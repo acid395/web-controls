@@ -62,9 +62,4 @@ const MYSITE = {
 window.MYSITE = MYSITE;
 ```
 
-## Notes
 
-- Maps on `water.noaa.gov` and `weather.gov` are canvas-drawn, so individual
-  map pins can't be clicked this way. Everything else on those pages can.
-- `noaa-controls.js` is partial: search-box results and one radio group were
-  never confirmed live. Marked in the file, not guessed at.
