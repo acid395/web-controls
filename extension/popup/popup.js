@@ -15,7 +15,10 @@ document.getElementById("call").addEventListener("click", () => {
     return;
   }
 
-  log(`-> USGS.${fn}(${JSON.stringify(args)})`);
+  // Which manifest (USGS vs GENERIC) actually runs is decided by
+  // background.js's ROUTES, based on the active tab's URL, not known here.
+  // The response's calledOn field says which one it was.
+  log(`-> ${fn}(${JSON.stringify(args)})`);
   chrome.runtime.sendMessage({ type: "invoke", fn, args }, (res) => {
     if (chrome.runtime.lastError) {
       log("runtime error: " + chrome.runtime.lastError.message);

@@ -58,7 +58,8 @@ async function invokeOnActiveTab(fn, args) {
     throw new Error(`no route for this page. Known: ${ROUTES.map((r) => r.test).join(", ")}`);
   }
   await ensureInjected(tab.id, route.bundle);
-  return chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  const result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  return { ...result, calledOn: route.global }; // which manifest actually ran, for the popup log
 }
 
 // Stub planner: instruction text -> { fn, args } on the USGS manifest, or
