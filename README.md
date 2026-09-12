@@ -99,13 +99,18 @@ looked at before.
 
 `map-probe.js` / `GENERIC.mapInfo()` report what's possible on a given map.
 
-Leaflet maps (USGS National Water Dashboard, NOAA Tides & Currents) put each
-marker in the DOM, so `WC` clicks them like any other element.
+Leaflet *can* put each marker in the DOM, so `WC` clicks them like any other
+element, but it's a choice each app makes, not a guarantee. Leaflet also
+supports rendering to a canvas, and it's the faster option once there are a
+lot of points. Confirmed live: the USGS National Water Dashboard, which plots
+stations nationwide, does exactly that, a canvas sits inside its Leaflet
+container and the marker panes are nearly empty. So "it's Leaflet" alone
+doesn't tell you which case you're in, `mapInfo()`'s `domMarkerCount` does.
 
 MapLibre GL, Mapbox GL, OpenLayers and Esri maps (water.noaa.gov,
-weather.gov/forecastpoints, EPA, Drought.gov) draw to a canvas. Nothing to
-click, but the map object has pan, zoom and query methods, reachable only if
-the page happens to expose it somewhere off `window`.
+weather.gov/forecastpoints, EPA, Drought.gov) draw to a canvas by default.
+Nothing to click, but the map object has pan, zoom and query methods,
+reachable only if the page happens to expose it somewhere off `window`.
 
 That's a real limit, not a per-site bug to keep fixing. Confirmed on EPA's
 Esri map: the library is detected correctly, but its view object isn't
