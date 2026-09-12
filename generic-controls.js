@@ -325,7 +325,7 @@
     let scanned = 0;
     const seen = new Set();
     const scan = (obj, depth) => {
-      if (instanceFoundFor || scanned++ > 30000 || depth > 3 || obj == null) return;
+      if (instanceFoundFor || scanned++ > 80000 || depth > 6 || obj == null) return;
       if (typeof obj !== "object" && typeof obj !== "function") return;
       if (seen.has(obj)) return;
       seen.add(obj);

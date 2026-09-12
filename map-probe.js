@@ -90,9 +90,9 @@
 
   const seen = new Set();
   let scanned = 0;
-  const MAX = 60000;
+  const MAX = 80000;
   const scan = (obj, path, depth) => {
-    if (scanned++ > MAX || depth > 3 || obj == null) return;
+    if (scanned++ > MAX || depth > 6 || obj == null) return;
     if (typeof obj !== "object" && typeof obj !== "function") return;
     if (seen.has(obj)) return;
     seen.add(obj);
