@@ -87,15 +87,31 @@ from raw selectors every time. The plan is to use `GENERIC` to bootstrap new
 manifests automatically instead of by hand, and cache the result, rather than
 staying at "guess from raw selectors" forever.
 
+Confirmed live on EPA's How's My Waterway (`mywaterway.epa.gov`), a codebase
+with nothing in common with any of the four hand-written manifests (a
+different React setup, different CSS approach, different everything below
+the surface): `GENERIC.inventory()` found the real search box, buttons and
+mode tabs with no EPA-specific code at all. That's the actual generalization
+claim, and it held up on the first site it was pointed at that nobody had
+looked at before.
+
 ## Maps
 
-`map-probe.js` reports what's possible on a given map.
+`map-probe.js` / `GENERIC.mapInfo()` report what's possible on a given map.
 
 Leaflet maps (USGS National Water Dashboard, NOAA Tides & Currents) put each
 marker in the DOM, so `WC` clicks them like any other element.
 
 MapLibre GL, Mapbox GL, OpenLayers and Esri maps (water.noaa.gov,
 weather.gov/forecastpoints, EPA, Drought.gov) draw to a canvas. Nothing to
-click, but the map object has pan, zoom and query methods. If the page keeps
-that object somewhere reachable, `map-probe.js` finds it and you can call it.
-If it's closed over, there's no way in.
+click, but the map object has pan, zoom and query methods, reachable only if
+the page happens to expose it somewhere off `window`.
+
+That's a real limit, not a per-site bug to keep fixing. Confirmed on EPA's
+Esri map: the library is detected correctly, but its view object isn't
+reachable at all, even scanning six levels deep off `window`. Production apps
+generally don't leak internals onto `window` on purpose, so this isn't
+specific to EPA, it's the expected outcome on most production sites. Where a
+site's own map object happens to be reachable (seen so far mostly on smaller,
+less bundled pages), `mapInfo()`/`map-probe.js` finds it and it's drivable.
+Where it isn't, there is no way in from outside the page.
