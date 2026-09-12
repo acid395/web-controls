@@ -12,6 +12,7 @@ Built for USGS and NOAA water data sites. The generic layer works anywhere.
 |---|---|
 | `inventory-controls.js` | Lists every interactive control on a page. Use it to map a new site. |
 | `map-probe.js` | Checks whether a page's map can be driven by script. |
+| `generic-controls.js` | Works on any page with no site-specific code. See "Any site" below. |
 | `web-controls.js` | Tools for `waterdata.usgs.gov/state/<state>/`. |
 | `site-controls.js` | Tools for `waterdata.usgs.gov/monitoring-location/USGS-<id>/`. |
 | `noaa-controls.js` | Tools for `water.noaa.gov/`. Partial. |
@@ -61,6 +62,30 @@ const MYSITE = {
 };
 window.MYSITE = MYSITE;
 ```
+
+## Any site
+
+The four manifests above (`USGS`, `SITE`, `NOAA`, `FCP`) are hand-written for
+one specific page each. `generic-controls.js` needs none of that: paste it on
+any page and it works immediately, by trading named functions for selectors.
+
+```js
+GENERIC.inventory();                              // every control, deduplicated, with selectors
+GENERIC.selectOption('#basemap-select', 'satellite');
+GENERIC.clickText('Download');
+```
+
+`GENERIC.inventory()` is the same page-reading logic as `inventory-controls.js`,
+returned as data instead of printed as a table, with a CSS selector on every
+row so a caller (a person, or eventually an LLM) can act on whatever it just
+found. This is the piece that lets the toolkit reach a site nobody has looked
+at yet: no manifest to write first, just read the page and act on it.
+
+The trade is reliability. A hand-written manifest like `USGS` was checked
+against a real page and given proper names; `GENERIC` is guessing at intent
+from raw selectors every time. The plan is to use `GENERIC` to bootstrap new
+manifests automatically instead of by hand, and cache the result, rather than
+staying at "guess from raw selectors" forever.
 
 ## Maps
 
