@@ -48,5 +48,6 @@ button actually change.
   extended to route to the right one.
 - Re-injects both scripts on every call rather than checking first. Simple,
   a bit wasteful, harmless.
-- Not tested against a real browser yet. Written and checked for syntax
-  errors, nothing more.
+- Confirmed live: `getState()` round-trips through the whole chain (popup,
+  background, content-script bridge, page's own JS world) and returns the
+  real page state.
