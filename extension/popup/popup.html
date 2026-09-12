@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <title>web-controls proof of concept</title>
 <style>
-  body { font: 13px/1.4 -apple-system, sans-serif; width: 340px; padding: 10px; }
+  body { font: 13px/1.4 -apple-system, sans-serif; width: 360px; padding: 10px; }
   h1 { font-size: 13px; margin: 0 0 8px; }
+  h2 { font-size: 12px; margin: 14px 0 4px; border-top: 1px solid #ddd; padding-top: 10px; }
   label { display: block; margin-top: 8px; font-size: 11px; color: #555; }
   input { width: 100%; box-sizing: border-box; padding: 4px; font: 12px monospace; }
   button { margin-top: 10px; width: 100%; padding: 6px; }
@@ -15,15 +16,19 @@
 </style>
 </head>
 <body>
-  <h1>web-controls: call USGS.* on the active tab</h1>
+  <h1>web-controls proof of concept</h1>
   <div class="hint">Open a waterdata.usgs.gov state page first, e.g. state/Idaho/</div>
 
+  <h2>Ask (stub planner, no real model yet)</h2>
+  <label for="instruction">plain-English instruction</label>
+  <input id="instruction" value="set gage height">
+  <button id="ask">Ask</button>
+
+  <h2>Call a function directly</h2>
   <label for="fn">function</label>
   <input id="fn" value="getState">
-
   <label for="args">arguments (JSON array)</label>
   <input id="args" value="[]">
-
   <button id="call">Call</button>
 
   <pre id="log"></pre>

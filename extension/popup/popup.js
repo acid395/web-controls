@@ -24,3 +24,17 @@ document.getElementById("call").addEventListener("click", () => {
     log(JSON.stringify(res, null, 2));
   });
 });
+
+document.getElementById("ask").addEventListener("click", () => {
+  const instruction = document.getElementById("instruction").value.trim();
+  if (!instruction) return;
+
+  log(`ask: "${instruction}"`);
+  chrome.runtime.sendMessage({ type: "ask", instruction }, (res) => {
+    if (chrome.runtime.lastError) {
+      log("runtime error: " + chrome.runtime.lastError.message);
+      return;
+    }
+    log(JSON.stringify(res, null, 2));
+  });
+});
