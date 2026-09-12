@@ -249,11 +249,16 @@
   // dedup trick as inventory-controls.js: without it, a page with 40
   // repeated site-list rows produces 40 near-identical entries instead of
   // one pattern with a count, which wastes an LLM's context just as badly
-  // as it wastes a human's screen.
+  // as it wastes a human's screen. The final catch-all only strips runs of
+  // 3+ digits (site ids, most numeric codes), not shorter ones: found live
+  // on drought.gov that stripping every digit collapsed a 1-10 rating-scale
+  // survey's radio buttons ("2".."9") into one signature, since they all
+  // normalized to the same bare "#" with nothing else to tell them apart,
+  // silently hiding 7 real, distinct options behind a single entry.
   const sigNorm = (s) => (s || "")
     .replace(/USGS-?\d+/g, "#ID")
     .replace(/\d{4}-\d{2}-\d{2}/g, "#DATE")
-    .replace(/\d+/g, "#")
+    .replace(/\d{3,}/g, "#")
     .trim();
 
   const TAGS = ["select", "input", "textarea", "button", "a", "summary", "details"];

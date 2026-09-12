@@ -76,11 +76,16 @@
     return parts.join(" > ");
   }
 
-  // normalize dynamic bits so repeated rows share a signature
+  // normalize dynamic bits so repeated rows share a signature. Only strips
+  // runs of 3+ digits (site ids, most numeric codes) in the final catch-all,
+  // not shorter ones: found live on drought.gov that stripping every digit
+  // collapsed a 1-10 rating-scale survey's radio buttons ("2".."9") into one
+  // signature, since they all normalized to the same bare "#" with nothing
+  // else to tell them apart, silently hiding 7 real, distinct options.
   const norm = (s) => (s || "")
     .replace(/USGS-?\d+/g, "#ID")
     .replace(/\d{4}-\d{2}-\d{2}/g, "#DATE")
-    .replace(/\d+/g, "#")
+    .replace(/\d{3,}/g, "#")
     .trim();
 
   const TAGS = ["select", "input", "textarea", "button", "a", "summary", "details"];
