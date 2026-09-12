@@ -24,10 +24,32 @@
     const k = Object.keys(el).find((k) => k.startsWith("__reactProps$"));
     return k ? el[k] : null;
   };
+  // Misses Svelte (and some other frameworks): they compile a bound click
+  // handler into a plain addEventListener call, which leaves neither an
+  // onclick attribute nor a React-style prop marker on the element. Found
+  // live on water.noaa.gov: a set of search-result rows were invisible to
+  // both checks below. getEventListeners is a real fix for that specific
+  // case, but it only exists in the DevTools console's own command-line API,
+  // not in a page's own JS or a real extension's injected code, so it's used
+  // when available and skipped otherwise rather than relied on.
   const jsHandler = (el) => {
     if (el.hasAttribute("onclick")) return true;
     const p = rprops(el);
-    return !!(p && (p.onClick || p.onChange || p.onInput));
+    if (p && (p.onClick || p.onChange || p.onInput)) return true;
+    try {
+      if (typeof getEventListeners === "function") {
+        const ev = getEventListeners(el);
+        if (ev && (ev.click || ev.pointerdown || ev.mousedown)) return true;
+      }
+    } catch (e) { /* not running in a console that provides it */ }
+    return false;
+  };
+  // Weaker, framework-agnostic fallback that works everywhere: anything
+  // styled to look clickable probably is, even if nothing above caught its
+  // handler. Trades some false positives (decorative hover styles) for
+  // catching handlers no attribute or prop inspection can see.
+  const looksClickable = (el) => {
+    try { return getComputedStyle(el).cursor === "pointer"; } catch (e) { return false; }
   };
 
   // Same extraction order as WC.rawLabelOf in web-controls.js and the other
@@ -98,7 +120,7 @@
     const tag = el.tagName.toLowerCase();
     const role = el.getAttribute("role");
     const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
-    if (!(TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || jsHandler(el))) continue;
+    if (!(TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || jsHandler(el) || looksClickable(el))) continue;
     if (seen.has(el) || !vis(el)) continue;
     seen.add(el);
 
