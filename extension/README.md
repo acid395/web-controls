@@ -22,48 +22,61 @@ built as small and testable as possible:
 
 ```
 popup.js  --chrome.runtime-->  background.js  --chrome.scripting-->  injects both:
-                                                  content/bridge.js   (isolated world, has chrome.*)
-                                                  page/usgs-bundle.js (MAIN world, has window.USGS)
+                                                  content/bridge.js     (isolated world, has chrome.*)
+                                                  page/<route>-bundle.js (MAIN world, has window.USGS or window.GENERIC)
 
-bridge.js <--postMessage--> usgs-bundle.js
+bridge.js <--postMessage--> page bundle
 ```
 
-`page/usgs-bundle.js` is `web-controls.js` with one thing appended: a listener
-that waits for a postMessage, calls the named `USGS` function, and posts the
-result back. `content/bridge.js` relays between that and the background
-script. `background.js` just injects both and forwards one call.
+`background.js` picks which page bundle to inject based on a small `ROUTES`
+table keyed by URL: USGS's state page gets `page/usgs-bundle.js`
+(`web-controls.js` plus a listener appended that waits for a postMessage,
+calls the named `USGS` function, and posts the result back). Every other
+routed site gets `page/generic-bundle.js` (`generic-controls.js` plus the
+same kind of listener, targeting `window.GENERIC` instead) — the
+zero-manifest fallback, so the extension can reach a site nobody wrote a
+manifest for, not just USGS. `content/bridge.js` relays between whichever
+bundle is active and the background script either way; it doesn't need to
+know which one it's talking to.
 
 ## Load it
 
 1. `chrome://extensions`, turn on Developer mode.
 2. Load unpacked, pick this `extension/` folder.
-3. Open a USGS state page, e.g. `https://waterdata.usgs.gov/state/Idaho/`.
+3. Open one of the routed pages (see `ROUTES` in `background.js`):
+   `waterdata.usgs.gov/state/Idaho/` (USGS manifest), or
+   `dashboard.waterdata.usgs.gov/`, `mywaterway.epa.gov/`, `www.drought.gov/`
+   (all three use the GENERIC fallback).
 4. Click the extension icon.
 
 Two ways to use it:
 
-- **Call a function directly.** Function defaults to `getState`, arguments to
-  `[]`. Click Call. Expect the same object `USGS.getState()` would return in
-  DevTools. Try `setParameter` with arguments `["gage height"]` and watch the
-  page's radio button actually change.
-- **Ask.** Type something like "set gage height", "group by huc8", or "hide
-  the map" and click Ask. The stub planner matches it against a short fixed
-  list of phrases (see `PLANNER_RULES` in `background.js`) and runs whatever
-  it picks. Type something it doesn't recognize (most things) and it says so
-  rather than guessing.
+- **Call a function directly.** On the USGS route: function defaults to
+  `getState`, arguments to `[]`. Click Call. Expect the same object
+  `USGS.getState()` would return in DevTools. Try `setParameter` with
+  arguments `["gage height"]` and watch the page's radio button actually
+  change. On a GENERIC route: try function `inventory` with arguments `[]`,
+  or `mapInfo`, or `selectOption` with arguments like
+  `["#some-selector", "some value"]` using a real selector from that page's
+  `inventory()` output.
+- **Ask.** USGS route only right now. Type something like "set gage height,"
+  "group by huc8," or "hide the map" and click Ask. The stub planner matches
+  it against a short fixed list of phrases (see `PLANNER_RULES` in
+  `background.js`) and runs whatever it picks. Type something it doesn't
+  recognize (most things) and it says so rather than guessing.
 
 ## Known rough edges
 
-- Only wired to the USGS state-page manifest. The other three manifests
-  (`SITE`, `NOAA`, `FCP`) aren't plugged into this yet, same idea though:
-  a `page/*-bundle.js` per manifest, and the URL check in `background.js`
-  extended to route to the right one.
-- Re-injects both scripts on every call rather than checking first. Simple,
-  a bit wasteful, harmless.
-- The stub planner understands a handful of fixed phrases, nothing more.
-  It's there to prove the loop shape, not to be a real assistant.
-- Confirmed live: `getState()` and `setParameter()` both round-trip through
-  the whole chain (popup, background, content-script bridge, page's own JS
-  world) and return real results / cause a real DOM change. The Ask flow
-  reuses that exact same path, so it should work the same way, but hasn't
-  been clicked in a real browser yet.
+- `SITE` and `NOAA` still aren't wired into `ROUTES`. Same idea as USGS
+  though: a `page/*-bundle.js` and a route entry each.
+- The Ask box only plans against the USGS manifest. Extending it to the
+  GENERIC routes means the stub planner would need to work off whatever
+  `inventory()` finds live, not a fixed rule list, which starts to look a
+  lot like what a real model would actually be doing there.
+- Re-injects scripts on every call rather than checking first. Simple, a bit
+  wasteful, harmless.
+- Confirmed live, on the USGS route: `getState()` and `setParameter()` both
+  round-trip through the whole chain and return real results / cause a real
+  DOM change. The GENERIC route through this same extension mechanism
+  (rather than a console paste, which is exempt from a page's CSP in a way
+  this injection isn't) hasn't been confirmed yet — that's the current test.

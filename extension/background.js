@@ -1,21 +1,44 @@
 /* background.js - the service worker.
  *
- * Two things live here:
- *   1. invokeOnActiveTab(fn, args) - inject the bridge + page bundle, call
- *      USGS.<fn>(...args) on the real page, return the result. This is the
- *      plumbing, proven live already: getState() and setParameter() both
- *      round-trip correctly.
- *   2. planTool(instruction) - a stub stand-in for an LLM. Plain keyword
- *      matching, not a model. It exists to prove the *shape* of the loop
- *      (typed instruction -> a tool call gets picked -> it actually runs)
- *      without needing an API key or spending anything. Swapping this one
- *      function for a real model call is the entire upgrade path later.
+ * Three things live here:
+ *   1. ROUTES - which page bundle to inject for a given site. USGS's state
+ *      page gets its own hand-written manifest (page/usgs-bundle.js,
+ *      window.USGS). Everything else routed here falls back to the
+ *      zero-manifest tier (page/generic-bundle.js, window.GENERIC) - this is
+ *      what makes the extension itself reach sites nobody wrote a manifest
+ *      for, not just the console scripts.
+ *   2. invokeOnActiveTab(fn, args) - inject the bridge + whichever page
+ *      bundle the active tab's URL routes to, call <fn>(...args) on the
+ *      real page, return the result. Proven live for the USGS route
+ *      already (getState()/setParameter() both round-trip correctly);
+ *      the GENERIC route is new and is exactly what Phase 1 is testing -
+ *      does the extension's actual injection mechanism (not a console
+ *      paste, which is exempt from a page's CSP in a way this isn't)
+ *      still work on sites beyond the original one.
+ *   3. planTool(instruction) - a stub stand-in for an LLM, USGS-route only
+ *      for now. Plain keyword matching, not a model. It exists to prove
+ *      the *shape* of the loop (typed instruction -> a tool call gets
+ *      picked -> it actually runs) without needing an API key or spending
+ *      anything. Swapping this one function for a real model call is the
+ *      entire upgrade path later.
  */
 
-async function ensureInjected(tabId) {
-  // isolated world first (the relay), then the page's own world (WC + USGS).
-  // Re-injecting on every call is wasteful but simple and safe for a proof
-  // of concept: both files guard against installing duplicate listeners.
+const ROUTES = [
+  { test: /^https:\/\/waterdata\.usgs\.gov\/state\//, bundle: "page/usgs-bundle.js", global: "USGS" },
+  { test: /^https:\/\/dashboard\.waterdata\.usgs\.gov\//, bundle: "page/generic-bundle.js", global: "GENERIC" },
+  { test: /^https:\/\/mywaterway\.epa\.gov\//, bundle: "page/generic-bundle.js", global: "GENERIC" },
+  { test: /^https:\/\/www\.drought\.gov\//, bundle: "page/generic-bundle.js", global: "GENERIC" },
+];
+
+function routeFor(url) {
+  return ROUTES.find((r) => r.test.test(url || "")) || null;
+}
+
+async function ensureInjected(tabId, bundle) {
+  // isolated world first (the relay), then the page's own world (WC + the
+  // manifest that bundle exposes). Re-injecting on every call is wasteful
+  // but simple and safe for a proof of concept: both files guard against
+  // installing duplicate listeners.
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["content/bridge.js"],
@@ -23,17 +46,18 @@ async function ensureInjected(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
-    files: ["page/usgs-bundle.js"],
+    files: [bundle],
   });
 }
 
 async function invokeOnActiveTab(fn, args) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.id) throw new Error("no active tab");
-  if (!/^https:\/\/waterdata\.usgs\.gov\//.test(tab.url || "")) {
-    throw new Error("open a waterdata.usgs.gov page first");
+  const route = routeFor(tab.url);
+  if (!route) {
+    throw new Error(`no route for this page. Known: ${ROUTES.map((r) => r.test).join(", ")}`);
   }
-  await ensureInjected(tab.id);
+  await ensureInjected(tab.id, route.bundle);
   return chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
 }
 
