@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>web-controls proof of concept</title>
+<style>
+  body { font: 13px/1.4 -apple-system, sans-serif; width: 340px; padding: 10px; }
+  h1 { font-size: 13px; margin: 0 0 8px; }
+  label { display: block; margin-top: 8px; font-size: 11px; color: #555; }
+  input { width: 100%; box-sizing: border-box; padding: 4px; font: 12px monospace; }
+  button { margin-top: 10px; width: 100%; padding: 6px; }
+  pre { margin-top: 10px; max-height: 220px; overflow: auto; background: #f4f4f4;
+        padding: 6px; font: 11px monospace; white-space: pre-wrap; word-break: break-word; }
+  .hint { color: #888; font-size: 11px; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>web-controls: call USGS.* on the active tab</h1>
+  <div class="hint">Open a waterdata.usgs.gov state page first, e.g. state/Idaho/</div>
+
+  <label for="fn">function</label>
+  <input id="fn" value="getState">
+
+  <label for="args">arguments (JSON array)</label>
+  <input id="args" value="[]">
+
+  <button id="call">Call</button>
+
+  <pre id="log"></pre>
+
+  <script src="popup.js"></script>
+</body>
+</html>

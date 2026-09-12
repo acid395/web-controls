@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "web-controls (proof of concept)",
+  "version": "0.1.0",
+  "description": "Calls web-controls functions on a live USGS page from an extension popup. Proves the popup -> background -> content script -> page bridge round-trips before any LLM is involved.",
+  "permissions": ["scripting", "activeTab"],
+  "host_permissions": ["https://waterdata.usgs.gov/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}
