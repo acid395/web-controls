@@ -47,8 +47,14 @@
   // Weaker, framework-agnostic fallback that works everywhere: anything
   // styled to look clickable probably is, even if nothing above caught its
   // handler. Trades some false positives (decorative hover styles) for
-  // catching handlers no attribute or prop inspection can see.
+  // catching handlers no attribute or prop inspection can see. Excludes SVG
+  // graphics primitives: found live on water.noaa.gov that an icon's <svg>/
+  // <path>/<line> inherit "pointer" from their already-captured clickable
+  // parent button, so counting them too just duplicates that one real
+  // control under three more entries instead of finding anything new.
+  const GRAPHIC_TAGS = new Set(["svg", "path", "line", "circle", "rect", "polygon", "polyline", "g", "ellipse", "use"]);
   const looksClickable = (el) => {
+    if (GRAPHIC_TAGS.has(el.tagName.toLowerCase())) return false;
     try { return getComputedStyle(el).cursor === "pointer"; } catch (e) { return false; }
   };
 
