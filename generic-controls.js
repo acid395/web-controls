@@ -304,7 +304,7 @@
       "Mapbox GL": ".mapboxgl-canvas",
       "MapLibre GL": ".maplibregl-canvas",
       "OpenLayers": ".ol-viewport",
-      "Esri ArcGIS": "[class*='esri-view']",
+      "Esri ArcGIS": "[class*='esri-']",
       "Google Maps": ".gm-style",
     };
     const libraries = Object.keys(domHints).filter((name) => deepQueryAll(domHints[name]).length > 0);

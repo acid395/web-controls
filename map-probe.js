@@ -33,7 +33,7 @@
     "Mapbox GL": () => !!window.mapboxgl,
     "MapLibre GL": () => !!window.maplibregl,
     "OpenLayers": () => !!window.ol && !!window.ol.Map,
-    "Esri ArcGIS": () => !!(window.__esri || document.querySelector("[class*='esri-view']")),
+    "Esri ArcGIS": () => !!(window.__esri || document.querySelector("[class*='esri-']")),
     "Google Maps": () => !!(window.google && window.google.maps),
   };
   for (const [name, test] of Object.entries(libSigns)) {
@@ -47,7 +47,7 @@
     "Mapbox GL": ".mapboxgl-canvas",
     "MapLibre GL": ".maplibregl-canvas",
     "OpenLayers": ".ol-viewport",
-    "Esri ArcGIS": "[class*='esri-view']",
+    "Esri ArcGIS": "[class*='esri-']",
     "Google Maps": ".gm-style",
   };
   for (const [name, sel] of Object.entries(domHints)) {
@@ -60,7 +60,7 @@
     leafletVectorPaths: deepQueryAll(".leaflet-interactive").length,   // SVG circles/polys
     svgInsideMap: deepQueryAll(".leaflet-container svg path, .leaflet-container circle").length,
     genericRoleButtonsInMap: deepQueryAll(
-      ".leaflet-container [role=button], .ol-viewport [role=button], [class*='esri-view'] [role=button]"
+      ".leaflet-container [role=button], .ol-viewport [role=button], [class*='esri-'] [role=button]"
     ).length,
   };
 
