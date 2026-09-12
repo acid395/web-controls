@@ -8,14 +8,18 @@
  *   window.NOAA  tools for the water.noaa.gov national map page
  *
  * STATUS: partial. Confirmed live 2026-09-08 against the "View Layers" panel
- * and the River Gauge product picker. NOT confirmed: what happens after
- * search(). Typing into #search-box never produced a separate result list
- * in three tries (checked with a heuristic-free query for any li/role/result-
- * shaped element, nothing matched), so this UI likely searches or moves the
- * map on its own rather than presenting something to click. search() fills
- * the box and presses Enter as a best-effort "submit," unverified. Also
- * unconfirmed: the second nameless radio group (values "all"/"hydrologic"/
- * "hide") whose panel hasn't been opened yet. See README, "Tested on other sites."
+ * and the River Gauge product picker. Settled, not just unconfirmed: typing
+ * into #search-box produces no separate result-list element to click, in
+ * four separate tries, the last two with a real value confirmed sitting in
+ * the box (value: "Boise") and a generic-controls-grade inventory (Svelte
+ * click-handler detection plus a cursor:pointer fallback) finding nothing
+ * resembling a dropdown anywhere in the page. The likely explanation is a
+ * closed shadow root, which a script cannot see into by design, not a
+ * detection gap to keep patching. search() fills the box and presses Enter
+ * as a best-effort "submit"; picking a specific result from it is not
+ * something this approach can do on this page. Also unconfirmed: the second
+ * nameless radio group (values "all"/"hydrologic"/"hide") whose panel hasn't
+ * been opened yet. See README, "Tested on other sites."
  *
  * After pasting, try:
  *   NOAA.openLayers()
