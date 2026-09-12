@@ -33,7 +33,7 @@ table keyed by URL: USGS's state page gets `page/usgs-bundle.js`
 (`web-controls.js` plus a listener appended that waits for a postMessage,
 calls the named `USGS` function, and posts the result back). Every other
 routed site gets `page/generic-bundle.js` (`generic-controls.js` plus the
-same kind of listener, targeting `window.GENERIC` instead) — the
+same kind of listener, targeting `window.GENERIC` instead), the
 zero-manifest fallback, so the extension can reach a site nobody wrote a
 manifest for, not just USGS. `content/bridge.js` relays between whichever
 bundle is active and the background script either way; it doesn't need to
@@ -79,4 +79,4 @@ Two ways to use it:
   round-trip through the whole chain and return real results / cause a real
   DOM change. The GENERIC route through this same extension mechanism
   (rather than a console paste, which is exempt from a page's CSP in a way
-  this injection isn't) hasn't been confirmed yet — that's the current test.
+  this injection isn't) hasn't been confirmed yet. That's the current test.
