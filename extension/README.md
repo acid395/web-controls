@@ -88,8 +88,12 @@ Three ways to use it:
 - Re-injects scripts on every call rather than checking first. Simple, a bit
   wasteful, harmless.
 - Confirmed live: `getState()`/`setParameter()` on the USGS route, and
-  `inventory()`/`selectOption()`/`fill()` on the GENERIC route across three
-  separate sites (EPA, Drought.gov, the National Water Dashboard), all
-  through this actual extension mechanism, not a console paste. The
-  permission-request flow itself (this phase's addition) hasn't been
-  clicked in a real browser yet.
+  `inventory()`/`selectOption()`/`fill()` on the GENERIC route across four
+  separate sites (EPA, Drought.gov, the National Water Dashboard, and
+  StreamStats, granted at runtime via "Enable on this site" with no code
+  change), all through this actual extension mechanism, not a console
+  paste. The first version of the permission-request handler silently
+  failed with no dialog shown, because an `await` before
+  `chrome.permissions.request()` broke Chrome's user-gesture check. Fixed by
+  precomputing the tab's origin when the popup opens, so the click handler
+  calls `chrome.permissions.request()` as its first and only step.
