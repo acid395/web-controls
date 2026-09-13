@@ -27,6 +27,16 @@
   <button id="enable">Enable on this site</button>
   <div class="hint" id="enableStatus"></div>
 
+  <h2>WebLLM test (Phase 3, not wired into Ask yet)</h2>
+  <div class="hint">
+    First click downloads the model (real bandwidth, can take a while) and
+    needs WebGPU. Not yet used by the Ask box below - this only proves the
+    model loads and answers at all.
+  </div>
+  <label for="prompt">test prompt</label>
+  <input id="prompt" value="Say hello in exactly five words.">
+  <button id="llmTest">Load model + ask</button>
+
   <h2>Ask (stub planner, USGS route only, no real model yet)</h2>
   <label for="instruction">plain-English instruction</label>
   <input id="instruction" value="set gage height">

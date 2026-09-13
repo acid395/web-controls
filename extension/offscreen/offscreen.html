@@ -1,0 +1,10 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>web-llm offscreen host</title></head>
+<body>
+<!-- No UI. This document exists only because a service worker has no WebGPU
+     access; an offscreen document does. background.js talks to offscreen.js
+     over chrome.runtime messaging, the same pattern as content/bridge.js. -->
+<script type="module" src="offscreen.js"></script>
+</body>
+</html>

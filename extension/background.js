@@ -1,6 +1,6 @@
 /* background.js - the service worker.
  *
- * Four things live here:
+ * Five things live here:
  *   1. NAMED_MANIFESTS - sites with a real, hand-written manifest, checked
  *      first. Currently just USGS's state page (page/usgs-bundle.js,
  *      window.USGS). Anything else routes to the zero-manifest tier
@@ -18,8 +18,17 @@
  *      for now. Plain keyword matching, not a model. It exists to prove
  *      the *shape* of the loop (typed instruction -> a tool call gets
  *      picked -> it actually runs) without needing an API key or spending
- *      anything. Swapping this one function for a real model call is the
- *      entire upgrade path later.
+ *      anything.
+ *   4. ensureOffscreenDocument() - a service worker has no WebGPU access at
+ *      all, so the actual WebLLM engine can't run here. It runs in
+ *      offscreen/offscreen.js instead, inside a hidden document this
+ *      function creates on demand, the one context in an extension that
+ *      does have WebGPU. This is genuinely new and unconfirmed: it's never
+ *      been run in a real browser yet, only syntax-checked.
+ *   5. llmPing relay - forwards a test prompt to the offscreen document and
+ *      back, proving the model loads and answers at all before anything
+ *      gets wired into the actual tool-calling loop (planTool still does
+ *      that, untouched, for now).
  */
 
 const NAMED_MANIFESTS = [
@@ -95,7 +104,39 @@ function planTool(instruction) {
   return null;
 }
 
+const OFFSCREEN_URL = "offscreen/offscreen.html";
+let creatingOffscreen = null; // avoids racing two createDocument calls at once
+
+async function ensureOffscreenDocument() {
+  const existing = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+  });
+  if (existing.length > 0) return;
+
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+  creatingOffscreen = chrome.offscreen.createDocument({
+    url: OFFSCREEN_URL,
+    reasons: ["WORKERS"], // closest existing justification; WebLLM does its
+    // real work via WebGPU + a Worker internally, and Chrome's offscreen
+    // reason list (as of this writing) has no dedicated "WEBGPU" or
+    // "AI_MODEL" value - WORKERS is the standard stand-in other on-device-
+    // model extensions use for exactly this situation.
+    justification: "Run the WebLLM model, which needs WebGPU, unavailable in a service worker.",
+  });
+  try {
+    await creatingOffscreen;
+  } finally {
+    creatingOffscreen = null;
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.target === "offscreen") return; // that message is for offscreen.js, not this listener
+
   if (msg.type === "invoke") {
     (async () => {
       try {
@@ -119,6 +160,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ...result, plannedCall: plan });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err), plannedCall: plan });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === "llmPing") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        // first call downloads the model (can take a while, real bandwidth
+        // and disk space), subsequent calls reuse the same loaded engine
+        // for as long as the offscreen document stays alive.
+        const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmPing", prompt: msg.prompt });
+        sendResponse(result);
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
       }
     })();
     return true;

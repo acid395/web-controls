@@ -57,6 +57,28 @@ document.getElementById("call").addEventListener("click", () => {
   });
 });
 
+// offscreen.js reports model-download progress via a plain broadcast
+// (no target field), so it reaches whichever popup happens to be open.
+// Progress during the first, multi-gigabyte download is easy to mistake
+// for a hang without this - closing the popup loses these, since a popup
+// is torn down when it loses focus, but the download itself keeps going
+// in the offscreen document regardless.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "llmProgress") log("model loading: " + msg.text);
+});
+
+document.getElementById("llmTest").addEventListener("click", () => {
+  const prompt = document.getElementById("prompt").value.trim();
+  log(`llm test: "${prompt}" (first run downloads the model, can take a while)`);
+  chrome.runtime.sendMessage({ type: "llmPing", prompt }, (res) => {
+    if (chrome.runtime.lastError) {
+      log("runtime error: " + chrome.runtime.lastError.message);
+      return;
+    }
+    log(JSON.stringify(res, null, 2));
+  });
+});
+
 document.getElementById("ask").addEventListener("click", () => {
   const instruction = document.getElementById("instruction").value.trim();
   if (!instruction) return;
