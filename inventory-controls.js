@@ -126,7 +126,15 @@
     const tag = el.tagName.toLowerCase();
     const role = el.getAttribute("role");
     const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
-    if (!(TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || jsHandler(el) || looksClickable(el))) continue;
+    // Real signals (a native interactive tag, an ARIA role, a tab stop, or
+    // an actual handler) vs. cursor:pointer alone. Found live on
+    // water.noaa.gov: clicking a cursor:pointer-only <ul> did nothing,
+    // because the real handler was on a child button inside it, not the
+    // <ul> itself, so that fallback's catches get marked low confidence
+    // rather than presented the same as a real button or role=button.
+    const strong = TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || jsHandler(el);
+    const weak = !strong && looksClickable(el);
+    if (!(strong || weak)) continue;
     if (seen.has(el) || !vis(el)) continue;
     seen.add(el);
 
@@ -138,6 +146,7 @@
       inShadow: el.getRootNode() instanceof ShadowRoot, selector: cssPath(el),
       href: tag === "a" ? (el.getAttribute("href") || "(js)") : "",
       dateLike: el.type === "date" || /date|calendar|mm\/dd|yyyy|time period|day range/i.test(lab + " " + el.name + " " + el.id) || undefined,
+      confidence: weak ? "low" : "high",
     };
     if (tag === "select") rec.options = [...el.options].map((o) => ({ value: o.value, text: o.text.trim(), selected: o.selected }));
     rec._sig = [rec.kind, rec.type, norm(lab), rec.name, norm(rec.href)].join("|");
@@ -155,6 +164,7 @@
     return {
       count: rows.length, kind: r.kind, tag: r.tag, type: r.type, label: r.label,
       name: r.name, dateLike: r.dateLike || "", sampleSelector: r.selector, sampleHref: r.href,
+      confidence: r.confidence,
     };
   }).sort((a, b) => a.count - b.count);
 

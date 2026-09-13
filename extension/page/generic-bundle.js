@@ -301,7 +301,15 @@
       const tag = el.tagName.toLowerCase();
       const role = el.getAttribute("role");
       const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
-      if (!(TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || hasJsHandler(el) || looksClickable(el))) continue;
+      // Real signals (a native interactive tag, an ARIA role, a tab stop, or
+      // an actual handler) vs. cursor:pointer alone. Found live on
+      // water.noaa.gov: clicking a cursor:pointer-only <ul> did nothing,
+      // because the real handler was on a child button inside it, not the
+      // <ul> itself, so that fallback's catches get marked low confidence
+      // rather than presented the same as a real button or role=button.
+      const strong = TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || hasJsHandler(el);
+      const weak = !strong && looksClickable(el);
+      if (!(strong || weak)) continue;
       if (seen.has(el) || !isVisible(el)) continue;
       seen.add(el);
 
@@ -311,6 +319,7 @@
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
         checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked : undefined,
         selector: cssPath(el),
+        confidence: weak ? "low" : "high",
       };
       if (tag === "select") rec.options = [...el.options].map((o) => ({ value: o.value, text: o.text.trim() }));
       rec._sig = [rec.kind, rec.type, sigNorm(lab), rec.name].join("|");
