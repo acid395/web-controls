@@ -1,6 +1,6 @@
 /* background.js - the service worker.
  *
- * Six things live here:
+ * Seven things live here:
  *   1. NAMED_MANIFESTS - sites with a real, hand-written manifest, checked
  *      first. Currently just USGS's state page (page/usgs-bundle.js,
  *      window.USGS). Anything else routes to the zero-manifest tier
@@ -27,12 +27,17 @@
  *   5. llmPing relay - forwards a test prompt to the offscreen document and
  *      back. Confirmed working. Not tool-calling, just proves the model
  *      loads and answers at all.
- *   6. TOOL_DEFS + llmPlan - the real thing. Same tool descriptions as
- *      webmcp-register.js, reshaped for WebLLM's OpenAI-compatible
- *      function-calling format. An instruction plus the active route's
- *      tools go to the model; whatever tool it picks runs through
- *      invokeOnActiveTab, same execution path planTool()'s stub always
- *      used. Untested live - offscreen.js's llmPlan handler is new too.
+ *   6. TOOL_DEFS + llmPlan - WebLLM's version of the real thing, using the
+ *      offscreen document. Requires a real (large) one-time model download
+ *      and WebGPU. Confirmed loading and answering; tool-calling itself
+ *      still mid-test as of this writing.
+ *   7. askGemini + geminiPlan - a second, parallel path to the exact same
+ *      TOOL_DEFS and the exact same invokeOnActiveTab execution afterward,
+ *      calling Google's Gemini API (free tier, needs an API key from
+ *      aistudio.google.com/apikey, saved via the popup) instead of a local
+ *      model. No download, no WebGPU, no offscreen document - a plain
+ *      fetch() from this file. Traded away "fully local" for "instant and
+ *      still free." Untested live.
  */
 
 const NAMED_MANIFESTS = [
@@ -171,6 +176,46 @@ function findToolDef(route, name) {
   return (TOOL_DEFS[route] || []).find((d) => d.name === name);
 }
 
+// Check aistudio.google.com/apikey's own model list if this ever 404s -
+// Google's free-tier model names change more often than most APIs'.
+const GEMINI_MODEL = "gemini-3.8-flash";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+// Same shape as toOpenAITools, wrapped the way Gemini's REST API wants it:
+// one functionDeclarations array instead of one {type,function} object per
+// tool. The actual JSON Schema in each tool's `parameters` is identical
+// either way - both APIs happen to want plain JSON Schema here.
+function toGeminiTools(defs) {
+  return [{ functionDeclarations: defs.map((d) => ({ name: d.name, description: d.description, parameters: d.parameters })) }];
+}
+
+async function askGemini(instruction, defs) {
+  const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
+  if (!geminiApiKey) {
+    throw new Error('no Gemini API key saved. Get a free one at aistudio.google.com/apikey and save it in the popup.');
+  }
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": geminiApiKey },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: instruction }] }],
+      tools: toGeminiTools(defs),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gemini API error ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+  // Gemini's args come back as a real object already, unlike WebLLM/OpenAI's
+  // JSON-stringified arguments - one less parsing step, one less way to fail.
+  const callPart = parts.find((p) => p.functionCall);
+  if (callPart) return { toolCall: { name: callPart.functionCall.name, args: callPart.functionCall.args || {} } };
+  const textPart = parts.find((p) => p.text);
+  return { toolCall: null, text: textPart ? textPart.text : "" };
+}
+
 const OFFSCREEN_URL = "offscreen/offscreen.html";
 let creatingOffscreen = null; // avoids racing two createDocument calls at once
 
@@ -295,6 +340,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const args = def.argOrder.map((key) => plan.toolCall.args[key]);
         const result = await invokeOnActiveTab(def.fn, args);
         sendResponse({ ...result, plannedBy: "webllm", toolCall: plan.toolCall });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
+  // Same shape as llmPlan above, same TOOL_DEFS, same invokeOnActiveTab
+  // execution - only the "which tool" decision is different: a direct
+  // fetch() to Gemini instead of the offscreen document's local model.
+  if (msg.type === "geminiPlan") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || !tab.url) throw new Error("no active tab");
+        const route = routeFor(tab.url);
+        const defs = TOOL_DEFS[route.global] || [];
+        const plan = await askGemini(msg.instruction, defs);
+        if (!plan.toolCall) {
+          sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
+          return;
+        }
+        const def = findToolDef(route.global, plan.toolCall.name);
+        if (!def) {
+          sendResponse({ ok: false, error: `model picked an unknown tool "${plan.toolCall.name}"`, toolCall: plan.toolCall });
+          return;
+        }
+        const args = def.argOrder.map((key) => plan.toolCall.args[key]);
+        const result = await invokeOnActiveTab(def.fn, args);
+        sendResponse({ ...result, plannedBy: "gemini", toolCall: plan.toolCall });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
       }

@@ -47,6 +47,20 @@
   <input id="llmInstruction" value="set the parameter to gage height">
   <button id="llmAsk">Ask WebLLM</button>
 
+  <h2>Ask Gemini (free tier, needs an API key)</h2>
+  <div class="hint">
+    No download, no WebGPU, instant - unlike WebLLM, this calls Google's
+    cloud API. Get a free key at
+    <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>,
+    paste it below once. Untested live.
+  </div>
+  <label for="geminiKey">API key</label>
+  <input id="geminiKey" type="password" placeholder="paste your Gemini API key">
+  <button id="saveKey">Save key</button>
+  <label for="geminiInstruction">plain-English instruction</label>
+  <input id="geminiInstruction" value="set the parameter to gage height">
+  <button id="geminiAsk">Ask Gemini</button>
+
   <h2>Ask (stub planner, USGS route only, no real model)</h2>
   <label for="instruction">plain-English instruction</label>
   <input id="instruction" value="set gage height">

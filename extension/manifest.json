@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "web-controls (proof of concept)",
-  "version": "0.4.1",
-  "description": "Calls web-controls functions on a live page from an extension popup. USGS gets its own manifest; any other site uses the zero-manifest GENERIC fallback, enabled per-site at runtime. Phase 3: WebLLM runs in an offscreen document, since a service worker has no WebGPU access.",
-  "permissions": ["scripting", "activeTab", "offscreen"],
+  "version": "0.5.0",
+  "description": "Calls web-controls functions on a live page from an extension popup. USGS gets its own manifest; any other site uses the zero-manifest GENERIC fallback, enabled per-site at runtime. Two model options for the real tool-calling: WebLLM (local, offscreen document, no cost, real download time) or Gemini's free tier (cloud, instant, needs an API key).",
+  "permissions": ["scripting", "activeTab", "offscreen", "storage"],
   "host_permissions": [
     "https://waterdata.usgs.gov/*",
     "https://dashboard.waterdata.usgs.gov/*",
     "https://mywaterway.epa.gov/*",
-    "https://www.drought.gov/*"
+    "https://www.drought.gov/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {

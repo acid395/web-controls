@@ -93,6 +93,40 @@ document.getElementById("llmAsk").addEventListener("click", () => {
   });
 });
 
+// Shows "(key saved)" as a placeholder rather than the real key, so the
+// field doesn't need to hold and display the actual secret every time the
+// popup reopens - chrome.storage.local already has it.
+chrome.storage.local.get("geminiApiKey", ({ geminiApiKey }) => {
+  if (geminiApiKey) document.getElementById("geminiKey").placeholder = "(key saved)";
+});
+
+document.getElementById("saveKey").addEventListener("click", () => {
+  const key = document.getElementById("geminiKey").value.trim();
+  if (!key) {
+    log("no key entered");
+    return;
+  }
+  chrome.storage.local.set({ geminiApiKey: key }, () => {
+    log("Gemini API key saved.");
+    document.getElementById("geminiKey").value = "";
+    document.getElementById("geminiKey").placeholder = "(key saved)";
+  });
+});
+
+document.getElementById("geminiAsk").addEventListener("click", () => {
+  const instruction = document.getElementById("geminiInstruction").value.trim();
+  if (!instruction) return;
+
+  log(`ask gemini: "${instruction}"`);
+  chrome.runtime.sendMessage({ type: "geminiPlan", instruction }, (res) => {
+    if (chrome.runtime.lastError) {
+      log("runtime error: " + chrome.runtime.lastError.message);
+      return;
+    }
+    log(JSON.stringify(res, null, 2));
+  });
+});
+
 document.getElementById("ask").addEventListener("click", () => {
   const instruction = document.getElementById("instruction").value.trim();
   if (!instruction) return;
