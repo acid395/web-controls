@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "web-controls (proof of concept)",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Calls web-controls functions on a live page from an extension popup. USGS gets its own manifest; any other site uses the zero-manifest GENERIC fallback, enabled per-site at runtime. Phase 3: WebLLM runs in an offscreen document, since a service worker has no WebGPU access.",
   "permissions": ["scripting", "activeTab", "offscreen"],
   "host_permissions": [
@@ -11,6 +11,9 @@
     "https://www.drought.gov/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "background": {
     "service_worker": "background.js"
   },
