@@ -57,4 +57,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true; // async response
   }
+
+  // Fire-and-forget: background.js sends this as soon as the browser
+  // starts, well before anyone opens the popup, so getEngine()'s promise is
+  // usually already resolved (or at least in progress) by the time an
+  // actual llmPing arrives. Only saves real time after the very first ever
+  // load, since that one still has to hit the network no matter when it
+  // starts - this just moves the wait earlier, out of the moment someone's
+  // actually waiting on an answer, rather than making it wait less overall.
+  if (msg.type === "llmWarm") {
+    if (!("gpu" in navigator)) {
+      chrome.runtime.sendMessage({ type: "llmProgress", text: "no WebGPU, skipping warm-load" });
+      return;
+    }
+    getEngine((report) => {
+      chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+    }).then(() => {
+      chrome.runtime.sendMessage({ type: "llmProgress", text: "model ready" });
+    }).catch((err) => {
+      chrome.runtime.sendMessage({ type: "llmProgress", text: "warm-load failed: " + String((err && err.message) || err) });
+    });
+    // no sendResponse: nothing is waiting on this one
+  }
 });

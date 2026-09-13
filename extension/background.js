@@ -134,6 +134,21 @@ async function ensureOffscreenDocument() {
   }
 }
 
+// Start loading the model as soon as the browser opens, or the extension is
+// installed/reloaded, instead of waiting for someone to actually ask it
+// something. Doesn't shrink the real download time, just moves the wait to
+// before it's needed rather than during it - after the first successful
+// load ever, the weights are cached locally, so this finishes fast on every
+// later browser launch.
+async function warmModel() {
+  try {
+    await ensureOffscreenDocument();
+    chrome.runtime.sendMessage({ target: "offscreen", type: "llmWarm" });
+  } catch (e) { /* best effort - a real llmPing later will surface any real error */ }
+}
+chrome.runtime.onStartup.addListener(warmModel);
+chrome.runtime.onInstalled.addListener(warmModel);
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target === "offscreen") return; // that message is for offscreen.js, not this listener
 
