@@ -17,12 +17,14 @@
  */
 import { CreateMLCEngine } from "./vendor/web-llm.js";
 
-// Smaller than the Hermes-2-Pro-8B model discussed earlier, on purpose: this
-// is the first real test of whether WebLLM works in this environment at
-// all, so it's worth minimizing download size and GPU memory needed before
-// trusting a bigger model to matter. Swapping this string is the entire
-// upgrade once this is confirmed working.
-const MODEL_ID = "Hermes-3-Llama-3.2-3B-q4f16_1-MLC";
+// Started as the smaller Hermes-3-Llama-3.2-3B to validate loading itself
+// cheaply. Confirmed live it loads and answers - but WebLLM 0.2.85 rejected
+// it outright for tool-calling: "not supported for ChatCompletionRequest.
+// tools." Its own error message names exactly which models are, all
+// Hermes-2-Pro or Hermes-3 at 7-8B, none smaller. This is that one, as
+// planned from the start once tool-calling was the actual feature needed.
+// Bigger download than the 3B model, real bandwidth and time again.
+const MODEL_ID = "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC";
 
 let enginePromise = null;
 
