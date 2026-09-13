@@ -37,7 +37,17 @@
   <input id="prompt" value="Say hello in exactly five words.">
   <button id="llmTest">Load model + ask</button>
 
-  <h2>Ask (stub planner, USGS route only, no real model yet)</h2>
+  <h2>Ask WebLLM (the real thing)</h2>
+  <div class="hint">
+    Works on any enabled site - USGS gets its real tools (setParameter,
+    groupBy, ...), anything else gets the generic ones (click, fill,
+    selectOption, ...). Untested live.
+  </div>
+  <label for="llmInstruction">plain-English instruction</label>
+  <input id="llmInstruction" value="set the parameter to gage height">
+  <button id="llmAsk">Ask WebLLM</button>
+
+  <h2>Ask (stub planner, USGS route only, no real model)</h2>
   <label for="instruction">plain-English instruction</label>
   <input id="instruction" value="set gage height">
   <button id="ask">Ask</button>

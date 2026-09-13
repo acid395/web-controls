@@ -1,6 +1,6 @@
 /* background.js - the service worker.
  *
- * Five things live here:
+ * Six things live here:
  *   1. NAMED_MANIFESTS - sites with a real, hand-written manifest, checked
  *      first. Currently just USGS's state page (page/usgs-bundle.js,
  *      window.USGS). Anything else routes to the zero-manifest tier
@@ -23,12 +23,16 @@
  *      all, so the actual WebLLM engine can't run here. It runs in
  *      offscreen/offscreen.js instead, inside a hidden document this
  *      function creates on demand, the one context in an extension that
- *      does have WebGPU. This is genuinely new and unconfirmed: it's never
- *      been run in a real browser yet, only syntax-checked.
+ *      does have WebGPU. Confirmed working live: model loads, runs, answers.
  *   5. llmPing relay - forwards a test prompt to the offscreen document and
- *      back, proving the model loads and answers at all before anything
- *      gets wired into the actual tool-calling loop (planTool still does
- *      that, untouched, for now).
+ *      back. Confirmed working. Not tool-calling, just proves the model
+ *      loads and answers at all.
+ *   6. TOOL_DEFS + llmPlan - the real thing. Same tool descriptions as
+ *      webmcp-register.js, reshaped for WebLLM's OpenAI-compatible
+ *      function-calling format. An instruction plus the active route's
+ *      tools go to the model; whatever tool it picks runs through
+ *      invokeOnActiveTab, same execution path planTool()'s stub always
+ *      used. Untested live - offscreen.js's llmPlan handler is new too.
  */
 
 const NAMED_MANIFESTS = [
@@ -102,6 +106,69 @@ function planTool(instruction) {
     if (rule.test.test(instruction)) return { fn: rule.fn, args: rule.args };
   }
   return null;
+}
+
+// Real tool definitions for the WebLLM planner, one set per route. Same
+// tools and descriptions as webmcp-register.js's navigator.modelContext
+// versions, reshaped for WebLLM's OpenAI-compatible function-calling format
+// (type: "function", function: {name, description, parameters}) instead of
+// the W3C draft's shape - same underlying schemas either way. argOrder maps
+// the named arguments a tool-calling model returns (an object, since that's
+// what JSON Schema properties describe) back to the positional array
+// invokeOnActiveTab/the page bridge actually expects.
+const TOOL_DEFS = {
+  USGS: [
+    {
+      name: "usgsSetParameter", fn: "setParameter", argOrder: ["parameter"],
+      description: "Set which water parameter is shown on this USGS state map (discharge, gage height, water level, water temperature, or all).",
+      parameters: { type: "object", properties: { parameter: { type: "string", description: "e.g. discharge, gage height, water temperature, water level, all" } }, required: ["parameter"] },
+    },
+    {
+      name: "usgsGroupBy", fn: "groupBy", argOrder: ["groupBy"],
+      description: "Group the map's stream sites by county, HUC-8 subbasin, or HUC-6 basin.",
+      parameters: { type: "object", properties: { groupBy: { type: "string", enum: ["county", "huc8", "huc6"] } }, required: ["groupBy"] },
+    },
+    {
+      name: "usgsSetRecency", fn: "setRecency", argOrder: ["recency"],
+      description: "Filter sites to only those with data in the last 120 days, or show all years of historical data.",
+      parameters: { type: "object", properties: { recency: { type: "string", enum: ["120 days", "all"] } }, required: ["recency"] },
+    },
+    {
+      name: "usgsGetState", fn: "getState", argOrder: [],
+      description: "Read the current parameter, grouping, sort order, recency filter, and map visibility on this page.",
+      parameters: { type: "object", properties: {} },
+    },
+  ],
+  GENERIC: [
+    {
+      name: "pageInventory", fn: "inventory", argOrder: [],
+      description: "List every interactive control on the current page with a CSS selector for each, so they can be acted on directly.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "pageClick", fn: "click", argOrder: ["selector"],
+      description: "Click an element on the page by CSS selector, e.g. one returned by pageInventory.",
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+    },
+    {
+      name: "pageFill", fn: "fill", argOrder: ["selector", "text"],
+      description: "Type text into an input or textarea on the page by CSS selector.",
+      parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } }, required: ["selector", "text"] },
+    },
+    {
+      name: "pageSelectOption", fn: "selectOption", argOrder: ["selector", "value"],
+      description: "Choose an option in a <select> dropdown by CSS selector and the option's value or visible text.",
+      parameters: { type: "object", properties: { selector: { type: "string" }, value: { type: "string" } }, required: ["selector", "value"] },
+    },
+  ],
+};
+
+function toOpenAITools(defs) {
+  return defs.map((d) => ({ type: "function", function: { name: d.name, description: d.description, parameters: d.parameters } }));
+}
+
+function findToolDef(route, name) {
+  return (TOOL_DEFS[route] || []).find((d) => d.name === name);
 }
 
 const OFFSCREEN_URL = "offscreen/offscreen.html";
@@ -189,6 +256,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // for as long as the offscreen document stays alive.
         const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmPing", prompt: msg.prompt });
         sendResponse(result);
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
+  // The real thing: instruction -> WebLLM picks a tool -> it actually runs,
+  // same execution path (invokeOnActiveTab) planTool()'s stub already used.
+  // Only the "which tool" decision changed; everything downstream of that
+  // decision is code already proven working across six sites.
+  if (msg.type === "llmPlan") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || !tab.url) throw new Error("no active tab");
+        const route = routeFor(tab.url);
+        const defs = TOOL_DEFS[route.global] || [];
+        await ensureOffscreenDocument();
+        const plan = await chrome.runtime.sendMessage({
+          target: "offscreen", type: "llmPlan",
+          instruction: msg.instruction, tools: toOpenAITools(defs),
+        });
+        if (!plan.ok) { sendResponse(plan); return; }
+        if (!plan.toolCall) {
+          // the model answered in plain text instead of picking a tool -
+          // a real, valid outcome, not an error (e.g. the instruction
+          // wasn't actually asking to do anything on the page).
+          sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
+          return;
+        }
+        const def = findToolDef(route.global, plan.toolCall.name);
+        if (!def) {
+          sendResponse({ ok: false, error: `model picked an unknown tool "${plan.toolCall.name}"`, toolCall: plan.toolCall });
+          return;
+        }
+        const args = def.argOrder.map((key) => plan.toolCall.args[key]);
+        const result = await invokeOnActiveTab(def.fn, args);
+        sendResponse({ ...result, plannedBy: "webllm", toolCall: plan.toolCall });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
       }
