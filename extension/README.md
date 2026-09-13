@@ -97,3 +97,11 @@ Three ways to use it:
   `chrome.permissions.request()` broke Chrome's user-gesture check. Fixed by
   precomputing the tab's origin when the popup opens, so the click handler
   calls `chrome.permissions.request()` as its first and only step.
+- WebLLM confirmed working end to end: offscreen document, WebGPU, model
+  download, real inference, a real response back through the popup. Two real
+  bugs surfaced and got fixed along the way: extension pages' default CSP
+  blocks WebAssembly outright (fixed with `'wasm-unsafe-eval'` in
+  `content_security_policy.extension_pages`), and the model reloaded from
+  scratch on every ask until a warm-load on browser startup/extension
+  install was added. Not wired into the actual tool-calling loop yet -
+  `planTool()` is still keyword matching. That's the next step.
