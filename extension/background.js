@@ -1,20 +1,19 @@
 /* background.js - the service worker.
  *
- * Three things live here:
- *   1. ROUTES - which page bundle to inject for a given site. USGS's state
- *      page gets its own hand-written manifest (page/usgs-bundle.js,
- *      window.USGS). Everything else routed here falls back to the
- *      zero-manifest tier (page/generic-bundle.js, window.GENERIC) - this is
- *      what makes the extension itself reach sites nobody wrote a manifest
- *      for, not just the console scripts.
- *   2. invokeOnActiveTab(fn, args) - inject the bridge + whichever page
- *      bundle the active tab's URL routes to, call <fn>(...args) on the
- *      real page, return the result. Proven live for the USGS route
- *      already (getState()/setParameter() both round-trip correctly);
- *      the GENERIC route is new and is exactly what Phase 1 is testing -
- *      does the extension's actual injection mechanism (not a console
- *      paste, which is exempt from a page's CSP in a way this isn't)
- *      still work on sites beyond the original one.
+ * Four things live here:
+ *   1. NAMED_MANIFESTS - sites with a real, hand-written manifest, checked
+ *      first. Currently just USGS's state page (page/usgs-bundle.js,
+ *      window.USGS). Anything else routes to the zero-manifest tier
+ *      (page/generic-bundle.js, window.GENERIC) automatically - no per-site
+ *      entry needed here at all. This is the actual generalization: adding
+ *      a new GENERIC-eligible site used to mean editing this file *and*
+ *      manifest.json's host_permissions, then reloading the extension. Now
+ *      it means clicking "Enable on this site" in the popup once - see (3).
+ *   2. invokeOnActiveTab(fn, args) - checks the site is actually permitted
+ *      (chrome.permissions.contains, not just "did we hardcode a route for
+ *      it"), injects the bridge + whichever bundle applies, calls
+ *      <fn>(...args) on the real page, returns the result. Proven live on
+ *      USGS, Drought.gov, EPA, and the National Water Dashboard.
  *   3. planTool(instruction) - a stub stand-in for an LLM, USGS-route only
  *      for now. Plain keyword matching, not a model. It exists to prove
  *      the *shape* of the loop (typed instruction -> a tool call gets
@@ -23,15 +22,21 @@
  *      entire upgrade path later.
  */
 
-const ROUTES = [
+const NAMED_MANIFESTS = [
   { test: /^https:\/\/waterdata\.usgs\.gov\/state\//, bundle: "page/usgs-bundle.js", global: "USGS" },
-  { test: /^https:\/\/dashboard\.waterdata\.usgs\.gov\//, bundle: "page/generic-bundle.js", global: "GENERIC" },
-  { test: /^https:\/\/mywaterway\.epa\.gov\//, bundle: "page/generic-bundle.js", global: "GENERIC" },
-  { test: /^https:\/\/www\.drought\.gov\//, bundle: "page/generic-bundle.js", global: "GENERIC" },
 ];
 
 function routeFor(url) {
-  return ROUTES.find((r) => r.test.test(url || "")) || null;
+  return NAMED_MANIFESTS.find((r) => r.test.test(url || "")) || { bundle: "page/generic-bundle.js", global: "GENERIC" };
+}
+
+function originPatternFor(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.hostname}/*`;
+  } catch (e) {
+    return null;
+  }
 }
 
 async function ensureInjected(tabId, bundle) {
@@ -52,11 +57,14 @@ async function ensureInjected(tabId, bundle) {
 
 async function invokeOnActiveTab(fn, args) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) throw new Error("no active tab");
-  const route = routeFor(tab.url);
-  if (!route) {
-    throw new Error(`no route for this page. Known: ${ROUTES.map((r) => r.test).join(", ")}`);
+  if (!tab || !tab.id || !tab.url) throw new Error("no active tab");
+  const pattern = originPatternFor(tab.url);
+  if (!pattern) throw new Error("can't determine this page's origin");
+  const granted = await chrome.permissions.contains({ origins: [pattern] });
+  if (!granted) {
+    throw new Error(`not enabled on this site yet. Click "Enable on this site" in the popup first.`);
   }
+  const route = routeFor(tab.url);
   await ensureInjected(tab.id, route.bundle);
   const result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
   return { ...result, calledOn: route.global }; // which manifest actually ran, for the popup log

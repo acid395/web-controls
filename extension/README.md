@@ -1,9 +1,10 @@
 # extension (proof of concept)
 
-Not the real extension yet. Proves two things: a popup button can call a
-`USGS.*` function on a live page and get the real result back through an
-actual Chrome extension instead of a pasted console script, and a typed
-instruction can pick which function to call, run it, and return the result.
+Not the real extension yet. Proves three things: a popup button can call a
+function on a live page and get the real result back through an actual
+Chrome extension instead of a pasted console script; a typed instruction can
+pick which function to call, run it, and return the result; and a brand new
+site can be turned on with one click, no code change, no reload.
 
 No real LLM here yet. The "Ask" box is answered by a stub: plain keyword
 matching in `background.js`'s `planTool()`, not a model. It exists to prove
@@ -28,29 +29,40 @@ popup.js  --chrome.runtime-->  background.js  --chrome.scripting-->  injects bot
 bridge.js <--postMessage--> page bundle
 ```
 
-`background.js` picks which page bundle to inject based on a small `ROUTES`
-table keyed by URL: USGS's state page gets `page/usgs-bundle.js`
-(`web-controls.js` plus a listener appended that waits for a postMessage,
-calls the named `USGS` function, and posts the result back). Every other
-routed site gets `page/generic-bundle.js` (`generic-controls.js` plus the
-same kind of listener, targeting `window.GENERIC` instead), the
-zero-manifest fallback, so the extension can reach a site nobody wrote a
-manifest for, not just USGS. `content/bridge.js` relays between whichever
-bundle is active and the background script either way; it doesn't need to
-know which one it's talking to.
+`background.js` picks which page bundle to inject based on `NAMED_MANIFESTS`:
+USGS's state page gets `page/usgs-bundle.js` (`web-controls.js` plus a
+listener appended that waits for a postMessage, calls the named `USGS`
+function, and posts the result back). Anything not in that list gets
+`page/generic-bundle.js` (`generic-controls.js` plus the same kind of
+listener, targeting `window.GENERIC` instead), the zero-manifest fallback -
+automatically, with no per-site entry required. `content/bridge.js` relays
+between whichever bundle is active and the background script either way; it
+doesn't need to know which one it's talking to.
+
+Reaching a new site no longer means editing this repo. `manifest.json`
+declares a fixed set of `host_permissions` (the sites already tested) plus
+`optional_host_permissions: ["https://*/*", "http://*/*"]`. The popup's
+"Enable on this site" button calls `chrome.permissions.request()` for
+whatever origin the active tab is on; Chrome shows its own native prompt,
+and once granted, that site works immediately - no code change, no reload.
+`chrome.permissions.request()` has to run inside the click handler itself to
+count as a real user gesture, so that one call lives directly in `popup.js`,
+not relayed through `background.js` like everything else.
 
 ## Load it
 
 1. `chrome://extensions`, turn on Developer mode.
 2. Load unpacked, pick this `extension/` folder.
-3. Open one of the routed pages (see `ROUTES` in `background.js`):
-   `waterdata.usgs.gov/state/Idaho/` (USGS manifest), or
-   `dashboard.waterdata.usgs.gov/`, `mywaterway.epa.gov/`, `www.drought.gov/`
-   (all three use the GENERIC fallback).
-4. Click the extension icon.
+3. Open any page. `waterdata.usgs.gov/state/Idaho/` uses the real USGS
+   manifest; anything else uses GENERIC once enabled (next step).
+4. Click the extension icon. If this is a new site, click "Enable on this
+   site" first and accept Chrome's permission prompt.
 
-Two ways to use it:
+Three ways to use it:
 
+- **Enable on this site.** Only needed once per site beyond the four already
+  granted in `manifest.json`. Click it, accept Chrome's permission prompt,
+  done.
 - **Call a function directly.** On the USGS route: function defaults to
   `getState`, arguments to `[]`. Click Call. Expect the same object
   `USGS.getState()` would return in DevTools. Try `setParameter` with
@@ -67,16 +79,17 @@ Two ways to use it:
 
 ## Known rough edges
 
-- `SITE` and `NOAA` still aren't wired into `ROUTES`. Same idea as USGS
-  though: a `page/*-bundle.js` and a route entry each.
-- The Ask box only plans against the USGS manifest. Extending it to the
-  GENERIC routes means the stub planner would need to work off whatever
-  `inventory()` finds live, not a fixed rule list, which starts to look a
-  lot like what a real model would actually be doing there.
+- `SITE` and `NOAA` still aren't wired into `NAMED_MANIFESTS`. Same idea as
+  USGS though: a `page/*-bundle.js` and an entry each.
+- The Ask box only plans against the USGS manifest. Extending it to GENERIC
+  sites means the stub planner would need to work off whatever `inventory()`
+  finds live, not a fixed rule list, which starts to look a lot like what a
+  real model would actually be doing there.
 - Re-injects scripts on every call rather than checking first. Simple, a bit
   wasteful, harmless.
-- Confirmed live, on the USGS route: `getState()` and `setParameter()` both
-  round-trip through the whole chain and return real results / cause a real
-  DOM change. The GENERIC route through this same extension mechanism
-  (rather than a console paste, which is exempt from a page's CSP in a way
-  this injection isn't) hasn't been confirmed yet. That's the current test.
+- Confirmed live: `getState()`/`setParameter()` on the USGS route, and
+  `inventory()`/`selectOption()`/`fill()` on the GENERIC route across three
+  separate sites (EPA, Drought.gov, the National Water Dashboard), all
+  through this actual extension mechanism, not a console paste. The
+  permission-request flow itself (this phase's addition) hasn't been
+  clicked in a real browser yet.

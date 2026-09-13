@@ -19,9 +19,13 @@
   <h1>web-controls proof of concept</h1>
   <div class="hint">
     waterdata.usgs.gov/state/... uses the USGS manifest (setParameter, groupBy, getState, ...).
-    dashboard.waterdata.usgs.gov, mywaterway.epa.gov, and drought.gov use the
-    zero-manifest GENERIC fallback (inventory, mapInfo, click, fill, selectOption, ...).
+    Any other site uses the zero-manifest GENERIC fallback (inventory, mapInfo,
+    click, fill, selectOption, ...) once enabled below.
   </div>
+
+  <h2>This site</h2>
+  <button id="enable">Enable on this site</button>
+  <div class="hint" id="enableStatus"></div>
 
   <h2>Ask (stub planner, USGS route only, no real model yet)</h2>
   <label for="instruction">plain-English instruction</label>

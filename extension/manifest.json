@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "web-controls (proof of concept)",
-  "version": "0.2.0",
-  "description": "Calls web-controls functions on a live page from an extension popup. USGS gets its own manifest; other sites use the zero-manifest GENERIC fallback. Proves the popup -> background -> content script -> page bridge round-trips, on more than one site, before any LLM is involved.",
+  "version": "0.3.0",
+  "description": "Calls web-controls functions on a live page from an extension popup. USGS gets its own manifest; any other site uses the zero-manifest GENERIC fallback, enabled per-site at runtime from the popup rather than hardcoded here.",
   "permissions": ["scripting", "activeTab"],
   "host_permissions": [
     "https://waterdata.usgs.gov/*",
@@ -10,6 +10,7 @@
     "https://mywaterway.epa.gov/*",
     "https://www.drought.gov/*"
   ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": {
     "service_worker": "background.js"
   },

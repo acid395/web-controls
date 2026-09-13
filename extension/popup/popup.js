@@ -4,6 +4,30 @@ function log(s) {
   pre.scrollTop = pre.scrollHeight;
 }
 
+// chrome.permissions.request() must run inside the click handler itself to
+// count as triggered by a user gesture - relaying it through background.js
+// via chrome.runtime.sendMessage risks Chrome not recognizing the gesture,
+// since the message-passing boundary can strip that context. So this one
+// talks to chrome.permissions directly, not through invokeOnActiveTab.
+document.getElementById("enable").addEventListener("click", async () => {
+  const status = document.getElementById("enableStatus");
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url) { status.textContent = "no active tab"; return; }
+  let pattern;
+  try {
+    const u = new URL(tab.url);
+    pattern = `${u.protocol}//${u.hostname}/*`;
+  } catch (e) {
+    status.textContent = "couldn't read this tab's URL";
+    return;
+  }
+  chrome.permissions.request({ origins: [pattern] }, (granted) => {
+    status.textContent = granted
+      ? `enabled on ${pattern}. Try Call with function "inventory" now.`
+      : `permission denied for ${pattern}`;
+  });
+});
+
 document.getElementById("call").addEventListener("click", () => {
   const fn = document.getElementById("fn").value.trim();
   const argsText = document.getElementById("args").value.trim() || "[]";
