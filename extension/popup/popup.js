@@ -4,27 +4,32 @@ function log(s) {
   pre.scrollTop = pre.scrollHeight;
 }
 
-// chrome.permissions.request() must run inside the click handler itself to
-// count as triggered by a user gesture - relaying it through background.js
-// via chrome.runtime.sendMessage risks Chrome not recognizing the gesture,
-// since the message-passing boundary can strip that context. So this one
-// talks to chrome.permissions directly, not through invokeOnActiveTab.
-document.getElementById("enable").addEventListener("click", async () => {
-  const status = document.getElementById("enableStatus");
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url) { status.textContent = "no active tab"; return; }
-  let pattern;
+// chrome.permissions.request() only counts as triggered by a real click if
+// there's no await before it in the same handler - an await, even a fast
+// one, can cross a task boundary Chrome uses to decide "was this a genuine
+// user gesture." So the tab's URL is looked up once when the popup opens
+// (there's nothing else competing for the gesture at that point), cached,
+// and the click handler below calls chrome.permissions.request as its
+// first and only step, synchronously, using that cached value.
+let currentOriginPattern = null;
+chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+  if (!tab || !tab.url) return;
   try {
     const u = new URL(tab.url);
-    pattern = `${u.protocol}//${u.hostname}/*`;
-  } catch (e) {
-    status.textContent = "couldn't read this tab's URL";
+    currentOriginPattern = `${u.protocol}//${u.hostname}/*`;
+  } catch (e) { /* not a http(s) page, e.g. chrome:// - leave it null */ }
+});
+
+document.getElementById("enable").addEventListener("click", () => {
+  const status = document.getElementById("enableStatus");
+  if (!currentOriginPattern) {
+    status.textContent = "couldn't read this tab's URL (not a normal http/https page?)";
     return;
   }
-  chrome.permissions.request({ origins: [pattern] }, (granted) => {
+  chrome.permissions.request({ origins: [currentOriginPattern] }, (granted) => {
     status.textContent = granted
-      ? `enabled on ${pattern}. Try Call with function "inventory" now.`
-      : `permission denied for ${pattern}`;
+      ? `enabled on ${currentOriginPattern}. Try Call with function "inventory" now.`
+      : `permission denied for ${currentOriginPattern}`;
   });
 });
 
