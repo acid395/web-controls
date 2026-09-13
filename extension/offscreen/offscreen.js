@@ -27,6 +27,7 @@ import { CreateMLCEngine } from "./vendor/web-llm.js";
 const MODEL_ID = "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC";
 
 let enginePromise = null;
+let engineReady = false; // a Promise can't be asked "are you resolved yet?" directly - tracked separately so llmStatus can answer synchronously instead of waiting on the engine.
 
 function getEngine(onProgress) {
   if (!enginePromise) {
@@ -34,6 +35,9 @@ function getEngine(onProgress) {
       initProgressCallback: (report) => {
         if (onProgress) onProgress(report);
       },
+    }).then((engine) => {
+      engineReady = true;
+      return engine;
     });
   }
   return enginePromise;
@@ -60,6 +64,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     })();
     return true; // async response
+  }
+
+  if (msg.type === "llmStatus") {
+    sendResponse({ ready: engineReady, hasGpu: "gpu" in navigator });
+    return; // synchronous, no need to keep the channel open
   }
 
   if (msg.type === "llmPlan") {

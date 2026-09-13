@@ -7,9 +7,12 @@
   body { font: 13px/1.4 -apple-system, sans-serif; width: 360px; padding: 10px; }
   h1 { font-size: 13px; margin: 0 0 8px; }
   h2 { font-size: 12px; margin: 14px 0 4px; border-top: 1px solid #ddd; padding-top: 10px; }
+  h2.primary { border-top: none; padding-top: 0; margin-top: 4px; }
   label { display: block; margin-top: 8px; font-size: 11px; color: #555; }
   input { width: 100%; box-sizing: border-box; padding: 4px; font: 12px monospace; }
   button { margin-top: 10px; width: 100%; padding: 6px; }
+  details { margin-top: 14px; border-top: 1px solid #ddd; padding-top: 6px; }
+  summary { font-size: 12px; cursor: pointer; color: #555; }
   pre { margin-top: 10px; max-height: 220px; overflow: auto; background: #f4f4f4;
         padding: 6px; font: 11px monospace; white-space: pre-wrap; word-break: break-word; }
   .hint { color: #888; font-size: 11px; margin-top: 4px; }
@@ -27,51 +30,59 @@
   <button id="enable">Enable on this site</button>
   <div class="hint" id="enableStatus"></div>
 
-  <h2>WebLLM test (Phase 3, not wired into Ask yet)</h2>
+  <h2 class="primary">Ask</h2>
   <div class="hint">
-    First click downloads the model (real bandwidth, can take a while) and
-    needs WebGPU. Not yet used by the Ask box below - this only proves the
-    model loads and answers at all.
+    Instant when it recognizes the instruction (no model involved at all).
+    Only reaches for the local model if it doesn't, and only if that model
+    has actually finished loading - otherwise it says so, rather than
+    hanging. Untested live.
   </div>
-  <label for="prompt">test prompt</label>
-  <input id="prompt" value="Say hello in exactly five words.">
-  <button id="llmTest">Load model + ask</button>
+  <label for="smartInstruction">plain-English instruction</label>
+  <input id="smartInstruction" value="set the parameter to gage height">
+  <button id="smartAsk">Ask</button>
 
-  <h2>Ask WebLLM (the real thing)</h2>
-  <div class="hint">
-    Works on any enabled site - USGS gets its real tools (setParameter,
-    groupBy, ...), anything else gets the generic ones (click, fill,
-    selectOption, ...). Untested live.
-  </div>
-  <label for="llmInstruction">plain-English instruction</label>
-  <input id="llmInstruction" value="set the parameter to gage height">
-  <button id="llmAsk">Ask WebLLM</button>
+  <details>
+    <summary>Debug tools (call things directly, bypass Ask)</summary>
 
-  <h2>Ask Gemini (free tier, needs an API key)</h2>
-  <div class="hint">
-    No download, no WebGPU, instant - unlike WebLLM, this calls Google's
-    cloud API. Get a free key at
-    <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>,
-    paste it below once. Untested live.
-  </div>
-  <label for="geminiKey">API key</label>
-  <input id="geminiKey" type="password" placeholder="paste your Gemini API key">
-  <button id="saveKey">Save key</button>
-  <label for="geminiInstruction">plain-English instruction</label>
-  <input id="geminiInstruction" value="set the parameter to gage height">
-  <button id="geminiAsk">Ask Gemini</button>
+    <h2>WebLLM test</h2>
+    <div class="hint">
+      First click downloads the model (real bandwidth, can take a while) and
+      needs WebGPU.
+    </div>
+    <label for="prompt">test prompt</label>
+    <input id="prompt" value="Say hello in exactly five words.">
+    <button id="llmTest">Load model + ask</button>
 
-  <h2>Ask (stub planner, USGS route only, no real model)</h2>
-  <label for="instruction">plain-English instruction</label>
-  <input id="instruction" value="set gage height">
-  <button id="ask">Ask</button>
+    <h2>Ask WebLLM directly (skips the fast path)</h2>
+    <label for="llmInstruction">plain-English instruction</label>
+    <input id="llmInstruction" value="set the parameter to gage height">
+    <button id="llmAsk">Ask WebLLM</button>
 
-  <h2>Call a function directly</h2>
-  <label for="fn">function</label>
-  <input id="fn" value="getState">
-  <label for="args">arguments (JSON array)</label>
-  <input id="args" value="[]">
-  <button id="call">Call</button>
+    <h2>Ask Gemini (free tier, needs an API key)</h2>
+    <div class="hint">
+      Not part of Ask above on purpose - it stays an explicit, separate
+      choice since it needs your own key. Get a free one at
+      <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.
+    </div>
+    <label for="geminiKey">API key</label>
+    <input id="geminiKey" type="password" placeholder="paste your Gemini API key">
+    <button id="saveKey">Save key</button>
+    <label for="geminiInstruction">plain-English instruction</label>
+    <input id="geminiInstruction" value="set the parameter to gage height">
+    <button id="geminiAsk">Ask Gemini</button>
+
+    <h2>Ask (stub planner only, USGS route)</h2>
+    <label for="instruction">plain-English instruction</label>
+    <input id="instruction" value="set gage height">
+    <button id="ask">Ask</button>
+
+    <h2>Call a function directly</h2>
+    <label for="fn">function</label>
+    <input id="fn" value="getState">
+    <label for="args">arguments (JSON array)</label>
+    <input id="args" value="[]">
+    <button id="call">Call</button>
+  </details>
 
   <pre id="log"></pre>
 

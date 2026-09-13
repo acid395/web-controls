@@ -1,16 +1,30 @@
 # extension (proof of concept)
 
-Not the real extension yet. Proves three things: a popup button can call a
-function on a live page and get the real result back through an actual
-Chrome extension instead of a pasted console script; a typed instruction can
-pick which function to call, run it, and return the result; and a brand new
-site can be turned on with one click, no code change, no reload.
+Not the real extension yet, but the real shape of it. Proves: a popup button
+can call a function on a live page and get the result back through an actual
+Chrome extension, not a pasted console script; a brand new site turns on
+with one click, no code change, no reload; and a typed instruction can pick
+the right function to call on its own.
 
-No real LLM here yet. The "Ask" box is answered by a stub: plain keyword
-matching in `background.js`'s `planTool()`, not a model. It exists to prove
-the shape of the loop (instruction in, tool call picked, it actually runs,
-result comes back) before spending anything on a real one. Swapping
-`planTool()` for a real model call is the whole upgrade later.
+## Why three ways to answer "Ask," not one
+
+The actual goal is a wrapper that runs fully locally, for free, with no
+account - and also feels instant from the first click. Those two things are
+in real tension: a model capable enough to reliably pick the right tool has
+to be several gigabytes, and that has to download once, over whatever
+network the user has. There's no way to make that instant. So `Ask` doesn't
+wait on one model - it tries three things in order, cheapest first:
+
+1. **`planTool()`**, a zero-download keyword matcher (USGS route only right
+   now). Instant, free, no model involved, whenever it recognizes the phrasing.
+2. **WebLLM**, a real local model in an offscreen document (a service worker
+   has no WebGPU access, so it can't run there). Fully local and free, but
+   the first time ever needs a real, multi-gigabyte download - `Ask` checks
+   it has actually finished before relying on it, rather than blocking on it.
+3. **Gemini's free tier** exists too, but on purpose isn't part of `Ask`'s
+   fallback chain - it needs a personal API key, which contradicts "easy to
+   use," so it stays a separate, explicit choice in the debug tools, not
+   something the default path reaches for on its own.
 
 ## Why this exists
 
@@ -58,24 +72,19 @@ not relayed through `background.js` like everything else.
 4. Click the extension icon. If this is a new site, click "Enable on this
    site" first and accept Chrome's permission prompt.
 
-Three ways to use it:
-
 - **Enable on this site.** Only needed once per site beyond the four already
   granted in `manifest.json`. Click it, accept Chrome's permission prompt,
   done.
-- **Call a function directly.** On the USGS route: function defaults to
-  `getState`, arguments to `[]`. Click Call. Expect the same object
-  `USGS.getState()` would return in DevTools. Try `setParameter` with
-  arguments `["gage height"]` and watch the page's radio button actually
-  change. On a GENERIC route: try function `inventory` with arguments `[]`,
-  or `mapInfo`, or `selectOption` with arguments like
-  `["#some-selector", "some value"]` using a real selector from that page's
-  `inventory()` output.
-- **Ask.** USGS route only right now. Type something like "set gage height,"
-  "group by huc8," or "hide the map" and click Ask. The stub planner matches
-  it against a short fixed list of phrases (see `PLANNER_RULES` in
-  `background.js`) and runs whatever it picks. Type something it doesn't
-  recognize (most things) and it says so rather than guessing.
+- **Ask.** The real, intended thing (`smartAsk` in `background.js`). Type an
+  instruction, click Ask. Tries `planTool()` first (USGS route only so far,
+  see "Known rough edges"), falls back to WebLLM only if that missed and the
+  model has actually finished loading, otherwise says so plainly instead of
+  hanging. Untested live.
+- **Debug tools**, behind the collapsed section: call a function directly by
+  name and raw arguments, test WebLLM or Gemini without going through the
+  fast path first, or run the old stub-only Ask. All the same building
+  blocks `smartAsk` uses, exposed individually for testing each piece on its
+  own.
 
 ## Known rough edges
 
@@ -98,10 +107,14 @@ Three ways to use it:
   precomputing the tab's origin when the popup opens, so the click handler
   calls `chrome.permissions.request()` as its first and only step.
 - WebLLM confirmed working end to end: offscreen document, WebGPU, model
-  download, real inference, a real response back through the popup. Two real
+  download, real inference, a real response back through the popup. Real
   bugs surfaced and got fixed along the way: extension pages' default CSP
   blocks WebAssembly outright (fixed with `'wasm-unsafe-eval'` in
-  `content_security_policy.extension_pages`), and the model reloaded from
+  `content_security_policy.extension_pages`); the model reloaded from
   scratch on every ask until a warm-load on browser startup/extension
-  install was added. Not wired into the actual tool-calling loop yet -
-  `planTool()` is still keyword matching. That's the next step.
+  install was added; the first model picked (a small 3B one, chosen to
+  validate loading cheaply) turned out not to support tool-calling at all in
+  WebLLM 0.2.85, confirmed by its own error message naming which models do
+  (all Hermes-2-Pro/Hermes-3 at 7-8B).
+- Gemini and `smartAsk` (the fast-path-first, WebLLM-if-ready orchestration)
+  are both new and untested live.

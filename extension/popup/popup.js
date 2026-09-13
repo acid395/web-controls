@@ -33,6 +33,20 @@ document.getElementById("enable").addEventListener("click", () => {
   });
 });
 
+document.getElementById("smartAsk").addEventListener("click", () => {
+  const instruction = document.getElementById("smartInstruction").value.trim();
+  if (!instruction) return;
+
+  log(`ask: "${instruction}"`);
+  chrome.runtime.sendMessage({ type: "smartAsk", instruction }, (res) => {
+    if (chrome.runtime.lastError) {
+      log("runtime error: " + chrome.runtime.lastError.message);
+      return;
+    }
+    log(JSON.stringify(res, null, 2));
+  });
+});
+
 document.getElementById("call").addEventListener("click", () => {
   const fn = document.getElementById("fn").value.trim();
   const argsText = document.getElementById("args").value.trim() || "[]";

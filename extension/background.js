@@ -1,6 +1,6 @@
 /* background.js - the service worker.
  *
- * Seven things live here:
+ * Eight things live here:
  *   1. NAMED_MANIFESTS - sites with a real, hand-written manifest, checked
  *      first. Currently just USGS's state page (page/usgs-bundle.js,
  *      window.USGS). Anything else routes to the zero-manifest tier
@@ -37,7 +37,15 @@
  *      aistudio.google.com/apikey, saved via the popup) instead of a local
  *      model. No download, no WebGPU, no offscreen document - a plain
  *      fetch() from this file. Traded away "fully local" for "instant and
- *      still free." Untested live.
+ *      still free." An explicit, separate choice a user opts into (needs a
+ *      key), not something smartAsk below falls back to on its own.
+ *   8. smartAsk - the actual intended default: try the free, instant
+ *      planTool() stub first; only reach for WebLLM if that didn't match,
+ *      and only if it has actually finished loading (checked via
+ *      offscreen.js's llmStatus, not assumed) - never a silent multi-minute
+ *      wait a user didn't ask for. This is the answer to the real tension
+ *      in this project's goal: fully local and free, but also easy to use
+ *      from the first click, not just eventually. Untested live.
  */
 
 const NAMED_MANIFESTS = [
@@ -216,6 +224,18 @@ async function askGemini(instruction, defs) {
   return { toolCall: null, text: textPart ? textPart.text : "" };
 }
 
+// Shared by llmPlan, geminiPlan, and smartAsk below: whichever model
+// decided on a tool call, actually running it is the same one step either
+// way - look up the real manifest function behind the tool's WebMCP-style
+// name, reorder the model's named arguments into the positional array
+// invokeOnActiveTab expects, run it.
+async function executeToolCall(routeGlobal, toolCall) {
+  const def = findToolDef(routeGlobal, toolCall.name);
+  if (!def) throw new Error(`model picked an unknown tool "${toolCall.name}"`);
+  const args = def.argOrder.map((key) => toolCall.args[key]);
+  return invokeOnActiveTab(def.fn, args);
+}
+
 const OFFSCREEN_URL = "offscreen/offscreen.html";
 let creatingOffscreen = null; // avoids racing two createDocument calls at once
 
@@ -332,13 +352,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
           return;
         }
-        const def = findToolDef(route.global, plan.toolCall.name);
-        if (!def) {
-          sendResponse({ ok: false, error: `model picked an unknown tool "${plan.toolCall.name}"`, toolCall: plan.toolCall });
-          return;
-        }
-        const args = def.argOrder.map((key) => plan.toolCall.args[key]);
-        const result = await invokeOnActiveTab(def.fn, args);
+        const result = await executeToolCall(route.global, plan.toolCall);
         sendResponse({ ...result, plannedBy: "webllm", toolCall: plan.toolCall });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
@@ -362,14 +376,64 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
           return;
         }
-        const def = findToolDef(route.global, plan.toolCall.name);
-        if (!def) {
-          sendResponse({ ok: false, error: `model picked an unknown tool "${plan.toolCall.name}"`, toolCall: plan.toolCall });
+        const result = await executeToolCall(route.global, plan.toolCall);
+        sendResponse({ ...result, plannedBy: "gemini", toolCall: plan.toolCall });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
+  // The actual intended default experience: instant where possible, honest
+  // about waiting where it isn't, never silently blocked. Tries the
+  // zero-download stub matcher first (planTool, USGS route only, same as
+  // it's always been) - if that hits, done, no model involved at all, no
+  // wait. Only reaches for WebLLM if the fast path didn't match, and even
+  // then checks it's actually finished loading first rather than kicking
+  // off a multi-minute wait a user didn't ask for. Never touches Gemini:
+  // that stays an explicit, separate choice (needs a key), not a fallback.
+  if (msg.type === "smartAsk") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || !tab.url) throw new Error("no active tab");
+        const route = routeFor(tab.url);
+
+        if (route.global === "USGS") {
+          const fast = planTool(msg.instruction || "");
+          if (fast) {
+            const result = await invokeOnActiveTab(fast.fn, fast.args);
+            sendResponse({ ...result, plannedBy: "fast-path", plannedCall: fast });
+            return;
+          }
+        }
+
+        await ensureOffscreenDocument();
+        const status = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" });
+        if (!status.ready) {
+          sendResponse({
+            ok: false,
+            stillLoading: true,
+            error: status.hasGpu
+              ? "No quick match for that, and the local model is still loading in the background. Try a simpler instruction, or wait and ask again."
+              : "No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.",
+          });
           return;
         }
-        const args = def.argOrder.map((key) => plan.toolCall.args[key]);
-        const result = await invokeOnActiveTab(def.fn, args);
-        sendResponse({ ...result, plannedBy: "gemini", toolCall: plan.toolCall });
+
+        const defs = TOOL_DEFS[route.global] || [];
+        const plan = await chrome.runtime.sendMessage({
+          target: "offscreen", type: "llmPlan",
+          instruction: msg.instruction, tools: toOpenAITools(defs),
+        });
+        if (!plan.ok) { sendResponse(plan); return; }
+        if (!plan.toolCall) {
+          sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
+          return;
+        }
+        const result = await executeToolCall(route.global, plan.toolCall);
+        sendResponse({ ...result, plannedBy: "webllm", toolCall: plan.toolCall });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
       }
