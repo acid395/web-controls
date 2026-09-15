@@ -90,6 +90,29 @@ readable data in the DOM - this page draws to 2 canvas element(s), whose
 contents are pixels, not elements"*. For those the real answer is the data the
 page itself fetched, not the picture it drew.
 
+## Why a number can differ from the site you are looking at
+
+Nothing here scrapes the page you are on. Data tools call the agencies
+directly, so a figure can legitimately differ from the one on screen, and the
+card always says which station or gauge it came from so the difference is
+checkable rather than mysterious.
+
+Three things made "max temperature of Chicago" disagree with weather.gov, and
+two of them were bugs:
+
+- **A maximum is not a current reading.** It was being answered with whatever
+  the thermometer said at that moment. `max`/`high` and `min`/`low` now route
+  to the forecast's daytime and night periods, labelled *"forecast, not the
+  current reading"*.
+- **It found the wrong Chicago.** The town match allowed anything between "at"
+  and the name, so "PETTIBONE CREEK AT NORTH CHICAGO" matched, putting the
+  station 40 miles away in Waukegan. The name must now begin the segment.
+- **Observations and forecasts are different things**, and legitimately
+  differ. weather.gov shows a forecast for a grid square; a current reading
+  comes from one station, now labelled *"observed at ..."*. Even the forecast
+  can differ by a degree or two, because the grid square is chosen from the
+  derived coordinate - a lakefront gauge is not downtown.
+
 ## Reading a chart that cannot be read
 
 `readPage()` handles an SVG chart, whose labels are real elements. A canvas

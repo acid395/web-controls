@@ -720,6 +720,32 @@ const TOOL_DEFS = {
  * reporting gauge (verified: 126 gauges for Alaska in ~1.7s).
  */
 
+// Agencies go down - waterservices.usgs.gov returned 503 for an extended
+// period while this was being written, while USGS's OGC API, NWS and NOAA
+// stayed up. "returned 503" is jargon that reads like a bug in the question;
+// saying which service is unavailable, and that the others still work, is the
+// difference between a dead end and a usable answer.
+async function fetchJson(url, service) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    throw new Error(`couldn't reach ${service} - check the network connection`);
+  }
+  if (res.status >= 500) {
+    throw new Error(`${service} is not responding right now (${res.status}). That's an outage at their end, not a problem with the question - other sources may still work.`);
+  }
+  if (res.status === 429) {
+    throw new Error(`${service} is rate-limiting requests right now - wait a moment and ask again`);
+  }
+  if (!res.ok) throw new Error(`${service} rejected that request (${res.status})`);
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error(`${service} returned something that wasn't JSON - the service may be mid-outage`);
+  }
+}
+
 const US_STATES = {
   alabama: "al", alaska: "ak", arizona: "az", arkansas: "ar", california: "ca",
   colorado: "co", connecticut: "ct", delaware: "de", florida: "fl", georgia: "ga",
@@ -1061,9 +1087,7 @@ async function usgsCurrentConditions({ state, parameter, nameContains }) {
 
   const url = "https://waterservices.usgs.gov/nwis/iv/?format=json" +
     `&stateCd=${stateCode}&parameterCd=${paramCode}&siteStatus=active`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`USGS Water Services returned ${res.status}`);
-  const data = await res.json();
+  const data = await fetchJson(url, "USGS Water Services");
 
   const series = (data && data.value && data.value.timeSeries) || [];
   let readings = series.map((ts) => {
@@ -1171,9 +1195,7 @@ async function nwpsFloodStatus({ state }) {
   const [w, s, e, n] = box;
   const url = "https://api.water.noaa.gov/nwps/v1/gauges" +
     `?bbox.xmin=${w}&bbox.xmax=${e}&bbox.ymin=${s}&bbox.ymax=${n}&srid=EPSG_4326`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`NOAA NWPS returned ${res.status}`);
-  const data = await res.json();
+  const data = await fetchJson(url, "NOAA's National Water Prediction Service");
 
   const gauges = ((data && data.gauges) || [])
     .filter((g) => g.state && String(g.state.abbreviation).toLowerCase() === stateCode)
@@ -1252,11 +1274,7 @@ async function nwsAlerts({ state, floodOnly = true }) {
   const stateCode = resolveStateCode(state) || (findStateInText(state) || {}).code;
   if (!stateCode) throw new Error(`don't recognize "${state}" as a US state`);
 
-  const res = await fetch(`https://api.weather.gov/alerts/active?area=${stateCode.toUpperCase()}`, {
-    headers: { Accept: "application/geo+json" },
-  });
-  if (!res.ok) throw new Error(`NWS alerts API returned ${res.status}`);
-  const data = await res.json();
+  const data = await fetchJson(`https://api.weather.gov/alerts/active?area=${stateCode.toUpperCase()}`, "the National Weather Service");
 
   let alerts = ((data && data.features) || []).map((f) => f.properties || {});
   if (floodOnly) alerts = alerts.filter((p) => /flood/i.test(p.event || ""));
@@ -1331,9 +1349,7 @@ async function usgsFindGauges({ place, parameter }) {
   const cql = patterns.map((p) => `monitoring_location_name LIKE '${p}'`).join(" OR ");
   const url = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items" +
     `?filter=${encodeURIComponent(cql)}&limit=200&f=json`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`USGS monitoring-location search returned ${res.status}`);
-  const data = await res.json();
+  const data = await fetchJson(url, "USGS monitoring-location search");
 
   const all = ((data && data.features) || []).map((f) => {
     const p = f.properties || {};
@@ -1480,7 +1496,11 @@ async function nwsPointFor({ stateCode, place }) {
           // merely shares the name - "SOUTH OMAHA CREEK" sits 70 miles from
           // Omaha and was picking a Sioux City weather station. Prefer a
           // trailing mention, which really is the town the gauge is in.
-          const town = new RegExp(`(?:\\bat\\s+|,\\s*)[^,]*\\b${tokens[tokens.length - 1]}\\b`, "i");
+          // The town must *begin* the segment after "at" or a comma. Allowing
+          // anything in between matched "PETTIBONE CREEK AT NORTH CHICAGO"
+          // for Chicago, which put the weather station 40 miles away in
+          // Waukegan - a different city with different weather.
+          const town = new RegExp(`(?:\\bat\\s+|,\\s*)${tokens.join("\\s+")}\\b`, "i");
           const hit = feats.find((f) => town.test(f.properties.monitoring_location_name)) || feats[0];
           if (hit) {
             const [lon, lat] = hit.geometry.coordinates;
@@ -1504,6 +1524,14 @@ const FORECAST_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "
 
 function forecastWhen(text) {
   const t = (text || "").toLowerCase();
+  // A maximum or minimum is not a current reading. Answering "max
+  // temperature in Chicago" with whatever the thermometer says right now is
+  // the same silent substitution as answering "Friday" with today - and it
+  // is why the number disagreed with weather.gov, which shows the forecast
+  // high. NWS gives the day's high as its daytime period and the night's low
+  // as the night period.
+  if (/\b(max|maximum|high|highest|hottest|warmest)\b/.test(t)) return "high";
+  if (/\b(min|minimum|low|lowest|coldest|coolest)\b/.test(t)) return "low";
   if (/\b(this |next |coming )?week\b|\bweekly\b|\b7[- ]day\b|\bseven[- ]day\b/.test(t)) return "week";
   if (/\btomorrow\b/.test(t)) return "tomorrow";
   if (/\btonight\b/.test(t)) return "tonight";
@@ -1535,6 +1563,25 @@ async function nwsForecast({ state, place, when }) {
 
   const label = place || located.stateCode.toUpperCase();
   const dayLike = (p) => p.name.toLowerCase();
+
+  // Today's high or tonight's low: the first matching period.
+  if (when === "high" || when === "low") {
+    const period = periods.find((p) => (when === "high" ? p.isDaytime : !p.isDaytime));
+    if (!period) throw new Error(`NWS's forecast has no ${when === "high" ? "daytime" : "night"} period left today`);
+    return {
+      place: label, when, periods: [{ name: period.name, temperature: period.temperature, unit: period.temperatureUnit, forecast: period.shortForecast }],
+      locatedBy: located.basis,
+      source: "National Weather Service forecast, no API key required",
+      display: {
+        title: `${when === "high" ? "High" : "Low"} · ${label}`,
+        subtitle: `${period.name} · forecast, not the current reading`,
+        stats: [{ label: when === "high" ? "high" : "low", value: `${period.temperature}°${period.temperatureUnit}` }],
+        rows: [{ name: period.name, value: `${period.temperature}°${period.temperatureUnit}`, meta: period.shortForecast }],
+        note: located.basis,
+        source: "NWS forecast",
+      },
+    };
+  }
 
   // A named day, tonight or tomorrow: the matching period, and its night.
   if (when !== "week" && when !== "weekend") {
@@ -1670,8 +1717,11 @@ async function nwsConditions({ state, place }) {
     pressureInHg: round(pressurePa == null ? null : pressurePa / 3386.39, 2),
     source: "National Weather Service (api.weather.gov), no API key required",
     display: {
-      title: `Weather · ${place || stateCode.toUpperCase()}`,
-      subtitle: `${station.name || station.id} · ${relativeAge(obs.timestamp)}`,
+      title: `Weather now · ${place || stateCode.toUpperCase()}`,
+      // Named explicitly: this is an observation at a specific station, which
+      // is not what weather.gov's page shows for a city (a forecast for a
+      // grid square), so the two legitimately differ.
+      subtitle: `observed at ${station.name || station.id} · ${relativeAge(obs.timestamp)}`,
       stats, rows,
       note: point.basis,
       source: "NWS",
@@ -2215,6 +2265,65 @@ function keepAlive() {
   return () => clearInterval(id);
 }
 
+/* ---------------------------------------------------------------------------
+ * Ask history.
+ *
+ * A popup is destroyed the moment it loses focus - clicking the page, another
+ * tab, another window. Anything still running then has nowhere to deliver its
+ * answer, and everything already on screen is gone on reopening. For a slow
+ * ask (a model, a bounding-box sweep) that is most of them.
+ *
+ * The work itself already survives: it runs in the service worker, kept alive
+ * across the wait. Only the *destination* was disappearing. So results are
+ * written here as they complete, and the popup renders from this rather than
+ * from its own memory - which also means an answer that arrives while the
+ * popup is shut is waiting when it is next opened, instead of being lost.
+ *
+ * An ask is recorded as "running" before the work starts, so a popup opened
+ * mid-flight shows it in progress rather than showing nothing at all.
+ */
+const HISTORY_KEY = "askHistory";
+const HISTORY_LIMIT = 30;
+
+async function readHistory() {
+  const got = await chrome.storage.local.get(HISTORY_KEY);
+  return Array.isArray(got[HISTORY_KEY]) ? got[HISTORY_KEY] : [];
+}
+
+// Only the presentation and a short summary are kept. Whole payloads - a
+// captured feed body, a statewide gauge list - would blow past the storage
+// quota within a few asks, and the popup never renders them anyway.
+function historyEntry(id, instruction, patch) {
+  // Fields are listed rather than spread. Spreading let a caller's whole raw
+  // result through - a captured feed body, a statewide gauge list - which
+  // would exhaust the storage quota within a few asks, and the popup renders
+  // none of it anyway.
+  return {
+    id, instruction, at: new Date().toISOString(),
+    status: patch.status,
+    plannedBy: patch.plannedBy,
+    error: patch.error,
+    hint: patch.hint,
+    display: patch.display ? JSON.parse(JSON.stringify(patch.display)) : undefined,
+  };
+}
+
+async function recordAsk(id, instruction, patch) {
+  try {
+    const history = await readHistory();
+    const existing = history.findIndex((h) => h.id === id);
+    const entry = historyEntry(id, instruction, patch);
+    if (existing !== -1) entry.at = history[existing].at; // keep when it was asked
+    if (existing !== -1) history[existing] = entry;
+    else history.push(entry);
+    while (history.length > HISTORY_LIMIT) history.shift();
+    await chrome.storage.local.set({ [HISTORY_KEY]: history });
+  } catch (e) {
+    // History is a convenience; never let it break the answer itself.
+    console.log("[history] could not record:", String((e && e.message) || e));
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target === "offscreen") return; // that message is for offscreen.js, not this listener
 
@@ -2357,6 +2466,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // which tools it can pick from, plus the context string (env-vocab, and on
   // GENERIC routes the live inventory). Makes "did it even see this page's
   // controls" checkable without waiting on inference.
+  if (msg.type === "askHistory") {
+    (async () => { sendResponse({ ok: true, history: await readHistory() }); })();
+    return true;
+  }
+
+  if (msg.type === "clearHistory") {
+    (async () => {
+      await chrome.storage.local.set({ [HISTORY_KEY]: [] });
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
   if (msg.type === "showContext") {
     (async () => {
       try {
@@ -2396,8 +2518,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // answer" is always recoverable from this service worker's own
       // console (chrome://extensions -> Inspect views: service worker),
       // independent of whether any popup was still open to receive it.
+      // Recorded before the work starts, so a popup opened mid-ask sees it
+      // running rather than seeing nothing.
+      const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      recordAsk(askId, msg.instruction, { status: "running" });
+
       const respond = (res) => {
         console.log(`[smartAsk] "${msg.instruction}" ->`, res);
+        recordAsk(askId, msg.instruction, {
+          status: res.ok === false ? "error" : "done",
+          plannedBy: res.plannedBy,
+          display: res.display || (res.result && res.result.display),
+          error: res.error,
+          hint: res.hint,
+        });
         sendResponse(res);
       };
       const stopKeepAlive = keepAlive();

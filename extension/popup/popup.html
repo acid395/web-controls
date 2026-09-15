@@ -16,6 +16,13 @@
   pre { margin: 0; background: #f4f4f4;
         padding: 6px; font: 11px monospace; white-space: pre-wrap; word-break: break-word; }
   .hint { color: #888; font-size: 11px; margin-top: 4px; }
+  .logbar { display: flex; align-items: center; justify-content: space-between; margin-top: 12px;
+            border-top: 1px solid #ddd; padding-top: 6px; }
+  .logbar .hint { margin: 0; }
+  button.linky { width: auto; margin: 0; padding: 2px 6px; font-size: 11px; background: none;
+                 border: 1px solid #ddd; border-radius: 3px; color: #666; cursor: pointer; }
+  .running { font-size: 11px; color: #9a6700; background: #fdf6e3; border-left: 2px solid #d9a441;
+             padding: 5px 7px; border-radius: 0 3px 3px 0; }
 
   #log { margin-top: 10px; max-height: 320px; overflow: auto; }
   #log > * { margin-top: 6px; }
@@ -159,6 +166,10 @@
     <button id="call">Call</button>
   </details>
 
+  <div class="logbar">
+    <span class="hint" id="logNote">results are kept even if this popup closes</span>
+    <button id="clearLog" class="linky">clear</button>
+  </div>
   <div id="log"></div>
 
   <script src="popup.js"></script>

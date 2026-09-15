@@ -47,7 +47,20 @@ function loadBackground({ onFetch } = {}) {
         registerContentScripts: async () => {},
         unregisterContentScripts: async () => {},
       },
-      storage: { local: { get: async () => ({}), set: async () => {} } },
+      // A real in-memory store, not a no-op: ask history is persisted through
+      // here, and stubbing it away would test nothing.
+      storage: {
+        local: {
+          _data: {},
+          async get(key) {
+            if (key == null) return { ...this._data };
+            if (typeof key === "string") return key in this._data ? { [key]: this._data[key] } : {};
+            return Object.fromEntries(Object.keys(key).map((k) => [k, k in this._data ? this._data[k] : key[k]]));
+          },
+          async set(obj) { Object.assign(this._data, obj); },
+        },
+        onChanged: { addListener() {} },
+      },
       offscreen: { createDocument: async () => {} },
     },
   };

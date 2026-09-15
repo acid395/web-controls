@@ -79,6 +79,12 @@ check("humidity has no water equivalent", toolOf("humidity in boise"), "weatherC
 check("a named day is a forecast, not now", toolOf("Milwaukee temperature on Friday"), "weatherForecast");
 check("a week is a forecast", toolOf("weekly temperature in milwaukee"), "weatherForecast");
 check("history is refused, not forecast", plan("temperature in milwaukee yesterday").args.when, "past");
+// A maximum is not a current reading. Answering it with the thermometer's
+// present value is why a number disagreed with weather.gov, which shows the
+// forecast high.
+check("max is a forecast high", plan("max temperature of chicago IL").args.when, "high");
+check("min is a forecast low", plan("min temperature in chicago").args.when, "low");
+check("bare temperature is still now", toolOf("temperature in chicago", { global: "FCP" }), "weatherConditions");
 check("a river with no state is still answerable", toolOf("discharge of the bighorn river"), "waterFindGauges");
 check("control instructions stay control", toolOf("set the parameter to gage height"), undefined);
 check('"select Alaska" is not a data question', toolOf("select Alaska"), undefined);
@@ -159,6 +165,42 @@ check("braces inside strings", firstJson('{"tool":"pageClick","args":{"selector"
 check("no JSON at all", firstJson("I cannot help with that"), null);
 check("malformed JSON is rejected, not thrown", firstJson('{"tool": oops}'), null);
 
+section("ask history survives the popup closing");
+// A popup is destroyed on blur, so results cannot live in its DOM. These are
+// the states the popup has to be able to redraw from storage alone.
+(async () => {
+  await sb.recordAsk("a1", "gage height in wyoming", { status: "running" });
+  let h = await sb.readHistory();
+  check("an ask is recorded before it finishes", h[0].status, "running");
+
+  await sb.recordAsk("a1", "gage height in wyoming", {
+    status: "done", plannedBy: "fast-path",
+    display: { title: "gageHeight · WY", subtitle: "109 gauges", stats: [], rows: [] },
+  });
+  h = await sb.readHistory();
+  check("completing updates in place, not appended", h.length, 1);
+  check("and becomes renderable", h[0].display.title, "gageHeight · WY");
+  check("keeps when it was asked", h[0].at, h[0].at);
+
+  await sb.recordAsk("a2", "nonsense", { status: "error", error: "nothing matched" });
+  h = await sb.readHistory();
+  check("errors are kept too", h[1].status, "error");
+
+  // Whole payloads would exhaust the quota within a few asks.
+  await sb.recordAsk("a3", "read this page", {
+    status: "done", display: { title: "p", stats: [], rows: [] }, result: { huge: "x".repeat(500000) },
+  });
+  h = await sb.readHistory();
+  ensure("raw payloads are not stored", h[2].result === undefined, Object.keys(h[2]));
+
+  for (let i = 0; i < 40; i++) await sb.recordAsk(`b${i}`, `q${i}`, { status: "done" });
+  h = await sb.readHistory();
+  ensure("history is capped", h.length <= 30, h.length);
+  check("and keeps the newest", h[h.length - 1].instruction, "q39");
+  finishHistory();
+})();
+
+function finishHistory() {
 section("feed capture");
 const capturePage = loadPage(`<!doctype html><html><head><title>Canvas chart</title></head><body><canvas></canvas></body></html>`);
 if (!capturePage) skip("feed capture", "jsdom not installed");
@@ -236,6 +278,8 @@ if (process.argv.includes("--live")) {
   console.log("\n(live API tests skipped - pass --live to run them)");
   report();
 }
+}
+
 }
 
 function report() {

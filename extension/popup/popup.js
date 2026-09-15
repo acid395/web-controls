@@ -99,6 +99,62 @@ function logResult(res) {
   else log(JSON.stringify(res, null, 2));
 }
 
+/* ---------------------------------------------------------------------------
+ * Restoring the log.
+ *
+ * This popup is destroyed every time it loses focus, so its own DOM is not
+ * where results can live. background.js records each ask, and everything
+ * below renders from that - which is why an answer that lands while the
+ * popup is shut is simply there on reopening, and why a slow ask shows as
+ * running rather than as nothing.
+ */
+function renderEntry(entry) {
+  logEcho(`ask: "${entry.instruction}"`);
+  if (entry.status === "running") {
+    const el2 = el("div", "running", "still running - this stays here if you close the popup");
+    append(el2);
+    return;
+  }
+  if (entry.display) { renderCard(entry.display, entry); return; }
+  if (entry.error) { log(entry.error + (entry.hint ? `\n\nhint: ${entry.hint}` : "")); return; }
+  log(JSON.stringify(entry, null, 2));
+}
+
+let renderedIds = new Set();
+
+function restoreHistory() {
+  chrome.runtime.sendMessage({ type: "askHistory" }, (res) => {
+    if (chrome.runtime.lastError || !res || !res.ok) return;
+    const box = logEl();
+    box.textContent = "";
+    renderedIds = new Set();
+    for (const entry of res.history) {
+      renderEntry(entry);
+      if (entry.status !== "running") renderedIds.add(entry.id);
+    }
+    box.scrollTop = box.scrollHeight;
+  });
+}
+
+// A result that arrives while the popup happens to be open should appear
+// without waiting for a reopen.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.askHistory) return;
+  const next = changes.askHistory.newValue || [];
+  const unseen = next.filter((e) => e.status !== "running" && !renderedIds.has(e.id));
+  if (!unseen.length) return;
+  restoreHistory();
+});
+
+document.addEventListener("DOMContentLoaded", restoreHistory);
+
+document.getElementById("clearLog").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "clearHistory" }, () => {
+    logEl().textContent = "";
+    renderedIds = new Set();
+  });
+});
+
 // chrome.permissions.request() only counts as triggered by a real click if
 // there's no await before it in the same handler - an await, even a fast
 // one, can cross a task boundary Chrome uses to decide "was this a genuine
@@ -132,10 +188,17 @@ document.getElementById("smartAsk").addEventListener("click", () => {
   const instruction = document.getElementById("smartInstruction").value.trim();
   if (!instruction) return;
 
-  logEcho(`ask: "${instruction}"`);
-  chrome.runtime.sendMessage({ type: "smartAsk", instruction }, (res) => {
-    logResult(res);
+  // No echo and no direct render: background.js records the ask immediately,
+  // and the storage listener above draws it. Rendering here as well would
+  // duplicate every entry, and would still lose anything that completed
+  // after this popup was destroyed.
+  chrome.runtime.sendMessage({ type: "smartAsk", instruction }, () => {
+    // The response is deliberately ignored - it only arrives if this popup
+    // survived long enough to receive it, which is exactly what cannot be
+    // relied on. chrome.runtime.lastError is read to keep Chrome quiet.
+    void chrome.runtime.lastError;
   });
+  restoreHistory();
 });
 
 // Same shape a model's tool call arrives in ({name, args}), typed by hand.
