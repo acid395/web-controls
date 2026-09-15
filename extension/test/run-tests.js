@@ -153,6 +153,34 @@ check("a plain button is still clicked",
 // The search fallback must not swallow everything else.
 ensure("nonsense still matches nothing", act("fly me to the moon") === null, act("fly me to the moon"));
 
+section("driving the site comes first");
+// Controlling the site is the point; answering about it is the bonus. Only
+// USGS had a keyword path, so 46 verified tools across SITE, NOAA and FCP
+// could be reached only through the model - which is off by default. On a
+// NOAA page almost nothing worked.
+const m = (q, route) => {
+  const r = sb.planManifestTool(q, route);
+  return r ? `${r.name} ${JSON.stringify(r.args)}` : null;
+};
+check("NOAA basemap", m("set the basemap to satellite", "NOAA"), 'noaaSetBasemap {"basemap":"satellite"}');
+check("NOAA zoom", m("zoom in", "NOAA"), "noaaZoomIn {}");
+// A boolean follows the verb rather than toggling blindly.
+check("NOAA boolean", m("turn on limit by boundary", "NOAA"), 'noaaSetLimitByBoundary {"on":true}');
+check("SITE time span", m("set the time span to 30 days", "SITE"), 'siteSetTimeSpan {"span":"30 days"}');
+check("SITE scale", m("set the scale to log", "SITE"), 'siteSetScale {"scale":"log"}');
+// A number argument is read from the instruction.
+check("FCP number argument", m("set ring radius to 50", "FCP"), 'fcpSetRingRadius {"miles":50}');
+check("USGS grouping", m("group by county", "USGS"), 'usgsGroupBy {"groupBy":"county"}');
+ensure("nonsense matches no tool", m("fly me to the moon", "NOAA") === null, m("fly me to the moon", "NOAA"));
+
+// The verb decides the order. Control-first everywhere would send "gage
+// height in Alaska" to usgsSetParameter - changing the page instead of
+// answering it - because the words overlap a control's name.
+check("an action is a command", sb.isCommand("set the parameter to gage height"), true);
+check("a bare measurement and place is not", sb.isCommand("gage height in Alaska"), false);
+check("a question is not", sb.isCommand("what is the max temperature in Chicago"), false);
+check("searching is", sb.isCommand("search for Boise"), true);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

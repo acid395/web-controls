@@ -2397,6 +2397,132 @@ function pageValueWants(text) {
   return wants;
 }
 
+/* ---------------------------------------------------------------------------
+ * Matching a hand-written manifest's tools, without a model.
+ *
+ * Driving the site is the point of this extension; answering questions about
+ * it is a bonus. Yet only USGS had a keyword path - the 46 tools across SITE,
+ * NOAA and FCP could be reached only through the model, which is off by
+ * default because it is slow and huge. So on a NOAA page almost nothing
+ * worked, despite seventeen verified tools sitting right there.
+ *
+ * The tool definitions already carry everything needed to match against:
+ * a name, a description written in the user's vocabulary, and enumerated
+ * argument values. Scoring an instruction against those reaches every tool
+ * with no model at all. A hand-written manifest is preferred over GENERIC's
+ * selector guessing whenever it matches, because it was verified against the
+ * real site.
+ */
+function toolVocabulary(def) {
+  // "noaaSetBasemap" -> "noaa set basemap"; the route prefix is noise.
+  const fromName = def.name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()
+    .replace(/^(usgs|site|noaa|fcp|page)\s+/, "");
+  const enums = [];
+  const props = (def.parameters && def.parameters.properties) || {};
+  for (const spec of Object.values(props)) {
+    if (Array.isArray(spec.enum)) enums.push(...spec.enum.map(String));
+  }
+  return { fromName, description: (def.description || "").toLowerCase(), enums };
+}
+
+function scoreManifestTool(def, words, instruction) {
+  const { fromName, description, enums } = toolVocabulary(def);
+  const text = instruction.toLowerCase();
+  let score = 0;
+
+  // The tool's own name is the strongest signal: "set basemap" naming
+  // setBasemap is not a coincidence.
+  const nameWords = fromName.split(/\s+/).filter((w) => w.length > 2);
+  for (const w of nameWords) if (new RegExp(`\\b${w}`).test(text)) score += 3;
+  if (nameWords.length && nameWords.every((w) => text.includes(w))) score += 4;
+
+  // An enumerated value appearing verbatim all but names the tool -
+  // "satellite" belongs to exactly one.
+  for (const value of enums) {
+    const v = value.toLowerCase();
+    if (v.length > 2 && new RegExp(`\\b${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text)) score += 5;
+  }
+
+  // Description words carry less weight: they are prose, and prose overlaps.
+  for (const w of words) {
+    if (w.length > 3 && description.includes(w)) score += 1;
+  }
+  return score;
+}
+
+// Fills a tool's arguments from the instruction, using the schema to know
+// what kind of value each one wants.
+function argsForTool(def, instruction, words) {
+  const props = (def.parameters && def.parameters.properties) || {};
+  const required = (def.parameters && def.parameters.required) || [];
+  const text = instruction.toLowerCase();
+  const args = {};
+
+  for (const [key, spec] of Object.entries(props)) {
+    if (Array.isArray(spec.enum)) {
+      const hit = spec.enum.find((v) => new RegExp(`\\b${String(v).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
+      if (hit !== undefined) args[key] = hit;
+      continue;
+    }
+    if (spec.type === "boolean") {
+      args[key] = !TURN_OFF.test(instruction);
+      continue;
+    }
+    if (spec.type === "number") {
+      const n = text.match(/\b(\d+(?:\.\d+)?)\b/);
+      if (n) args[key] = Number(n[1]);
+      continue;
+    }
+    if (spec.type === "array") continue; // defaults are better than a guess
+    // A free string: quoted text, else the words the tool's own name does not
+    // already account for.
+    const quoted = instruction.match(/["']([^"']{2,60})["']/);
+    if (quoted) { args[key] = quoted[1]; continue; }
+    const nameWords = new Set(toolVocabulary(def).fromName.split(/\s+/));
+    const leftover = words.filter((w) => !nameWords.has(w));
+    if (leftover.length) args[key] = leftover.join(" ");
+  }
+
+  // A required argument with nothing to fill it means this is the wrong tool.
+  for (const key of required) if (args[key] === undefined) return null;
+  return args;
+}
+
+// Driving the site is the primary job; answering about it is the bonus. So an
+// instruction phrased as an action is treated as one, and only a question
+// goes looking for data first.
+//
+// Ordering alone cannot decide this. Control-first everywhere would send
+// "gage height in Alaska" to usgsSetParameter - changing the page instead of
+// answering - because the words overlap a control's name. Data-first
+// everywhere buries the main purpose. The verb settles it: "set the parameter
+// to gage height" acts, "gage height in Alaska" answers.
+const CONTROL_VERB = /\b(click|press|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look ?up|find|type|enter|download|zoom|group|sort|view|go to|navigate|apply|reset|clear|check|uncheck|tick)\b/i;
+
+function isCommand(instruction) {
+  return CONTROL_VERB.test(instruction || "");
+}
+
+function planManifestTool(instruction, routeGlobal) {
+  const defs = (TOOL_DEFS[routeGlobal] || []).filter((d) => !d.run);
+  if (!defs.length) return null;
+  const words = meaningfulWords(instruction);
+  if (!words.length) return null;
+
+  const scored = defs
+    .map((def) => ({ def, score: scoreManifestTool(def, words, instruction) }))
+    .filter((x) => x.score >= 4)          // a single description word is not enough
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  // A near-tie means two tools fit the words equally, and picking one would
+  // be a coin flip on a real action.
+  if (scored[1] && scored[0].score - scored[1].score < 2) return null;
+
+  const args = argsForTool(scored[0].def, instruction, words);
+  if (!args) return null;
+  return { name: scored[0].def.name, args };
+}
+
 // Control tools depend on which site is open; data tools never do.
 function toolsFor(routeGlobal) {
   return [...(TOOL_DEFS[routeGlobal] || []), ...DATA_TOOLS];
@@ -2879,10 +3005,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // hijacked by a control rule just because the USGS page is open.
         const dataCall = planDataTool(msg.instruction || "", route);
 
-        // The page first, when it plausibly holds the answer. Only for
-        // questions that are about a displayed value at all, and only when
-        // the page is about the same place - otherwise fetching is right.
-        const wants = pageValueWants(msg.instruction || "");
+        // Control is the primary job, so an instruction phrased as an action
+        // is not diverted into answering about the page. "set the parameter
+        // to gage height" acts; "gage height in Alaska" answers. Only a
+        // question reaches the data paths first - a command falls through to
+        // them below if nothing on the page turned out to match.
+        const commandLike = isCommand(msg.instruction || "");
+
+        const wants = commandLike ? [] : pageValueWants(msg.instruction || "");
         if (wants.length) {
           const askedPlace = dataCall && dataCall.args
             ? (dataCall.args.place || dataCall.args.nameContains || null)
@@ -2927,7 +3057,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
           return;
         }
-        if (dataCall) {
+        if (dataCall && !commandLike) {
           const result = await executeToolCall(route.global, dataCall);
           respond({ ...result, plannedBy: "fast-path", toolCall: dataCall });
           return;
@@ -2940,6 +3070,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             respond({ ...result, plannedBy: "fast-path", plannedCall: fast });
             return;
           }
+        }
+
+        // Then the route's own verified tools. This is what makes SITE, NOAA
+        // and FCP usable at all without the model - 46 tools that previously
+        // only it could reach. A hand-written manifest beats GENERIC's
+        // selector guessing below, having been checked against the real site.
+        const manifestCall = planManifestTool(msg.instruction || "", route.global);
+        if (manifestCall) {
+          const result = await executeToolCall(route.global, manifestCall);
+          respond({ ...result, plannedBy: "manifest", toolCall: manifestCall });
+          return;
         }
 
         // Any site, no model: match the instruction against the page's own
@@ -3053,6 +3194,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               },
             });
             return;
+          }
+        }
+
+        // A command that matched no control, but asked about something these
+        // sources know: better to answer than to fail. "show the discharge in
+        // Idaho" on a page with no such control is still a fair question.
+        if (commandLike && dataCall && !dataCall.needsState) {
+          const result = await executeToolCall(route.global, dataCall);
+          respond({ ...result, plannedBy: "fast-path", toolCall: dataCall, note: "no control matched, so this was answered from data" });
+          return;
+        }
+        if (commandLike) {
+          const pageWants = pageValueWants(msg.instruction || "");
+          if (pageWants.length && inv.ok) {
+            const readForValues = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+            if (readForValues.ok) {
+              const hits = findOnPage(readForValues.result, { wants: pageWants, place: null, day: null });
+              if (hits) {
+                respond({
+                  ok: true, plannedBy: "from-page", values: hits,
+                  display: {
+                    title: (readForValues.result.title || "This page").slice(0, 70),
+                    subtitle: "no control matched, so this was read from the page",
+                    stats: [], rows: hits.map((h) => ({ name: String(h.label).slice(0, 60), value: "", meta: "" })),
+                    source: "this page",
+                  },
+                });
+                return;
+              }
+            }
           }
         }
 

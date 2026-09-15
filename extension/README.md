@@ -240,6 +240,30 @@ it, not a shrug. Three states are distinguished, because they need different
 advice - capture not installed (enable the site), installed but empty (reload
 the page, its data loaded before capture did), and captured.
 
+## Driving the site is the primary job
+
+Answering questions about a site is a bonus; operating it is the point. Two
+things had drifted away from that.
+
+Only USGS had a keyword path, so the 46 verified tools across SITE, NOAA and
+FCP could be reached *only* through the model - which is off by default
+because it is slow and large. On a NOAA page almost nothing worked, despite
+seventeen tested tools sitting right there. `planManifestTool()` scores an
+instruction against each tool's name, description and enumerated values, and
+fills arguments from the schema: an enum match by name, a boolean from the
+verb, a number lifted from the text. All 59 named control tools are now
+reachable with no model, and a hand-written manifest is preferred over
+GENERIC's selector guessing, having been verified against the real site.
+
+And the order now follows what was asked. Ordering alone cannot decide it:
+control-first everywhere sends "gage height in Alaska" to `usgsSetParameter`,
+changing the page instead of answering, because the words overlap a control's
+name; data-first everywhere buries the main purpose. The verb settles it -
+"set the parameter to gage height" acts, "gage height in Alaska" answers. A
+command that matches no control still falls through to the data paths rather
+than failing, since "show the discharge in Idaho" is a fair question on a page
+that cannot show it.
+
 ## Two kinds of tool: control the page, or answer a question
 
 Everything above is about *controlling* a page - inject a manifest, call a
