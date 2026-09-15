@@ -1,21 +1,22 @@
 /* ============================================================================
- * web-controls.js - paste into the DevTools console on the live page.
+ * site-controls.js - paste into the DevTools console on a USGS
+ *   monitoring-location page, e.g.
+ *   https://waterdata.usgs.gov/monitoring-location/USGS-13206000/
  *
- * Layer 1  window.WC    generic DOM primitives, works on any site.
- *                        This block is identical to the WC block in
- *                        site-controls.js, noaa-controls.js, and
- *                        forecastpoints-controls.js. Keep them in sync.
- * Layer 2  window.USGS  tools for the USGS "state water conditions" page,
- *                        split into DISCOVERED (read off the page) and
- *                        SUPPLIED (typed in by hand, see that section below)
+ *   window.WC    generic DOM primitives, identical to the WC block in
+ *                web-controls.js, noaa-controls.js, and
+ *                forecastpoints-controls.js. Keep them in sync.
+ *   window.SITE  tools for the monitoring-location page, split into
+ *                DISCOVERED (read off the page) and SUPPLIED (typed by hand)
  *
- * Quick test after pasting:
- *   USGS.listParameters()
- *   USGS.setParameter('gage height')
- *   USGS.groupBy('huc8')
- *   USGS.sortBy('id-descending')
- *   USGS.toggleMap()
- *   await USGS.selectState('Montana')
+ * After pasting, try:
+ *   SITE.listGraphParameters()
+ *   SITE.graphParameter('discharge')
+ *   SITE.setTimeSpan('30 days')
+ *   SITE.setScale('log')
+ *   SITE.viewTabularData()
+ *   SITE.revealDateRange()   // then run the mini-inventory it prints
+ *   SITE.revealDownload()    // then run the mini-inventory it prints
  * ========================================================================== */
 (() => {
   /* ---------- Layer 1: generic primitives ---------- */
@@ -190,199 +191,194 @@
     wait, waitFor,
   };
 
+  /* ---------- mini-inventory: dump controls that just appeared ---------- */
+  const miniInventory = (note) => {
+    const rows = deepQueryAll('input,select,textarea,button,[role=button],[role=combobox],[role=radio],[role=checkbox]')
+      .filter((el) => el.offsetParent)
+      .map((el) => ({
+        tag: el.tagName.toLowerCase(), type: el.type || "", name: el.name || "", id: el.id || "",
+        label: rawLabelOf(el).slice(0, 70), value: (el.value || "").slice(0, 40),
+        options: el.tagName === "SELECT" ? [...el.options].map((o) => o.value + "=" + o.text.trim()) : undefined,
+      }));
+    console.log(`%c${note} - ${rows.length} visible controls`, "font-weight:bold;color:#06c");
+    console.table(rows);
+    try { copy(JSON.stringify(rows, null, 2)); console.log("copied to clipboard"); } catch (e) {}
+    return rows;
+  };
+
   /* ============================================================================
-   * Layer 2: USGS state-page tool manifest
+   * Layer 2: monitoring-location tool manifest
    *
-   * Split into two buckets, on purpose:
-   *
-   *  DISCOVERED  facts read straight off this page's DOM: group names, the
-   *              literal option values, ids. You can re-find all of this any
-   *              time by pasting inventory-controls.js on this page. None of
-   *              it required knowing what the page means.
-   *
-   *  SUPPLIED    domain knowledge a script can't get from the DOM: USGS
-   *              parameter-code meanings (00060 = discharge), ISO-8601
-   *              duration codes (P120D = "120 days"), and the synonyms a
-   *              person would type for each. If USGS renames a group or
-   *              changes a value, only DISCOVERED goes stale. If a code's
-   *              meaning were ever wrong, that would be SUPPLIED.
+   * DISCOVERED  group names, ids, and literal option values read off this
+   *             page's DOM. Confirmed live, 2026-09-05. Re-derivable with
+   *             inventory-controls.js, or SITE.revealDateRange() / revealDownload().
+   * SUPPLIED    USGS parameter-code and ISO-8601-duration meanings, and the
+   *             synonyms a person would type for them. Not visible in the DOM.
    * ========================================================================== */
 
   const DISCOVERED = {
-    // input[name=...] for each radio/checkbox group on this page, and the
-    // literal values seen on its <input>s. Confirmed live, 2026-09-05.
-    parameterGroup: "map-quick-select-radios",
-    parameterValues: ["00060", "00065", "72019", "00010", "all"],
-    groupByGroup: "locationGroupButtons",
-    groupByValues: ["county", "huc8", "huc6"],
-    sortGroup: "location-sort-order",
-    sortValues: ["name-ascending", "name-descending", "id-ascending", "id-descending"],
-    recencyGroup: "filterByDate",
-    recencyValues: ["P120D", "all"],
-    dataTypeMatchGroup: "matching-parameter-codes-radio-group",
-    dataTypeMatchValues: ["atLeastOne", "all"],
-    dataTypeCheckboxGroup: "show-data-type-checkbox",
-    dataTypeCodes: ["00060", "00065", "72019", "00010", "00300", "00400", "00095", "00045", "63680", "32315", "32321", "70969"],
-    stateSearchSelector: "#state-territory-selection",
-    filtersToggleText: "Customize filters", // renders as "Customizefilters" (two spans)
-    mapToggleTextOn: "Hide map",
-    mapToggleTextOff: "Show map",
+    graphParamGroup: "continuous", // radio values look like "continuous-00060-0"
+    timeSpanGroup: "time-span-short-cuts",
+    timeSpanValues: ["P7D", "P30D", "P365D"],
+    scaleGroup: "continuous-graph-scale-kind",
+    scaleValues: ["linear", "log"],
+    startDateSelector: "#continuous-data-start-date",
+    endDateSelector: "#continuous-data-end-date",
+    daysBeforeSelector: "#continuous-days-before",
+    timeSpanPanelToggleText: "changetime span", // panel toggle (label has no space)
+    timeSpanApplyText: "change time span",       // apply button inside the panel
+    downloadOpenText: "downloaddata",            // opener button (label has no space)
+    downloadSetGroup: "continuous-download-data-set",
+    downloadPrimaryCheckboxId: "continuous-primary-data-download-checkbox",
+    downloadLocationCheckboxId: "continuous-monitoring-location-data-download-checkbox",
+    downloadMetadataCheckboxId: "continuous-time-series-data-download-checkbox",
+    downloadButtonText: "download",
   };
 
-  // Human vocabulary mapped to the DISCOVERED values above. This is the part
-  // a DOM reader genuinely cannot derive: nothing on the page says "00060
-  // means discharge" or "P120D means 120 days." That's USGS/ISO-8601
-  // convention, typed in here from https://help.waterdata.usgs.gov and
-  // manual testing.
+  // USGS parameter codes and human synonyms for them. Not derivable from the
+  // DOM: the radio's value is just "continuous-00060-0". "Discharge" is
+  // USGS convention, taken from https://help.waterdata.usgs.gov/parameter_cd.
   const SUPPLIED = {
-    PARAMS: {
+    GRAPH_PARAMS: {
       "00060": "00060", discharge: "00060", streamflow: "00060", flow: "00060",
-      "00065": "00065", "gage height": "00065", "gauge height": "00065", stage: "00065",
-      "72019": "72019", "depth to water level": "72019", "water level": "72019", groundwater: "72019",
+      "00065": "00065", "gage height": "00065", stage: "00065",
       "00010": "00010", "water temperature": "00010", temperature: "00010", temp: "00010",
-      all: "all", "any data": "all", any: "all",
+      "00095": "00095", "specific conductance": "00095", conductance: "00095",
+      "00300": "00300", "dissolved oxygen": "00300", "do": "00300",
+      "00400": "00400", ph: "00400",
+      "63680": "63680", turbidity: "63680",
+      "00045": "00045", precipitation: "00045", precip: "00045",
     },
-    GROUP_BY: {
-      county: "county",
-      huc8: "huc8", "huc-08": "huc8", "huc-08 subbasin": "huc8", "huc 08": "huc8",
-      huc6: "huc6", "huc-06": "huc6", "huc-06 basin": "huc6", "huc 06": "huc6",
+    // ISO-8601 durations and the phrases a person types for them
+    TIME_SPAN: {
+      "7d": "P7D", "7 days": "P7D", "7": "P7D", week: "P7D",
+      "30d": "P30D", "30 days": "P30D", "30": "P30D", month: "P30D",
+      "1y": "P365D", "1yr": "P365D", "1 year": "P365D", "365": "P365D", year: "P365D",
     },
-    RECENCY: {
-      p120d: "P120D", "120d": "P120D", "120 days": "P120D", "last 120 days": "P120D", recent: "P120D",
-      all: "all", "all years": "all", "all possible years": "all", historical: "all",
+    DOWNLOAD_SETS: {
+      data: "downloadPrimaryCheckboxId", primary: "downloadPrimaryCheckboxId",
+      location: "downloadLocationCheckboxId", about: "downloadLocationCheckboxId",
+      metadata: "downloadMetadataCheckboxId",
     },
   };
 
-  // The filter-panel controls only exist in the DOM while the panel is
-  // open, and the panel renders asynchronously, so wait for it after
-  // clicking the toggle.
-  const ensureFilters = async () => {
-    if (deepQueryAll(`input[name="${DISCOVERED.recencyGroup}"]`).length) return;
-    try { clickByText(DISCOVERED.filtersToggleText); } catch (e) { /* button label varies */ }
-    await waitFor(() => deepQueryAll(`input[name="${DISCOVERED.recencyGroup}"]`).length || null, { timeout: 4000 }).catch(() => {});
-  };
+  const SITE = {
+    DISCOVERED, SUPPLIED, // see SITE.DISCOVERED / SITE.SUPPLIED
 
-  const checkedValue = (name) => {
-    const r = deepQueryAll(`input[name="${name}"]`).find((el) => el.checked);
-    return r ? r.value : null;
-  };
+    listGraphParameters() {
+      return deepQueryAll(`input[name="${DISCOVERED.graphParamGroup}"]`).map((r) => ({ value: r.value, label: rawLabelOf(r), checked: r.checked }));
+    },
+    graphParameter(p) {
+      const radios = deepQueryAll(`input[name="${DISCOVERED.graphParamGroup}"]`);
+      if (!radios.length) throw new Error(`graphParameter: no "${DISCOVERED.graphParamGroup}" parameter radios on this page`);
+      const want = norm(p);
+      const code = SUPPLIED.GRAPH_PARAMS[want];
+      const hit =
+        (code && radios.find((r) => r.value.includes(code))) ||
+        radios.find((r) => labelOf(r).includes(want));
+      if (!hit) throw new Error(`graphParameter: "${p}" not available. See SITE.listGraphParameters()`);
+      if (!hit.checked) realClick(hit);
+      return hit.value;
+    },
+    setTimeSpan(x) {
+      return pickRadio(DISCOVERED.timeSpanGroup, SUPPLIED.TIME_SPAN[norm(x)] || norm(x).toUpperCase());
+    },
+    setScale(x) {
+      return pickRadio(DISCOVERED.scaleGroup, norm(x));
+    },
+    viewTabularData() { return clickByText("View tabular data"); },
+    viewRelatedGraphs() { return clickByText("View related graphs"); },
+    expandAllDataCollections() { return clickByText("Expand all data collections"); },
 
-  const USGS = {
-    DISCOVERED, SUPPLIED, // see USGS.DISCOVERED / USGS.SUPPLIED
+    // --- custom time span ---
+    openTimeSpanPanel() {
+      if (deepQuery(DISCOVERED.startDateSelector)) return "already open";
+      clickExact(DISCOVERED.timeSpanPanelToggleText);
+      return "opening";
+    },
+    applyTimeSpan() { return clickExact(DISCOVERED.timeSpanApplyText); },
 
-    listParameters() {
-      return deepQueryAll(`input[name="${DISCOVERED.parameterGroup}"]`)
-        .map((r) => ({ value: r.value, label: rawLabelOf(r), checked: r.checked }));
+    // start / end are strings the field accepts, e.g. "2024-01-15" or "01/15/2024"
+    async setDateRange(start, end) {
+      this.openTimeSpanPanel();
+      const s = await waitFor(DISCOVERED.startDateSelector);
+      const e = deepQuery(DISCOVERED.endDateSelector);
+      fill(s, start);
+      if (end && e) fill(e, end);
+      this.applyTimeSpan();
+      return { start, end };
     },
-    setParameter(p) {
-      const code = SUPPLIED.PARAMS[norm(p)];
-      if (!code) throw new Error(`setParameter: unknown "${p}". Known: ${[...new Set(Object.values(SUPPLIED.PARAMS))].join(", ")}`);
-      return pickRadio(DISCOVERED.parameterGroup, code);
-    },
-    groupBy(x) {
-      return pickRadio(DISCOVERED.groupByGroup, SUPPLIED.GROUP_BY[norm(x)] || norm(x));
-    },
-    sortBy(x) {
-      // accepts: "id descending", "id-descending", "name ascending", ...
-      return pickRadio(DISCOVERED.sortGroup, norm(x).replace(/[\s_]+/g, "-"));
-    },
-    mapVisible() {
-      return !!deepQueryAll("button").find((b) => norm(b.textContent).includes(norm(DISCOVERED.mapToggleTextOn)));
-    },
-    toggleMap() {
-      try { return clickByText(DISCOVERED.mapToggleTextOn); } catch (e) { return clickByText(DISCOVERED.mapToggleTextOff); }
-    },
-    setMap(visible) {
-      if (this.mapVisible() !== !!visible) this.toggleMap();
-      return this.mapVisible();
-    },
-    openFilters() { return clickByText(DISCOVERED.filtersToggleText); },
-
-    // --- filter panel (auto-opens the panel; all async) ---
-    async setRecency(x) {
-      await ensureFilters();
-      return pickRadio(DISCOVERED.recencyGroup, SUPPLIED.RECENCY[norm(x)] || norm(x));
-    },
-    async setDataTypeMatch(x) {
-      await ensureFilters();
-      return pickRadio(DISCOVERED.dataTypeMatchGroup, /all/.test(norm(x)) ? "all" : "atLeastOne");
-    },
-    async listDataTypes() {
-      await ensureFilters();
-      return deepQueryAll(`input[name="${DISCOVERED.dataTypeCheckboxGroup}"]`)
-        .map((c) => ({ code: c.value, label: rawLabelOf(c), checked: c.checked }));
-    },
-    async toggleDataType(codeOrName, on = true) {
-      await ensureFilters();
-      const want = norm(codeOrName);
-      const cb = deepQueryAll(`input[name="${DISCOVERED.dataTypeCheckboxGroup}"]`)
-        .find((c) => c.value === codeOrName || labelOf(c).includes(want));
-      if (!cb) throw new Error(`toggleDataType: "${codeOrName}" not found. See await USGS.listDataTypes()`);
-      return setChecked(cb, on);
+    async setDaysBefore(n) {
+      this.openTimeSpanPanel();
+      const el = await waitFor(DISCOVERED.daysBeforeSelector);
+      fill(el, String(n));
+      this.applyTimeSpan();
+      return Number(n);
     },
 
-    // snapshot of everything this page's tools control
-    getState() {
-      return {
-        parameter: checkedValue(DISCOVERED.parameterGroup),
-        groupBy: checkedValue(DISCOVERED.groupByGroup),
-        sortBy: checkedValue(DISCOVERED.sortGroup),
-        recency: checkedValue(DISCOVERED.recencyGroup),
-        dataTypeMatch: checkedValue(DISCOVERED.dataTypeMatchGroup),
-        dataTypes: deepQueryAll(`input[name="${DISCOVERED.dataTypeCheckboxGroup}"]`).filter((c) => c.checked).map((c) => c.value),
-        mapVisible: this.mapVisible(),
-      };
+    // --- download ---
+    openDownloadDialog() {
+      if (deepQuery(`#${DISCOVERED.downloadPrimaryCheckboxId}`)) return "already open";
+      clickExact(DISCOVERED.downloadOpenText);
+      return "opening";
+    },
+    listDownloadSets() {
+      this.openDownloadDialog();
+      return deepQueryAll(`input[name="${DISCOVERED.downloadSetGroup}"]`)
+        .map((c) => ({ value: c.value, id: c.id, label: rawLabelOf(c), checked: c.checked }));
+    },
+    // sets: any of "data" (primary series), "location" (about this location), "metadata"
+    async downloadData(sets = ["data"]) {
+      this.openDownloadDialog();
+      await waitFor(`#${DISCOVERED.downloadPrimaryCheckboxId}`);
+      const wantedIds = new Set(sets.map((s) => DISCOVERED[SUPPLIED.DOWNLOAD_SETS[norm(s)]] || s));
+      deepQueryAll(`input[name="${DISCOVERED.downloadSetGroup}"]`).forEach((cb) => setChecked(cb, wantedIds.has(cb.id)));
+      const btn = deepQueryAll("button").find((b) => norm(b.textContent) === DISCOVERED.downloadButtonText);
+      if (!btn) throw new Error("downloadData: 'Download' button not found");
+      realClick(btn); // browser will start a file download
+      return [...wantedIds];
     },
 
-    async selectState(name) {
-      const box = deepQuery(DISCOVERED.stateSearchSelector);
-      if (!box) throw new Error(`selectState: ${DISCOVERED.stateSearchSelector} not found`);
-      realClick(box);
-      box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
-      fill(box, name);
-      const opt = await waitFor(() =>
-        deepQueryAll('[role=option], [class*="option"], [id*="option"]')
-          .find((o) => norm(o.textContent).includes(norm(name)) && o.offsetParent !== null)
-      );
-      realClick(opt); // react-select commits on mousedown, included in realClick
-      return norm(opt.textContent);
+    // reveal-then-inspect (debug helpers)
+    revealDateRange() {
+      this.openTimeSpanPanel();
+      setTimeout(() => miniInventory("Custom date range panel"), 700);
+      return "mini-inventory prints in ~1s";
     },
-    selectCounty(name) {
-      const want = norm(`select ${name}`.replace(/ county$/, ""));
-      const el = deepQueryAll('[role=radio]').find((r) =>
-        norm(r.getAttribute("aria-label")).startsWith(want)
-      );
-      if (!el) throw new Error(`selectCounty: "${name}" not found`);
-      return realClick(el);
+    revealDownload() {
+      this.openDownloadDialog();
+      setTimeout(() => miniInventory("Download dialog"), 700);
+      return "mini-inventory prints in ~1s";
     },
-    favoriteSite(id, on = true) {
-      return setChecked(`#my-favorites-USGS-${id}-checkbox`, on);
-    },
-    openSite(id) { location.assign(`/monitoring-location/USGS-${id}/`); },
   };
 
   window.WC = WC;
-  window.USGS = USGS;
-  console.log("%cLoaded  window.WC  (generic primitives)  +  window.USGS  (this page)", "color:green;font-weight:bold");
+  window.SITE = SITE;
+  window.miniInventory = miniInventory;
+  console.log("%cLoaded  window.WC  +  window.SITE  (monitoring-location page)", "color:green;font-weight:bold");
   console.log([
-    "USGS tools  (await the ones marked async):",
-    "  getState()                         read current selections",
-    "  setParameter('gage height')        map quick-select radios",
-    "  groupBy('huc8' | 'huc6' | 'county')",
-    "  sortBy('id descending')            name/id  ascending/descending",
-    "  toggleMap()  /  setMap(true|false)  /  mapVisible()",
-    "  await setRecency('120 days' | 'all')       async, opens the filter panel first",
-    "  await setDataTypeMatch('any' | 'all')      async",
-    "  await listDataTypes()  /  await toggleDataType('00060', true)   async",
-    "  await selectState('Montana')",
-    "  selectCounty('Ada')  /  favoriteSite('13206000', true)  /  openSite('13206000')",
-    "  USGS.DISCOVERED / USGS.SUPPLIED    what's read off the page vs typed in by hand",
+    "SITE tools:",
+    "  listGraphParameters()",
+    "  graphParameter('discharge' | 'gage height' | '00010' ...)",
+    "  setTimeSpan('7 days' | '30 days' | '1 year')      quick presets",
+    "  await setDateRange('2024-01-01', '2024-06-30')    custom start/end",
+    "  await setDaysBefore(90)                           N days before today",
+    "  setScale('linear' | 'log')",
+    "  viewTabularData()  /  viewRelatedGraphs()  /  expandAllDataCollections()",
+    "  listDownloadSets()",
+    "  await downloadData(['data'])   // also 'location', 'metadata'. Starts a file download",
+    "  SITE.DISCOVERED / SITE.SUPPLIED    what's read off the page vs typed in by hand",
   ].join("\n"));
+
+  // full pick -> date -> download chain, for reference:
+  //   SITE.graphParameter('discharge');
+  //   await SITE.setDateRange('2024-01-01','2024-12-31');
+  //   await SITE.downloadData(['data']);
 })();
 
 /* ---------- bridge: lets the extension call this page's manifest functions ----------
  * This file runs in the page's own JS context (the "MAIN world"), so it can see
- * window.USGS above, but it has no access to chrome.* APIs. It talks out via
+ * window.SITE above, but it has no access to chrome.* APIs. It talks out via
  * postMessage; a content script in the isolated world relays that to the extension
  * background script. Function lookup walks every manifest global present, so
  * injecting a named manifest and GENERIC together works.

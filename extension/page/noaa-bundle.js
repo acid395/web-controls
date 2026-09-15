@@ -1,21 +1,33 @@
 /* ============================================================================
- * web-controls.js - paste into the DevTools console on the live page.
+ * noaa-controls.js - paste into the DevTools console on
+ *   https://water.noaa.gov/
  *
- * Layer 1  window.WC    generic DOM primitives, works on any site.
- *                        This block is identical to the WC block in
- *                        site-controls.js, noaa-controls.js, and
- *                        forecastpoints-controls.js. Keep them in sync.
- * Layer 2  window.USGS  tools for the USGS "state water conditions" page,
- *                        split into DISCOVERED (read off the page) and
- *                        SUPPLIED (typed in by hand, see that section below)
+ *   window.WC    generic DOM primitives, identical to the WC block in
+ *                web-controls.js, site-controls.js, and
+ *                forecastpoints-controls.js. Keep them in sync.
+ *   window.NOAA  tools for the water.noaa.gov national map page
  *
- * Quick test after pasting:
- *   USGS.listParameters()
- *   USGS.setParameter('gage height')
- *   USGS.groupBy('huc8')
- *   USGS.sortBy('id-descending')
- *   USGS.toggleMap()
- *   await USGS.selectState('Montana')
+ * STATUS: partial. Confirmed live 2026-09-08 against the "View Layers" panel
+ * and the River Gauge product picker. Settled, not just unconfirmed: typing
+ * into #search-box produces no separate result-list element to click, in
+ * four separate tries, the last two with a real value confirmed sitting in
+ * the box (value: "Boise") and a generic-controls-grade inventory (Svelte
+ * click-handler detection plus a cursor:pointer fallback) finding nothing
+ * resembling a dropdown anywhere in the page. The likely explanation is a
+ * closed shadow root, which a script cannot see into by design, not a
+ * detection gap to keep patching. search() fills the box and presses Enter
+ * as a best-effort "submit"; picking a specific result from it is not
+ * something this approach can do on this page. Also unconfirmed: the second
+ * nameless radio group (values "all"/"hydrologic"/"hide") whose panel hasn't
+ * been opened yet. See README, "Tested on other sites."
+ *
+ * After pasting, try:
+ *   NOAA.openLayers()
+ *   NOAA.setBasemap('satellite')
+ *   NOAA.toggleSection('River Gauge')
+ *   NOAA.setGaugeProduct('ensemble')      // substring-matches the live label
+ *   NOAA.setGaugeMode('forecast')
+ *   NOAA.toggleFloodCategory('Minor Flood', true)
  * ========================================================================== */
 (() => {
   /* ---------- Layer 1: generic primitives ---------- */
@@ -191,198 +203,159 @@
   };
 
   /* ============================================================================
-   * Layer 2: USGS state-page tool manifest
+   * Layer 2: water.noaa.gov manifest
    *
-   * Split into two buckets, on purpose:
-   *
-   *  DISCOVERED  facts read straight off this page's DOM: group names, the
-   *              literal option values, ids. You can re-find all of this any
-   *              time by pasting inventory-controls.js on this page. None of
-   *              it required knowing what the page means.
-   *
-   *  SUPPLIED    domain knowledge a script can't get from the DOM: USGS
-   *              parameter-code meanings (00060 = discharge), ISO-8601
-   *              duration codes (P120D = "120 days"), and the synonyms a
-   *              person would type for each. If USGS renames a group or
-   *              changes a value, only DISCOVERED goes stale. If a code's
-   *              meaning were ever wrong, that would be SUPPLIED.
+   * DISCOVERED  read straight off the DOM, confirmed live 2026-09-08 via
+   *             inventory-controls.js on https://water.noaa.gov/ (home map,
+   *             default view, then again with "View Layers" open).
+   * SUPPLIED    hand-typed domain knowledge. There's much less of it than in
+   *             web-controls.js's USGS manifest, because this page's radios
+   *             and checkboxes carry real, descriptive labels instead of
+   *             opaque numeric codes, so pickRadio's built-in substring-label
+   *             matching already handles most phrasing without a synonym
+   *             table. SUPPLIED here is only for genuine abbreviations
+   *             (HEFS, LRO) that don't literally appear in the label text.
    * ========================================================================== */
 
   const DISCOVERED = {
-    // input[name=...] for each radio/checkbox group on this page, and the
-    // literal values seen on its <input>s. Confirmed live, 2026-09-05.
-    parameterGroup: "map-quick-select-radios",
-    parameterValues: ["00060", "00065", "72019", "00010", "all"],
-    groupByGroup: "locationGroupButtons",
-    groupByValues: ["county", "huc8", "huc6"],
-    sortGroup: "location-sort-order",
-    sortValues: ["name-ascending", "name-descending", "id-ascending", "id-descending"],
-    recencyGroup: "filterByDate",
-    recencyValues: ["P120D", "all"],
-    dataTypeMatchGroup: "matching-parameter-codes-radio-group",
-    dataTypeMatchValues: ["atLeastOne", "all"],
-    dataTypeCheckboxGroup: "show-data-type-checkbox",
-    dataTypeCodes: ["00060", "00065", "72019", "00010", "00300", "00400", "00095", "00045", "63680", "32315", "32321", "70969"],
-    stateSearchSelector: "#state-territory-selection",
-    filtersToggleText: "Customize filters", // renders as "Customizefilters" (two spans)
-    mapToggleTextOn: "Hide map",
-    mapToggleTextOff: "Show map",
+    searchBoxSelector: "#search-box",
+    geolocateButtonText: "Geolocate",
+    zoomInButtonText: "Zoom in",
+    zoomOutButtonText: "Zoom out",
+    homeButtonText: "Home",
+    viewLayersButtonText: "View Layers",
+    closePanelButtonText: "Close map panel",
+    attributionToggleText: "Toggle attribution",
+    mapCanvasSelector: "canvas.maplibregl-canvas", // not interactive, see NOAA.mapNote()
+
+    // only <select> on the page once "View Layers" is open
+    basemapSelectSelector: "select",
+    basemapValues: ["topographic", "satellite", "dark", "light"],
+
+    // toggle buttons for each collapsible section in the layers panel
+    sections: {
+      "river gauge": "#uk-accordion-1",
+      hazards: "#uk-accordion-3",
+      "precipitation estimate": "#uk-accordion-5",
+      "national water model": "#uk-accordion-7",
+      "flood inundation": "#uk-accordion-9",
+      "national snow analysis": "#uk-accordion-10",
+      "administrative boundaries": "#uk-accordion-12",
+    },
+
+    // "River Gauge" section, open by default: a 3-way product picker. These
+    // <input type=radio> have no name attribute at all, confirmed by
+    // dumping their outerHTML. pickRadio's nameless-radio fallback handles that.
+    gaugeProductValues: ["obsFcst", "HEFS", "LRO"],
+    gaugeModeButtonTexts: ["Observation", "Forecast"],
+    floodCategoryLabels: [
+      "Major Flood", "Moderate Flood", "Minor Flood", "Action", "No Flood",
+      "Flood Category Not Defined", "Low Water Threshold", "Data Not Current", "Out of Service",
+    ],
+    limitByBoundaryLabel: "Limit by boundary",
+    partnerFimLabel: "Only display Partner FIM Gauges",
+
+    // a second nameless radio group exists somewhere on the page (values
+    // "all"/"hydrologic"/"hide", each aria-labeled with its own value), but
+    // its panel hasn't been opened or inventoried yet, so its purpose is unconfirmed.
+    unconfirmedRadioValues: ["all", "hydrologic", "hide"],
   };
 
-  // Human vocabulary mapped to the DISCOVERED values above. This is the part
-  // a DOM reader genuinely cannot derive: nothing on the page says "00060
-  // means discharge" or "P120D means 120 days." That's USGS/ISO-8601
-  // convention, typed in here from https://help.waterdata.usgs.gov and
-  // manual testing.
+  // Abbreviations that don't appear verbatim in the live label text, so
+  // pickRadio's own substring matching can't find them unaided.
   const SUPPLIED = {
-    PARAMS: {
-      "00060": "00060", discharge: "00060", streamflow: "00060", flow: "00060",
-      "00065": "00065", "gage height": "00065", "gauge height": "00065", stage: "00065",
-      "72019": "72019", "depth to water level": "72019", "water level": "72019", groundwater: "72019",
-      "00010": "00010", "water temperature": "00010", temperature: "00010", temp: "00010",
-      all: "all", "any data": "all", any: "all",
-    },
-    GROUP_BY: {
-      county: "county",
-      huc8: "huc8", "huc-08": "huc8", "huc-08 subbasin": "huc8", "huc 08": "huc8",
-      huc6: "huc6", "huc-06": "huc6", "huc-06 basin": "huc6", "huc 06": "huc6",
-    },
-    RECENCY: {
-      p120d: "P120D", "120d": "P120D", "120 days": "P120D", "last 120 days": "P120D", recent: "P120D",
-      all: "all", "all years": "all", "all possible years": "all", historical: "all",
+    GAUGE_PRODUCT_ABBREV: {
+      hefs: "HEFS",         // "Hydrologic Ensemble Forecasts", abbreviation not in the label text
+      lro: "LRO",           // "Long Range Flood Outlook", abbreviation not in the label text
+      "obs fcst": "obsFcst",
     },
   };
 
-  // The filter-panel controls only exist in the DOM while the panel is
-  // open, and the panel renders asynchronously, so wait for it after
-  // clicking the toggle.
-  const ensureFilters = async () => {
-    if (deepQueryAll(`input[name="${DISCOVERED.recencyGroup}"]`).length) return;
-    try { clickByText(DISCOVERED.filtersToggleText); } catch (e) { /* button label varies */ }
-    await waitFor(() => deepQueryAll(`input[name="${DISCOVERED.recencyGroup}"]`).length || null, { timeout: 4000 }).catch(() => {});
-  };
+  const NOAA = {
+    DISCOVERED, SUPPLIED, // see NOAA.DISCOVERED / NOAA.SUPPLIED
 
-  const checkedValue = (name) => {
-    const r = deepQueryAll(`input[name="${name}"]`).find((el) => el.checked);
-    return r ? r.value : null;
-  };
+    mapNote() {
+      return "Map markers are drawn on a MapLibre GL canvas. There is no per-station DOM element to find or click. Only the surrounding UI (search, layers panel, buttons) is scriptable. See README, 'Tested on other sites.'";
+    },
 
-  const USGS = {
-    DISCOVERED, SUPPLIED, // see USGS.DISCOVERED / USGS.SUPPLIED
+    // Fills the box and presses Enter as a best-effort "submit." No separate
+    // result list was ever observed live (see file header), so what this
+    // actually does on the page is unconfirmed.
+    search(query) {
+      const box = fill(DISCOVERED.searchBoxSelector, query);
+      box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter" }));
+      return box;
+    },
+    geolocate() { return clickByText(DISCOVERED.geolocateButtonText); },
+    zoomIn() { return clickByText(DISCOVERED.zoomInButtonText); },
+    zoomOut() { return clickByText(DISCOVERED.zoomOutButtonText); },
+    home() { return clickByText(DISCOVERED.homeButtonText); },
 
-    listParameters() {
-      return deepQueryAll(`input[name="${DISCOVERED.parameterGroup}"]`)
-        .map((r) => ({ value: r.value, label: rawLabelOf(r), checked: r.checked }));
+    openLayers() { return clickByText(DISCOVERED.viewLayersButtonText); },
+    closeLayers() { return clickByText(DISCOVERED.closePanelButtonText); },
+    listBasemaps() {
+      const sel = deepQuery(DISCOVERED.basemapSelectSelector);
+      return sel ? [...sel.options].map((o) => ({ value: o.value, text: o.text, selected: o.selected })) : [];
     },
-    setParameter(p) {
-      const code = SUPPLIED.PARAMS[norm(p)];
-      if (!code) throw new Error(`setParameter: unknown "${p}". Known: ${[...new Set(Object.values(SUPPLIED.PARAMS))].join(", ")}`);
-      return pickRadio(DISCOVERED.parameterGroup, code);
-    },
-    groupBy(x) {
-      return pickRadio(DISCOVERED.groupByGroup, SUPPLIED.GROUP_BY[norm(x)] || norm(x));
-    },
-    sortBy(x) {
-      // accepts: "id descending", "id-descending", "name ascending", ...
-      return pickRadio(DISCOVERED.sortGroup, norm(x).replace(/[\s_]+/g, "-"));
-    },
-    mapVisible() {
-      return !!deepQueryAll("button").find((b) => norm(b.textContent).includes(norm(DISCOVERED.mapToggleTextOn)));
-    },
-    toggleMap() {
-      try { return clickByText(DISCOVERED.mapToggleTextOn); } catch (e) { return clickByText(DISCOVERED.mapToggleTextOff); }
-    },
-    setMap(visible) {
-      if (this.mapVisible() !== !!visible) this.toggleMap();
-      return this.mapVisible();
-    },
-    openFilters() { return clickByText(DISCOVERED.filtersToggleText); },
+    setBasemap(x) { return setSelect(DISCOVERED.basemapSelectSelector, norm(x)); },
 
-    // --- filter panel (auto-opens the panel; all async) ---
-    async setRecency(x) {
-      await ensureFilters();
-      return pickRadio(DISCOVERED.recencyGroup, SUPPLIED.RECENCY[norm(x)] || norm(x));
+    toggleSection(name) {
+      const key = norm(name);
+      const text = Object.keys(DISCOVERED.sections).find((k) => k === key || k.includes(key));
+      if (!text) throw new Error(`toggleSection: "${name}" not one of [${Object.keys(DISCOVERED.sections).join(", ")}]`);
+      return clickByText(text);
     },
-    async setDataTypeMatch(x) {
-      await ensureFilters();
-      return pickRadio(DISCOVERED.dataTypeMatchGroup, /all/.test(norm(x)) ? "all" : "atLeastOne");
+
+    // p can be "obsFcst"/"HEFS"/"LRO" or free text. pickRadio label-matches
+    // live, falling back to SUPPLIED for bare abbreviations.
+    setGaugeProduct(p) {
+      const code = SUPPLIED.GAUGE_PRODUCT_ABBREV[norm(p)] || p;
+      return pickRadio("gauge-product", code);
     },
-    async listDataTypes() {
-      await ensureFilters();
-      return deepQueryAll(`input[name="${DISCOVERED.dataTypeCheckboxGroup}"]`)
-        .map((c) => ({ code: c.value, label: rawLabelOf(c), checked: c.checked }));
+    setGaugeMode(x) {
+      const want = norm(x);
+      const text = DISCOVERED.gaugeModeButtonTexts.find((t) => norm(t) === want || norm(t).includes(want));
+      if (!text) throw new Error(`setGaugeMode: "${x}" not one of [${DISCOVERED.gaugeModeButtonTexts.join(", ")}]`);
+      return clickByText(text);
     },
-    async toggleDataType(codeOrName, on = true) {
-      await ensureFilters();
-      const want = norm(codeOrName);
-      const cb = deepQueryAll(`input[name="${DISCOVERED.dataTypeCheckboxGroup}"]`)
-        .find((c) => c.value === codeOrName || labelOf(c).includes(want));
-      if (!cb) throw new Error(`toggleDataType: "${codeOrName}" not found. See await USGS.listDataTypes()`);
+    listFloodCategories() {
+      return deepQueryAll('input[type=checkbox]')
+        .filter((c) => DISCOVERED.floodCategoryLabels.some((l) => labelOf(c) === norm(l)))
+        .map((c) => ({ label: rawLabelOf(c), checked: c.checked }));
+    },
+    toggleFloodCategory(label, on = true) {
+      const want = norm(label);
+      const cb = deepQueryAll('input[type=checkbox]').find((c) => labelOf(c) === want || labelOf(c).includes(want));
+      if (!cb) throw new Error(`toggleFloodCategory: "${label}" not found. See NOAA.listFloodCategories()`);
       return setChecked(cb, on);
     },
-
-    // snapshot of everything this page's tools control
-    getState() {
-      return {
-        parameter: checkedValue(DISCOVERED.parameterGroup),
-        groupBy: checkedValue(DISCOVERED.groupByGroup),
-        sortBy: checkedValue(DISCOVERED.sortGroup),
-        recency: checkedValue(DISCOVERED.recencyGroup),
-        dataTypeMatch: checkedValue(DISCOVERED.dataTypeMatchGroup),
-        dataTypes: deepQueryAll(`input[name="${DISCOVERED.dataTypeCheckboxGroup}"]`).filter((c) => c.checked).map((c) => c.value),
-        mapVisible: this.mapVisible(),
-      };
-    },
-
-    async selectState(name) {
-      const box = deepQuery(DISCOVERED.stateSearchSelector);
-      if (!box) throw new Error(`selectState: ${DISCOVERED.stateSearchSelector} not found`);
-      realClick(box);
-      box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
-      fill(box, name);
-      const opt = await waitFor(() =>
-        deepQueryAll('[role=option], [class*="option"], [id*="option"]')
-          .find((o) => norm(o.textContent).includes(norm(name)) && o.offsetParent !== null)
-      );
-      realClick(opt); // react-select commits on mousedown, included in realClick
-      return norm(opt.textContent);
-    },
-    selectCounty(name) {
-      const want = norm(`select ${name}`.replace(/ county$/, ""));
-      const el = deepQueryAll('[role=radio]').find((r) =>
-        norm(r.getAttribute("aria-label")).startsWith(want)
-      );
-      if (!el) throw new Error(`selectCounty: "${name}" not found`);
-      return realClick(el);
-    },
-    favoriteSite(id, on = true) {
-      return setChecked(`#my-favorites-USGS-${id}-checkbox`, on);
-    },
-    openSite(id) { location.assign(`/monitoring-location/USGS-${id}/`); },
+    setLimitByBoundary(on = true) { return setChecked(deepQueryAll('input[type=checkbox]').find((c) => labelOf(c) === norm(DISCOVERED.limitByBoundaryLabel)), on); },
+    setPartnerFimOnly(on = true) { return setChecked(deepQueryAll('input[type=checkbox]').find((c) => labelOf(c) === norm(DISCOVERED.partnerFimLabel)), on); },
   };
 
   window.WC = WC;
-  window.USGS = USGS;
-  console.log("%cLoaded  window.WC  (generic primitives)  +  window.USGS  (this page)", "color:green;font-weight:bold");
+  window.NOAA = NOAA;
+  console.log("%cLoaded  window.WC  +  window.NOAA  (water.noaa.gov, partial)", "color:green;font-weight:bold");
   console.log([
-    "USGS tools  (await the ones marked async):",
-    "  getState()                         read current selections",
-    "  setParameter('gage height')        map quick-select radios",
-    "  groupBy('huc8' | 'huc6' | 'county')",
-    "  sortBy('id descending')            name/id  ascending/descending",
-    "  toggleMap()  /  setMap(true|false)  /  mapVisible()",
-    "  await setRecency('120 days' | 'all')       async, opens the filter panel first",
-    "  await setDataTypeMatch('any' | 'all')      async",
-    "  await listDataTypes()  /  await toggleDataType('00060', true)   async",
-    "  await selectState('Montana')",
-    "  selectCounty('Ada')  /  favoriteSite('13206000', true)  /  openSite('13206000')",
-    "  USGS.DISCOVERED / USGS.SUPPLIED    what's read off the page vs typed in by hand",
+    "NOAA tools (partial, see file header for what's unconfirmed):",
+    "  search('Boise')                    fills the search box (picking a result: unconfirmed)",
+    "  geolocate() / zoomIn() / zoomOut() / home()",
+    "  openLayers() / closeLayers()",
+    "  listBasemaps() / setBasemap('satellite')",
+    "  toggleSection('River Gauge' | 'Hazards' | ...)",
+    "  setGaugeProduct('HEFS' | 'ensemble' | 'obsFcst' | 'LRO')",
+    "  setGaugeMode('Observation' | 'Forecast')",
+    "  listFloodCategories() / toggleFloodCategory('Minor Flood', true)",
+    "  setLimitByBoundary(true) / setPartnerFimOnly(true)",
+    "  NOAA.mapNote()   why individual map markers can't be clicked",
+    "  NOAA.DISCOVERED / NOAA.SUPPLIED    what's read off the page vs typed in by hand",
   ].join("\n"));
 })();
 
 /* ---------- bridge: lets the extension call this page's manifest functions ----------
  * This file runs in the page's own JS context (the "MAIN world"), so it can see
- * window.USGS above, but it has no access to chrome.* APIs. It talks out via
+ * window.NOAA above, but it has no access to chrome.* APIs. It talks out via
  * postMessage; a content script in the isolated world relays that to the extension
  * background script. Function lookup walks every manifest global present, so
  * injecting a named manifest and GENERIC together works.

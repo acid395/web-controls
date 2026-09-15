@@ -417,11 +417,12 @@
   ].join("\n"));
 })();
 
-/* ---------- bridge: lets the extension call GENERIC.* from outside this JS world ----------
- * Same pattern as page/usgs-bundle.js, targeting window.GENERIC instead of window.USGS.
- * This file runs in the page's own JS context (the "MAIN world"), so it can see window.GENERIC
- * above, but it has no access to chrome.* APIs. It talks out via postMessage; a content
- * script in the isolated world relays that to the extension background script.
+/* ---------- bridge: lets the extension call this page's manifest functions ----------
+ * This file runs in the page's own JS context (the "MAIN world"), so it can see
+ * window.GENERIC above, but it has no access to chrome.* APIs. It talks out via
+ * postMessage; a content script in the isolated world relays that to the extension
+ * background script. Function lookup walks every manifest global present, so
+ * injecting a named manifest and GENERIC together works.
  */
 if (!window.__wcPageBridgeInstalled) {
   window.__wcPageBridgeInstalled = true;
@@ -430,9 +431,14 @@ if (!window.__wcPageBridgeInstalled) {
     if (!e.data || e.data.channel !== "web-controls-req") return;
     const { id, fn, args } = e.data;
     try {
-      const target = window.GENERIC;
-      if (!target || typeof target[fn] !== "function") throw new Error(`GENERIC.${fn} is not a function`);
-      const result = await target[fn](...(args || []));
+      // Named manifests first: a hand-written, verified implementation beats
+      // GENERIC's selector-driven fallback whenever both expose the same name.
+      const names = ["USGS", "SITE", "NOAA", "FCP", "GENERIC"];
+      const owner = names
+        .map((n) => window[n])
+        .find((t) => t && typeof t[fn] === "function");
+      if (!owner) throw new Error(`${fn} is not a function on any manifest loaded here (tried ${names.join(", ")})`);
+      const result = await owner[fn](...(args || []));
       window.postMessage({ channel: "web-controls-res", id, ok: true, result }, "*");
     } catch (err) {
       window.postMessage({ channel: "web-controls-res", id, ok: false, error: String((err && err.message) || err) }, "*");
