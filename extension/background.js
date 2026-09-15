@@ -1559,6 +1559,27 @@ async function nwsPointFor({ stateCode, place }) {
 // instead. Returns what was asked for, or null for "right now".
 const FORECAST_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
+// People abbreviate days, and the tables being read do too ("Wed Sep 16").
+// Matching full names only meant "on Wed" lost the day silently and answered
+// about today instead - a wrong answer that looks entirely right.
+const DAY_ABBREVIATIONS = {
+  mon: "monday", tue: "tuesday", tues: "tuesday", wed: "wednesday", weds: "wednesday",
+  thu: "thursday", thur: "thursday", thurs: "thursday", fri: "friday",
+  sat: "saturday", sun: "sunday",
+};
+
+function findDayInText(text) {
+  const t = (text || "").toLowerCase();
+  const full = FORECAST_DAYS.find((d) => new RegExp(`\\b${d}\\b`).test(t));
+  if (full) return full;
+  // Word-boundary matching keeps "sun" out of "sunny" and "sat" out of
+  // "saturate".
+  for (const [abbr, day] of Object.entries(DAY_ABBREVIATIONS)) {
+    if (new RegExp(`\\b${abbr}\\b`).test(t)) return day;
+  }
+  return null;
+}
+
 function forecastWhen(text) {
   const t = (text || "").toLowerCase();
   // A maximum or minimum is not a current reading. Answering "max
@@ -1569,14 +1590,14 @@ function forecastWhen(text) {
   // as the night period.
   // "max ... on tuesday" is both an extreme and a day; answering with today's
   // high ignores half the question.
-  const namedDay = FORECAST_DAYS.find((d) => new RegExp(`\\b${d}\\b`).test(t));
+  const namedDay = findDayInText(t);
   if (/\b(max|maximum|high|highest|hottest|warmest)\b/.test(t)) return namedDay ? `high:${namedDay}` : "high";
   if (/\b(min|minimum|low|lowest|coldest|coolest)\b/.test(t)) return namedDay ? `low:${namedDay}` : "low";
   if (/\b(this |next |coming )?week\b|\bweekly\b|\b7[- ]day\b|\bseven[- ]day\b/.test(t)) return "week";
   if (/\btomorrow\b/.test(t)) return "tomorrow";
   if (/\btonight\b/.test(t)) return "tonight";
   if (/\bweekend\b/.test(t)) return "weekend";
-  const day = FORECAST_DAYS.find((d) => new RegExp(`\\b${d}\\b`).test(t));
+  const day = findDayInText(t);
   if (day) return day;
   if (/\bforecast\b|\bwill it\b|\bgoing to be\b/.test(t)) return "week";
   // "yesterday" and "last week" are history, which NWS's forecast cannot
@@ -2246,7 +2267,9 @@ function findMeasurementRows(pageData, { wants, place, day }) {
       if (index === -1) index = row.findIndex((cell, i) => i > 0 && /\d/.test(String(cell)));
       if (index === -1 || !row[index]) continue;
 
-      const column = columns[index] || `column ${index}`;
+      // "MonSep 14" when a <br> separates the day from the date; readable
+      // again with a space, and honest about an unnamed column.
+      const column = String(columns[index] || "").replace(/([a-z])([A-Z])/g, "$1 $2").trim() || "this column";
       return [{
         label: `${row[0]} · ${column}: ${row[index]}`,
         value: String(row[index]),

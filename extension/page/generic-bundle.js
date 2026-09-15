@@ -484,8 +484,21 @@
       const rows = [...table.rows].slice(0, 25);
       if (rows.length < 2) continue;
       const cells = (r) => [...r.cells].map((c) => textOf(c).slice(0, 60));
-      const header = rows[0].cells.length && [...rows[0].cells].some((c) => c.tagName === "TH")
-        ? cells(rows[0]) : null;
+
+      // Requiring <th> was too strict: plenty of real tables mark up their
+      // header row with <td>, and without column names a lookup has nothing
+      // to match a day against - every day then reads the same cell, which
+      // looks like a correct answer to the wrong question. So fall back to
+      // shape: a first row that is mostly words, above rows that are mostly
+      // numbers, is a header whatever tag it uses.
+      const isNumeric = (t) => /^[^a-zA-Z]*-?[\d,.]+[^a-zA-Z]*$/.test(t) && /\d/.test(t);
+      const firstRow = rows[0].cells.length ? cells(rows[0]) : [];
+      const taggedHeader = [...rows[0].cells].some((c) => c.tagName === "TH");
+      const bodyRows = rows.slice(1);
+      const bodyHasNumbers = bodyRows.some((r) => cells(r).slice(1).some(isNumeric));
+      const firstRowIsWords = firstRow.length > 1 && firstRow.slice(1).filter(Boolean).every((t) => !isNumeric(t));
+      const header = firstRow.length && (taggedHeader || (firstRowIsWords && bodyHasNumbers))
+        ? firstRow : null;
       out.push({
         caption: table.caption ? textOf(table.caption).slice(0, 80) : null,
         columns: header,

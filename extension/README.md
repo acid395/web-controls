@@ -117,6 +117,16 @@ text is sampled to confirm the subject, the row label picks the measurement,
 and the day picks the column. With no day named it takes *today's* column
 rather than the first, since these tables often begin with yesterday.
 
+Header detection cannot require `<th>`. The real page marks its header row
+with `<td>` and splits the day from the date with a `<br>`, so insisting on
+the tag left the columns unnamed - and an unnamed column means a day has
+nothing to match, so every day quietly reads the same cell. That is a wrong
+answer to the right question, and it looks entirely correct. A first row that
+is mostly words above rows that are mostly numbers is treated as a header
+whatever tag it uses. Days are matched by abbreviation too, since both people
+and tables write "Wed" - with word boundaries, so "sunny" is not Sunday and
+"saturated" is not Saturday.
+
 A is searched too, because a place is often not what the page is about - a
 regional forecast lists dozens of towns, and the answer for the one asked
 about is in its row. Judging relevance by title and

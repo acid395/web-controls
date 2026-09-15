@@ -327,6 +327,36 @@ else {
   check("elsewhere still fetches", ask("max temperature of chicago on tuesday"), null);
 }
 
+section("headers without <th>, and abbreviated days");
+// The real page marks its header row with <td> and splits the day from the
+// date with a <br>. Requiring <th> left the columns unnamed, so every day
+// read the same cell - a wrong answer to the right question, which looks
+// entirely correct.
+const plainPage = loadPage(`<!doctype html><html><head><title>IDSS Forecast Points</title></head><body>
+  <p>0 miles N of Hermantown, MN</p>
+  <table>
+  <tr><td>Weekly Summary</td><td>Mon<br>Sep 14</td><td>Tue<br>Sep 15</td><td>Wed<br>Sep 16</td></tr>
+  <tr><td>Max Temp, °F</td><td>56</td><td>64</td><td>63</td></tr>
+  <tr><td>Min Temp, °F</td><td>56</td><td>47</td><td>40</td></tr>
+  </table></body></html>`, { url: "https://www.weather.gov/forecastpoints" });
+if (!plainPage) skip("th-less tables", "jsdom not installed");
+else {
+  const pd2 = plainPage.GENERIC.readPage();
+  ensure("a <td> header row is still recognised", (pd2.tables[0].columns || []).length === 4, pd2.tables[0].columns);
+  const ask2 = (q) => {
+    const plan = sb.planDataTool(q, { global: "FCP" });
+    const when = plan && plan.args ? plan.args.when : null;
+    const day = when && String(when).includes(":") ? String(when).split(":")[1] : null;
+    const r = sb.findOnPage(pd2, { wants: sb.pageValueWants(q), place: plan && plan.args ? plan.args.place : null, day });
+    return r ? r[0].label : null;
+  };
+  check("an abbreviated day is understood", ask2("max temperature of hermantown MN on Wed"), "Max Temp, °F · Wed Sep 16: 63");
+  check("the full name agrees", ask2("max temperature of hermantown MN on wednesday"), "Max Temp, °F · Wed Sep 16: 63");
+  check("a different day is a different column", ask2("max temperature of hermantown MN on tuesday"), "Max Temp, °F · Tue Sep 15: 64");
+  // "sunny" must not read as Sunday, nor "saturated" as Saturday.
+  check("sunny is not Sunday", plan("max temperature in sunny california", { global: "FCP" }).args.when, "high");
+}
+
 section("model output parsing");
 // The native tools API is restricted to 7-8B models, which measured as
 // unusable here, so the model is prompted for JSON instead - and a small
