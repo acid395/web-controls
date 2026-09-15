@@ -80,10 +80,12 @@ function loadBackground({ onFetch } = {}) {
 
 // Runs the GENERIC page bundle against a DOM, the way it runs in a real page.
 // Returns null when jsdom isn't installed, so DOM tests skip rather than fail.
-function loadPage(html) {
+// A real page always has a real URL, and code under test resolves relative
+// links against it; about:blank (jsdom's default) makes that throw.
+function loadPage(html, { url = "https://waterdata.usgs.gov/state/Idaho/" } = {}) {
   let JSDOM;
   try { ({ JSDOM } = require("jsdom")); } catch (e) { return null; }
-  const dom = new JSDOM(html, { pretendToBeVisual: true, runScripts: "dangerously" });
+  const dom = new JSDOM(html, { pretendToBeVisual: true, runScripts: "dangerously", url });
   const w = dom.window;
   // jsdom lays nothing out, so every element measures zero and the bundle's
   // isVisible() would reject all of them.

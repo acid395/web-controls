@@ -666,6 +666,26 @@ const TOOL_DEFS = {
   ],
   GENERIC: [
     {
+      name: "pageHoverChart", fn: "hoverSeries", argOrder: ["selector"],
+      description: "Read a chart's values by hovering across it, for charts that only reveal numbers in a tooltip. Slower and sampled; prefer pageFeeds when the underlying data request was captured.",
+      parameters: { type: "object", properties: { selector: { type: "string", description: "optional CSS selector for the chart; the largest one is used otherwise" } } },
+    },
+    {
+      name: "pageMapFeatures", fn: "mapFeatures", argOrder: [],
+      description: "Read the markers and their data from a map on this page, using the map library's own instance where one is reachable. Reports plainly when the map is canvas-only and has nothing readable.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "pageReadUrl", fn: "readUrl", argOrder: ["url"],
+      description: "Read another page of the same site without navigating to it - use to answer about a different state, gauge or location than the one currently open. Same-origin only, and reads server HTML, so a page that builds itself in JavaScript arrives empty.",
+      parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+    },
+    {
+      name: "pageLinks", fn: "pageLinks", argOrder: [],
+      description: "List the links on this page, to find the URL of another page worth reading with pageReadUrl.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
       name: "pageFeeds", fn: "capturedFeeds", argOrder: [],
       description: "List the data requests this page made - the source behind a chart or map whose contents are drawn to a canvas and cannot be read from the page itself.",
       parameters: { type: "object", properties: {} },

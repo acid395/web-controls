@@ -594,6 +594,296 @@
     return out;
   }
 
+  /* ============================================================================
+   * hoverSeries() - the data a chart only reveals on hover.
+   *
+   * A chart's numbers frequently exist nowhere in the DOM until a pointer
+   * moves over it, at which point the library writes a tooltip. That is true
+   * of canvas charts especially, where there is otherwise nothing to read at
+   * all. Moving a synthetic pointer across the plot and collecting what
+   * appears recovers the series.
+   *
+   * This is a genuine last resort, not a preferred path. It samples rather
+   * than enumerates, so it can miss points between samples; it depends on the
+   * library rendering a tooltip into the DOM at all (some draw it into the
+   * canvas, where it stays unreadable); and it moves the pointer, which on a
+   * map can pan or highlight. Feed capture is better whenever the underlying
+   * request was seen, since that is the real series rather than a reading of
+   * the picture.
+   * ========================================================================== */
+  const TOOLTIP_SELECTOR = [
+    '[role=tooltip]', '.tooltip', '[class*="tooltip"]', '[class*="Tooltip"]',
+    '[class*="popup"]', '[class*="Popup"]', '[class*="hover"]', '[id*="tooltip"]',
+  ].join(",");
+
+  const tooltipTexts = () => deepQueryAll(TOOLTIP_SELECTOR)
+    .filter((el) => isVisible(el))
+    .map((el) => textOf(el))
+    .filter((t) => t && t.length < 300);
+
+  async function hoverSeries({ selector, samples = 24, settle = 60 } = {}) {
+    const target = selector
+      ? deepQuery(selector)
+      : deepQueryAll("canvas, svg").filter(isVisible).sort((a, b) => {
+          const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+          return (rb.width * rb.height) - (ra.width * ra.height);
+        })[0];
+    if (!target) return { found: false, note: "no chart or canvas on this page to hover over" };
+
+    const box = target.getBoundingClientRect();
+    if (!box.width || !box.height) return { found: false, note: "the chart has no size on screen" };
+
+    const before = new Set(tooltipTexts());
+    const seen = new Map(); // text -> the x fraction it first appeared at
+    const y = box.top + box.height / 2;
+
+    for (let i = 0; i < samples; i++) {
+      const fraction = samples === 1 ? 0.5 : i / (samples - 1);
+      const x = box.left + box.width * fraction;
+      for (const type of ["pointermove", "mousemove"]) {
+        // Both, because libraries listen for one or the other and there is
+        // no reliable way to know which.
+        target.dispatchEvent(new MouseEvent(type, {
+          bubbles: true, cancelable: true, clientX: x, clientY: y, view: window,
+        }));
+      }
+      await wait(settle);
+      for (const text of tooltipTexts()) {
+        if (before.has(text) || seen.has(text)) continue;
+        seen.set(text, Math.round(fraction * 100) / 100);
+      }
+    }
+
+    // Leave the pointer off the chart so the tooltip does not linger.
+    target.dispatchEvent(new MouseEvent("pointerout", { bubbles: true }));
+    target.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+
+    const points = [...seen.entries()].map(([text, at]) => ({ text, at }));
+    return {
+      found: points.length > 0,
+      element: target.tagName.toLowerCase(),
+      samples,
+      points,
+      note: points.length
+        ? "read by hovering across the chart - sampled, so points between samples may be missing"
+        : "hovering produced no tooltip. The chart may draw its tooltip into the canvas itself, where it cannot be read - try pageFeeds() for the data it fetched instead",
+    };
+  }
+
+  /* ============================================================================
+   * mapFeatures() - the data behind map markers.
+   *
+   * map-probe established the hard part years of testing keeps confirming: a
+   * canvas map has no per-marker DOM, so markers cannot be found, clicked or
+   * hovered by selector. Hovering pixels blindly is worse than useless on a
+   * map, because a stray pointer pans it.
+   *
+   * What does sometimes exist is the library's own instance, reachable off
+   * window, holding the features it drew. Asking it directly is exact where
+   * hovering is guesswork. Leaflet and OpenLayers keep layers of features;
+   * Mapbox and MapLibre can be queried for rendered features. When no
+   * instance is reachable the honest answer is that the data is pixels, and
+   * the request the page made (pageFeeds) is the only way to it.
+   * ========================================================================== */
+  function mapFeatures({ limit = 60 } = {}) {
+    const info = mapInfo();
+    const out = [];
+
+    // DOM markers first: when they exist this is exact and cheap.
+    const domMarkers = deepQueryAll('[class*="marker"], [class*="Marker"], .leaflet-marker-icon, [role="button"][aria-label]')
+      .filter(isVisible)
+      .map((el) => ({
+        label: (el.getAttribute("aria-label") || el.getAttribute("title") || textOf(el) || "").slice(0, 120),
+        selector: cssPath(el),
+      }))
+      .filter((m) => m.label);
+    if (domMarkers.length) {
+      return { source: "dom", libraries: info.libraries, count: domMarkers.length,
+        features: domMarkers.slice(0, limit),
+        note: "these markers are real elements, so they can also be clicked by selector" };
+    }
+
+    // Otherwise the library's own instance, if it is reachable.
+    const seen = new Set();
+    const collect = (obj, depth) => {
+      if (!obj || depth > 5 || out.length >= limit || seen.has(obj)) return;
+      if (typeof obj !== "object") return;
+      seen.add(obj);
+
+      // Leaflet: eachLayer walks everything added to the map.
+      if (typeof obj.eachLayer === "function") {
+        try {
+          obj.eachLayer((layer) => {
+            if (out.length >= limit) return;
+            const latlng = typeof layer.getLatLng === "function" ? layer.getLatLng() : null;
+            const popup = typeof layer.getPopup === "function" && layer.getPopup();
+            const text = popup && typeof popup.getContent === "function" ? popup.getContent() : null;
+            if (latlng || text) {
+              out.push({
+                lat: latlng ? latlng.lat : null, lon: latlng ? latlng.lng : null,
+                label: typeof text === "string" ? text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160) : null,
+                properties: layer.feature && layer.feature.properties ? layer.feature.properties : undefined,
+              });
+            }
+          });
+        } catch (e) { /* not a Leaflet map after all */ }
+      }
+
+      // OpenLayers: layers carry sources carrying features.
+      if (typeof obj.getLayers === "function") {
+        try {
+          obj.getLayers().forEach((layer) => {
+            const source = typeof layer.getSource === "function" ? layer.getSource() : null;
+            if (source && typeof source.getFeatures === "function") {
+              for (const f of source.getFeatures()) {
+                if (out.length >= limit) break;
+                const props = typeof f.getProperties === "function" ? f.getProperties() : {};
+                delete props.geometry;
+                out.push({ properties: props, label: (props.name || props.title || props.label || "") || null });
+              }
+            }
+          });
+        } catch (e) { /* not an OpenLayers map */ }
+      }
+
+      // Mapbox / MapLibre: ask for what is currently rendered.
+      if (typeof obj.queryRenderedFeatures === "function") {
+        try {
+          for (const f of obj.queryRenderedFeatures()) {
+            if (out.length >= limit) break;
+            out.push({ properties: f.properties || {}, label: (f.properties && (f.properties.name || f.properties.title)) || null,
+              lat: f.geometry && f.geometry.coordinates ? f.geometry.coordinates[1] : null,
+              lon: f.geometry && f.geometry.coordinates ? f.geometry.coordinates[0] : null });
+          }
+        } catch (e) { /* not queryable right now */ }
+      }
+    };
+
+    for (const key of Object.keys(window)) {
+      if (out.length >= limit) break;
+      let value;
+      try { value = window[key]; } catch (e) { continue; } // some globals throw on access
+      collect(value, 0);
+    }
+
+    if (out.length) {
+      return { source: "js-instance", libraries: info.libraries, count: out.length, features: out.slice(0, limit),
+        note: "read from the map library's own instance, which is exact - hovering pixels would not be" };
+    }
+    return {
+      source: "none", libraries: info.libraries, count: 0, features: [],
+      driveable: info.driveable,
+      note: info.libraries.length
+        ? "this map draws its features to a canvas and exposes no reachable instance, so there is nothing to read from the page - use pageFeeds() for the data it fetched"
+        : "no map found on this page",
+    };
+  }
+
+  /* ============================================================================
+   * readUrl() - another page of the same site, without leaving this one.
+   *
+   * "I am on Idaho and I want Alaska" is a fair thing to ask, and navigating
+   * there to answer it would lose the page in front of you. Fetching the
+   * other page and running the same extraction over it answers without
+   * moving.
+   *
+   * The limit is real and worth stating: this reads the HTML the server
+   * sends. A page that renders its content in JavaScript - which many
+   * dashboards do - arrives here nearly empty, and no amount of parsing
+   * recovers what was never in the document. For those, the page's own data
+   * request (pageFeeds) or the agency API is the way. Same-origin only, since
+   * that is what the page is allowed to fetch.
+   * ========================================================================== */
+  async function readUrl(url) {
+    let target;
+    try { target = new URL(url, location.href); } catch (e) { throw new Error(`"${url}" is not a URL`); }
+    if (target.origin !== location.origin) {
+      throw new Error(`can only read pages on ${location.origin} from here - ${target.origin} is a different site`);
+    }
+
+    const res = await fetch(target.href, { credentials: "same-origin" });
+    if (!res.ok) throw new Error(`${target.pathname} returned ${res.status}`);
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    // The same extraction as readPage, over a parsed document rather than the
+    // live one. Visibility cannot be judged here - nothing is laid out - so
+    // structure is used instead of geometry.
+    const text = (el) => (el.textContent || "").replace(/\s+/g, " ").trim();
+    const tables = [...doc.querySelectorAll("table")].slice(0, 8).map((table) => {
+      const rows = [...table.rows].slice(0, 30);
+      const cells = (r) => [...r.cells].map((c) => text(c).slice(0, 60));
+      const header = rows.length && [...rows[0].cells].some((c) => c.tagName === "TH") ? cells(rows[0]) : null;
+      return {
+        caption: table.caption ? text(table.caption).slice(0, 80) : null,
+        columns: header,
+        rows: (header ? rows.slice(1) : rows).map(cells),
+        totalRows: table.rows.length,
+      };
+    }).filter((t) => t.rows.length);
+
+    const pairs = [];
+    for (const dl of doc.querySelectorAll("dl")) {
+      const kids = [...dl.children];
+      for (let i = 0; i < kids.length - 1; i++) {
+        if (kids[i].tagName === "DT" && kids[i + 1].tagName === "DD") {
+          pairs.push({ label: text(kids[i]).slice(0, 60), value: text(kids[i + 1]).slice(0, 60) });
+        }
+      }
+    }
+    for (const tr of doc.querySelectorAll("tr")) {
+      if (tr.cells && tr.cells.length === 2) {
+        const label = text(tr.cells[0]), value = text(tr.cells[1]);
+        if (label && value && label.length < 60) pairs.push({ label: label.slice(0, 60), value: value.slice(0, 60) });
+      }
+    }
+
+    const labelledNumbers = [];
+    const seen = new Set();
+    for (const el of doc.querySelectorAll("p, span, div, li, dd, dt, td, th, strong, b, h3, h4, h5, h6")) {
+      if (el.children.length > 1) continue;
+      const t = text(el);
+      if (!t || t.length > 70 || !/\d/.test(t) || !/[a-zA-Z]/.test(t) || seen.has(t)) continue;
+      seen.add(t);
+      const m = t.match(/(-?[\d,]+\.?\d*)\s*(°\s?[CF]|°|%|[a-zA-Z/]{1,8})?/);
+      labelledNumbers.push({ text: t, value: m ? Number(m[1].replace(/,/g, "")) : null, unit: m && m[2] ? m[2].replace(/\s+/g, "") : null });
+      if (labelledNumbers.length >= 80) break;
+    }
+
+    const bodyText = text(doc.body || doc.documentElement).length;
+    return {
+      url: target.href,
+      title: doc.title,
+      headings: [...doc.querySelectorAll("h1, h2")].map(text).filter(Boolean).slice(0, 12),
+      tables, pairs, labelledNumbers,
+      readouts: [],
+      chart: { svgCharts: [], canvasCount: doc.querySelectorAll("canvas").length },
+      note: (!tables.length && !pairs.length && !labelledNumbers.length)
+        ? (bodyText < 2000
+          ? "this page arrived nearly empty, which means it builds its content in JavaScript - the server HTML has nothing to read"
+          : "no tables, labelled pairs or numbers found in this page's HTML")
+        : undefined,
+    };
+  }
+
+  // Links on this page, so a caller can find the other page worth reading.
+  function pageLinks({ limit = 120 } = {}) {
+    const out = [];
+    const seen = new Set();
+    for (const a of deepQueryAll("a[href]")) {
+      let href;
+      try { href = new URL(a.getAttribute("href"), location.href); } catch (e) { continue; }
+      if (href.origin !== location.origin) continue;
+      if (seen.has(href.href)) continue;
+      seen.add(href.href);
+      const label = textOf(a).slice(0, 80) || a.getAttribute("aria-label") || a.getAttribute("title") || "";
+      if (!label) continue;
+      out.push({ label, url: href.href });
+      if (out.length >= limit) break;
+    }
+    return { url: location.href, count: out.length, links: out };
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -619,6 +909,10 @@
   const GENERIC = {
     inventory,
     readPage,
+    hoverSeries,
+    mapFeatures,
+    readUrl,
+    pageLinks,
     capturedFeeds,
     capturedFeed,
     mapInfo,

@@ -215,6 +215,73 @@ else {
     hit("max temperature on hermantown mn", "hermantown"));
 }
 
+section("charts, maps and other pages");
+const chartPage = loadPage(`<!doctype html><html><head><title>Gauge</title></head><body>
+  <canvas id="c" width="400" height="200"></canvas>
+  <div class="tooltip" id="tip" style="display:none"></div></body></html>`);
+if (!chartPage) skip("hover / map / cross-page", "jsdom not installed");
+else {
+  // A canvas chart keeps its numbers nowhere in the DOM until hovered, so
+  // this is the only way to read one that captured no data request.
+  const canvas = chartPage.document.getElementById("c");
+  const tip = chartPage.document.getElementById("tip");
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 200, right: 400, bottom: 200 });
+  const series = [["Mon", "4.1 ft"], ["Tue", "4.3 ft"], ["Wed", "3.9 ft"]];
+  canvas.addEventListener("mousemove", (e) => {
+    const i = Math.min(series.length - 1, Math.floor((e.clientX / 400) * series.length));
+    tip.textContent = `${series[i][0]}: ${series[i][1]}`;
+    tip.style.display = "block";
+  });
+
+  // A map instance is exact where hovering pixels is guesswork - and on a
+  // map a stray pointer pans it, so hovering is worse than useless there.
+  const mapPage = loadPage(`<!doctype html><html><body><canvas></canvas></body></html>`);
+  mapPage.someMap = { eachLayer(fn) {
+    [{ lat: 61.2, lng: -149.9, name: "Ship Creek" }].forEach((m) => fn({
+      getLatLng: () => ({ lat: m.lat, lng: m.lng }),
+      getPopup: () => ({ getContent: () => `<b>${m.name}</b> 4.2 ft` }),
+    }));
+  } };
+  const mf = mapPage.GENERIC.mapFeatures();
+  check("map features come from the library instance", mf.source, "js-instance");
+  check("with their coordinates", [mf.features[0].lat, mf.features[0].lon], [61.2, -149.9]);
+  check("popup markup is stripped", mf.features[0].label, "Ship Creek 4.2 ft");
+
+  const bare = loadPage(`<!doctype html><html><body><canvas class="maplibregl-canvas"></canvas></body></html>`);
+  const bareMap = bare.GENERIC.mapFeatures();
+  check("a canvas map with no instance says so", bareMap.source, "none");
+  ensure("and explains the limit", /canvas/.test(bareMap.note), bareMap.note);
+
+  // "I am on Idaho and want Alaska" - answering without navigating away.
+  const linkPage = loadPage(`<!doctype html><html><head><title>Idaho</title></head><body>
+    <a href="/state/Alaska/">Alaska</a><a href="https://elsewhere.gov/x">Offsite</a></body></html>`);
+  linkPage.fetch = async () => ({ ok: true, status: 200, text: async () =>
+    `<html><head><title>Alaska conditions</title></head><body><h1>Alaska</h1>
+     <table><tr><th>Gauge</th><th>Stage</th></tr><tr><td>Ship Creek</td><td>4.2 ft</td></tr></table></body></html>` });
+  check("only same-origin links are offered", linkPage.GENERIC.pageLinks().links.map((l) => l.label), ["Alaska"]);
+
+  (async () => {
+    const hov = await chartPage.GENERIC.hoverSeries({ samples: 6, settle: 1 });
+    ensure("hovering recovers a canvas chart's series", hov.points.length >= 3, hov.points);
+    ensure("and says it sampled rather than enumerated", /sampled/.test(hov.note), hov.note);
+
+    const empty = loadPage(`<!doctype html><html><body><canvas id="x"></canvas></body></html>`);
+    empty.document.getElementById("x").getBoundingClientRect = () => ({ left: 0, top: 0, width: 300, height: 150, right: 300, bottom: 150 });
+    const none = await empty.GENERIC.hoverSeries({ samples: 3, settle: 1 });
+    // A tooltip drawn into the canvas is unreadable; saying so beats "no data".
+    ensure("no tooltip is explained, not reported as empty", /canvas/.test(none.note), none.note);
+
+    const other = await linkPage.GENERIC.readUrl("/state/Alaska/");
+    check("another page is read without navigating", other.title, "Alaska conditions");
+    check("and its table extracted", other.tables[0].rows[0], ["Ship Creek", "4.2 ft"]);
+    let refused = null;
+    try { await linkPage.GENERIC.readUrl("https://elsewhere.gov/x"); } catch (e) { refused = e.message; }
+    ensure("a different site is refused", /different site/.test(refused || ""), refused);
+    finishPageTools();
+  })();
+}
+
+function finishPageTools() {
 section("model output parsing");
 // The native tools API is restricted to 7-8B models, which measured as
 // unusable here, so the model is prompted for JSON instead - and a small
@@ -346,6 +413,7 @@ if (process.argv.includes("--live")) {
 }
 }
 
+}
 }
 
 function report() {

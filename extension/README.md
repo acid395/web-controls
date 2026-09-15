@@ -139,6 +139,32 @@ two of them were bugs:
   can differ by a degree or two, because the grid square is chosen from the
   derived coordinate - a lakefront gauge is not downtown.
 
+## Charts, maps, and other pages
+
+Four more ways to get at data, each for a case the others cannot reach.
+
+**`hoverSeries()`** moves a synthetic pointer across a chart and collects the
+tooltips, recovering values that exist nowhere in the DOM until hovered - the
+usual state of a canvas chart. It samples rather than enumerates, so points
+between samples are missed, and it says so. A library that draws its tooltip
+*into* the canvas stays unreadable, which it also says. Feed capture is better
+whenever the underlying request was seen: that is the real series rather than
+a reading of the picture.
+
+**`mapFeatures()`** asks the map library's own instance for what it drew -
+Leaflet's layers, OpenLayers' sources, Mapbox and MapLibre's rendered features
+- which is exact where hovering would be guesswork. Hovering a map is in fact
+worse than useless: a stray pointer pans it. When no instance is reachable the
+answer is that the features are pixels, and the page's own data request is the
+only route to them.
+
+**`readUrl(url)`** reads another page of the same site without navigating -
+"I'm on Idaho and want Alaska" - running the same extraction over the fetched
+HTML. The limit is worth stating plainly: it reads what the server sends, so a
+page that builds its content in JavaScript arrives nearly empty, and it says
+which of those happened rather than reporting no data. Same-origin only.
+**`pageLinks()`** finds the URL to hand it.
+
 ## Reading a chart that cannot be read
 
 `readPage()` handles an SVG chart, whose labels are real elements. A canvas
