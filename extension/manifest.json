@@ -9,7 +9,10 @@
     "https://dashboard.waterdata.usgs.gov/*",
     "https://mywaterway.epa.gov/*",
     "https://www.drought.gov/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://waterservices.usgs.gov/*",
+    "https://api.water.noaa.gov/*",
+    "https://api.weather.gov/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "content_security_policy": {
