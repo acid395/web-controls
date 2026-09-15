@@ -292,7 +292,16 @@ function planDataTool(instruction, route) {
     // A weather question about an unrecognized place stays a weather
     // question - weatherConditions resolves the state from the place itself
     // rather than falling back to water data for want of a state.
-    if (wantsWeather) return { name: "weatherConditions", args: { place } };
+    //
+    // The time has to survive too. Dropping it here meant "min temperature of
+    // hermantown on wednesday" lost the day, and a table lookup then read
+    // whichever column came first - yesterday's.
+    if (wantsWeather) {
+      const when = forecastWhen(text);
+      return when
+        ? { name: "weatherForecast", args: { place, when } }
+        : { name: "weatherConditions", args: { place } };
+    }
     return {
       name: "waterFindGauges",
       args: { place, ...(parameter ? { parameter: parameter.canonical } : {}) },
@@ -2162,7 +2171,23 @@ function pageIsAbout(pageData, place) {
 // about is in its row. Title-and-headings matching never sees that, so the
 // tables are searched by row first, and the column whose header matches the
 // question decides which cell to read.
-function findInTables(pageData, { wants, place }) {
+// Forecast tables come in both orientations, and assuming one silently
+// answers from the wrong cell.
+//
+//   A. rows are places, columns are measurements
+//        Location   | High  | Low
+//        Hermantown | 71 °F | 46 °F
+//
+//   B. rows are measurements, columns are days - the page itself being about
+//      one place, stated in its text rather than in the table
+//        Weekly Summary | Mon Sep 14 | Tue Sep 15
+//        Max Temp, °F   |     56     |     64
+//
+// B was being missed entirely, so a page showing exactly the number asked for
+// fell through to the agency and answered from the state centre instead.
+function findInTables(pageData, { wants, place, day }) {
+  const inB = findMeasurementRows(pageData, { wants, place, day });
+  if (inB) return inB;
   if (!place) return null;
   const needle = place.toLowerCase();
   for (const table of pageData.tables || []) {
@@ -2189,9 +2214,52 @@ function findInTables(pageData, { wants, place }) {
   return null;
 }
 
-function findOnPage(pageData, { wants, place }) {
+// Orientation B: the row label names the measurement and the columns are
+// days. The page is about one place, so that has to be confirmed from its
+// text - the table itself never mentions it.
+function findMeasurementRows(pageData, { wants, place, day }) {
+  if (!wants.length) return null;
+  const haystack = [pageData.title || "", ...(pageData.headings || []), pageData.text || ""].join(" ").toLowerCase();
+  if (place && !place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || haystack.includes(w))) return null;
+
+  for (const table of pageData.tables || []) {
+    const columns = table.columns || [];
+    for (const row of table.rows || []) {
+      const label = String(row[0] || "").toLowerCase();
+      if (!label || !wants.every((concept) => conceptMatches(concept, label))) continue;
+
+      // Which column. A named day matches a header by its first three
+      // letters ("tuesday" -> "Tue Sep 15"); with no day, the first cell
+      // carrying a number is the nearest one.
+      let index = -1;
+      if (day) {
+        const abbr = day.slice(0, 3);
+        index = columns.findIndex((c) => String(c).toLowerCase().includes(abbr));
+      }
+      // No day named: today, not simply the first column - these tables often
+      // begin with yesterday, so "first numeric cell" quietly answers about
+      // the wrong day.
+      if (index === -1) {
+        const today = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][new Date().getDay()];
+        index = columns.findIndex((c) => String(c).toLowerCase().includes(today));
+      }
+      if (index === -1) index = row.findIndex((cell, i) => i > 0 && /\d/.test(String(cell)));
+      if (index === -1 || !row[index]) continue;
+
+      const column = columns[index] || `column ${index}`;
+      return [{
+        label: `${row[0]} · ${column}: ${row[index]}`,
+        value: String(row[index]),
+        fromTable: true,
+      }];
+    }
+  }
+  return null;
+}
+
+function findOnPage(pageData, { wants, place, day }) {
   // Tables first: they can answer about a place the page is not itself about.
-  const inTable = findInTables(pageData, { wants, place });
+  const inTable = findInTables(pageData, { wants, place, day });
   if (inTable) return inTable;
   if (!pageIsAbout(pageData, place)) return null;
   const known = wants.filter((w) => PAGE_VALUE_TERMS[w]);
@@ -2712,7 +2780,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             : (extractPlaceHint(msg.instruction || "", {}) || null);
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
-            const hits = findOnPage(read.result, { wants, place: askedPlace });
+            // "high:tuesday" carries the day, which decides the column.
+            const askedDay = dataCall && dataCall.args && typeof dataCall.args.when === "string" && dataCall.args.when.includes(":")
+              ? dataCall.args.when.split(":")[1] : null;
+            const hits = findOnPage(read.result, { wants, place: askedPlace, day: askedDay });
             if (hits) {
               respond({
                 ok: true, plannedBy: "from-page", readFrom: read.result.url, values: hits,

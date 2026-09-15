@@ -290,6 +290,43 @@ else {
 }
 
 function finishPageTools() {
+section("a table of measurements by day");
+// The layout weather.gov actually uses, which is the transpose of what the
+// place-row lookup expects: measurements down the side, days across the top,
+// and the location stated in prose rather than in the table at all. Missing
+// it meant a page showing exactly the number asked for fell through to the
+// agency, which answered from the centre of the state.
+const gridPage = loadPage(`<!doctype html><html><head><title>Point Forecast</title></head><body>
+  <p>0 miles N of Hermantown, MN</p>
+  <table>
+  <tr><th>Weekly Summary</th><th>Mon Sep 14</th><th>Tue Sep 15</th><th>Wed Sep 16</th></tr>
+  <tr><td>Max Temp, °F</td><td>56</td><td>64</td><td>63</td></tr>
+  <tr><td>Min Temp, °F</td><td>56</td><td>47</td><td>40</td></tr>
+  <tr><td>Max Wind, mph</td><td>12</td><td>22</td><td>6</td></tr>
+  </table></body></html>`, { url: "https://www.weather.gov/forecastpoints" });
+if (!gridPage) skip("measurement tables", "jsdom not installed");
+else {
+  const gd = gridPage.GENERIC.readPage();
+  // The place is in prose, so the page's own text is what identifies it.
+  ensure("the page's text is sampled", /hermantown/i.test(gd.text || ""), (gd.text || "").slice(0, 60));
+  const ask = (q) => {
+    const plan = sb.planDataTool(q, { global: "FCP" });
+    const place = plan && plan.args ? (plan.args.place || plan.args.nameContains) : null;
+    const when = plan && plan.args ? plan.args.when : null;
+    const day = when && String(when).includes(":") ? String(when).split(":")[1] : null;
+    const r = sb.findOnPage(gd, { wants: sb.pageValueWants(q), place, day });
+    return r ? r[0].label : null;
+  };
+  check("the named day picks the column",
+    ask("max temperature of hermantown, MN on tuesday sep 15"), "Max Temp, °F · Tue Sep 15: 64");
+  // The row label picks the row, so min and max are different rows.
+  check("min reads a different row", ask("min temperature of hermantown on wednesday"), "Min Temp, °F · Wed Sep 16: 40");
+  check("wind is a different row again", ask("max wind in hermantown on tuesday"), "Max Wind, mph · Tue Sep 15: 22");
+  // Without "MN" there is no state, and that path was dropping the day.
+  ensure("a day survives even with no state named", /Wed/.test(ask("min temperature of hermantown on wednesday") || ""), ask("min temperature of hermantown on wednesday"));
+  check("elsewhere still fetches", ask("max temperature of chicago on tuesday"), null);
+}
+
 section("model output parsing");
 // The native tools API is restricted to 7-8B models, which measured as
 // unusable here, so the model is prompted for JSON instead - and a small

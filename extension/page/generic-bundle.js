@@ -889,9 +889,15 @@
     const tables = readTables();
     const pairs = readPairs();
     const readouts = readReadouts();
+    // A bounded sample of the page's own text. Some pages state their subject
+    // in prose rather than a heading - "0 miles N of Hermantown, MN" - and
+    // without this there is no way to tell such a page is about that place.
+    const bodyText = textOf(document.body || document.documentElement).slice(0, 4000);
+
     return {
       url: location.href,
       title: document.title,
+      text: bodyText,
       headings: deepQueryAll("h1, h2").filter(isVisible).map(textOf).filter(Boolean).slice(0, 12),
       tables,
       pairs,

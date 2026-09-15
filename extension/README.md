@@ -100,9 +100,26 @@ station observation is not a grid-square forecast.
 
 So data questions read the page first and fall back to the agency.
 
-Tables are searched by row before anything else, because a place is often not
-what the page is *about* - a regional forecast lists dozens of towns, and the
-answer for the one asked about is in its row. Judging relevance by title and
+Forecast tables come in both orientations, and assuming one silently answers
+from the wrong cell:
+
+```
+A. rows are places                  B. rows are measurements
+   Location   | High  | Low            Weekly Summary | Mon Sep 14 | Tue Sep 15
+   Hermantown | 71 °F | 46 °F          Max Temp, °F   |     56     |     64
+```
+
+B is what weather.gov's point forecast actually uses, and missing it meant a
+page displaying exactly the number asked for fell through to the agency, which
+answered from the centre of the state. In B the place is not in the table at
+all - it is stated in prose ("0 miles N of Hermantown, MN") - so the page's own
+text is sampled to confirm the subject, the row label picks the measurement,
+and the day picks the column. With no day named it takes *today's* column
+rather than the first, since these tables often begin with yesterday.
+
+A is searched too, because a place is often not what the page is about - a
+regional forecast lists dozens of towns, and the answer for the one asked
+about is in its row. Judging relevance by title and
 headings alone missed that entirely: asked for Hermantown's high on a page
 whose table had exactly that, it fetched instead and answered from the centre
 of Minnesota. The column whose header matches the question picks the cell, so
