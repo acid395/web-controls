@@ -80,11 +80,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const engine = await getEngine((report) => {
           chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
         });
-        const reply = await engine.chat.completions.create({
-          messages: [{ role: "user", content: msg.instruction }],
-          tools: msg.tools,
-          tool_choice: "auto",
-        });
+        // background.js optionally supplies context (env-vocab synonyms,
+        // and for GENERIC-route asks, the live inventory() output) - this is
+        // what lets the model pick a real selector on a page it's never
+        // seen, rather than guessing one blind. It can't go in a system
+        // message: WebLLM 0.2.85 rejects any custom system prompt outright
+        // once `tools` is set ("cannot specify customized system prompt"),
+        // confirmed live - Hermes-2-Pro's tool-calling mode installs its own
+        // fixed system prompt instead. So it's folded into the one user
+        // message instead.
+        const content = msg.context ? `${msg.context}\n\n${msg.instruction}` : msg.instruction;
+        const messages = [{ role: "user", content }];
+        // llmProgress only fires during model *loading*, so a slow-but-
+        // working inference call (realistically seconds on an 8B model over
+        // WebGPU) looks identical to a hang in the popup otherwise.
+        chrome.runtime.sendMessage({ type: "llmGenerating" });
+        // Without a bound here, a genuinely stuck request and a merely slow
+        // one look identical from the popup's side - both just say
+        // "thinking" forever, with no way to tell them apart or recover
+        // short of reloading the extension. 120s is generous for even a
+        // slow-GPU 8B model on a real turn; if it's not back by then,
+        // something is actually wrong, not just slow.
+        const INFERENCE_TIMEOUT_MS = 120000;
+        const reply = await Promise.race([
+          engine.chat.completions.create({ messages, tools: msg.tools, tool_choice: "auto" }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s - the model may be stuck, or this hardware is too slow for local WebGPU inference on an 8B model`)), INFERENCE_TIMEOUT_MS)
+          ),
+        ]);
         const choice = reply.choices[0].message;
         const call = choice.tool_calls && choice.tool_calls[0];
         if (!call) {
