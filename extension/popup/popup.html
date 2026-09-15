@@ -13,9 +13,44 @@
   button { margin-top: 10px; width: 100%; padding: 6px; }
   details { margin-top: 14px; border-top: 1px solid #ddd; padding-top: 6px; }
   summary { font-size: 12px; cursor: pointer; color: #555; }
-  pre { margin-top: 10px; max-height: 220px; overflow: auto; background: #f4f4f4;
+  pre { margin: 0; background: #f4f4f4;
         padding: 6px; font: 11px monospace; white-space: pre-wrap; word-break: break-word; }
   .hint { color: #888; font-size: 11px; margin-top: 4px; }
+
+  #log { margin-top: 10px; max-height: 320px; overflow: auto; }
+  #log > * { margin-top: 6px; }
+  .echo { color: #666; font-size: 11px; font-style: italic; }
+
+  /* Rendered data-tool results. Everything below is filled in via
+     textContent, never innerHTML - gauge names and alert headlines come
+     from external APIs and are not to be trusted as markup. */
+  .card { border: 1px solid #dcdcdc; border-radius: 6px; overflow: hidden; background: #fff; }
+  .card-head { padding: 7px 9px; background: #f7f9fb; border-bottom: 1px solid #e6e6e6; }
+  .card-title { font-size: 12px; font-weight: 600; }
+  .card-sub { font-size: 11px; color: #666; margin-top: 1px; }
+  .stats { display: flex; gap: 6px; padding: 7px 9px 0; }
+  .stat { flex: 1; background: #f4f6f8; border-radius: 4px; padding: 4px 6px; }
+  .stat-label { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #7a7a7a; }
+  .stat-value { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .caveat { margin: 7px 9px 0; padding: 5px 7px; background: #fdf6e3; border-left: 2px solid #d9a441;
+            color: #6b5420; font-size: 10px; line-height: 1.35; border-radius: 0 3px 3px 0; }
+  .checked { padding: 6px 9px 0; }
+  .checked-label { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #7a7a7a; }
+  .checked-item { font-size: 10px; color: #777; padding-left: 9px; position: relative; }
+  .checked-item::before { content: "\2713"; position: absolute; left: 0; color: #1a7f37; }
+  .rows { padding: 4px 9px 7px; }
+  .row { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; border-top: 1px solid #f0f0f0; }
+  .rows .row:first-child { border-top: none; }
+  .row-name { flex: 1; font-size: 11px; line-height: 1.3; }
+  .row-meta { display: block; color: #8a8a8a; font-size: 10px; }
+  .row-value { font-size: 11px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .row.alert .row-value { color: #b3261e; }
+  .row.warn  .row-value { color: #9a6700; }
+  .row.ok    .row-value { color: #1a7f37; }
+  .card-foot { padding: 5px 9px; border-top: 1px solid #f0f0f0; color: #8a8a8a; font-size: 10px;
+               display: flex; justify-content: space-between; gap: 8px; }
+  details.raw { margin: 0; border: none; padding: 0; }
+  details.raw > summary { font-size: 10px; color: #999; padding: 4px 9px; }
 </style>
 </head>
 <body>
@@ -32,10 +67,13 @@
 
   <h2 class="primary">Ask</h2>
   <div class="hint">
-    Instant when it recognizes the instruction (no model involved at all).
-    Only reaches for the local model if it doesn't, and only if that model
-    has actually finished loading - otherwise it says so, rather than
-    hanging. Untested live.
+    Two kinds of request. <b>Control</b> the page you're on ("set the
+    parameter to gage height"), or <b>ask a question</b> answered from USGS's
+    public API, with no clicking and no matter which page is open ("what's
+    the gage height in Alaska"). Both are instant when recognized, with no
+    model involved at all. Anything it doesn't recognize says so rather than
+    guessing - the local model that would handle the rest is off by default
+    (see Debug tools), because it downloads gigabytes and slows the machine.
   </div>
   <label for="smartInstruction">plain-English instruction</label>
   <input id="smartInstruction" value="set the parameter to gage height">
@@ -43,6 +81,39 @@
 
   <details>
     <summary>Debug tools (call things directly, bypass Ask)</summary>
+
+    <h2>Run a tool call by hand (no model)</h2>
+    <div class="hint">
+      Feeds a tool call straight into the same path a model's output takes:
+      tool-name lookup, argument remapping, injection, the page bridge. No
+      model, no download, no key - isolates "does execution work" from "is
+      the model any good." Tool names come from TOOL_DEFS, e.g.
+      usgsSetParameter, siteGraphParameter, noaaSetBasemap, pageSelectOption.
+    </div>
+    <label for="toolName">tool name</label>
+    <input id="toolName" value="usgsSetParameter">
+    <label for="toolArgs">arguments (JSON object)</label>
+    <input id="toolArgs" value='{"parameter":"discharge"}'>
+    <button id="runToolCall">Run tool call</button>
+
+    <h2>Show the model's context</h2>
+    <div class="hint">
+      Exactly what a model would be handed for this page: the tools it can
+      pick from, plus env-vocab and (on GENERIC sites) the live inventory
+      with real selectors.
+    </div>
+    <button id="showContext">Show context</button>
+
+    <h2>Local model (off by default)</h2>
+    <div class="hint">
+      Off unless you switch it on: it downloads several gigabytes and
+      saturates the GPU while running, which slows the whole machine, not
+      just this extension. Everything above works without it.
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" id="localModelEnabled" style="width:auto">
+      <span>Enable the local model for Ask</span>
+    </label>
 
     <h2>WebLLM test</h2>
     <div class="hint">
@@ -84,7 +155,7 @@
     <button id="call">Call</button>
   </details>
 
-  <pre id="log"></pre>
+  <div id="log"></div>
 
   <script src="popup.js"></script>
 </body>
