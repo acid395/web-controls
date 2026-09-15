@@ -176,6 +176,12 @@ const PLACE_FILLER = new Set([
   "weather", "climate", "outside", "air", "currently", "conditions",
   "windy", "hot", "cold", "humid", "warm", "cool", "it", "is", "how",
   "temperature", "temp", "humidity", "wind", "pressure", "dewpoint",
+  // Time and statistic words. "Milwaukee weekly temperature average" was
+  // taking "weekly" as the place and reporting the centre of Wisconsin.
+  "weekly", "daily", "monthly", "hourly", "yearly", "annual", "annually",
+  "week", "month", "year", "day", "night", "tonight", "tomorrow",
+  "yesterday", "monday", "tuesday", "wednesday", "thursday", "friday",
+  "saturday", "sunday", "weekend", "next", "this", "last", "past", "coming",
 ]);
 
 // Pulls the place out of an instruction by elimination: strip the parts we
@@ -258,10 +264,19 @@ function planDataTool(instruction, route) {
   // by where it was asked: a water page means the water, anywhere else means
   // the air, which is what the word means in ordinary use.
   if (wantsWeather) {
-    const placeHint = extractPlaceHint(text, { stateMatched: state.matched });
+    // The city wins over the leftovers, not the other way round: when a city
+    // supplied the state, its own name is stripped as the state, so whatever
+    // survives is usually a stray word ("weekly"), and preferring it lost
+    // Milwaukee entirely.
+    const placeHint = extractPlaceHint(text, {
+      stateMatched: state.matched,
+      cityMatched: city && city.matched,
+    });
+    const place = (city && city.city) || placeHint;
+    const when = forecastWhen(text);
     return {
-      name: "weatherConditions",
-      args: { state: state.code, ...(placeHint || city ? { place: placeHint || city.city } : {}) },
+      name: when ? "weatherForecast" : "weatherConditions",
+      args: { state: state.code, ...(place ? { place } : {}), ...(when ? { when } : {}) },
     };
   }
 
@@ -1419,9 +1434,101 @@ async function nwsPointFor({ stateCode, place }) {
   return { lat: (s + n) / 2, lon: (w + e) / 2, basis: `centre of ${stateCode.toUpperCase()}` };
 }
 
+// A question about Friday, or about a week, is not a question about now.
+// Answering it with current conditions looks answered while being wrong,
+// which is worse than refusing - so a time cue routes to the forecast
+// instead. Returns what was asked for, or null for "right now".
+const FORECAST_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+function forecastWhen(text) {
+  const t = (text || "").toLowerCase();
+  if (/\b(this |next |coming )?week\b|\bweekly\b|\b7[- ]day\b|\bseven[- ]day\b/.test(t)) return "week";
+  if (/\btomorrow\b/.test(t)) return "tomorrow";
+  if (/\btonight\b/.test(t)) return "tonight";
+  if (/\bweekend\b/.test(t)) return "weekend";
+  const day = FORECAST_DAYS.find((d) => new RegExp(`\\b${d}\\b`).test(t));
+  if (day) return day;
+  if (/\bforecast\b|\bwill it\b|\bgoing to be\b/.test(t)) return "week";
+  // "yesterday" and "last week" are history, which NWS's forecast cannot
+  // answer - flagged so the caller can say so rather than quietly forecast.
+  if (/\byesterday\b|\blast (week|month|night)\b|\bpast\b/.test(t)) return "past";
+  return null;
+}
+
+async function nwsForecast({ state, place, when }) {
+  if (when === "past") {
+    throw new Error("NWS provides forecasts and current observations, not history - past conditions would need a different source");
+  }
+  const located = await resolveWeatherPoint({ state, place });
+  const pRes = await fetch(`https://api.weather.gov/points/${located.lat.toFixed(4)},${located.lon.toFixed(4)}`,
+    { headers: { Accept: "application/geo+json" } });
+  if (!pRes.ok) throw new Error(`NWS returned ${pRes.status} for that location`);
+  const forecastUrl = ((await pRes.json()).properties || {}).forecast;
+  if (!forecastUrl) throw new Error("NWS has no forecast for that location");
+
+  const fRes = await fetch(forecastUrl, { headers: { Accept: "application/geo+json" } });
+  if (!fRes.ok) throw new Error(`NWS forecast returned ${fRes.status}`);
+  const periods = (((await fRes.json()).properties) || {}).periods || [];
+  if (!periods.length) throw new Error("NWS returned an empty forecast");
+
+  const label = place || located.stateCode.toUpperCase();
+  const dayLike = (p) => p.name.toLowerCase();
+
+  // A named day, tonight or tomorrow: the matching period, and its night.
+  if (when !== "week" && when !== "weekend") {
+    const wanted = periods.filter((p) => dayLike(p).includes(when));
+    const hit = wanted.length ? wanted : periods.filter((p) => dayLike(p).startsWith(when));
+    if (!hit.length) {
+      throw new Error(`NWS's forecast only reaches ${periods[periods.length - 1].name} - "${when}" is outside it`);
+    }
+    return {
+      place: label, when, periods: hit.map((p) => ({ name: p.name, temperature: p.temperature, unit: p.temperatureUnit, forecast: p.shortForecast, wind: p.windSpeed })),
+      locatedBy: located.basis,
+      source: "National Weather Service forecast, no API key required",
+      display: {
+        title: `Forecast · ${label}`,
+        subtitle: hit.map((p) => p.name).join(" and "),
+        stats: hit.slice(0, 3).map((p) => ({ label: p.name.split(" ")[p.name.split(" ").length - 1] === "Night" ? "low" : "high", value: `${p.temperature}°${p.temperatureUnit}` })),
+        rows: hit.map((p) => ({ name: p.name, value: `${p.temperature}°${p.temperatureUnit}`, meta: p.shortForecast })),
+        note: located.basis,
+        source: "NWS forecast",
+      },
+    };
+  }
+
+  // A week: the daytime highs, which is what "weekly average" means to a
+  // person. Labelled as a forecast average, not a historical one.
+  const days = periods.filter((p) => p.isDaytime).slice(0, when === "weekend" ? 7 : 7);
+  const temps = days.map((p) => p.temperature).filter((n) => Number.isFinite(n));
+  const avg = temps.length ? Math.round(temps.reduce((a, b) => a + b, 0) / temps.length) : null;
+  const unit = (days[0] && days[0].temperatureUnit) || "F";
+  return {
+    place: label, when: "week",
+    averageHigh: avg, high: temps.length ? Math.max(...temps) : null, low: temps.length ? Math.min(...temps) : null,
+    days: days.map((p) => ({ name: p.name, temperature: p.temperature, forecast: p.shortForecast })),
+    locatedBy: located.basis,
+    source: "National Weather Service forecast, no API key required",
+    display: {
+      title: `Forecast week · ${label}`,
+      subtitle: `${days.length}-day outlook · daytime highs`,
+      stats: [
+        { label: "avg high", value: `${avg}°${unit}` },
+        { label: "warmest", value: `${Math.max(...temps)}°${unit}` },
+        { label: "coolest", value: `${Math.min(...temps)}°${unit}` },
+      ],
+      rows: days.map((p) => ({ name: p.name, value: `${p.temperature}°${p.temperatureUnit}`, meta: p.shortForecast })),
+      caveat: "this is the forecast for the coming week, not an average of past readings",
+      note: located.basis,
+      source: "NWS forecast",
+    },
+  };
+}
+
 const cToF = (c) => (c == null ? null : Math.round((c * 9 / 5 + 32) * 10) / 10);
 
-async function nwsConditions({ state, place }) {
+// Both weather tools need the same thing: a state, and a coordinate inside
+// it. Kept in one place so they can't drift apart.
+async function resolveWeatherPoint({ state, place }) {
   let stateCode = resolveStateCode(state) || (findStateInText(state || "") || {}).code
     || (findCityInText(place || state || "") || {}).code;
 
@@ -1436,6 +1543,13 @@ async function nwsConditions({ state, place }) {
   if (!stateCode) throw new Error(`don't recognize "${state || place}" as a US state or known place`);
 
   const point = await nwsPointFor({ stateCode, place });
+  return { ...point, stateCode };
+}
+
+async function nwsConditions({ state, place }) {
+  const located = await resolveWeatherPoint({ state, place });
+  const stateCode = located.stateCode;
+  const point = located;
   const pRes = await fetch(`https://api.weather.gov/points/${point.lat.toFixed(4)},${point.lon.toFixed(4)}`,
     { headers: { Accept: "application/geo+json" } });
   if (!pRes.ok) throw new Error(`NWS returned ${pRes.status} for that location`);
@@ -1531,6 +1645,20 @@ const DATA_TOOLS = [
         place: { type: "string", description: "optional city or place to locate the nearest station" },
       },
       required: ["state"],
+    },
+  },
+  {
+    name: "weatherForecast",
+    run: nwsForecast,
+    description: "National Weather Service forecast for a coming day or the week ahead - use for questions naming a day ('temperature on Friday'), tomorrow, tonight, or a week. weatherConditions answers 'right now' instead.",
+    parameters: {
+      type: "object",
+      properties: {
+        state: { type: "string", description: "US state name or two-letter code" },
+        place: { type: "string", description: "optional city or place" },
+        when: { type: "string", description: "a weekday name, tonight, tomorrow, or week" },
+      },
+      required: ["when"],
     },
   },
   {

@@ -84,6 +84,15 @@ open, and needs no API key. Three so far, all measured live:
 | `waterAlerts(state, floodOnly?)` | NWS | "any flood warnings in Alaska" | ~0.5s |
 | `waterFindGauges(place, parameter?)` | USGS OGC API | "discharge of the Bighorn River" | ~1s, no state needed |
 | `weatherConditions(state, place?)` | NWS observations | "temperature and humidity in Kansas City" | ~1.5s |
+| `weatherForecast(when, state?, place?)` | NWS forecast | "Milwaukee temperature on Friday" | ~1s |
+
+A question about Friday, or about a week, is not a question about now, so a
+time cue routes to the forecast. Answering "Milwaukee temperature at Friday"
+with current conditions looked answered while being wrong, which is the same
+failure mode as setting one of three controls and leaving a chart looking
+correct. History is refused outright rather than quietly forecast - NWS offers
+forecasts and current observations, not the past - and a week's "average" is
+labelled as the coming week's forecast, not an average of past readings.
 
 `weatherConditions` exists because USGS measures water, not air - humidity,
 dew point, wind and pressure have no USGS equivalent, and "air temperature"
