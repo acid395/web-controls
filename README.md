@@ -1,8 +1,96 @@
 # web-controls
 
-Console scripts that turn a web page's buttons, dropdowns and checkboxes into
-callable functions. Paste one into DevTools and drive the page from the
-console instead of clicking through it.
+Ask a water or weather site a question in plain English, instead of hunting
+through it.
+
+Type *"max temperature in Hermantown MN on Wednesday"* and it reads the answer
+off the page you're looking at. Type *"gage height in Alaska"* and it fetches
+that from USGS, whatever page you happen to be on. Type *"select Alaska"* and
+it operates the page's own controls for you.
+
+Two parts live here:
+
+- **`extension/`** — a Chrome extension. This is the thing you install and
+  use. Start here.
+- **everything else** — the console scripts it grew out of, still usable on
+  their own by pasting into DevTools. The extension bundles these as its
+  per-site knowledge.
+
+## Try it in five minutes
+
+```
+git clone <this repo> && cd web-controls
+```
+
+1. Open `chrome://extensions`, turn on **Developer mode** (top right).
+2. **Load unpacked**, choose the `extension/` folder.
+3. Visit `weather.gov/forecastpoints` or `waterdata.usgs.gov/state/Idaho/`.
+4. Click the extension's icon. On a site it hasn't seen, click **Enable on
+   this site** once and accept Chrome's prompt.
+5. Type a question and press **Ask**.
+
+Things worth trying, each exercising a different path:
+
+| Ask | What happens |
+|---|---|
+| `gage height in Alaska` | Fetches from USGS. Works from any page. |
+| `max temperature in Hermantown MN on Wednesday` | Reads the table on the page. |
+| `is there flooding in Idaho` | Fetches NOAA flood forecasts. |
+| `read this page` | Extracts the page's tables, values and charts. |
+| `select Alaska` | Operates the page's own controls. |
+
+No API key, no account, no server. Nothing is sent anywhere except to the
+public USGS, NOAA and NWS APIs.
+
+## Run the tests
+
+```
+node extension/test/run-tests.js          # 113 tests, no network needed
+node extension/test/run-tests.js --live   # also calls the real agency APIs
+```
+
+The offline tests need no setup. For the browser-DOM ones,
+`cd extension/test && npm install` pulls in jsdom; without it those skip
+rather than fail.
+
+Almost every test exists because something once returned a **confidently
+wrong answer** — a statewide average of readings measured from different
+baselines, "Snake Creek, Georgia" for the Snake River, Kansas City resolving
+to the state of Kansas, Wednesday's question answered with Tuesday's number.
+None of those crash. Each looked right on screen. They're pinned by name so
+they can't come back quietly.
+
+## How it works, briefly
+
+A question takes the cheapest route that can answer it:
+
+1. **The page you're on.** If it already shows the answer, that's the answer —
+   fetching a second opinion from an agency would be both slower and a
+   *different number*.
+2. **A public agency API.** USGS for water, NWS and NOAA for weather and
+   floods. This is what lets it answer about Alaska while you're reading about
+   Idaho.
+3. **The page's own controls.** "Select Alaska" finds and clicks the right
+   control, using hand-written knowledge of four water sites and a generic
+   fallback that works on any page.
+4. **A local AI model**, off by default. Everything above is plain pattern
+   matching — instant, and it runs on any machine. The model is there for
+   phrasings the patterns don't cover, but it downloads ~2GB and is slow, so
+   it's opt-in rather than assumed.
+
+When it can't answer, it says what it understood, what it searched, and what
+the page can actually do — rather than failing blankly.
+
+`extension/README.md` goes into the engineering detail, including the
+limitations that are real and permanent (a chart drawn to a canvas has no
+numbers to read; maps mostly can't be clicked).
+
+---
+
+## The console scripts
+
+The original tools, still useful on their own: paste one into DevTools and
+drive the page from the console instead of clicking through it.
 
 Built for USGS and NOAA water data sites. The generic layer works anywhere.
 
