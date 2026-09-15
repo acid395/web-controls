@@ -209,6 +209,14 @@ else {
   check("a different row is a different answer",
     hit("max temperature in duluth", "duluth"), ["Duluth · High: 64 °F"]);
   check("a town not in the table still fetches", hit("max temperature in chicago", "chicago"), null);
+  // A date in the question was becoming part of the place ("hermantown sep
+  // 15"), which matched no row and no gauge, so it fetched and answered from
+  // the state centre while the town's row was on screen.
+  const dated = plan("max temperature of hermantown mn on tuesday sep 15", { global: "FCP" });
+  check("a date is not part of the place", dated.args.place, "hermantown");
+  check("the named day is kept", dated.args.when, "high:tuesday");
+  check("and the row is then found",
+    hit("max temperature of hermantown mn on tuesday sep 15", dated.args.place), ["Hermantown MN · High: 71 °F"]);
   // "Wind 9 mph" sits in the same row and must not answer a temperature question.
   ensure("the wind column does not answer a temperature question",
     !(hit("max temperature on hermantown mn", "hermantown") || []).some((h) => /wind|mph/i.test(h)),

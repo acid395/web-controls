@@ -221,6 +221,13 @@ const PLACE_FILLER = new Set([
   "week", "month", "year", "day", "night", "tonight", "tomorrow",
   "yesterday", "monday", "tuesday", "wednesday", "thursday", "friday",
   "saturday", "sunday", "weekend", "next", "this", "last", "past", "coming",
+  // Dates. "max temperature of hermantown mn on tuesday sep 15" was taking
+  // "hermantown sep 15" as the place, which matched no table row and no
+  // gauge, so it fell through to the agency and answered from the state
+  // centre while the town's row sat on screen.
+  "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may",
+  "jun", "june", "jul", "july", "aug", "august", "sep", "sept", "september",
+  "oct", "october", "nov", "november", "dec", "december", "am", "pm",
 ]);
 
 // Pulls the place out of an instruction by elimination: strip the parts we
@@ -242,7 +249,8 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
   // height" is not.
   const tail = t.match(/\b(?:at|in|on|near|along|around|for|of)\s+(.+)$/);
   if (!tail) return null;
-  const words = tail[1].split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !PLACE_FILLER.has(w));
+  const words = tail[1].split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 1 && !PLACE_FILLER.has(w) && !/^\d+$/.test(w));
   return words.length ? words.join(" ") : null;
 }
 
@@ -1550,8 +1558,11 @@ function forecastWhen(text) {
   // is why the number disagreed with weather.gov, which shows the forecast
   // high. NWS gives the day's high as its daytime period and the night's low
   // as the night period.
-  if (/\b(max|maximum|high|highest|hottest|warmest)\b/.test(t)) return "high";
-  if (/\b(min|minimum|low|lowest|coldest|coolest)\b/.test(t)) return "low";
+  // "max ... on tuesday" is both an extreme and a day; answering with today's
+  // high ignores half the question.
+  const namedDay = FORECAST_DAYS.find((d) => new RegExp(`\\b${d}\\b`).test(t));
+  if (/\b(max|maximum|high|highest|hottest|warmest)\b/.test(t)) return namedDay ? `high:${namedDay}` : "high";
+  if (/\b(min|minimum|low|lowest|coldest|coolest)\b/.test(t)) return namedDay ? `low:${namedDay}` : "low";
   if (/\b(this |next |coming )?week\b|\bweekly\b|\b7[- ]day\b|\bseven[- ]day\b/.test(t)) return "week";
   if (/\btomorrow\b/.test(t)) return "tomorrow";
   if (/\btonight\b/.test(t)) return "tonight";
@@ -1584,18 +1595,26 @@ async function nwsForecast({ state, place, when }) {
   const label = place || located.stateCode.toUpperCase();
   const dayLike = (p) => p.name.toLowerCase();
 
-  // Today's high or tonight's low: the first matching period.
-  if (when === "high" || when === "low") {
-    const period = periods.find((p) => (when === "high" ? p.isDaytime : !p.isDaytime));
-    if (!period) throw new Error(`NWS's forecast has no ${when === "high" ? "daytime" : "night"} period left today`);
+  // An extreme, optionally for a named day: "high:tuesday" means Tuesday's
+  // daytime period rather than the next one available.
+  if (when === "high" || when === "low" || /^(high|low):/.test(when)) {
+    const [kind, day] = when.split(":");
+    const wantDaytime = kind === "high";
+    const period = day
+      ? periods.find((p) => p.name.toLowerCase().includes(day) && p.isDaytime === wantDaytime)
+      : periods.find((p) => p.isDaytime === wantDaytime);
+    if (!period && day) {
+      throw new Error(`NWS's forecast reaches ${periods[periods.length - 1].name}, which doesn't include ${day}`);
+    }
+    if (!period) throw new Error(`NWS's forecast has no ${wantDaytime ? "daytime" : "night"} period left today`);
     return {
       place: label, when, periods: [{ name: period.name, temperature: period.temperature, unit: period.temperatureUnit, forecast: period.shortForecast }],
       locatedBy: located.basis,
       source: "National Weather Service forecast, no API key required",
       display: {
-        title: `${when === "high" ? "High" : "Low"} · ${label}`,
+        title: `${wantDaytime ? "High" : "Low"} · ${label}`,
         subtitle: `${period.name} · forecast, not the current reading`,
-        stats: [{ label: when === "high" ? "high" : "low", value: `${period.temperature}°${period.temperatureUnit}` }],
+        stats: [{ label: wantDaytime ? "high" : "low", value: `${period.temperature}°${period.temperatureUnit}` }],
         rows: [{ name: period.name, value: `${period.temperature}°${period.temperatureUnit}`, meta: period.shortForecast }],
         note: located.basis,
         source: "NWS forecast",

@@ -109,6 +109,13 @@ of Minnesota. The column whose header matches the question picks the cell, so
 a maximum and a minimum read different columns of the same row, and the wind
 column answers neither.
 
+A date in the question used to become part of the place - "max temperature of
+hermantown mn on tuesday sep 15" searched for a row containing "hermantown sep
+15", matched nothing, and fetched from the state centre while the town's row
+sat on screen. Month names and bare numbers are filler now, and a named day is
+kept as part of *when* rather than *where*, so that question returns Tuesday's
+high from the table.
+
 For everything else the page must plausibly concern the place asked about -
 title and headings, not body text, since a forecast page names dozens of towns
 in its navigation - so "max temperature in Milwaukee" asked on a Chicago page
