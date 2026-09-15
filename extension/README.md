@@ -81,6 +81,31 @@ readable data in the DOM - this page draws to 2 canvas element(s), whose
 contents are pixels, not elements"*. For those the real answer is the data the
 page itself fetched, not the picture it drew.
 
+## Reading a chart that cannot be read
+
+`readPage()` handles an SVG chart, whose labels are real elements. A canvas
+chart defeats it completely - painted pixels, nothing to extract - and so does
+every canvas map, which `mapInfo()` has reported across five sites.
+
+The data is not gone though: the page fetched it, drew it, and discarded the
+elements. `page/feed-capture.js` patches `fetch` and `XMLHttpRequest` to keep
+it, and `pageFeeds()` / `pageFeed(match)` read it back, parsed.
+
+Timing is the entire difficulty. A chart requests its series during page load,
+so an interceptor injected when someone finally types a question has already
+missed it. Capture is therefore registered as a **document_start** content
+script for each enabled site, so a normal page load is recorded without the
+popup ever being open; it is also injected alongside the bundles, which covers
+anything fetched after an ask. Responses are cloned before reading - consuming
+the stream would break the page's own code - filtered to data-looking URLs,
+capped per body, and held in a 40-request ring buffer.
+
+Asking "read this page" on a canvas page now falls through automatically:
+nothing readable plus a canvas present means the answer is the requests behind
+it, not a shrug. Three states are distinguished, because they need different
+advice - capture not installed (enable the site), installed but empty (reload
+the page, its data loaded before capture did), and captured.
+
 ## Two kinds of tool: control the page, or answer a question
 
 Everything above is about *controlling* a page - inject a manifest, call a

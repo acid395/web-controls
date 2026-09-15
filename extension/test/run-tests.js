@@ -143,6 +143,42 @@ else {
   ensure("canvas-only says why it read nothing", /canvas/.test(blank.GENERIC.readPage().note || ""), blank.GENERIC.readPage().note);
 }
 
+section("feed capture");
+const capturePage = loadPage(`<!doctype html><html><head><title>Canvas chart</title></head><body><canvas></canvas></body></html>`);
+if (!capturePage) skip("feed capture", "jsdom not installed");
+else {
+  const fs2 = require("fs"), pathMod = require("path");
+  // A canvas page has nothing readable, which is exactly when the data the
+  // page fetched becomes the only answer.
+  const before = capturePage.GENERIC.capturedFeeds();
+  check("reports when capture is not installed", before.installed, false);
+
+  capturePage.fetch = async () => ({ status: 200, headers: { get: () => "application/json" },
+    clone() { return { text: async () => '{"series":[1,2,3],"unit":"ft"}' }; } });
+  const sc = capturePage.document.createElement("script");
+  sc.textContent = fs2.readFileSync(pathMod.join(__dirname, "..", "page", "feed-capture.js"), "utf8");
+  capturePage.document.body.appendChild(sc);
+
+  ensure("installs", !!capturePage.__wcFeedCapture, capturePage.__wcFeedCapture);
+  const empty = capturePage.GENERIC.capturedFeeds();
+  // Installed-but-empty and not-installed need different advice.
+  ensure("distinguishes installed-but-empty", /reload/.test(empty.note || ""), empty.note);
+
+  (async () => {
+    await capturePage.fetch("https://x.gov/api/gauges/1/observations?f=json");
+    await capturePage.fetch("https://x.gov/logo.png");
+    await new Promise((r) => setTimeout(r, 60));
+    const after = capturePage.GENERIC.capturedFeeds();
+    check("captures data requests only", after.count, 1);
+    check("summarises the payload", after.feeds[0].keys, ["series", "unit"]);
+    const one = capturePage.GENERIC.capturedFeed("observations");
+    check("returns the parsed body", one.parsed.series, [1, 2, 3]);
+    check("missing feed is reported, not thrown", capturePage.GENERIC.capturedFeed("nope").found, false);
+    finishCapture();
+  })();
+}
+
+function finishCapture() {
 if (process.argv.includes("--live")) {
   section("live agency APIs");
   (async () => {
@@ -183,6 +219,7 @@ if (process.argv.includes("--live")) {
 } else {
   console.log("\n(live API tests skipped - pass --live to run them)");
   report();
+}
 }
 
 function report() {

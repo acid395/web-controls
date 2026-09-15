@@ -67,6 +67,8 @@ const NAMED_MANIFESTS = [
 ];
 
 const GENERIC_BUNDLE = "page/generic-bundle.js";
+const FEED_CAPTURE = "page/feed-capture.js";
+const FEED_CAPTURE_ID = "wc-feed-capture";
 
 function routeFor(url) {
   return NAMED_MANIFESTS.find((r) => r.test.test(url || "")) || { bundle: GENERIC_BUNDLE, global: "GENERIC" };
@@ -96,13 +98,50 @@ async function ensureInjected(tabId, bundle) {
   // USGS or NOAA page can still answer "click weekly average". The shared
   // bridge resolves a call against whichever global owns the function, named
   // manifests first, so the two coexist rather than compete.
-  const files = bundle === GENERIC_BUNDLE ? [bundle] : [bundle, GENERIC_BUNDLE];
+  // feed-capture first: it patches fetch/XHR, and anything the bundles do
+  // afterwards should be visible to it. On an already-loaded page this is
+  // too late to have caught the page's own startup requests - that is what
+  // the document_start registration below is for - but it catches anything
+  // the page fetches from here on.
+  const files = bundle === GENERIC_BUNDLE
+    ? [FEED_CAPTURE, bundle]
+    : [FEED_CAPTURE, bundle, GENERIC_BUNDLE];
   await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
     files,
   });
 }
+
+// A chart asks for its data while the page loads, so an interceptor injected
+// when someone finally types a question has already missed it. Registering
+// feed-capture as a document_start content script means an enabled site is
+// captured from its next load onward, without needing the popup open.
+async function registerFeedCapture() {
+  try {
+    const granted = await chrome.permissions.getAll();
+    const origins = (granted.origins || []).filter((o) => /^https?:/.test(o));
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [FEED_CAPTURE_ID] }).catch(() => []);
+    if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [FEED_CAPTURE_ID] });
+    if (!origins.length) return;
+    await chrome.scripting.registerContentScripts([{
+      id: FEED_CAPTURE_ID,
+      matches: origins,
+      js: [FEED_CAPTURE],
+      runAt: "document_start",
+      world: "MAIN",
+      allFrames: false,
+    }]);
+  } catch (e) {
+    // Registration is an enhancement: without it capture still works for
+    // requests made after an ask, just not for the page's startup load.
+    console.log("[feed-capture] could not register at document_start:", String((e && e.message) || e));
+  }
+}
+chrome.runtime.onStartup.addListener(registerFeedCapture);
+chrome.runtime.onInstalled.addListener(registerFeedCapture);
+chrome.permissions.onAdded.addListener(registerFeedCapture);
+chrome.permissions.onRemoved.addListener(registerFeedCapture);
 
 async function invokeOnActiveTab(fn, args) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -626,6 +665,16 @@ const TOOL_DEFS = {
     },
   ],
   GENERIC: [
+    {
+      name: "pageFeeds", fn: "capturedFeeds", argOrder: [],
+      description: "List the data requests this page made - the source behind a chart or map whose contents are drawn to a canvas and cannot be read from the page itself.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "pageFeed", fn: "capturedFeed", argOrder: ["match"],
+      description: "Return one captured data response in full, by a fragment of its URL - use after pageFeeds to read the actual series behind a chart.",
+      parameters: { type: "object", properties: { match: { type: "string", description: "part of the URL, e.g. observations" } }, required: ["match"] },
+    },
     {
       name: "pageRead", fn: "readPage", argOrder: [],
       description: "Read the data shown on the current page - tables, labelled values, numeric readouts, and any SVG chart's labels. Use to answer questions about what this page says, as opposed to changing what it displays.",
@@ -2408,15 +2457,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               d.chart && d.chart.svgCharts.length ? `${d.chart.svgCharts.length} SVG chart${d.chart.svgCharts.length === 1 ? "" : "s"}` : null,
               d.chart && d.chart.canvasCount ? `${d.chart.canvasCount} canvas (unreadable)` : null,
             ].filter(Boolean);
+            // Nothing readable and a canvas present means the data is
+            // pixels - but the page fetched it before drawing, so the
+            // captured feeds are the real answer rather than a shrug.
+            let feeds = null;
+            if (!rows.length && d.chart && d.chart.canvasCount) {
+              const cap = await invokeOnActiveTab("capturedFeeds", []).catch(() => ({ ok: false }));
+              if (cap.ok) feeds = cap.result;
+            }
+            if (feeds && feeds.count) {
+              for (const f of feeds.feeds.slice(0, 8)) {
+                rows.push({
+                  name: f.url.replace(/^https?:\/\//, "").slice(0, 70),
+                  value: `${f.status}`,
+                  meta: [f.keys ? f.keys.join(", ") : null, f.bytes ? `${Math.round(f.bytes / 1024)}kB` : null].filter(Boolean).join(" · "),
+                });
+              }
+            }
             respond({
-              ok: true, plannedBy: "page-read", result: d,
+              ok: true, plannedBy: "page-read", result: d, feeds: feeds || undefined,
               display: {
                 title: d.title ? d.title.slice(0, 70) : "This page",
-                subtitle: counts.length ? counts.join(" · ") : "no readable data found",
+                subtitle: feeds && feeds.count
+                  ? `chart is canvas - showing the ${feeds.count} data request${feeds.count === 1 ? "" : "s"} behind it`
+                  : counts.length ? counts.join(" · ") : "no readable data found",
                 stats: [], rows,
-                caveat: d.note,
+                caveat: feeds && !feeds.count ? feeds.note : d.note,
                 note: d.headings && d.headings.length ? d.headings[0].slice(0, 60) : undefined,
-                source: "live DOM",
+                source: feeds && feeds.count ? "captured requests" : "live DOM",
               },
             });
             return;

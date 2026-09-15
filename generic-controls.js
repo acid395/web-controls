@@ -392,6 +392,66 @@
   }
 
   /* ============================================================================
+   * Feed capture - the data behind a chart that cannot be read.
+   *
+   * readPage() can read an SVG chart's labels, but a canvas chart is painted
+   * pixels with nothing to extract, and the same is true of every canvas map
+   * (see mapInfo). The data is not absent though - the page fetched it, drew
+   * it, and threw the elements away. Intercepting fetch and XMLHttpRequest
+   * catches it on the way in.
+   *
+   * The interceptor itself lives in page/feed-capture.js and runs at
+   * document_start, because a chart requests its series during page load: an
+   * interceptor installed when someone asks a question arrives too late to
+   * see it. These two functions only read what it collected.
+   *
+   * Responses are cloned, capped, and only kept for data-looking URLs -
+   * recording every image and analytics beacon would be noise, and holding
+   * whole response bodies for a long-lived page would be a memory leak.
+   * ========================================================================== */
+  const FEED_URL_RE = /(\/api\/|\/rest\/|\/ogcapi\/|nwis|nwps|waterservices|waterdata|gridpoints|geoserver|\bwfs\b|\bwms\b|query\?|\.json(\?|$)|\.geojson(\?|$)|\.csv(\?|$)|observations|forecast|gauges?\/)/i;
+  const FEED_LIMIT = 40;          // most recent N requests
+  const FEED_BODY_CAP = 200000;   // characters kept per response
+
+  // Everything captured so far. `parsed` is the decoded JSON where the body
+  // was JSON, since that is the part worth reading.
+  function capturedFeeds({ includeBodies = false } = {}) {
+    const store = window.__wcFeedCapture;
+    if (!store) {
+      return { installed: false, count: 0, feeds: [],
+        note: "feed capture is not installed on this page - enable the site and reload it" };
+    }
+    const feeds = store.feeds.map((f) => {
+      let parsed = null;
+      if (f.body && !f.truncated && /json/i.test(f.contentType || "")) {
+        try { parsed = JSON.parse(f.body); } catch (e) { parsed = null; }
+      }
+      const out = { url: f.url, method: f.method, status: f.status, at: f.at, bytes: f.bytes, truncated: f.truncated };
+      if (includeBodies) out.body = f.body;
+      if (parsed) out.keys = Array.isArray(parsed) ? [`array[${parsed.length}]`] : Object.keys(parsed).slice(0, 12);
+      return out;
+    });
+    return {
+      installed: true, installedAt: store.installedAt, count: feeds.length, feeds,
+      note: feeds.length ? undefined
+        : "capture is installed but this page has requested nothing since - reload the page to catch the data it loads at startup",
+    };
+  }
+
+  // One captured response in full, by URL substring - for actually reading
+  // the series behind a chart rather than just listing what was fetched.
+  function capturedFeed(match) {
+    const store = window.__wcFeedCapture;
+    if (!store) return { found: false, note: "feed capture is not installed on this page" };
+    const needle = String(match || "").toLowerCase();
+    const hit = [...store.feeds].reverse().find((f) => f.url.toLowerCase().includes(needle));
+    if (!hit) return { found: false, note: `nothing captured whose URL contains "${match}"` };
+    let parsed = null;
+    try { parsed = JSON.parse(hit.body); } catch (e) { /* not JSON, body stands */ }
+    return { found: true, url: hit.url, status: hit.status, at: hit.at, truncated: hit.truncated, parsed, body: parsed ? undefined : hit.body };
+  }
+
+  /* ============================================================================
    * readPage() - the data on the page, as opposed to inventory()'s controls.
    *
    * inventory() answers "what can I click here"; this answers "what does this
@@ -528,6 +588,8 @@
   const GENERIC = {
     inventory,
     readPage,
+    capturedFeeds,
+    capturedFeed,
     mapInfo,
     click: (selector) => realClick(selector),
     clickText: (text) => clickByText(text),
