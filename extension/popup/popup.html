@@ -106,9 +106,11 @@
 
     <h2>Local model (off by default)</h2>
     <div class="hint">
-      Off unless you switch it on: it downloads several gigabytes and
-      saturates the GPU while running, which slows the whole machine, not
-      just this extension. Everything above works without it.
+      Off unless you switch it on. Now a 3B model (roughly 2GB) rather than
+      8B: the native tool-calling API is restricted to 7-8B models, which
+      took over two minutes per answer here and slowed the whole machine, so
+      Ask prompts for JSON instead and is free to use a smaller one.
+      Everything above works without it.
     </div>
     <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
       <input type="checkbox" id="localModelEnabled" style="width:auto">
@@ -117,8 +119,10 @@
 
     <h2>WebLLM test</h2>
     <div class="hint">
-      First click downloads the model (real bandwidth, can take a while) and
-      needs WebGPU.
+      First click downloads the model (~2GB, real bandwidth) and needs WebGPU.
+      Note this button and "Ask WebLLM" use the native tools API, which needs
+      MODEL_ID switched back to the 8B Hermes model in offscreen.js; Ask uses
+      the JSON path with the 3B model instead.
     </div>
     <label for="prompt">test prompt</label>
     <input id="prompt" value="Say hello in exactly five words.">

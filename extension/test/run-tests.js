@@ -11,7 +11,7 @@
  * Those are invisible to type checking and to "does it crash" testing, which
  * is why they are pinned here by name.
  */
-const { loadBackground, loadPage } = require("./harness");
+const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
 
 let passed = 0, failed = 0, skipped = 0;
 const failures = [];
@@ -142,6 +142,22 @@ else {
   // pixels. Those are different answers.
   ensure("canvas-only says why it read nothing", /canvas/.test(blank.GENERIC.readPage().note || ""), blank.GENERIC.readPage().note);
 }
+
+section("model output parsing");
+// The native tools API is restricted to 7-8B models, which measured as
+// unusable here, so the model is prompted for JSON instead - and a small
+// model obeys "JSON only" loosely. Each of these is a shape one actually
+// emits; JSON.parse on the whole reply fails on every one of them.
+const firstJson = loadOffscreenHelper("firstJsonObject");
+check("bare object", firstJson('{"tool":"waterAlerts","args":{"state":"ak"}}').tool, "waterAlerts");
+check("with a preamble", firstJson('Sure! Here is the call:\n{"tool":"x","args":{}}').tool, "x");
+check("in code fences", firstJson('```json\n{"tool":"y","args":{"a":1}}\n```').args.a, 1);
+check("still talking afterwards", firstJson('{"tool":"z","args":{}} Hope that helps!').tool, "z");
+check("nested objects", firstJson('{"tool":"a","args":{"nested":{"deep":true}}}').args.nested.deep, true);
+// A selector or gauge name can contain a brace; naive depth counting breaks.
+check("braces inside strings", firstJson('{"tool":"pageClick","args":{"selector":"#a{b}"}}').args.selector, "#a{b}");
+check("no JSON at all", firstJson("I cannot help with that"), null);
+check("malformed JSON is rejected, not thrown", firstJson('{"tool": oops}'), null);
 
 section("feed capture");
 const capturePage = loadPage(`<!doctype html><html><head><title>Canvas chart</title></head><body><canvas></canvas></body></html>`);

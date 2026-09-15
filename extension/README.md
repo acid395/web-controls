@@ -18,9 +18,18 @@ wait on one model - it tries three things in order, cheapest first:
 1. **`planTool()`**, a zero-download keyword matcher (USGS route only right
    now). Instant, free, no model involved, whenever it recognizes the phrasing.
 2. **WebLLM**, a real local model in an offscreen document (a service worker
-   has no WebGPU access, so it can't run there). Fully local and free, but
-   the first time ever needs a real, multi-gigabyte download - `Ask` checks
-   it has actually finished before relying on it, rather than blocking on it.
+   has no WebGPU access, so it can't run there). Off by default and opt-in,
+   because the first version of this tier was unusable: WebLLM's native
+   tool-calling API only accepts 7-8B models, and that model needed ~5GB of
+   VRAM, exceeded a 120-second ceiling per answer on ordinary hardware, and
+   saturated the GPU while doing it - felt as the whole machine slowing down.
+   The restriction is on the API, not the models, so `Ask` prompts for JSON
+   and parses it here instead, which frees the choice of model. A 3B model
+   (~2GB) is enough for the actual task: pick one tool from a short list and
+   fill two arguments. A small model obeys "JSON only" loosely, so the first
+   balanced object is taken from the reply rather than parsing the whole of
+   it, and a tool name it invents is rejected by name rather than failing
+   obscurely.
 3. **Gemini's free tier** exists too, but on purpose isn't part of `Ask`'s
    fallback chain - it needs a personal API key, which contradicts "easy to
    use," so it stays a separate, explicit choice in the debug tools, not

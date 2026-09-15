@@ -2575,17 +2575,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         const defs = toolsFor(route.global);
         const context = await buildContext(route.global);
+        // llmPlanJson, not llmPlan: the native tools API is restricted to
+        // 7-8B models, which measured as unusable on ordinary hardware.
+        // Prompting for JSON works with a 3B model instead.
         const plan = await chrome.runtime.sendMessage({
-          target: "offscreen", type: "llmPlan",
-          instruction: msg.instruction, tools: toOpenAITools(defs), context,
+          target: "offscreen", type: "llmPlanJson",
+          instruction: msg.instruction, tools: defs, context,
         });
         if (!plan.ok) { respond(plan); return; }
         if (!plan.toolCall) {
           respond({ ok: true, modelReply: plan.text, calledOn: route.global });
           return;
         }
+        // A prompted model can name a tool that does not exist, which the
+        // native API could not - executeToolCall rejects it by name, and
+        // saying so beats a bare failure.
+        const known = findToolDef(route.global, plan.toolCall.name);
+        if (!known) {
+          respond({
+            ok: false,
+            error: `the model asked for "${plan.toolCall.name}", which isn't a tool here`,
+            available: toolsFor(route.global).map((t) => t.name),
+            modelOutput: plan.raw,
+          });
+          return;
+        }
         const result = await executeToolCall(route.global, plan.toolCall);
-        respond({ ...result, plannedBy: "webllm", toolCall: plan.toolCall });
+        respond({ ...result, plannedBy: "webllm-json", toolCall: plan.toolCall });
       } catch (err) {
         respond({ ok: false, error: String((err && err.message) || err) });
       } finally {

@@ -17,14 +17,52 @@
  */
 import { CreateMLCEngine } from "./vendor/web-llm.js";
 
-// Started as the smaller Hermes-3-Llama-3.2-3B to validate loading itself
-// cheaply. Confirmed live it loads and answers - but WebLLM 0.2.85 rejected
-// it outright for tool-calling: "not supported for ChatCompletionRequest.
-// tools." Its own error message names exactly which models are, all
-// Hermes-2-Pro or Hermes-3 at 7-8B, none smaller. This is that one, as
-// planned from the start once tool-calling was the actual feature needed.
-// Bigger download than the 3B model, real bandwidth and time again.
-const MODEL_ID = "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC";
+// WebLLM 0.2.85 only accepts ChatCompletionRequest.tools on Hermes-2-Pro and
+// Hermes-3 at 7-8B - its own error names them - so using the API meant an 8B
+// model. That model was measured here and it is not viable for this: several
+// gigabytes to download, ~5GB of VRAM, and inference that exceeded a 120s
+// ceiling on ordinary hardware while saturating the GPU, which is felt as the
+// whole machine slowing down. A tool nobody can run is not a tool.
+//
+// The restriction is on WebLLM's tool-calling API, not on the models. Asking
+// a small model for JSON and parsing it here sidesteps the API entirely and
+// frees the choice of model, which is the only way this tier runs on a
+// typical laptop. The task is narrow - pick one tool from a short list and
+// fill a couple of arguments - which is well within a 3B model.
+//
+// Both paths are kept, but only one can be loaded at a time: llmPlanJson
+// prompts and works with this model, while llmPlan uses the native tools API
+// and needs MODEL_ID set back to Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC to work
+// at all. Ask uses the JSON path; llmPlan stays as a debug comparison.
+const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+
+/* @testable-start firstJsonObject */
+// Small models do not reliably obey "JSON only" - they add a preamble, wrap
+// the object in ``` fences, or continue talking afterwards. Taking the first
+// balanced object tolerates all three, where JSON.parse on the whole reply
+// fails on any of them. Braces inside string values are respected, since a
+// gauge name or a selector can legitimately contain one.
+function firstJsonObject(text) {
+  const start = (text || "").indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, inString = false, escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) {
+      try { return JSON.parse(text.slice(start, i + 1)); } catch (e) { return null; }
+    }
+  }
+  return null;
+}
+/* @testable-end */
 
 let enginePromise = null;
 let engineReady = false; // a Promise can't be asked "are you resolved yet?" directly - tracked separately so llmStatus can answer synchronously instead of waiting on the engine.
@@ -69,6 +107,69 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmStatus") {
     sendResponse({ ready: engineReady, hasGpu: "gpu" in navigator });
     return; // synchronous, no need to keep the channel open
+  }
+
+  // Tool-calling by prompting rather than by API. Works on any model, which
+  // is the point: the native path forces an 8B download that most machines
+  // cannot run usefully.
+  if (msg.type === "llmPlanJson") {
+    (async () => {
+      try {
+        if (!("gpu" in navigator)) {
+          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
+        }
+        const engine = await getEngine((report) => {
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+        });
+
+        // Compact: every token of schema is prefill time on a small model,
+        // and prefill is what made the 8B path unusable.
+        const catalogue = (msg.tools || []).map((t) => {
+          const props = Object.keys((t.parameters && t.parameters.properties) || {});
+          return `${t.name}(${props.join(", ")}) - ${t.description}`;
+        }).join("\n");
+
+        const prompt = [
+          "You choose one tool to answer the request, and reply with JSON only.",
+          "",
+          "Tools:",
+          catalogue,
+          "",
+          msg.context ? `Context:\n${msg.context}\n` : "",
+          `Request: ${msg.instruction}`,
+          "",
+          'Reply with exactly {"tool":"<name>","args":{...}} and nothing else.',
+          'If no tool fits, reply {"tool":null,"reply":"<short answer>"}.',
+        ].filter(Boolean).join("\n");
+
+        chrome.runtime.sendMessage({ type: "llmGenerating" });
+        const INFERENCE_TIMEOUT_MS = 120000;
+        const reply = await Promise.race([
+          engine.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,      // picking a tool is not a creative task
+            max_tokens: 200,     // a tool call is short; unbounded generation was a real cost
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)), INFERENCE_TIMEOUT_MS)),
+        ]);
+
+        const text = (reply.choices[0].message.content || "").trim();
+        const parsed = firstJsonObject(text);
+        if (!parsed) {
+          sendResponse({ ok: false, error: `model did not return usable JSON: ${text.slice(0, 200)}` });
+          return;
+        }
+        if (!parsed.tool) {
+          sendResponse({ ok: true, toolCall: null, text: parsed.reply || text });
+          return;
+        }
+        sendResponse({ ok: true, toolCall: { name: parsed.tool, args: parsed.args || {} }, raw: text.slice(0, 300) });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
   }
 
   if (msg.type === "llmPlan") {

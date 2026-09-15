@@ -84,4 +84,21 @@ function loadPage(html) {
   return w;
 }
 
-module.exports = { loadBackground, loadPage, EXT };
+// offscreen.js is an ES module importing the WebLLM bundle, so it cannot be
+// required directly. Its pure helpers are lifted out and evaluated alone.
+function loadOffscreenHelper(name) {
+  const src = fs.readFileSync(path.join(EXT, "offscreen", "offscreen.js"), "utf8");
+  // Delimited by markers rather than by walking braces: the function being
+  // extracted contains "{" and "}" as string literals, which defeats naive
+  // brace counting - the same problem it exists to solve.
+  const open = `/* @testable-start ${name} */`;
+  const start = src.indexOf(open);
+  const end = src.indexOf("/* @testable-end */", start);
+  if (start === -1 || end === -1) throw new Error(`${name} is not marked testable in offscreen.js`);
+  const sandbox = { JSON, console };
+  vm.createContext(sandbox);
+  vm.runInContext(`${src.slice(start + open.length, end)}\nthis.__fn = ${name};`, sandbox);
+  return sandbox.__fn;
+}
+
+module.exports = { loadBackground, loadPage, loadOffscreenHelper, EXT };
