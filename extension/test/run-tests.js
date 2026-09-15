@@ -116,6 +116,43 @@ check("rivals are the ones sharing a word",
 check("unmatched words are reported", g("weekly average temperature in fahrenheit").unmatchedWords, ["fahrenheit"]);
 ensure("nonsense matches nothing", g("fly me to the moon") === null, g("fly me to the moon"));
 
+section("the rest of a page's controls");
+// The matcher could only click or choose an option, so a search box got a
+// click - which does nothing visible. The control matched and the action was
+// useless, which is harder to notice than no match at all.
+const richPage = { controls: [
+  { kind: "input", type: "search", label: "Search station", selector: "#q", confidence: "high" },
+  { kind: "select", label: "Basemap", selector: "#base", confidence: "high",
+    options: [{ value: "sat", text: "Satellite" }, { value: "terr", text: "Terrain" }] },
+  { kind: "input", type: "checkbox", label: "Flood inundation layer", selector: "#flood", confidence: "high" },
+  { kind: "input", type: "radio", name: "product", label: "Observed", selector: "#obs", confidence: "high" },
+  { kind: "button", label: "Download CSV", selector: "#dl", confidence: "high" },
+] };
+const act = (q) => {
+  const r = sb.planGenericTool(q, richPage);
+  return r && r.calls ? r.calls.map((c) => ({ name: c.name, args: c.args })) : null;
+};
+check("a search box is filled, not clicked",
+  act("search for Boise"), [{ name: "pageFill", args: { selector: "#q", text: "Boise" } }]);
+// A quoted string is the query verbatim, spaces and all.
+check("quoted text is taken whole",
+  act('search station "Big Sandy River"')[0].args.text, "Big Sandy River");
+// "look up 13206000" names no control - a site number shares no word with
+// "Search station" - but the intent is plain.
+check("a bare identifier still reaches the search box",
+  act("look up 13206000"), [{ name: "pageFill", args: { selector: "#q", text: "13206000" } }]);
+check("a dropdown option is chosen",
+  act("set the basemap to satellite"), [{ name: "pageSelectOption", args: { selector: "#base", value: "sat" } }]);
+// A checkbox has two directions, and clicking blindly cannot express which.
+check("a checkbox can be ticked", act("turn on the flood inundation layer")[0].args.on, true);
+check("and unticked", act("hide the flood inundation layer")[0].args.on, false);
+check("a radio is picked by its group",
+  act("select observed"), [{ name: "pagePickRadio", args: { group: "product", value: "Observed" } }]);
+check("a plain button is still clicked",
+  act("download csv"), [{ name: "pageClick", args: { selector: "#dl" } }]);
+// The search fallback must not swallow everything else.
+ensure("nonsense still matches nothing", act("fly me to the moon") === null, act("fly me to the moon"));
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

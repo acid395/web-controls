@@ -733,6 +733,21 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } }, required: ["selector", "text"] },
     },
     {
+      name: "pageCheck", fn: "check", argOrder: ["selector", "on"],
+      description: "Tick or untick a checkbox by CSS selector - layer toggles, filters, 'show only ...' options.",
+      parameters: { type: "object", properties: { selector: { type: "string" }, on: { type: "boolean", description: "true to tick, false to untick" } }, required: ["selector"] },
+    },
+    {
+      name: "pagePickRadio", fn: "pickRadio", argOrder: ["group", "value"],
+      description: "Choose one option from a radio group, by the group's name attribute and the option's value or visible label.",
+      parameters: { type: "object", properties: { group: { type: "string", description: "the radios' shared name attribute; pass anything if they have none" }, value: { type: "string" } }, required: ["group", "value"] },
+    },
+    {
+      name: "pageClickText", fn: "clickText", argOrder: ["text"],
+      description: "Click a button or link by its visible text, when no selector is known.",
+      parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    },
+    {
       name: "pageSelectOption", fn: "selectOption", argOrder: ["selector", "value"],
       description: "Choose an option in a <select> dropdown by CSS selector and the option's value or visible text.",
       parameters: { type: "object", properties: { selector: { type: "string" }, value: { type: "string" } }, required: ["selector", "value"] },
@@ -1952,12 +1967,60 @@ function matchOption(control, words) {
   });
 }
 
-function toolCallFor(control, words) {
-  if (control.kind === "select" || (control.options && control.options.length)) {
+// What the instruction wants done to a checkbox. Absent an explicit verb,
+// ticking is the safer reading: someone naming a filter usually wants it on.
+const TURN_ON = /\b(turn on|enable|show|tick|check|add|include|display|select)\b/i;
+const TURN_OFF = /\b(turn off|disable|hide|untick|uncheck|remove|exclude|clear|deselect)\b/i;
+
+function checkboxIntent(instruction) {
+  if (TURN_OFF.test(instruction)) return false;
+  if (TURN_ON.test(instruction)) return true;
+  return true;
+}
+
+// The text to type. A quoted string is unambiguous; otherwise whatever
+// follows a search cue is the query, since "search for Boise" means Boise and
+// not "search for". Falling back to the leftover words handles "Boise in the
+// search box".
+function valueToType(instruction, control) {
+  const quoted = (instruction || "").match(/["']([^"']{2,60})["']/);
+  if (quoted) return quoted[1];
+  const cue = (instruction || "").match(/\b(?:search(?:\s+for)?|look\s*up|find|type|enter|query)\b[:\s]+(.{2,60})$/i);
+  if (cue) return cue[1].replace(/\s+(in|into|on)\s+the\s+(search|box|field|bar).*$/i, "").trim();
+  const label = (control.label || "").toLowerCase();
+  const leftovers = meaningfulWords(instruction).filter((w) => !label.includes(w));
+  return leftovers.length ? leftovers.join(" ") : null;
+}
+
+const TEXT_INPUT_KINDS = new Set(["text", "search", "email", "url", "tel", "number", "textarea"]);
+
+function toolCallFor(control, words, instruction = "") {
+  const kind = String(control.kind || "").toLowerCase();
+  const type = String(control.type || "").toLowerCase();
+
+  if (kind === "select" || (control.options && control.options.length)) {
     const option = matchOption(control, words);
     if (!option) return null;
     return { name: "pageSelectOption", args: { selector: control.selector, value: option.value || option.text } };
   }
+
+  // A search box needs filling, not clicking - clicking one does nothing
+  // visible, which is exactly how this failed before: the control matched and
+  // the action was useless.
+  if (TEXT_INPUT_KINDS.has(type) || TEXT_INPUT_KINDS.has(kind)) {
+    const value = valueToType(instruction, control);
+    if (!value) return null;
+    return { name: "pageFill", args: { selector: control.selector, text: value } };
+  }
+
+  if (type === "checkbox" || kind === "checkbox") {
+    return { name: "pageCheck", args: { selector: control.selector, on: checkboxIntent(instruction) } };
+  }
+
+  if (type === "radio" || kind === "radio") {
+    return { name: "pagePickRadio", args: { group: control.name || control.label || "", value: control.label || control.value || "" } };
+  }
+
   return { name: "pageClick", args: { selector: control.selector } };
 }
 
@@ -2020,7 +2083,7 @@ function planGenericTool(instruction, inventory) {
       break; // some controls already settled; don't guess at the leftovers
     }
 
-    const call = toolCallFor(best.control, remaining);
+    const call = toolCallFor(best.control, remaining, instruction);
     if (!call) break;
 
     const covered = wordsCoveredBy(best.control, remaining);
@@ -2031,7 +2094,30 @@ function planGenericTool(instruction, inventory) {
     remaining = remaining.filter((w) => !covered.includes(w));
   }
 
-  if (!calls.length) return null;
+  // "look up 13206000" names no control - a site number shares no words with
+  // "Search station" - but the intent is plain. When the instruction asks to
+  // search and the page has somewhere to type, that is the control meant,
+  // even though scoring found nothing.
+  if (!calls.length) {
+    const searching = /\b(search|look\s*up|find|query|enter|type)\b/i.test(instruction);
+    if (searching) {
+      const box = controls.find((c) => {
+        const t = String(c.type || c.kind || "").toLowerCase();
+        return t === "search" || /\bsearch\b/i.test(c.label || "");
+      }) || controls.find((c) => TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()));
+      if (box) {
+        const call = toolCallFor(box, allWords, instruction);
+        if (call) {
+          return {
+            calls: [call],
+            matched: [{ label: box.label, selector: box.selector, covered: allWords }],
+            unmatchedWords: [], phrase,
+          };
+        }
+      }
+    }
+    return null;
+  }
   return { calls, matched, unmatchedWords: remaining, phrase };
 }
 

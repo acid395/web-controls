@@ -58,6 +58,22 @@ three and silently ignore the rest, which is worse than failing, because the
 chart then looks answered while showing the wrong thing. Words nothing
 matched are reported back rather than dropped.
 
+Each kind of control needs its own action, and assuming one action fits all
+fails quietly. The matcher could originally only click or choose an option, so
+a search box got a *click* - which does nothing visible. The control matched,
+the action ran, and nothing happened: harder to notice than no match at all.
+Now a text or search field is filled, a checkbox is ticked or unticked
+according to the verb ("turn on" against "hide"), a radio is picked through
+its group, a dropdown takes the option named, and a button is clicked.
+
+What to type is read from the instruction: a quoted string verbatim, else
+whatever follows a search cue ("search for Boise" means Boise, not "search for
+Boise"), else the words left over once the control's own label is accounted
+for. And when nothing matches at all but the instruction plainly asks to
+search, the page's search box is used anyway - "look up 13206000" names no
+control, since a site number shares no word with "Search station", but the
+intent is not in doubt.
+
 Ambiguity is judged on *overlapping words*, not on score. Two controls that
 score similarly while covering different words aren't rivals, they're the
 separate halves of one instruction - an earlier version compared scores alone
