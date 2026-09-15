@@ -240,6 +240,28 @@ it, not a shrug. Three states are distinguished, because they need different
 advice - capture not installed (enable the site), installed but empty (reload
 the page, its data loaded before capture did), and captured.
 
+## Typos, on both sides
+
+Typo tolerance existed only for data - states, cities, measurements - while
+every control matcher compared exactly. So "gage hiehgt in wyoming" was
+forgiven and "selct thudnerstorms" was not: the same slip, fatal only when
+operating the page, which is the wrong way round given driving the site is the
+primary job. Labels, dropdown options, checkbox names, tool names and
+enumerated values now all tolerate it.
+
+The two sides keep different budgets, deliberately. Data matches against a
+global vocabulary where "stage" and "state" are one edit apart and mean
+entirely different things, so anything under six characters must be exact.
+Control matches against the labels of one specific page, where a four-letter
+collision is far less likely and the cost of refusing "zom in" is an action
+that simply never happens - so four letters is enough there.
+
+Exact matches are tried across every candidate before any fuzzy one, so a
+correctly spelled option can never lose to a near-miss on a different one, and
+a fuzzy hit always scores below an exact one. Multi-word values need a sliding
+window rather than token comparison, since "30 days" matches no single token -
+which is why "30 dys" found nothing until it did.
+
 ## Did the action actually do anything?
 
 Every control path returned whatever the page function returned, and none

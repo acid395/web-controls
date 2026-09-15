@@ -1961,7 +1961,11 @@ function scoreControl(control, words, phrase) {
   if (!label) return 0;
   let score = 0;
   if (phrase && label.includes(phrase)) score += 10 + phrase.length / 10;
-  for (const w of words) if (new RegExp(`\\b${w}`).test(label)) score += 2;
+  for (const w of words) {
+    const hit = wordMatchesText(w, label);
+    if (hit === "exact") score += 2;
+    else if (hit === "fuzzy") score += 1.5; // below exact, never instead of it
+  }
   if (label === phrase) score += 10;
   // A dropdown's label is often a category ("Variable") while the thing the
   // user actually named is one of its options ("Precipitation"), so options
@@ -1971,11 +1975,65 @@ function scoreControl(control, words, phrase) {
     const text = String(o.text || o.value || "").toLowerCase();
     if (!text) continue;
     if (text === phrase) score += 8;
-    else if (words.some((w) => new RegExp(`\\b${w}`).test(text))) score += 3;
+    else if (words.some((w) => wordMatchesText(w, text) === "exact")) score += 3;
+    else if (words.some((w) => wordMatchesText(w, text))) score += 2.5;
   }
   // A low-confidence row is a cursor:pointer guess, not a known control.
   if (control.confidence === "low") score -= 1.5;
   return score;
+}
+
+// Typo tolerance for control matching.
+//
+// editDistance and allowedTypos already existed, but only the data side used
+// them - states, cities, measurements. Every control matcher compared
+// exactly, so "selct thudnerstorms" found nothing at all while "select
+// thunderstorms" worked. The same slip that was forgiven when asking about a
+// river was fatal when operating the page, which is the wrong way round given
+// driving the site is the primary job.
+//
+// Exact matches are always tried first and scored higher, so correct spelling
+// can never lose to a fuzzy hit elsewhere.
+// Control matching gets a slightly more permissive budget than data matching.
+// Data compares against a global vocabulary where "stage" and "state" are one
+// edit apart and mean different things, so short words must match exactly.
+// Control compares against the labels of one specific page, where the risk of
+// a four-letter collision is far lower and the cost of refusing "zom in" is
+// an action that simply does not happen.
+function controlTypoBudget(word) {
+  if (word.length < 4) return 0;
+  if (word.length < 6) return 1;
+  return word.length >= 9 ? 2 : 1;
+}
+
+function wordMatchesText(word, text) {
+  if (!word || !text) return false;
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\b${escaped}`).test(text)) return "exact";
+
+  // A multi-word value ("30 days", "year to date") never matches a single
+  // token, so it needs a sliding window across the text instead.
+  if (/\s/.test(word)) {
+    const parts = word.split(/\s+/);
+    const tokens = String(text).split(/[^a-z0-9]+/).filter(Boolean);
+    for (let i = 0; i + parts.length <= tokens.length; i++) {
+      const window = tokens.slice(i, i + parts.length).join(" ");
+      const allowed = controlTypoBudget(word.length > window.length ? word : window);
+      if (allowed && editDistance(window, word) <= allowed) return "fuzzy";
+    }
+    return false;
+  }
+
+  for (const token of String(text).split(/[^a-z0-9]+/)) {
+    if (!token) continue;
+    // The longer of the two sets the budget: matching "sat" against
+    // "satellite" is not a typo, it is a different word.
+    const allowed = controlTypoBudget(token.length > word.length ? token : word);
+    if (!allowed) continue;
+    if (Math.abs(token.length - word.length) > allowed) continue;
+    if (editDistance(token, word) <= allowed) return "fuzzy";
+  }
+  return false;
 }
 
 // Which instruction words a control's label or options actually account for.
@@ -1985,15 +2043,16 @@ function wordsCoveredBy(control, words) {
   const optionText = (control.options || [])
     .map((o) => String(o.text || o.value || "").toLowerCase()).join(" ");
   const hay = `${label} ${optionText}`;
-  return words.filter((w) => new RegExp(`\\b${w}`).test(hay));
+  return words.filter((w) => wordMatchesText(w, hay));
 }
 
 // Picks the option inside a <select> that the instruction named.
 function matchOption(control, words) {
-  return (control.options || []).find((o) => {
-    const text = String(o.text || o.value || "").toLowerCase();
-    return words.some((w) => new RegExp(`\\b${w}`).test(text));
-  });
+  const options = control.options || [];
+  // Exact across every option before any fuzzy one, so a correctly spelled
+  // option is never beaten by a near-miss on a different one.
+  return options.find((o) => words.some((w) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))
+    || options.find((o) => words.some((w) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase())));
 }
 
 // What the instruction wants done to a checkbox. Absent an explicit verb,
@@ -2462,19 +2521,26 @@ function scoreManifestTool(def, words, instruction) {
   // The tool's own name is the strongest signal: "set basemap" naming
   // setBasemap is not a coincidence.
   const nameWords = fromName.split(/\s+/).filter((w) => w.length > 2);
-  for (const w of nameWords) if (new RegExp(`\\b${w}`).test(text)) score += 3;
-  if (nameWords.length && nameWords.every((w) => text.includes(w))) score += 4;
+  for (const w of nameWords) {
+    const hit = wordMatchesText(w, text);
+    if (hit === "exact") score += 3;
+    else if (hit === "fuzzy") score += 2.25;
+  }
+  if (nameWords.length && nameWords.every((w) => wordMatchesText(w, text))) score += 4;
 
   // An enumerated value appearing verbatim all but names the tool -
   // "satellite" belongs to exactly one.
   for (const value of enums) {
     const v = value.toLowerCase();
-    if (v.length > 2 && new RegExp(`\\b${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text)) score += 5;
+    if (v.length <= 2) continue;
+    const hit = wordMatchesText(v, text);
+    if (hit === "exact") score += 5;
+    else if (hit === "fuzzy") score += 4;
   }
 
   // Description words carry less weight: they are prose, and prose overlaps.
   for (const w of words) {
-    if (w.length > 3 && description.includes(w)) score += 1;
+    if (w.length > 3 && wordMatchesText(w, description)) score += 1;
   }
   return score;
 }
@@ -2489,7 +2555,11 @@ function argsForTool(def, instruction, words) {
 
   for (const [key, spec] of Object.entries(props)) {
     if (Array.isArray(spec.enum)) {
-      const hit = spec.enum.find((v) => new RegExp(`\\b${String(v).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
+      // Exact across all values first: a correctly spelled option must never
+      // lose to a near-miss on a different one.
+      const exact = spec.enum.find((v) => wordMatchesText(String(v).toLowerCase(), text) === "exact");
+      const hit = exact !== undefined ? exact
+        : spec.enum.find((v) => wordMatchesText(String(v).toLowerCase(), text));
       if (hit !== undefined) args[key] = hit;
       continue;
     }

@@ -230,6 +230,39 @@ section("repeat questions do not re-fetch");
 
 function finishCache() {
 
+section("typos in control instructions");
+// Typo tolerance existed only on the data side, so the same slip forgiven
+// when asking about a river was fatal when operating the page - the wrong way
+// round, given driving the site is the primary job.
+const typoPage = { controls: [
+  { kind: "button", label: "Thunderstorms", selector: "#ts", confidence: "high" },
+  { kind: "button", label: "Precipitation", selector: "#pr", confidence: "high" },
+  { kind: "select", label: "Basemap", selector: "#b", confidence: "high",
+    options: [{ value: "sat", text: "Satellite" }, { value: "terr", text: "Terrain" }] },
+  { kind: "input", type: "checkbox", label: "Flood inundation layer", selector: "#f", confidence: "high" },
+] };
+const t = (q) => {
+  const r = sb.planGenericTool(q, typoPage);
+  return r && r.calls ? `${r.calls[0].name} ${JSON.stringify(r.calls[0].args)}` : null;
+};
+check("misspelled label", t("selct thudnerstorms"), 'pageClick {"selector":"#ts"}');
+check("matches the correct spelling too", t("select thunderstorms"), 'pageClick {"selector":"#ts"}');
+check("misspelled option", t("set basemp to satelite"), 'pageSelectOption {"selector":"#b","value":"sat"}');
+check("misspelled checkbox", t("turn on flod inundation layr"), 'pageCheck {"selector":"#f","on":true}');
+
+const mt = (q, route) => { const r = sb.planManifestTool(q, route); return r ? `${r.name} ${JSON.stringify(r.args)}` : null; };
+// Short words needed their own budget: "zoom" is four letters.
+check("a short misspelled verb", mt("zom in", "NOAA"), "noaaZoomIn {}");
+// A multi-word enum never matches a single token, so it needs a window.
+check("a misspelled multi-word value", mt("set the time span to 30 dys", "SITE"), 'siteSetTimeSpan {"span":"30 days"}');
+check("misspelled tool name", mt("togle the legend", "FCP"), "fcpToggleLegend {}");
+check("misspelled enum", mt("set gauge mode to forecst", "NOAA"), 'noaaSetGaugeMode {"mode":"Forecast"}');
+
+// The data side keeps the stricter budget: there "stage" and "state" are one
+// edit apart and mean entirely different things.
+check("data matching stays strict", toolOf("what is the current state", { global: "USGS" }), undefined);
+check("and an exact control phrase is untouched", toolOf("set the parameter to stage", { global: "USGS" }), undefined);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
