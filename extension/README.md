@@ -240,6 +240,40 @@ it, not a shrug. Three states are distinguished, because they need different
 advice - capture not installed (enable the site), installed but empty (reload
 the page, its data loaded before capture did), and captured.
 
+## Did the action actually do anything?
+
+Every control path returned whatever the page function returned, and none
+checked the page had changed. A click that silently did nothing was
+indistinguishable from one that worked - both come back without error. That is
+the same failure shape as every other bug in this file: plausible, and wrong.
+It had already bitten: `noaaSetBasemap` only works once the layers panel is
+open, and called cold it fails invisibly.
+
+`verify-usgs.js` has done this for one manifest all along - call, read the DOM
+back, assert it changed. `runVerified()` generalises it: snapshot every
+control's state, act, wait, snapshot again, report what moved. A no-op is now
+said out loud, with the likeliest reason.
+
+Timing is half of it. These actions are asynchronous far more often than not -
+a click starts a fetch or a re-render - so comparing immediately reports a
+working action as a no-op. `settle()` waits for the DOM to stop mutating,
+with a ceiling so a page carrying a clock or a ticker cannot hang the caller.
+The snapshot records values only, never positions or text, since those move
+for reasons unrelated to the action.
+
+Verification never fails an action: if snapshotting is unavailable the result
+passes through untouched. Knowing less about a successful action beats
+refusing to perform it.
+
+Three smaller things came with it. **Sequences** - "switch to Alaska then show
+discharge" - run in order and stop at the first failure, splitting only where
+both halves independently plan to something so an instruction merely
+containing "and" is left alone. **"What can I do here?"** lists the route's
+verified tools, the page's own controls and the available questions, because
+nobody can use what they cannot find. And agency responses are **memoised for
+two minutes**, since NWPS is rate-limited by its own documentation and every
+ask re-fetched it - brief deliberately, these being current conditions.
+
 ## Driving the site is the primary job
 
 Answering questions about a site is a bonus; operating it is the point. Two

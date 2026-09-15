@@ -897,6 +897,94 @@
     return { url: location.href, count: out.length, links: out };
   }
 
+  /* ============================================================================
+   * settle() and pageSignature() - telling a real change from a no-op.
+   *
+   * An action that silently did nothing looks exactly like one that worked:
+   * both return without error. That is the same shape as every other bug this
+   * project has produced - plausible, and wrong. Comparing a compact snapshot
+   * of the page's control states before and after makes the difference
+   * visible.
+   *
+   * Timing matters as much as the comparison. Most of these actions are
+   * asynchronous - a click triggers a fetch, a re-render, an animation - so a
+   * snapshot taken immediately afterwards catches the old state and reports a
+   * working action as a no-op. settle() waits for the DOM to stop changing
+   * first, with a ceiling so a page that mutates constantly (a live clock, a
+   * ticker) cannot hang the caller.
+   * ========================================================================== */
+  function settle({ quiet = 220, timeout = 2500 } = {}) {
+    return new Promise((resolve) => {
+      let lastChange = Date.now();
+      let mutations = 0;
+      const observer = new MutationObserver((records) => {
+        mutations += records.length;
+        lastChange = Date.now();
+      });
+      observer.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, characterData: true,
+      });
+      const started = Date.now();
+      const tick = () => {
+        const idleFor = Date.now() - lastChange;
+        if (idleFor >= quiet || Date.now() - started >= timeout) {
+          observer.disconnect();
+          resolve({ mutations, waitedMs: Date.now() - started, timedOut: Date.now() - started >= timeout });
+          return;
+        }
+        setTimeout(tick, 60);
+      };
+      setTimeout(tick, 60);
+    });
+  }
+
+  // A compact record of what every control is currently set to. Deliberately
+  // values only - positions and text move for reasons unrelated to the action
+  // (lazy images, ads, a clock), and would report a change on every call.
+  function pageSignature({ limit = 400 } = {}) {
+    const state = {};
+    let n = 0;
+    for (const el of deepQueryAll("input, select, textarea, [role=radio], [role=checkbox], [aria-pressed], [aria-selected], [aria-expanded]")) {
+      if (n >= limit) break;
+      if (!isVisible(el)) continue;
+      const key = cssPath(el);
+      if (!key) continue;
+      const tag = el.tagName.toLowerCase();
+      let value;
+      if (tag === "select") value = el.value;
+      else if (el.type === "checkbox" || el.type === "radio") value = !!el.checked;
+      else if (tag === "input" || tag === "textarea") value = String(el.value || "").slice(0, 80);
+      else {
+        value = el.getAttribute("aria-pressed") || el.getAttribute("aria-selected") || el.getAttribute("aria-expanded");
+      }
+      if (value === undefined || value === null) continue;
+      state[key] = value;
+      n++;
+    }
+    return { url: location.href, title: document.title, controls: state, count: n };
+  }
+
+  // What actually changed between two snapshots, in terms a person can read.
+  function signatureDiff(before, after) {
+    const changes = [];
+    const seen = new Set();
+    for (const [key, value] of Object.entries(after.controls || {})) {
+      seen.add(key);
+      const was = (before.controls || {})[key];
+      if (was === undefined) { changes.push({ selector: key, appeared: true, now: value }); continue; }
+      if (String(was) !== String(value)) changes.push({ selector: key, was, now: value });
+    }
+    for (const key of Object.keys(before.controls || {})) {
+      if (!seen.has(key)) changes.push({ selector: key, disappeared: true, was: before.controls[key] });
+    }
+    return {
+      changed: changes.length > 0 || before.url !== after.url,
+      navigated: before.url !== after.url ? { from: before.url, to: after.url } : undefined,
+      changes: changes.slice(0, 20),
+      changeCount: changes.length,
+    };
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -928,6 +1016,9 @@
   const GENERIC = {
     inventory,
     readPage,
+    settle,
+    pageSignature,
+    signatureDiff,
     hoverSeries,
     mapFeatures,
     readUrl,

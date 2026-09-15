@@ -777,7 +777,29 @@ const TOOL_DEFS = {
 // stayed up. "returned 503" is jargon that reads like a bug in the question;
 // saying which service is unavailable, and that the others still work, is the
 // difference between a dead end and a usable answer.
+// NOAA's NWPS is slow and rate-limited by its own documentation, and every
+// ask re-fetched. A short memo makes a repeated question instant and keeps
+// the extension from being the reason a rate limit is hit. Deliberately brief
+// - these are current conditions, and stale readings were a real bug once.
+const FETCH_CACHE = new Map();
+const CACHE_TTL_MS = 120000;
+
+function cacheGet(url) {
+  const hit = FETCH_CACHE.get(url);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_TTL_MS) { FETCH_CACHE.delete(url); return null; }
+  return hit.value;
+}
+
+function cacheSet(url, value) {
+  FETCH_CACHE.set(url, { at: Date.now(), value });
+  // The worker is not long-lived, but an unbounded map is still wrong.
+  if (FETCH_CACHE.size > 40) FETCH_CACHE.delete(FETCH_CACHE.keys().next().value);
+}
+
 async function fetchJson(url, service) {
+  const cached = cacheGet(url);
+  if (cached) return cached;
   let res;
   try {
     res = await fetch(url);
@@ -792,7 +814,9 @@ async function fetchJson(url, service) {
   }
   if (!res.ok) throw new Error(`${service} rejected that request (${res.status})`);
   try {
-    return await res.json();
+    const body = await res.json();
+    cacheSet(url, body);
+    return body;
   } catch (e) {
     throw new Error(`${service} returned something that wasn't JSON - the service may be mid-outage`);
   }
@@ -1425,13 +1449,18 @@ async function usgsFindGauges({ place, parameter }) {
 
   const states = [...new Set(gauges.map((g) => g.state).filter(Boolean))];
   if (!gauges.length) {
+    // Every source here is a US federal agency. A place outside that coverage
+    // is not a spelling mistake, and saying "no gauge by that name" invites
+    // someone to keep trying - worse, a same-named US place would have
+    // answered confidently about the wrong continent.
     return {
-      place, found: 0,
+      place, found: 0, coverage: "united states only",
       display: {
         title: `No gauge named "${place}"`,
         subtitle: "USGS has no monitoring location with that name",
         stats: [], rows: [],
-        note: "try a different spelling, or the river's full name",
+        caveat: "USGS, NWS and NOAA cover the United States only - somewhere outside it will never be found here, however it is spelled",
+        note: "if it is a US river, try its full name or add the state",
         source: "USGS monitoring locations",
       },
     };
@@ -2523,6 +2552,72 @@ function planManifestTool(instruction, routeGlobal) {
   return { name: scored[0].def.name, args };
 }
 
+/* ---------------------------------------------------------------------------
+ * Did the action actually do anything?
+ *
+ * Every control path returned whatever the page function returned, and none
+ * of them checked the page changed. A click that silently did nothing was
+ * indistinguishable from one that worked - both come back without error.
+ * That is the same failure shape as every other bug here: plausible, and
+ * wrong.
+ *
+ * verify-usgs.js has done this for one manifest all along (call, read the DOM
+ * back, assert it changed). This is the same idea for any action on any page:
+ * snapshot the control states, act, wait for the page to settle, snapshot
+ * again, and report what moved.
+ *
+ * Verification never fails the action. If snapshotting is unavailable the
+ * result passes through untouched - knowing less about a successful action is
+ * better than refusing to perform it.
+ */
+async function runVerified(routeGlobal, toolCall) {
+  const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  const result = await executeToolCall(routeGlobal, toolCall);
+  if (!before.ok || result.ok === false) return result;
+
+  // Actions are asynchronous far more often than not - a click starts a
+  // fetch or a re-render - so comparing immediately would report a working
+  // action as a no-op.
+  const settled = await invokeOnActiveTab("settle", []).catch(() => ({ ok: false }));
+  const after = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  if (!after.ok) return result;
+
+  const diff = await invokeOnActiveTab("signatureDiff", [before.result, after.result]).catch(() => ({ ok: false }));
+  if (!diff.ok) return result;
+
+  return {
+    ...result,
+    verified: {
+      changed: diff.result.changed,
+      changeCount: diff.result.changeCount,
+      changes: diff.result.changes,
+      navigated: diff.result.navigated,
+      waitedMs: settled.ok ? settled.result.waitedMs : undefined,
+    },
+  };
+}
+
+// Turns the diff into something worth reading, rather than a selector dump.
+function describeVerification(verified, toolCall) {
+  if (!verified) return undefined;
+  if (verified.navigated) {
+    return { tone: "ok", text: `page moved to ${verified.navigated.to.replace(/^https?:\/\//, "").slice(0, 60)}` };
+  }
+  if (!verified.changed) {
+    // The important case. Silence here is what made a failed action look
+    // successful - some tools need a panel opened first, and say so.
+    return {
+      tone: "alert",
+      text: `${toolCall.name} ran but nothing on the page changed - it may need a panel opened first, or the control may not apply here`,
+    };
+  }
+  const first = verified.changes[0];
+  const detail = first && first.now !== undefined && first.was !== undefined
+    ? `${first.was} -> ${first.now}`
+    : `${verified.changeCount} control${verified.changeCount === 1 ? "" : "s"}`;
+  return { tone: "ok", text: `changed ${detail}` };
+}
+
 // Control tools depend on which site is open; data tools never do.
 function toolsFor(routeGlobal) {
   return [...(TOOL_DEFS[routeGlobal] || []), ...DATA_TOOLS];
@@ -2926,6 +3021,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // which tools it can pick from, plus the context string (env-vocab, and on
   // GENERIC routes the live inventory). Makes "did it even see this page's
   // controls" checkable without waiting on inference.
+  // "What can I do here?" - nobody can use what they cannot find. There are
+  // dozens of verified tools per route plus whatever inventory() turns up,
+  // and until now the only way to learn any of them was to guess.
+  if (msg.type === "capabilities") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || !tab.url) throw new Error("no active tab");
+        const route = routeFor(tab.url);
+
+        const manifestTools = (TOOL_DEFS[route.global] || []).filter((d) => !d.run);
+        const dataTools = DATA_TOOLS;
+        const inv = await invokeOnActiveTab("inventory", []).catch(() => ({ ok: false }));
+        const controls = inv.ok ? (inv.result.controls || []).filter((c) => c.label && c.confidence !== "low") : [];
+
+        // Descriptions are written for people already, so the first sentence
+        // of each is the most readable summary available.
+        const firstSentence = (t) => String(t || "").split(/(?<=\.)\s/)[0];
+        sendResponse({
+          ok: true,
+          route: route.global,
+          display: {
+            title: `What you can do here`,
+            subtitle: route.global === "GENERIC"
+              ? `${controls.length} controls found on this page, plus ${dataTools.length} data questions`
+              : `${manifestTools.length} verified tools for ${route.global}, plus ${dataTools.length} data questions`,
+            stats: [],
+            rows: [
+              ...manifestTools.slice(0, 10).map((t) => ({
+                name: t.name.replace(/^(usgs|site|noaa|fcp)/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim(),
+                value: "action", meta: firstSentence(t.description).slice(0, 70),
+              })),
+              ...controls.slice(0, 8).map((c) => ({ name: c.label.slice(0, 40), value: c.kind || "control", meta: c.selector })),
+              ...dataTools.slice(0, 4).map((t) => ({
+                name: t.name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase(),
+                value: "question", meta: firstSentence(t.description).slice(0, 70),
+              })),
+            ],
+            note: "ask in plain English - name a control to use it, or a place and a measurement to look it up",
+            source: route.global,
+          },
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "askHistory") {
     (async () => { sendResponse({ ok: true, history: await readHistory() }); })();
     return true;
@@ -3010,7 +3154,60 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // to gage height" acts; "gage height in Alaska" answers. Only a
         // question reaches the data paths first - a command falls through to
         // them below if nothing on the page turned out to match.
+        // "What can I do here" is neither a command nor a data question, and
+        // would otherwise be matched against control labels word by word.
+        if (/\bwhat can (i|you)\b|\bwhat( is|'s)? (possible|available|supported)\b|\bhelp\b|\bwhat do you do\b|\bcapabilities\b/i.test(msg.instruction || "")) {
+          const caps = await new Promise((r) => chrome.runtime.sendMessage({ type: "capabilities" }, r));
+          respond(caps || { ok: false, error: "couldn't list capabilities" });
+          return;
+        }
+
         const commandLike = isCommand(msg.instruction || "");
+
+        // Real tasks are sequences - "switch to Alaska then show discharge".
+        // Split only where both halves independently plan to something, so an
+        // instruction that merely contains "and" is left alone.
+        if (commandLike) {
+          const parts = String(msg.instruction).split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*/i)
+            .map((t) => t.trim()).filter(Boolean);
+          if (parts.length > 1 && parts.length <= 4) {
+            const plans = parts.map((part) => ({
+              part,
+              call: planManifestTool(part, route.global) || (route.global === "USGS" ? planTool(part) : null),
+            }));
+            if (plans.every((p) => p.call)) {
+              const steps = [];
+              for (const { part, call } of plans) {
+                // A manifest tool call and a planTool result have different
+                // shapes; both end up at the same executor.
+                const result = call.name
+                  ? await runVerified(route.global, call)
+                  : await invokeOnActiveTab(call.fn, call.args);
+                const changed = result.verified ? result.verified.changed : undefined;
+                steps.push({ part, ok: result.ok !== false, changed, error: result.error });
+                if (result.ok === false) break;
+              }
+              const failed = steps.find((st) => !st.ok);
+              respond({
+                ok: !failed, plannedBy: "sequence", steps,
+                error: failed ? `"${failed.part}" failed: ${failed.error}` : undefined,
+                display: {
+                  title: `${steps.length} step${steps.length === 1 ? "" : "s"}`,
+                  subtitle: failed ? "stopped at the first failure" : "done in order",
+                  stats: [],
+                  rows: steps.map((st) => ({
+                    name: st.part.slice(0, 44),
+                    value: !st.ok ? "failed" : st.changed === false ? "no change" : "done",
+                    meta: "",
+                    tone: !st.ok ? "alert" : st.changed === false ? "warn" : "ok",
+                  })),
+                  source: route.global,
+                },
+              });
+              return;
+            }
+          }
+        }
 
         const wants = commandLike ? [] : pageValueWants(msg.instruction || "");
         if (wants.length) {
@@ -3078,8 +3275,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // selector guessing below, having been checked against the real site.
         const manifestCall = planManifestTool(msg.instruction || "", route.global);
         if (manifestCall) {
-          const result = await executeToolCall(route.global, manifestCall);
-          respond({ ...result, plannedBy: "manifest", toolCall: manifestCall });
+          const result = await runVerified(route.global, manifestCall);
+          const note = describeVerification(result.verified, manifestCall);
+          respond({
+            ...result, plannedBy: "manifest", toolCall: manifestCall,
+            display: {
+              title: manifestCall.name,
+              subtitle: note ? note.text : "done",
+              stats: [],
+              rows: (result.verified && result.verified.changes || []).slice(0, 5).map((c) => ({
+                name: String(c.selector).slice(0, 50),
+                value: c.now === undefined ? "" : String(c.now).slice(0, 20),
+                meta: c.was === undefined ? "" : `was ${String(c.was).slice(0, 20)}`,
+                tone: "ok",
+              })),
+              caveat: note && note.tone === "alert" ? note.text : undefined,
+              source: route.global,
+            },
+          });
           return;
         }
 
@@ -3151,8 +3364,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // something, so continuing past a failure just piles on damage.
             const steps = [];
             for (const call of guess.calls) {
-              const result = await executeToolCall(route.global, call);
-              steps.push({ call, ok: result.ok !== false, result: result.result, error: result.error });
+              const result = await runVerified(route.global, call);
+              steps.push({
+                call, ok: result.ok !== false, result: result.result, error: result.error,
+                // A step that ran without changing anything is reported, not
+                // hidden: in a sequence it usually means a later step is
+                // about to act on a state that was never reached.
+                changed: result.verified ? result.verified.changed : undefined,
+              });
               if (result.ok === false) break;
             }
             const failed = steps.find((st) => !st.ok);
@@ -3168,12 +3387,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   ? `nothing on this page matched: ${guess.unmatchedWords.join(", ")}`
                   : guess.phrase,
                 stats: [],
-                rows: guess.matched.slice(0, steps.length).map((m, i) => ({
-                  name: m.label || m.selector,
-                  value: steps[i] && steps[i].ok ? "done" : "failed",
-                  meta: m.covered.join(" "),
-                  tone: steps[i] && steps[i].ok ? "ok" : "alert",
-                })),
+                rows: guess.matched.slice(0, steps.length).map((m, i) => {
+                  const st = steps[i];
+                  const noop = st && st.ok && st.changed === false;
+                  return {
+                    name: m.label || m.selector,
+                    value: !st || !st.ok ? "failed" : noop ? "no change" : "done",
+                    meta: m.covered.join(" "),
+                    tone: !st || !st.ok ? "alert" : noop ? "warn" : "ok",
+                  };
+                }),
                 source: "this page",
               },
             });

@@ -181,6 +181,55 @@ check("a bare measurement and place is not", sb.isCommand("gage height in Alaska
 check("a question is not", sb.isCommand("what is the max temperature in Chicago"), false);
 check("searching is", sb.isCommand("search for Boise"), true);
 
+section("did the action actually do anything");
+// A click that silently did nothing was indistinguishable from one that
+// worked - both return without error. Same shape as every other bug here:
+// plausible, and wrong.
+const actPage = loadPage(`<!doctype html><html><head><title>Controls</title></head><body>
+  <select id="basemap"><option value="terr">Terrain</option><option value="sat">Satellite</option></select>
+  <input type="checkbox" id="flood"><input type="text" id="q" value="">
+  </body></html>`);
+if (!actPage) skip("verification", "jsdom not installed");
+else {
+  const before = actPage.GENERIC.pageSignature();
+  ensure("a snapshot records control states", before.count >= 3, before);
+
+  // Nothing touched: the diff must say so, or a no-op reads as success.
+  const unchanged = actPage.GENERIC.signatureDiff(before, actPage.GENERIC.pageSignature());
+  check("an untouched page reports no change", unchanged.changed, false);
+
+  actPage.document.getElementById("basemap").value = "sat";
+  actPage.document.getElementById("flood").checked = true;
+  const after = actPage.GENERIC.pageSignature();
+  const diff = actPage.GENERIC.signatureDiff(before, after);
+  check("a real change is detected", diff.changed, true);
+  check("and counted", diff.changeCount, 2);
+  ensure("with the old and new values", diff.changes.some((c) => c.was === "terr" && c.now === "sat"), diff.changes);
+
+  // The no-op message is the one that matters: some tools need a panel
+  // opened first and fail invisibly otherwise.
+  const quiet = sb.describeVerification({ changed: false, changes: [], changeCount: 0 }, { name: "noaaSetBasemap" });
+  check("a no-op is called out", quiet.tone, "alert");
+  ensure("and suggests why", /panel|apply/.test(quiet.text), quiet.text);
+  const moved = sb.describeVerification({ changed: true, changeCount: 1, changes: [{ was: "terr", now: "sat" }] }, { name: "x" });
+  check("a change is reported plainly", moved.tone, "ok");
+  ensure("naming what moved", /terr -> sat/.test(moved.text), moved.text);
+}
+
+section("repeat questions do not re-fetch");
+// NWPS is slow and rate-limited by its own documentation, and every ask
+// re-fetched it.
+(async () => {
+  const fresh = loadBackground();
+  await fresh.executeToolCall("GENERIC", { name: "waterAlerts", args: { state: "RI" } }).catch(() => {});
+  const afterFirst = fresh.__requests.length;
+  await fresh.executeToolCall("GENERIC", { name: "waterAlerts", args: { state: "RI" } }).catch(() => {});
+  check("the second identical ask issues no new request", fresh.__requests.length, afterFirst);
+  finishCache();
+})();
+
+function finishCache() {
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
@@ -553,6 +602,7 @@ if (process.argv.includes("--live")) {
 }
 }
 
+}
 }
 }
 
