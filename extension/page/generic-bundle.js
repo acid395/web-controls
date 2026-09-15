@@ -564,6 +564,36 @@
     };
   }
 
+  // Values written as one run of text - "High: 81°F", "Low 68 °F", "Humidity
+   // 52%" - which is how a forecast page states most of what it shows. These
+   // are invisible to readPairs(), which needs two elements, and to
+   // readReadouts(), which needs a class or attribute to recognise. Without
+   // them a page can display a number plainly and still look empty.
+  function readLabelledNumbers(limit = 80) {
+    const out = [];
+    const seen = new Set();
+    for (const el of deepQueryAll("p, span, div, li, dd, dt, td, th, strong, b, h3, h4, h5, h6")) {
+      if (!isVisible(el)) continue;
+      // Leaves only. A wrapper's textContent is its children concatenated,
+      // which yields runs like "TodayHigh: 83 °F" alongside the "High: 83 °F"
+      // it already contains - duplicated, and uglier to show.
+      if (el.children.length > 1) continue;
+      const text = textOf(el);
+      if (!text || text.length > 70 || !/\d/.test(text)) continue;
+      if (!/[a-zA-Z]/.test(text)) continue; // a bare number says nothing
+      if (seen.has(text)) continue;
+      seen.add(text);
+      const m = text.match(/(-?[\d,]+\.?\d*)\s*(°\s?[CF]|°|%|[a-zA-Z/]{1,8})?/);
+      out.push({
+        text,
+        value: m ? Number(m[1].replace(/,/g, "")) : null,
+        unit: m && m[2] ? m[2].replace(/\s+/g, "") : null,
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -576,6 +606,7 @@
       tables,
       pairs,
       readouts,
+      labelledNumbers: readLabelledNumbers(),
       chart,
       // Said plainly, because "found nothing" and "the data is painted onto a
       // canvas and cannot be read from the DOM at all" are different answers.

@@ -90,12 +90,28 @@ readable data in the DOM - this page draws to 2 canvas element(s), whose
 contents are pixels, not elements"*. For those the real answer is the data the
 page itself fetched, not the picture it drew.
 
-## Why a number can differ from the site you are looking at
+## The page first, the agency second
 
-Nothing here scrapes the page you are on. Data tools call the agencies
-directly, so a figure can legitimately differ from the one on screen, and the
-card always says which station or gauge it came from so the difference is
-checkable rather than mysterious.
+A data tool calls the agency directly, which is exactly what lets it answer
+about Alaska from an Idaho page. It is the wrong instinct when the page
+already shows the answer: asked for a maximum on a forecast page, fetching a
+separate figure from NWS is both surprising and a *different number*, since a
+station observation is not a grid-square forecast.
+
+So data questions read the page first and fall back to the agency. Two rules
+keep that honest. A page is only used when it plausibly concerns the same
+place - title and headings, not body text, since a forecast page names dozens
+of towns in its navigation - so "max temperature in Milwaukee" asked on a
+Chicago page still fetches rather than quietly reading Chicago's numbers. And
+a unit stands in for the noun, because pages write "High: 83 °F" and never
+"High temperature: 83"; requiring the word made every forecast page look as
+though it displayed nothing. Those single text runs are also invisible to the
+pair and readout extractors, which need two elements or a class to recognise,
+so they get their own pass.
+
+When the answer does come from the agency, the card names the station or gauge
+it came from, so a difference from the screen is checkable rather than
+mysterious.
 
 Three things made "max temperature of Chicago" disagree with weather.gov, and
 two of them were bugs:

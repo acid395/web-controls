@@ -2063,6 +2063,89 @@ function explainFailure(instruction, route, inv, { modelOff }) {
   };
 }
 
+/* ---------------------------------------------------------------------------
+ * Answering from the page you are looking at.
+ *
+ * A data tool calls the agency directly, which is what makes it work from any
+ * page - but it is the wrong instinct when the page already shows the answer.
+ * Asked for a maximum on a forecast page, fetching a separate figure from NWS
+ * and reporting that is both surprising and, because a station observation is
+ * not a grid-square forecast, a different number from the one on screen.
+ *
+ * So data questions look at the page first and fall back to the agency. The
+ * page is only trusted when it is plausibly about the same place: a question
+ * naming somewhere the page never mentions is not answerable from it, and
+ * silently reading Milwaukee's numbers for a question about Chicago would be
+ * far worse than fetching.
+ */
+// A unit can stand in for the noun: pages write "High: 83 °F", never "High
+// temperature: 83". Requiring the word "temperature" made every forecast page
+// look as though it showed none.
+const PAGE_VALUE_TERMS = {
+  high: { terms: ["high", "max", "maximum", "hottest", "warmest"] },
+  low: { terms: ["low", "min", "minimum", "coldest", "coolest"] },
+  temperature: { terms: ["temperature", "temp"], unit: /°\s?[cf]\b|\bdegrees\b/i },
+  humidity: { terms: ["humidity", "humid"] },
+  dewpoint: { terms: ["dew point", "dewpoint", "dew"] },
+  wind: { terms: ["wind", "gust"], unit: /\bmph\b|\bkts?\b|\bkm\/h\b/i },
+  pressure: { terms: ["pressure", "barometric", "inhg"] },
+  precipitation: { terms: ["precipitation", "precip", "rain", "rainfall"] },
+  gageHeight: { terms: ["gage height", "gauge height", "stage"] },
+  discharge: { terms: ["discharge", "streamflow", "flow", "cfs"] },
+};
+
+function conceptMatches(concept, text) {
+  const def = PAGE_VALUE_TERMS[concept];
+  if (!def) return false;
+  if (def.terms.some((t) => text.includes(t))) return true;
+  return def.unit ? def.unit.test(text) : false;
+}
+
+function pageValueCandidates(pageData) {
+  const rows = [];
+  for (const p of (pageData.pairs || [])) rows.push({ label: p.label, text: `${p.label} ${p.value}`, value: p.value });
+  for (const r of (pageData.readouts || [])) rows.push({ label: r.label || r.text, text: `${r.label || ""} ${r.text}`, value: r.text });
+  for (const n of (pageData.labelledNumbers || [])) rows.push({ label: n.text, text: n.text, value: n.text });
+  return rows;
+}
+
+// Does the page look like it is about the place that was asked about? Title
+// and headings only - a forecast page mentions dozens of place names in its
+// navigation, and matching those would make every page look relevant.
+function pageIsAbout(pageData, place) {
+  if (!place) return true; // no place named: the page is the obvious subject
+  const hay = [pageData.title || "", ...(pageData.headings || [])].join(" ").toLowerCase();
+  return place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || hay.includes(w));
+}
+
+function findOnPage(pageData, { wants, place }) {
+  if (!pageIsAbout(pageData, place)) return null;
+  const known = wants.filter((w) => PAGE_VALUE_TERMS[w]);
+  if (!known.length) return null;
+
+  const hits = [];
+  for (const row of pageValueCandidates(pageData)) {
+    const text = (row.text || "").toLowerCase();
+    if (!/\d/.test(text)) continue;
+    // Every requested aspect must hold: "max temperature" needs both a
+    // maximum and a temperature, or "Max wind 20 mph" would answer it.
+    if (known.every((concept) => conceptMatches(concept, text))) hits.push(row);
+  }
+  return hits.length ? hits.slice(0, 6) : null;
+}
+
+// Which aspects an instruction is asking for, in PAGE_VALUE_TERMS' vocabulary.
+function pageValueWants(text) {
+  const t = (text || "").toLowerCase();
+  const wants = [];
+  for (const [key, def] of Object.entries(PAGE_VALUE_TERMS)) {
+    if (def.terms.some((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(t))) wants.push(key);
+  }
+  // A bare "high" or "max" with nothing else is a qualifier, not a subject.
+  if (wants.length === 1 && (wants[0] === "high" || wants[0] === "low")) return [];
+  return wants;
+}
+
 // Control tools depend on which site is open; data tools never do.
 function toolsFor(routeGlobal) {
   return [...(TOOL_DEFS[routeGlobal] || []), ...DATA_TOOLS];
@@ -2544,6 +2627,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // height in Alaska" is answerable from anywhere, and shouldn't be
         // hijacked by a control rule just because the USGS page is open.
         const dataCall = planDataTool(msg.instruction || "", route);
+
+        // The page first, when it plausibly holds the answer. Only for
+        // questions that are about a displayed value at all, and only when
+        // the page is about the same place - otherwise fetching is right.
+        const wants = pageValueWants(msg.instruction || "");
+        if (wants.length) {
+          const askedPlace = dataCall && dataCall.args
+            ? (dataCall.args.place || dataCall.args.nameContains || null) : null;
+          const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+          if (read.ok) {
+            const hits = findOnPage(read.result, { wants, place: askedPlace });
+            if (hits) {
+              respond({
+                ok: true, plannedBy: "from-page", readFrom: read.result.url, values: hits,
+                display: {
+                  title: (read.result.title || "This page").slice(0, 70),
+                  subtitle: `read from the page you're on · ${wants.join(" + ")}`,
+                  stats: [],
+                  rows: hits.map((h) => ({ name: h.label.slice(0, 60), value: "", meta: "" })),
+                  note: "these are the page's own figures - ask again naming a place to fetch from the agency instead",
+                  source: "this page",
+                },
+              });
+              return;
+            }
+          }
+        }
         // Well-formed but missing the one thing these APIs require.
         if (dataCall && dataCall.needsState) {
           respond({

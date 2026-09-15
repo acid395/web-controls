@@ -149,6 +149,39 @@ else {
   ensure("canvas-only says why it read nothing", /canvas/.test(blank.GENERIC.readPage().note || ""), blank.GENERIC.readPage().note);
 }
 
+section("answering from the page you are on");
+const wxPage = loadPage(`<!doctype html><html><head><title>National Weather Service Chicago IL</title></head><body>
+  <h1>Chicago, IL</h1>
+  <li><p class="period">Today</p><p class="temp temp-high">High: 83 °F</p></li>
+  <li><p class="period">Tonight</p><p class="temp temp-low">Low: 67 °F</p></li>
+  <p>Humidity 52%</p><p>Wind Speed 9 mph</p></body></html>`);
+if (!wxPage) skip("page values", "jsdom not installed");
+else {
+  const pd = wxPage.GENERIC.readPage();
+  // Pages write "High: 83 °F", never "High temperature: 83", and these are a
+  // single text run so readPairs/readReadouts never see them.
+  check("inline labelled numbers are found", pd.labelledNumbers.map((n) => n.text),
+    ["High: 83 °F", "Low: 67 °F", "Humidity 52%", "Wind Speed 9 mph"]);
+  const hits = (q, place) => {
+    const wants = sb.pageValueWants(q);
+    const r = wants.length ? sb.findOnPage(pd, { wants, place: place || null }) : null;
+    return r ? r.map((h) => h.label) : null;
+  };
+  // The unit stands in for the noun, or every forecast page looks empty.
+  check("max temperature reads the page", hits("max temperature"), ["High: 83 °F"]);
+  check("min temperature reads the page", hits("min temperature"), ["Low: 67 °F"]);
+  check("humidity", hits("humidity"), ["Humidity 52%"]);
+  // Both aspects must hold, or "Wind Speed 9 mph" answers "max temperature".
+  ensure("a wind reading does not answer a temperature question",
+    !(hits("max temperature") || []).some((h) => /wind/i.test(h)), hits("max temperature"));
+  // Reading Milwaukee's numbers for a Chicago question would be worse than
+  // fetching, so a page about somewhere else is not used.
+  check("a question about elsewhere is not answered from this page", hits("max temperature in milwaukee", "milwaukee"), null);
+  check("something the page lacks falls through", hits("gage height"), null);
+  // A bare "high" is a qualifier, not a subject.
+  check("bare qualifier asks for nothing", sb.pageValueWants("show me the high"), []);
+}
+
 section("model output parsing");
 // The native tools API is restricted to 7-8B models, which measured as
 // unusable here, so the model is prompted for JSON instead - and a small
