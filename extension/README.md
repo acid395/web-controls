@@ -295,6 +295,28 @@ and once granted, that site works immediately - no code change, no reload.
 count as a real user gesture, so that one call lives directly in `popup.js`,
 not relayed through `background.js` like everything else.
 
+## Tests
+
+```
+node extension/test/run-tests.js          # logic only, no network
+node extension/test/run-tests.js --live   # also calls the real agency APIs
+```
+
+48 offline, 10 live. Nearly every case exists because it once produced a
+*confidently wrong answer* rather than an error - a statewide average over
+incompatible datums, Snake Creek returned for the Snake River, Kansas City
+resolving to the state of Kansas, a 2012 reading served as current, Friday
+answered with today's weather. None of those crash, none would be caught by
+type checking, and each one looked correct in the popup. They are pinned here
+by name so they cannot come back quietly.
+
+The suite earned its place the moment it was written: it immediately caught
+that "set the parameter to gage height" had started searching the country for
+a river called "parameter", because leftover instruction words were being
+read as a place name. `extension/test/harness.js` runs `background.js` in a vm
+with `chrome.*` stubbed, so the file under test ships byte-identical, and
+loads the GENERIC bundle into jsdom for DOM tests.
+
 ## Load it
 
 1. `chrome://extensions`, turn on Developer mode.

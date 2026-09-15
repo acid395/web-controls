@@ -195,7 +195,15 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
     if (!phrase) continue;
     t = t.replace(new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), " ");
   }
-  const words = t.split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !PLACE_FILLER.has(w));
+  // Only words following a locational preposition count as a place. Without
+  // this, leftover instruction words became one: "set the parameter to gage
+  // height" searched the country for a river called "parameter", and "what is
+  // the current state" for one called "state" - both control instructions
+  // turned into data queries. "at big sandy river" is a place; "to gage
+  // height" is not.
+  const tail = t.match(/\b(?:at|in|on|near|along|around|for|of)\s+(.+)$/);
+  if (!tail) return null;
+  const words = tail[1].split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !PLACE_FILLER.has(w));
   return words.length ? words.join(" ") : null;
 }
 
