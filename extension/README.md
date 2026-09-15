@@ -65,6 +65,22 @@ shared page bridge resolves each call against whichever global owns the
 function, named manifests first, so a verified implementation always beats
 GENERIC's selector-driven fallback.
 
+## Reading the page, not just driving it
+
+`inventory()` answers "what can I click here"; `readPage()` answers "what does
+this page say". Both read the live DOM at the moment they're called. It pulls
+four things, in descending order of how reliably they carry meaning: tables
+(already structured, so they survive extraction intact), labelled pairs
+(`dl`/`dt`/`dd`, two-cell rows), numeric readouts, and an SVG chart's text and
+aria-labels.
+
+A canvas chart yields nothing, by construction - it is painted pixels with no
+elements to read, the same wall `mapInfo()` hits with maps. Rather than return
+an empty result that reads as "this page has no data", it says so: *"no
+readable data in the DOM - this page draws to 2 canvas element(s), whose
+contents are pixels, not elements"*. For those the real answer is the data the
+page itself fetched, not the picture it drew.
+
 ## Two kinds of tool: control the page, or answer a question
 
 Everything above is about *controlling* a page - inject a manifest, call a

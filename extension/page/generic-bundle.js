@@ -391,8 +391,143 @@
       driveable: domMarkers > 0 ? "dom" : instanceFoundFor ? "js-api" : libraries.length ? "no" : "no-map-found" };
   }
 
+  /* ============================================================================
+   * readPage() - the data on the page, as opposed to inventory()'s controls.
+   *
+   * inventory() answers "what can I click here"; this answers "what does this
+   * page say". Both read the live DOM at the moment they're called - nothing
+   * is cached or precomputed.
+   *
+   * Four kinds of thing are worth extracting, in descending order of how
+   * reliably they carry meaning:
+   *   tables      - already structured, so they survive extraction intact
+   *   pairs       - a label next to a value (dl/dt/dd, th+td, .label/.value)
+   *   readouts    - a number with a unit sitting in its own element
+   *   chartText   - SVG text and aria-labels, which is the only part of a
+   *                 chart that exists as readable DOM
+   *
+   * A canvas chart yields nothing here, by construction: it is painted
+   * pixels with no elements to read. That is a real limit, not an oversight
+   * - see mapInfo() for the same problem with maps. The honest fix for those
+   * is the data the page itself fetched, not the picture it drew.
+   * ========================================================================== */
+
+  // "12.4 ft", "-3.2 °C", "1,234 cfs", "45%"
+  const NUMBER_UNIT = /(-?[\d,]+\.?\d*)\s*(°?[a-zA-Z%/]{1,12}\b)?/;
+
+  const textOf = (el) => (el.textContent || "").replace(/\s+/g, " ").trim();
+
+  function readTables(limit = 6) {
+    const out = [];
+    for (const table of deepQueryAll("table").slice(0, limit)) {
+      if (!isVisible(table)) continue;
+      const rows = [...table.rows].slice(0, 25);
+      if (rows.length < 2) continue;
+      const cells = (r) => [...r.cells].map((c) => textOf(c).slice(0, 60));
+      const header = rows[0].cells.length && [...rows[0].cells].some((c) => c.tagName === "TH")
+        ? cells(rows[0]) : null;
+      out.push({
+        caption: table.caption ? textOf(table.caption).slice(0, 80) : null,
+        columns: header,
+        rows: (header ? rows.slice(1) : rows).map(cells),
+        totalRows: table.rows.length,
+      });
+    }
+    return out;
+  }
+
+  function readPairs(limit = 40) {
+    const pairs = [];
+    // definition lists
+    for (const dl of deepQueryAll("dl")) {
+      const kids = [...dl.children];
+      for (let i = 0; i < kids.length - 1; i++) {
+        if (kids[i].tagName === "DT" && kids[i + 1].tagName === "DD") {
+          pairs.push({ label: textOf(kids[i]).slice(0, 60), value: textOf(kids[i + 1]).slice(0, 60) });
+        }
+      }
+    }
+    // two-cell rows, the usual shape of a "current conditions" table
+    for (const tr of deepQueryAll("tr")) {
+      if (tr.cells && tr.cells.length === 2) {
+        const label = textOf(tr.cells[0]), value = textOf(tr.cells[1]);
+        if (label && value && label.length < 60) pairs.push({ label: label.slice(0, 60), value: value.slice(0, 60) });
+      }
+    }
+    return pairs.slice(0, limit);
+  }
+
+  function readReadouts(limit = 40) {
+    const out = [];
+    const seen = new Set();
+    for (const el of deepQueryAll("[class*=value], [class*=reading], [class*=stat], [class*=metric], [data-value], output")) {
+      if (!isVisible(el)) continue;
+      const text = textOf(el);
+      if (!text || text.length > 40 || !/\d/.test(text)) continue;
+      const key = text + "|" + (el.className || "");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const m = text.match(NUMBER_UNIT);
+      out.push({
+        text,
+        value: m ? Number(m[1].replace(/,/g, "")) : null,
+        unit: m && m[2] ? m[2] : null,
+        label: (el.getAttribute("aria-label") || rawLabelOf(el) || "").slice(0, 60) || null,
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  // The readable part of a chart. SVG charts label their axes and often
+  // their points; canvas charts have none of this, which is the difference
+  // between a chart this can read and one it cannot.
+  function readChartText(limit = 60) {
+    const svgs = deepQueryAll("svg").filter(isVisible);
+    const labelled = [];
+    for (const svg of svgs.slice(0, 4)) {
+      const texts = [...svg.querySelectorAll("text")].map(textOf).filter(Boolean);
+      const aria = [...svg.querySelectorAll("[aria-label]")]
+        .map((e) => e.getAttribute("aria-label")).filter((a) => a && /\d/.test(a));
+      const titles = [...svg.querySelectorAll("title")].map(textOf).filter(Boolean);
+      if (texts.length || aria.length || titles.length) {
+        labelled.push({
+          labels: texts.slice(0, limit),
+          points: aria.slice(0, limit),
+          titles: titles.slice(0, 12),
+        });
+      }
+    }
+    return {
+      svgCharts: labelled,
+      canvasCount: deepQueryAll("canvas").filter(isVisible).length,
+    };
+  }
+
+  function readPage() {
+    const chart = readChartText();
+    const tables = readTables();
+    const pairs = readPairs();
+    const readouts = readReadouts();
+    return {
+      url: location.href,
+      title: document.title,
+      headings: deepQueryAll("h1, h2").filter(isVisible).map(textOf).filter(Boolean).slice(0, 12),
+      tables,
+      pairs,
+      readouts,
+      chart,
+      // Said plainly, because "found nothing" and "the data is painted onto a
+      // canvas and cannot be read from the DOM at all" are different answers.
+      note: !tables.length && !pairs.length && !readouts.length && !chart.svgCharts.length && chart.canvasCount
+        ? `no readable data in the DOM - this page draws to ${chart.canvasCount} canvas element(s), whose contents are pixels, not elements`
+        : undefined,
+    };
+  }
+
   const GENERIC = {
     inventory,
+    readPage,
     mapInfo,
     click: (selector) => realClick(selector),
     clickText: (text) => clickByText(text),

@@ -619,6 +619,11 @@ const TOOL_DEFS = {
   ],
   GENERIC: [
     {
+      name: "pageRead", fn: "readPage", argOrder: [],
+      description: "Read the data shown on the current page - tables, labelled values, numeric readouts, and any SVG chart's labels. Use to answer questions about what this page says, as opposed to changing what it displays.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
       name: "pageInventory", fn: "inventory", argOrder: [],
       description: "List every interactive control on the current page with a CSS selector for each, so they can be acted on directly.",
       parameters: { type: "object", properties: {} },
@@ -2376,6 +2381,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Any site, no model: match the instruction against the page's own
         // controls. This is the only fast path an unmapped page has, and
         // without it every instruction there fell to the slow tier.
+        // "What does this page say" is a different request from "click
+        // something on it", and the control matcher would only ever find a
+        // button whose label happened to share a word.
+        if (/\bread\b.*\b(page|this|site)\b|\bwhat('?s| is| does)\b.*\b(page|shown|displayed|say)\b|\bon (this|the) (page|screen)\b|\bsummari[sz]e\b/i.test(msg.instruction || "")) {
+          const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+          if (read.ok) {
+            const d = read.result;
+            const rows = [];
+            for (const p of (d.pairs || []).slice(0, 8)) rows.push({ name: p.label, value: p.value, meta: "" });
+            for (const r of (d.readouts || []).slice(0, Math.max(0, 8 - rows.length))) {
+              rows.push({ name: r.label || r.text, value: r.unit ? `${r.value} ${r.unit}` : r.text, meta: "" });
+            }
+            const counts = [
+              d.tables && d.tables.length ? `${d.tables.length} table${d.tables.length === 1 ? "" : "s"}` : null,
+              d.pairs && d.pairs.length ? `${d.pairs.length} labelled values` : null,
+              d.readouts && d.readouts.length ? `${d.readouts.length} readouts` : null,
+              d.chart && d.chart.svgCharts.length ? `${d.chart.svgCharts.length} SVG chart${d.chart.svgCharts.length === 1 ? "" : "s"}` : null,
+              d.chart && d.chart.canvasCount ? `${d.chart.canvasCount} canvas (unreadable)` : null,
+            ].filter(Boolean);
+            respond({
+              ok: true, plannedBy: "page-read", result: d,
+              display: {
+                title: d.title ? d.title.slice(0, 70) : "This page",
+                subtitle: counts.length ? counts.join(" · ") : "no readable data found",
+                stats: [], rows,
+                caveat: d.note,
+                note: d.headings && d.headings.length ? d.headings[0].slice(0, 60) : undefined,
+                source: "live DOM",
+              },
+            });
+            return;
+          }
+        }
+
         // Every route now carries GENERIC alongside its named manifest, so
         // page controls can be matched anywhere - including the ones a
         // hand-written manifest never covered.
