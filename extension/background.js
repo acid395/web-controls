@@ -2118,7 +2118,42 @@ function pageIsAbout(pageData, place) {
   return place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || hay.includes(w));
 }
 
+// A place can be one row of a table rather than the subject of the page - a
+// regional forecast lists dozens of towns, and the answer for the one asked
+// about is in its row. Title-and-headings matching never sees that, so the
+// tables are searched by row first, and the column whose header matches the
+// question decides which cell to read.
+function findInTables(pageData, { wants, place }) {
+  if (!place) return null;
+  const needle = place.toLowerCase();
+  for (const table of pageData.tables || []) {
+    const columns = table.columns || [];
+    for (const row of table.rows || []) {
+      const rowIndex = row.findIndex((cell) => String(cell).toLowerCase().includes(needle));
+      if (rowIndex === -1) continue;
+      const hits = [];
+      for (let i = 0; i < row.length; i++) {
+        if (i === rowIndex) continue;
+        const cell = String(row[i] || "");
+        if (!/\d/.test(cell)) continue;
+        // Prefer the column header as the label; fall back to the cell, which
+        // often carries its own ("High 67").
+        const header = String(columns[i] || "").toLowerCase();
+        const context = `${header} ${cell}`.toLowerCase();
+        if (wants.every((concept) => conceptMatches(concept, context))) {
+          hits.push({ label: `${row[rowIndex]} · ${columns[i] || "value"}: ${cell}`, value: cell, fromTable: true });
+        }
+      }
+      if (hits.length) return hits.slice(0, 6);
+    }
+  }
+  return null;
+}
+
 function findOnPage(pageData, { wants, place }) {
+  // Tables first: they can answer about a place the page is not itself about.
+  const inTable = findInTables(pageData, { wants, place });
+  if (inTable) return inTable;
   if (!pageIsAbout(pageData, place)) return null;
   const known = wants.filter((w) => PAGE_VALUE_TERMS[w]);
   if (!known.length) return null;
@@ -2634,7 +2669,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const wants = pageValueWants(msg.instruction || "");
         if (wants.length) {
           const askedPlace = dataCall && dataCall.args
-            ? (dataCall.args.place || dataCall.args.nameContains || null) : null;
+            ? (dataCall.args.place || dataCall.args.nameContains || null)
+            : (extractPlaceHint(msg.instruction || "", {}) || null);
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
             const hits = findOnPage(read.result, { wants, place: askedPlace });
@@ -2645,8 +2681,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   title: (read.result.title || "This page").slice(0, 70),
                   subtitle: `read from the page you're on · ${wants.join(" + ")}`,
                   stats: [],
-                  rows: hits.map((h) => ({ name: h.label.slice(0, 60), value: "", meta: "" })),
-                  note: "these are the page's own figures - ask again naming a place to fetch from the agency instead",
+                  // A table hit already carries its own value; an inline
+                  // run ("High: 83 °F") is all one string, so it reads as
+                  // the label with nothing to put beside it.
+                  rows: hits.map((h) => (h.fromTable
+                    ? { name: String(h.label).split(" · ")[0].slice(0, 40), value: String(h.value).slice(0, 20),
+                        meta: String(h.label).split(" · ").slice(1).join(" · ").replace(/:.*$/, "") }
+                    : { name: String(h.label).slice(0, 60), value: "", meta: "" })),
+                  note: hits.some((h) => h.fromTable)
+                    ? "read from this page's table"
+                    : "these are the page's own figures - name a place to fetch from the agency instead",
                   source: "this page",
                 },
               });

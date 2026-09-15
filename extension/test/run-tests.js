@@ -182,6 +182,39 @@ else {
   check("bare qualifier asks for nothing", sb.pageValueWants("show me the high"), []);
 }
 
+section("a place that is one row of a table");
+// A regional forecast is a table of towns. Title-and-headings matching never
+// sees the one asked about, so the page looked irrelevant and it fetched -
+// reporting the state centre, miles from the town whose row was on screen.
+const tablePage = loadPage(`<!doctype html><html><head><title>NWS Duluth MN</title></head><body>
+  <h1>Northeast Minnesota</h1>
+  <table><caption>Tuesday</caption>
+  <tr><th>Location</th><th>High</th><th>Low</th><th>Wind</th></tr>
+  <tr><td>Duluth</td><td>64 °F</td><td>48 °F</td><td>12 mph</td></tr>
+  <tr><td>Hermantown MN</td><td>71 °F</td><td>46 °F</td><td>9 mph</td></tr>
+  </table></body></html>`);
+if (!tablePage) skip("table rows", "jsdom not installed");
+else {
+  const td = tablePage.GENERIC.readPage();
+  const hit = (q, place) => {
+    const r = sb.findOnPage(td, { wants: sb.pageValueWants(q), place });
+    return r ? r.map((h) => h.label) : null;
+  };
+  check("reads the row for the town asked about",
+    hit("max temperature on hermantown mn", "hermantown"), ["Hermantown MN · High: 71 °F"]);
+  // The column header decides which cell, so min is not the same cell as max.
+  check("the column header picks the cell",
+    hit("min temperature in hermantown", "hermantown"), ["Hermantown MN · Low: 46 °F"]);
+  // Reading a neighbouring row would be worse than fetching.
+  check("a different row is a different answer",
+    hit("max temperature in duluth", "duluth"), ["Duluth · High: 64 °F"]);
+  check("a town not in the table still fetches", hit("max temperature in chicago", "chicago"), null);
+  // "Wind 9 mph" sits in the same row and must not answer a temperature question.
+  ensure("the wind column does not answer a temperature question",
+    !(hit("max temperature on hermantown mn", "hermantown") || []).some((h) => /wind|mph/i.test(h)),
+    hit("max temperature on hermantown mn", "hermantown"));
+}
+
 section("model output parsing");
 // The native tools API is restricted to 7-8B models, which measured as
 // unusable here, so the model is prompted for JSON instead - and a small
