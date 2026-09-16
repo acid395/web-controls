@@ -688,6 +688,11 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { selector: { type: "string", description: "optional CSS selector for the chart; the largest one is used otherwise" } } },
     },
     {
+      name: "pageMapInfo", fn: "mapInfo", argOrder: [],
+      description: "Report whether this page has a map, which library draws it, and whether it can be driven by script at all - answers 'can you click the map' before anything tries to.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
       name: "pageMapFeatures", fn: "mapFeatures", argOrder: [],
       description: "Read the markers and their data from a map on this page, using the map library's own instance where one is reachable. Reports plainly when the map is canvas-only and has nothing readable.",
       parameters: { type: "object", properties: {} },
