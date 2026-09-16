@@ -733,6 +733,11 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
     },
     {
+      name: "pageSubmit", fn: "submit", argOrder: ["selector"],
+      description: "Submit a field after filling it - presses Enter, or submits the surrounding form, or clicks its submit button. Typing alone leaves the text sitting in the box.",
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+    },
+    {
       name: "pageFill", fn: "fill", argOrder: ["selector", "text"],
       description: "Type text into an input or textarea on the page by CSS selector.",
       parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } }, required: ["selector", "text"] },
@@ -2123,7 +2128,7 @@ function toolCallFor(control, words, instruction = "") {
     // "Open the search box" names no query, so clicking it - which focuses
     // and opens a collapsed one - is what was actually asked for.
     if (!value) return { name: "pageClick", args: { selector: control.selector } };
-    return { name: "pageFill", args: { selector: control.selector, text: value } };
+    return { name: "pageFill", args: { selector: control.selector, text: value }, thenSubmit: true };
   }
 
   if (type === "checkbox" || kind === "checkbox") {
@@ -2220,7 +2225,15 @@ function planGenericTool(instruction, inventory) {
         if (box) {
           const call = toolCallFor(box, allWords, instruction);
           if (call) {
-            return { calls: [call], matched: [{ label: box.label, selector: box.selector, covered: allWords }], unmatchedWords: [], phrase };
+            const submitAfter = call.thenSubmit;
+            delete call.thenSubmit;
+            const calls = [call];
+            const matched = [{ label: box.label, selector: box.selector, covered: allWords }];
+            if (submitAfter) {
+              calls.push({ name: "pageSubmit", args: { selector: box.selector } });
+              matched.push({ label: `submit ${box.label || "search"}`, selector: box.selector, covered: [] });
+            }
+            return { calls, matched, unmatchedWords: [], phrase };
           }
         }
         return {
@@ -2235,11 +2248,19 @@ function planGenericTool(instruction, inventory) {
 
     const call = toolCallFor(best.control, remaining, instruction);
     if (!call) break;
+    // Typing a query and never submitting it leaves the page unchanged while
+    // the input's value change makes it look like the action worked.
+    const follow = call.thenSubmit ? { name: "pageSubmit", args: { selector: call.args.selector } } : null;
+    delete call.thenSubmit;
 
     const covered = wordsCoveredBy(best.control, remaining);
     if (!covered.length) break;
     calls.push(call);
     matched.push({ label: best.control.label, selector: best.control.selector, covered });
+    if (follow) {
+      calls.push(follow);
+      matched.push({ label: `submit ${best.control.label || "search"}`, selector: best.control.selector, covered: [] });
+    }
     used.add(best.control.selector);
     remaining = remaining.filter((w) => !covered.includes(w));
   }
@@ -2258,11 +2279,15 @@ function planGenericTool(instruction, inventory) {
       if (box) {
         const call = toolCallFor(box, allWords, instruction);
         if (call) {
-          return {
-            calls: [call],
-            matched: [{ label: box.label, selector: box.selector, covered: allWords }],
-            unmatchedWords: [], phrase,
-          };
+          const submitAfter = call.thenSubmit;
+          delete call.thenSubmit;
+          const calls = [call];
+          const matched = [{ label: box.label, selector: box.selector, covered: allWords }];
+          if (submitAfter) {
+            calls.push({ name: "pageSubmit", args: { selector: box.selector } });
+            matched.push({ label: `submit ${box.label || "search"}`, selector: box.selector, covered: [] });
+          }
+          return { calls, matched, unmatchedWords: [], phrase };
         }
       }
     }

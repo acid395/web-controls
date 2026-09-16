@@ -132,15 +132,23 @@ const act = (q) => {
   const r = sb.planGenericTool(q, richPage);
   return r && r.calls ? r.calls.map((c) => ({ name: c.name, args: c.args })) : null;
 };
-check("a search box is filled, not clicked",
-  act("search for Boise"), [{ name: "pageFill", args: { selector: "#q", text: "Boise" } }]);
+// Filled *and* submitted: typing alone leaves the text in the box while the
+// value change makes it look like the search ran.
+check("a search box is filled and submitted",
+  act("search for Boise"), [
+    { name: "pageFill", args: { selector: "#q", text: "Boise" } },
+    { name: "pageSubmit", args: { selector: "#q" } },
+  ]);
 // A quoted string is the query verbatim, spaces and all.
 check("quoted text is taken whole",
   act('search station "Big Sandy River"')[0].args.text, "Big Sandy River");
 // "look up 13206000" names no control - a site number shares no word with
 // "Search station" - but the intent is plain.
 check("a bare identifier still reaches the search box",
-  act("look up 13206000"), [{ name: "pageFill", args: { selector: "#q", text: "13206000" } }]);
+  act("look up 13206000"), [
+    { name: "pageFill", args: { selector: "#q", text: "13206000" } },
+    { name: "pageSubmit", args: { selector: "#q" } },
+  ]);
 check("a dropdown option is chosen",
   act("set the basemap to satellite"), [{ name: "pageSelectOption", args: { selector: "#base", value: "sat" } }]);
 // A checkbox has two directions, and clicking blindly cannot express which.
@@ -383,16 +391,44 @@ const u = (q) => {
 // A responsive site's duplicate controls are one logical control, not a
 // choice to put to the user - this refused outright before.
 check("duplicated responsive controls are not ambiguous",
-  u("search for Boston"), 'pageFill {"selector":"#query","text":"Boston"}');
+  u("search for Boston"), 'pageFill {"selector":"#query","text":"Boston"} + pageSubmit {"selector":"#query"}');
 // "Open the search box" is a request to open it. Taking "box" as the query
 // and typing that is a confidently wrong action.
+// Opening a box submits nothing - there is no query to run.
+check("opening a box does not submit",
+  u("open the search box"), 'pageClick {"selector":"#query"}');
 check("a control's own name is not a query",
   u("open the search box"), 'pageClick {"selector":"#query"}');
 // A bare identifier matches no label, but the intent is not in doubt.
 check("a search cue outranks an unrelated tie",
-  u("look up 8443970"), 'pageFill {"selector":"#query","text":"8443970"}');
+  u("look up 8443970"), 'pageFill {"selector":"#query","text":"8443970"} + pageSubmit {"selector":"#query"}');
 check("a real dropdown still wins on its own words",
   u("select idaho"), 'pageSelectOption {"selector":"#state-select-list","value":"idaho"}');
+
+section("typing is not searching");
+// fill() typed and stopped. Every hand-written manifest that wraps a search
+// box adds Enter itself (NOAA.search does), because otherwise the text sits
+// in the box and nothing happens - and the input's value *did* change, so
+// verification calls it a success. A search that looks performed and was not
+// is the worst outcome available.
+const formPage = loadPage(`<!doctype html><html><body>
+  <form id="f"><input type="search" id="q" aria-label="Search"><button type="submit">Go</button></form>
+  </body></html>`, { url: "https://example.gov/" });
+if (!formPage) skip("submit", "jsdom not installed");
+else {
+  const fired = [];
+  formPage.document.getElementById("q").addEventListener("keydown", (e) => { if (e.key === "Enter") fired.push("enter"); });
+  formPage.document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); fired.push("submit"); });
+
+  formPage.GENERIC.fill("#q", "Boston");
+  check("filling sets the value", formPage.document.getElementById("q").value, "Boston");
+  check("but fires nothing on its own", fired.length, 0);
+
+  const routed = formPage.GENERIC.submit("#q");
+  ensure("submitting presses Enter", fired.includes("enter"), fired);
+  ensure("and submits the form", fired.includes("submit"), fired);
+  check("reporting which route worked", routed.submitted, "form");
+}
 
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });

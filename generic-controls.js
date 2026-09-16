@@ -1004,6 +1004,48 @@
     };
   }
 
+  /* ============================================================================
+   * submit() - typing is not searching.
+   *
+   * fill() types and stops. Every hand-written manifest that wraps a search
+   * box adds Enter itself (see NOAA.search), because typing alone leaves the
+   * text sitting in the box and nothing else happening - and the value did
+   * change, so a verification check calls it a success. A search that looks
+   * performed and was not is the worst outcome available.
+   *
+   * Three routes, because sites differ: the Enter key, the form's own submit,
+   * and an adjacent submit button. Enter first, since that is what a person
+   * would press and what search widgets almost always listen for.
+   * ========================================================================== */
+  function submit(elOrSel) {
+    const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
+    if (!el) throw new Error(`submit: not found: ${elOrSel}`);
+    el.focus();
+
+    const enter = { bubbles: true, cancelable: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 };
+    el.dispatchEvent(new KeyboardEvent("keydown", enter));
+    el.dispatchEvent(new KeyboardEvent("keypress", enter));
+    el.dispatchEvent(new KeyboardEvent("keyup", enter));
+
+    // A form may ignore a synthetic Enter, so ask it directly.
+    const form = el.form || el.closest("form");
+    if (form) {
+      try {
+        if (typeof form.requestSubmit === "function") form.requestSubmit();
+        else form.submit();
+        return { submitted: "form" };
+      } catch (e) { /* a framework may intercept; the button below is next */ }
+    }
+
+    // Otherwise a submit button beside it, which is how many search widgets
+    // are actually built.
+    const scope = form || el.parentElement || document;
+    const button = scope.querySelector('button[type=submit], input[type=submit], button[class*="search"], [aria-label*="earch"][role=button]');
+    if (button) { realClick(button); return { submitted: "button" }; }
+
+    return { submitted: "enter" };
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -1035,6 +1077,7 @@
   const GENERIC = {
     inventory,
     readPage,
+    submit,
     settle,
     pageSignature,
     signatureDiff,

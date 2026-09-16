@@ -74,6 +74,15 @@ search, the page's search box is used anyway - "look up 13206000" names no
 control, since a site number shares no word with "Search station", but the
 intent is not in doubt.
 
+Typing is not searching. `fill()` typed and stopped, while every hand-written
+manifest wrapping a search box adds Enter itself - `NOAA.search` does - because
+otherwise the text sits in the box and nothing happens. Worse, the input's
+value *did* change, so verification reported success. A search that looks
+performed and was not is the worst outcome available. A search-intent fill is
+now followed by `pageSubmit`, which tries Enter, then the surrounding form,
+then an adjacent submit button, since sites differ. Opening a box submits
+nothing, there being no query to run.
+
 Ambiguity is judged on *overlapping words*, not on score. Two controls that
 score similarly while covering different words aren't rivals, they're the
 separate halves of one instruction - an earlier version compared scores alone
