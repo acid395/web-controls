@@ -263,6 +263,30 @@ check("misspelled enum", mt("set gauge mode to forecst", "NOAA"), 'noaaSetGaugeM
 check("data matching stays strict", toolOf("what is the current state", { global: "USGS" }), undefined);
 check("and an exact control phrase is untouched", toolOf("set the parameter to stage", { global: "USGS" }), undefined);
 
+section("what can I do here");
+// A service worker's sendMessage is never delivered to its own listener, so
+// routing this through messaging looked correct and answered nothing at all.
+// It has to be a direct call.
+(async () => {
+  const withTab = loadBackground();
+  withTab.chrome.tabs.query = async () => [{ id: 1, url: "https://water.noaa.gov/" }];
+  withTab.chrome.tabs.sendMessage = async () => ({ ok: true, result: { controls: [
+    { label: "View Layers", kind: "button", selector: "#vl", confidence: "high" },
+  ] } });
+  const caps = await withTab.buildCapabilities();
+  check("the route is identified", caps.route, "NOAA");
+  ensure("its verified tools are listed", caps.tools.length >= 15, caps.tools.length);
+  ensure("the page's own controls are counted", caps.pageControls >= 1, caps.pageControls);
+  ensure("actions and questions are distinguished",
+    caps.display.rows.some((r) => r.value === "action") && caps.display.rows.some((r) => r.value === "question"),
+    caps.display.rows.map((r) => r.value));
+  // Tool names are for people here, not for the model.
+  ensure("names are readable", caps.display.rows.every((r) => !/[A-Z]/.test(r.name)), caps.display.rows.map((r) => r.name));
+  finishCaps();
+})();
+
+function finishCaps() {
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
@@ -635,6 +659,7 @@ if (process.argv.includes("--live")) {
 }
 }
 
+}
 }
 }
 }

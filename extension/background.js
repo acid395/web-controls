@@ -2954,6 +2954,62 @@ async function recordAsk(id, instruction, patch) {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * "What can I do here?"
+ *
+ * Nobody can use what they cannot find: dozens of verified tools per route,
+ * plus whatever inventory() turns up, and no way to learn any of them but to
+ * guess.
+ *
+ * A plain function rather than a message handler, because smartAsk needs it
+ * and a service worker's sendMessage is never delivered to its own listener -
+ * routing "what can I do here" through messaging looked right and silently
+ * answered nothing at all.
+ */
+async function buildCapabilities() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url) throw new Error("no active tab");
+  const route = routeFor(tab.url);
+
+  const manifestTools = (TOOL_DEFS[route.global] || []).filter((d) => !d.run);
+  const inv = await invokeOnActiveTab("inventory", []).catch(() => ({ ok: false }));
+  const controls = inv.ok ? (inv.result.controls || []).filter((c) => c.label && c.confidence !== "low") : [];
+
+  // Descriptions are written for people already, so their first sentence is
+  // the most readable summary available.
+  const firstSentence = (t) => String(t || "").split(/(?<=\.)\s/)[0];
+  const friendly = (name) => name
+    .replace(/^(usgs|site|noaa|fcp|page)/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim();
+
+  return {
+    ok: true,
+    route: route.global,
+    tools: manifestTools.map((t) => t.name),
+    pageControls: controls.length,
+    display: {
+      title: "What you can do here",
+      subtitle: route.global === "GENERIC"
+        ? `${controls.length} controls on this page, plus ${DATA_TOOLS.length} kinds of question`
+        : `${manifestTools.length} verified tools for ${route.global}, plus ${controls.length} controls found on the page`,
+      stats: [],
+      rows: [
+        ...manifestTools.slice(0, 10).map((t) => ({
+          name: friendly(t.name), value: "action", meta: firstSentence(t.description).slice(0, 70),
+        })),
+        ...controls.slice(0, 6).map((c) => ({
+          name: c.label.slice(0, 40), value: c.kind || "control", meta: c.selector,
+        })),
+        ...DATA_TOOLS.slice(0, 4).map((t) => ({
+          name: friendly(t.name), value: "question", meta: firstSentence(t.description).slice(0, 70),
+        })),
+      ],
+      note: "ask in plain English - name a control to use it, or a place and a measurement to look it up",
+      source: route.global,
+    },
+  };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target === "offscreen") return; // that message is for offscreen.js, not this listener
 
@@ -3102,42 +3158,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "capabilities") {
     (async () => {
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.url) throw new Error("no active tab");
-        const route = routeFor(tab.url);
-
-        const manifestTools = (TOOL_DEFS[route.global] || []).filter((d) => !d.run);
-        const dataTools = DATA_TOOLS;
-        const inv = await invokeOnActiveTab("inventory", []).catch(() => ({ ok: false }));
-        const controls = inv.ok ? (inv.result.controls || []).filter((c) => c.label && c.confidence !== "low") : [];
-
-        // Descriptions are written for people already, so the first sentence
-        // of each is the most readable summary available.
-        const firstSentence = (t) => String(t || "").split(/(?<=\.)\s/)[0];
-        sendResponse({
-          ok: true,
-          route: route.global,
-          display: {
-            title: `What you can do here`,
-            subtitle: route.global === "GENERIC"
-              ? `${controls.length} controls found on this page, plus ${dataTools.length} data questions`
-              : `${manifestTools.length} verified tools for ${route.global}, plus ${dataTools.length} data questions`,
-            stats: [],
-            rows: [
-              ...manifestTools.slice(0, 10).map((t) => ({
-                name: t.name.replace(/^(usgs|site|noaa|fcp)/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim(),
-                value: "action", meta: firstSentence(t.description).slice(0, 70),
-              })),
-              ...controls.slice(0, 8).map((c) => ({ name: c.label.slice(0, 40), value: c.kind || "control", meta: c.selector })),
-              ...dataTools.slice(0, 4).map((t) => ({
-                name: t.name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase(),
-                value: "question", meta: firstSentence(t.description).slice(0, 70),
-              })),
-            ],
-            note: "ask in plain English - name a control to use it, or a place and a measurement to look it up",
-            source: route.global,
-          },
-        });
+        sendResponse(await buildCapabilities());
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
       }
@@ -3232,8 +3253,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "What can I do here" is neither a command nor a data question, and
         // would otherwise be matched against control labels word by word.
         if (/\bwhat can (i|you)\b|\bwhat( is|'s)? (possible|available|supported)\b|\bhelp\b|\bwhat do you do\b|\bcapabilities\b/i.test(msg.instruction || "")) {
-          const caps = await new Promise((r) => chrome.runtime.sendMessage({ type: "capabilities" }, r));
-          respond(caps || { ok: false, error: "couldn't list capabilities" });
+          respond(await buildCapabilities());
           return;
         }
 
