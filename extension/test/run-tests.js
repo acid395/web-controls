@@ -283,7 +283,11 @@ section("what can I do here");
   // Tool names are rewritten for people ("noaaSetBasemap" -> "set basemap").
   // A page control keeps its own label, capitals and all, since that is what
   // is printed on the page.
-  const toolNames = caps.display.rows.filter((r) => r.value !== "control").map((r) => r.name);
+  // Tool rows are tagged "action" or "question"; a page control is tagged
+  // with its own kind ("button"), which is how the two are told apart.
+  const toolNames = caps.display.rows
+    .filter((r) => r.value === "action" || r.value === "question")
+    .map((r) => r.name);
   ensure("tool names are rewritten for people", toolNames.every((n) => !/[A-Z]/.test(n)), toolNames);
   ensure("a page control keeps its own label",
     caps.display.rows.some((r) => r.value === "button" && r.name === "View Layers"),
