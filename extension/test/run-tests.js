@@ -430,6 +430,30 @@ else {
   check("reporting which route worked", routed.submitted, "form");
 }
 
+section("the past, and one gauge at a time");
+// Water questions about the past were refused outright while weather answered
+// them from its forecast.
+const hist = (q) => { const p = plan(q, { global: "GENERIC" }); return p ? `${p.name} ${JSON.stringify(p.args)}` : null; };
+check("a counted span", hist("discharge on the snake river over the last 7 days"),
+  'waterHistory {"place":"snake river","parameter":"discharge","days":7}');
+check("a named span", hist("average discharge on the boise river last month"),
+  'waterHistory {"place":"boise river","parameter":"discharge","days":30}');
+// "Boise River" is a river, not the city of Boise - stripping the recognised
+// name out of a waterbody named after it left "river", which finds nothing.
+ensure("a city that names a river keeps its name",
+  /boise river/.test(hist("average discharge on the boise river last month")), hist("average discharge on the boise river last month"));
+check("but the city alone is still the city", hist("discharge in boise"),
+  'waterCurrentConditions {"state":"id","parameter":"discharge","nameContains":"boise"}');
+// Time words must not become part of the place. Checked on the place itself:
+// the arguments legitimately contain a "days" key.
+const spanPlace = plan("discharge on the snake river over the last 7 days", { global: "GENERIC" }).args.place;
+ensure("time words are not part of the place", !/\b(over|days?|last)\b/.test(spanPlace), spanPlace);
+check("present-tense questions are untouched", hist("gage height in Alaska"),
+  'waterCurrentConditions {"state":"ak","parameter":"gageHeight"}');
+// A span with no unit named defaults rather than failing.
+check("history with no span defaults", sb.historySpan("gage height history for the bighorn river"), 30);
+check("and now is still now", sb.historySpan("gage height in Alaska"), null);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

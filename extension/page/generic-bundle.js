@@ -1046,6 +1046,100 @@
     return { submitted: "enter" };
   }
 
+  /* ============================================================================
+   * The small operations everything else assumed were possible.
+   *
+   * waitFor already existed in the WC layer but was never exposed, so a
+   * sequence's second step acted on whatever happened to exist when it ran -
+   * settle() waits for the page to stop changing, which is not the same as
+   * waiting for a particular thing to appear. readControl fills the other
+   * obvious hole: nothing could read a single control's current value, so
+   * "what is selected" worked on USGS (getState) and nowhere else.
+   * ========================================================================== */
+
+  // Waits for a selector to appear, which is what a sequence needs between a
+  // click that opens a panel and an action inside it.
+  async function waitForSelector(selector, { timeout = 5000 } = {}) {
+    const started = Date.now();
+    try {
+      const el = await waitFor(selector, { timeout });
+      return { found: true, selector, waitedMs: Date.now() - started, label: rawLabelOf(el).slice(0, 60) || null };
+    } catch (e) {
+      return { found: false, selector, waitedMs: Date.now() - started,
+        note: `"${selector}" did not appear within ${timeout}ms - the action that should create it may not have run` };
+    }
+  }
+
+  // One control's current state, in the same vocabulary inventory() uses.
+  function readControl(selector) {
+    const el = deepQuery(selector);
+    if (!el) return { found: false, selector, note: `no element matches ${selector}` };
+    const tag = el.tagName.toLowerCase();
+    const out = {
+      found: true, selector, tag,
+      type: el.type || null,
+      label: rawLabelOf(el).slice(0, 80) || null,
+      disabled: !!el.disabled,
+      visible: isVisible(el),
+    };
+    if (tag === "select") {
+      out.value = el.value;
+      out.selectedText = el.selectedOptions && el.selectedOptions[0] ? el.selectedOptions[0].text.trim() : null;
+      out.options = [...el.options].slice(0, 30).map((o) => ({ value: o.value, text: o.text.trim(), selected: o.selected }));
+    } else if (el.type === "checkbox" || el.type === "radio") {
+      out.checked = !!el.checked;
+      out.value = el.value;
+    } else if (tag === "input" || tag === "textarea") {
+      out.value = String(el.value || "").slice(0, 200);
+    } else {
+      out.text = textOf(el).slice(0, 200);
+      for (const attr of ["aria-pressed", "aria-expanded", "aria-selected", "aria-checked"]) {
+        const v = el.getAttribute(attr);
+        if (v !== null) out[attr] = v;
+      }
+    }
+    return out;
+  }
+
+  // Puts controls back the way they were, from the change list signatureDiff
+  // produced. Only possible at all because verification records the previous
+  // value - before that there was nothing to revert to.
+  function restore(changes) {
+    const results = [];
+    for (const change of changes || []) {
+      if (!change || !change.selector || change.was === undefined) continue;
+      const el = deepQuery(change.selector);
+      if (!el) { results.push({ selector: change.selector, ok: false, why: "no longer on the page" }); continue; }
+      try {
+        const tag = el.tagName.toLowerCase();
+        if (tag === "select") setSelect(el, String(change.was));
+        else if (el.type === "checkbox" || el.type === "radio") setChecked(el, change.was === true || change.was === "true");
+        else if (tag === "input" || tag === "textarea") fill(el, String(change.was));
+        else { results.push({ selector: change.selector, ok: false, why: "not a settable control" }); continue; }
+        results.push({ selector: change.selector, ok: true, restoredTo: change.was });
+      } catch (e) {
+        results.push({ selector: change.selector, ok: false, why: String((e && e.message) || e) });
+      }
+    }
+    return { restored: results.filter((r) => r.ok).length, attempted: results.length, results };
+  }
+
+  // Leaving the page is easy; coming back was not possible at all.
+  function goBack() {
+    const from = location.href;
+    history.back();
+    return { from, note: "asked the browser to go back - the page may take a moment" };
+  }
+
+  // realClick scrolls what it clicks into view, but nothing else did, so
+  // reading a control below the fold was unreliable.
+  function scrollToElement(selector) {
+    const el = deepQuery(selector);
+    if (!el) return { found: false, selector };
+    el.scrollIntoView({ block: "center", inline: "center" });
+    return { found: true, selector, label: rawLabelOf(el).slice(0, 60) || null };
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -1078,6 +1172,11 @@
     inventory,
     readPage,
     submit,
+    waitForSelector,
+    readControl,
+    restore,
+    goBack,
+    scrollToElement,
     settle,
     pageSignature,
     signatureDiff,

@@ -218,7 +218,8 @@ const PLACE_FILLER = new Set([
   // Time and statistic words. "Milwaukee weekly temperature average" was
   // taking "weekly" as the place and reporting the centre of Wisconsin.
   "weekly", "daily", "monthly", "hourly", "yearly", "annual", "annually",
-  "week", "month", "year", "day", "night", "tonight", "tomorrow",
+  "week", "weeks", "month", "months", "year", "years", "day", "days",
+  "over", "during", "since", "ago", "night", "nights", "tonight", "tomorrow",
   "yesterday", "monday", "tuesday", "wednesday", "thursday", "friday",
   "saturday", "sunday", "weekend", "next", "this", "last", "past", "coming",
   // Dates. "max temperature of hermantown mn on tuesday sep 15" was taking
@@ -237,6 +238,15 @@ const PLACE_FILLER = new Set([
 // exactly what USGS's gauge names contain, so it works as a name filter.
 function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMatched } = {}) {
   let t = (instruction || "").toLowerCase();
+  // "Boise River" is a river, not the city of Boise. Stripping the recognised
+  // name out of a waterbody named after it leaves "river", which finds
+  // nothing. Applies to whichever field matched it - a city often supplies
+  // the state, in which case it is stripped as the state instead.
+  const namesAWaterbody = (phrase) => phrase && new RegExp(
+    "\\b" + String(phrase).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+    "\\s+(river|creek|lake|bay|slough|fork|bayou|reservoir|brook|run)\\b", "i").test(t);
+  if (namesAWaterbody(cityMatched)) cityMatched = null;
+  if (namesAWaterbody(stateMatched)) stateMatched = null;
   for (const phrase of [stateMatched, parameterMatched, cityMatched]) {
     if (!phrase) continue;
     t = t.replace(new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), " ");
@@ -260,6 +270,22 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
 // synonyms because it was written for USGS, which is right there and wrong on
 // a forecast site - so the route settles it rather than the word alone.
 const WATER_ROUTES = new Set(["USGS", "SITE", "NOAA"]);
+
+// How far back a question reaches, in days, or null if it is about now.
+// Water questions about the past were refused outright while weather answered
+// them from its forecast.
+const HISTORY_UNIT_DAYS = { day: 1, week: 7, month: 30, year: 365 };
+
+function historySpan(text) {
+  const t = String(text || "");
+  const counted = t.match(/\b(?:last|past|previous|over the last|over the past)\s+(\d+)\s*(day|week|month|year)s?\b/i)
+    || t.match(/\b(\d+)[- ](day|week|month|year)s?\b/i);
+  if (counted) return (Number(counted[1]) || 1) * (HISTORY_UNIT_DAYS[counted[2].toLowerCase()] || 1);
+  const named = t.match(/\b(?:last|past|previous)\s+(week|month|year)\b/i);
+  if (named) return HISTORY_UNIT_DAYS[named[1].toLowerCase()];
+  if (/\bhistory\b|\bhistorical\b|\btrend\b|\bover time\b/i.test(t)) return 30;
+  return null;
+}
 
 function planDataTool(instruction, route) {
   const text = instruction || "";
@@ -289,6 +315,14 @@ function planDataTool(instruction, route) {
     const parameter = findParameterInText(text);
     const place = extractPlaceHint(text, { parameterMatched: parameter && parameter.matched });
     if (!place) return null;
+
+    // Checked here too: a question naming only a river has no state, and
+    // returned from this branch before ever reaching the check below.
+    const pastHere = historySpan(text);
+    if (pastHere && parameter) {
+      return { name: "waterHistory", args: { place, parameter: parameter.canonical, days: pastHere } };
+    }
+
     // A weather question about an unrecognized place stays a weather
     // question - weatherConditions resolves the state from the place itself
     // rather than falling back to water data for want of a state.
@@ -346,9 +380,7 @@ function planDataTool(instruction, route) {
 
   const parameter = findParameterInText(text);
   if (!parameter) return null;
-  // A named river beats a city: "gage height in wyoming at big sandy river"
-  // is asking about that river, not about Wyoming generally. Falls back to
-  // statewide if the name matches no gauge.
+
   // Strip the city as it was actually typed - which may be misspelled - so a
   // typo can't survive into the filter. What's left is any further place
   // detail ("big sandy river"); if nothing is, the city's correct spelling
@@ -359,6 +391,15 @@ function planDataTool(instruction, route) {
     cityMatched: city && city.matched,
   });
   if (!place && city) place = city.city;
+
+  const past = historySpan(text);
+  if (past && place) {
+    return { name: "waterHistory", args: { place, parameter: parameter.canonical, days: past } };
+  }
+  // A named river beats a city: "gage height in wyoming at big sandy river"
+  // is asking about that river, not about Wyoming generally. Falls back to
+  // statewide if the name matches no gauge.
+
   return {
     name: "waterCurrentConditions",
     args: {
@@ -730,6 +771,31 @@ const TOOL_DEFS = {
     {
       name: "pageClick", fn: "click", argOrder: ["selector"],
       description: "Click an element on the page by CSS selector, e.g. one returned by pageInventory.",
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+    },
+    {
+      name: "pageWaitFor", fn: "waitForSelector", argOrder: ["selector"],
+      description: "Wait for an element to appear, for use between an action that opens a panel and one that acts inside it. Waiting for the page to stop changing is not the same as waiting for a particular thing.",
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+    },
+    {
+      name: "pageReadControl", fn: "readControl", argOrder: ["selector"],
+      description: "Read one control's current state - its value, what is selected, whether it is checked, whether it is disabled. Answers 'what is set right now' for a single control.",
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+    },
+    {
+      name: "pageUndo", fn: "restore", argOrder: ["changes"],
+      description: "Put controls back to their previous values, using the change list a verified action recorded.",
+      parameters: { type: "object", properties: { changes: { type: "array", description: "the `verified.changes` from an earlier action" } }, required: ["changes"] },
+    },
+    {
+      name: "pageBack", fn: "goBack", argOrder: [],
+      description: "Go back to the previous page, after an action navigated away.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "pageScrollTo", fn: "scrollToElement", argOrder: ["selector"],
+      description: "Scroll a control into view, for reading something below the fold.",
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
     },
     {
@@ -1852,6 +1918,128 @@ async function nwsConditions({ state, place }) {
   };
 }
 
+// History, which weather has had (through the forecast) and water has not:
+// time questions about water were refused outright. USGS's daily-values
+// service answers them - a daily mean per day, which is the right grain for
+// "average discharge last month" and far less data than instantaneous values.
+async function usgsTimeSeries({ site, place, parameter, days = 30 }) {
+  const known = USGS_PARAM_CODES[parameter]
+    ? { canonical: parameter, code: USGS_PARAM_CODES[parameter] }
+    : findParameterInText(parameter || "") || {};
+  if (!known.code) throw new Error(`don't recognize "${parameter}" as a water parameter`);
+
+  let siteCode = /^\d{8,15}$/.test(String(site || "").trim()) ? String(site).trim() : null;
+  let siteLabel = siteCode;
+  // A name rather than a number: find the gauge first, the same way a
+  // question naming a river does.
+  if (!siteCode && (place || site)) {
+    const found = await usgsFindGauges({ place: place || site });
+    const first = (found.gauges || [])[0];
+    if (!first) throw new Error(`couldn't find a gauge for "${place || site}"`);
+    siteCode = first.id;
+    siteLabel = first.name;
+  }
+  if (!siteCode) throw new Error("name a gauge, by USGS site number or by river");
+
+  const span = Math.max(1, Math.min(365, Math.round(Number(days) || 30)));
+  const end = new Date();
+  const start = new Date(end.getTime() - span * 86400000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const url = "https://waterservices.usgs.gov/nwis/dv/?format=json" +
+    `&sites=${siteCode}&parameterCd=${known.code}&statCd=00003&startDT=${iso(start)}&endDT=${iso(end)}`;
+
+  const data = await fetchJson(url, "USGS Water Services");
+  const ts = (data && data.value && data.value.timeSeries || [])[0];
+  if (!ts) {
+    return {
+      site: siteCode, name: siteLabel, parameter: known.canonical, days: span, points: [],
+      display: {
+        title: `${known.canonical} history`,
+        subtitle: `${siteLabel} reports no daily values for this parameter`,
+        stats: [], rows: [],
+        note: "not every gauge records every measurement - try discharge or gage height",
+        source: "USGS daily values",
+      },
+    };
+  }
+
+  const points = ((ts.values && ts.values[0] && ts.values[0].value) || [])
+    .map((p) => ({ date: String(p.dateTime).slice(0, 10), value: Number(p.value) }))
+    .filter((p) => Number.isFinite(p.value) && p.value > -999998);
+  const values = points.map((p) => p.value);
+  const unit = (ts.variable && ts.variable.unit && ts.variable.unit.unitCode) || "";
+  const mean = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  const round = (n) => (n == null ? null : Math.round(n * 100) / 100);
+
+  // Gage height is measured from each gauge's own datum, but a single gauge
+  // compared against itself over time is perfectly coherent - unlike the
+  // cross-gauge case, where averaging is meaningless.
+  return {
+    site: siteCode, name: ts.sourceInfo && ts.sourceInfo.siteName || siteLabel,
+    parameter: known.canonical, unit, days: span,
+    count: points.length,
+    mean: round(mean), min: round(Math.min(...values)), max: round(Math.max(...values)),
+    first: points[0], last: points[points.length - 1],
+    points: points.slice(-60),
+    source: "USGS daily values (daily means), no API key required",
+    display: {
+      title: `${known.canonical} · last ${span} days`,
+      subtitle: `${ts.sourceInfo && ts.sourceInfo.siteName || siteLabel} · ${points.length} daily means`,
+      stats: values.length ? [
+        { label: "mean", value: `${round(mean)} ${unit}` },
+        { label: "min", value: `${round(Math.min(...values))} ${unit}` },
+        { label: "max", value: `${round(Math.max(...values))} ${unit}` },
+      ] : [],
+      rows: points.slice(-6).reverse().map((p) => ({ name: p.date, value: `${p.value} ${unit}`, meta: "" })),
+      note: "daily means at one gauge - comparable over time, unlike readings across gauges",
+      source: "USGS",
+    },
+  };
+}
+
+// One gauge's full record: flood thresholds, the current category, the USGS
+// site it pairs with. Answers "how close to flooding is this one" where
+// waterFloodStatus answers it for a whole state.
+async function nwpsGaugeDetail({ gauge }) {
+  const id = String(gauge || "").trim().toUpperCase();
+  if (!id) throw new Error("name a gauge, by its NWPS id (e.g. ACKI1)");
+  const data = await fetchJson(`https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(id)}`,
+    "NOAA's National Water Prediction Service");
+
+  const observed = (data.status && data.status.observed) || {};
+  const forecast = (data.status && data.status.forecast) || {};
+  const categories = (data.flood && data.flood.categories) || {};
+  // NWPS writes -9999 where a threshold is not defined, which would read as a
+  // real stage far below the river.
+  const thresholds = Object.entries(categories)
+    .map(([name, c]) => ({ name, stage: c && c.stage }))
+    .filter((t) => Number.isFinite(t.stage) && t.stage > -9000);
+
+  return {
+    gauge: id,
+    name: data.name,
+    state: data.state && data.state.abbreviation,
+    usgsId: data.usgsId || null,
+    observed: { stage: observed.primary, unit: observed.primaryUnit, category: FLOOD_LABEL[observed.floodCategory] || observed.floodCategory, at: observed.validTime },
+    forecast: { stage: forecast.primary, category: FLOOD_LABEL[forecast.floodCategory] || forecast.floodCategory },
+    floodThresholds: thresholds,
+    source: "NOAA National Water Prediction Service, no API key required",
+    display: {
+      title: `${data.name || id}`,
+      subtitle: [data.state && data.state.abbreviation, observed.primary != null ? `${observed.primary} ${observed.primaryUnit || ""}` : null,
+        FLOOD_LABEL[observed.floodCategory] || observed.floodCategory].filter(Boolean).join(" · "),
+      stats: thresholds.slice(0, 3).map((t) => ({ label: t.name, value: `${t.stage} ${observed.primaryUnit || "ft"}` })),
+      rows: [
+        observed.primary != null ? { name: "Observed now", value: `${observed.primary} ${observed.primaryUnit || ""}`, meta: observed.validTime ? relativeAge(observed.validTime) : "" } : null,
+        forecast.primary != null ? { name: "Forecast", value: `${forecast.primary} ${observed.primaryUnit || ""}`, meta: FLOOD_LABEL[forecast.floodCategory] || "" } : null,
+        data.usgsId ? { name: "USGS gauge", value: data.usgsId, meta: "same site in USGS data" } : null,
+      ].filter(Boolean),
+      note: thresholds.length ? "stats are this gauge's own flood thresholds" : "no flood thresholds defined for this gauge",
+      source: "NOAA NWPS",
+    },
+  };
+}
+
 // Available on every route, unlike TOOL_DEFS' per-site control tools - a data
 // question doesn't care what page is open.
 const DATA_TOOLS = [
@@ -1894,6 +2082,31 @@ const DATA_TOOLS = [
         when: { type: "string", description: "a weekday name, tonight, tomorrow, or week" },
       },
       required: ["when"],
+    },
+  },
+  {
+    name: "waterHistory",
+    run: usgsTimeSeries,
+    description: "Daily values at one gauge over a period - use for questions about the past week, month or year at a named river or USGS site number, such as average discharge last month.",
+    parameters: {
+      type: "object",
+      properties: {
+        place: { type: "string", description: "river or gauge name" },
+        site: { type: "string", description: "USGS site number, if known" },
+        parameter: { type: "string", description: "discharge, gage height, water temperature, ..." },
+        days: { type: "number", description: "how many days back, up to 365; defaults to 30" },
+      },
+      required: ["parameter"],
+    },
+  },
+  {
+    name: "waterGaugeDetail",
+    run: nwpsGaugeDetail,
+    description: "One river gauge's full record: its flood thresholds, current and forecast stage, and the USGS site it pairs with. Use for 'how close to flooding is this gauge'.",
+    parameters: {
+      type: "object",
+      properties: { gauge: { type: "string", description: "NWPS gauge id, e.g. ACKI1" } },
+      required: ["gauge"],
     },
   },
   {

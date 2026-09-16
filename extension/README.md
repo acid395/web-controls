@@ -299,6 +299,40 @@ a fuzzy hit always scores below an exact one. Multi-word values need a sliding
 window rather than token comparison, since "30 days" matches no single token -
 which is why "30 dys" found nothing until it did.
 
+## The operations everything else assumed existed
+
+Five page operations that other features had been quietly working around:
+
+- **`pageWaitFor(selector)`** - `settle()` waits for the page to stop
+  changing, which is not the same as waiting for a *particular thing* to
+  appear. A sequence's second step had been acting on whatever happened to
+  exist when it ran.
+- **`pageReadControl(selector)`** - nothing could read a single control's
+  current value, so "what is selected" worked on USGS (`getState`) and nowhere
+  else.
+- **`pageUndo(changes)`** - possible only now, because verification records
+  the previous value. Before that there was nothing to revert *to*.
+- **`pageBack()`** - `openSite` and any link click navigated away with no way
+  back.
+- **`pageScrollTo(selector)`** - `realClick` scrolls what it clicks into view;
+  nothing else did, so reading a control below the fold was unreliable.
+
+And two data tools. **`waterHistory`** answers questions about the past, which
+water had been refusing outright while weather answered them from its
+forecast - USGS daily means at one gauge, which is the right grain for
+"average discharge last month" and far less data than instantaneous values.
+Averaging *is* meaningful here, unlike across gauges: one gauge compared with
+itself over time shares a datum. **`waterGaugeDetail`** gives a single gauge's
+flood thresholds, current and forecast stage, and its paired USGS site -
+answering "how close to flooding is this one" where `waterFloodStatus`
+answers it for a whole state.
+
+Routing them exposed two parsing faults. "Boise River" is a river, not the
+city of Boise, and stripping the recognised name out of a waterbody named
+after it left "river" - which finds nothing. And time words were becoming part
+of the place: "the snake river over the last 7 days" searched for a river
+called "snake river over days".
+
 ## Did the action actually do anything?
 
 Every control path returned whatever the page function returned, and none
