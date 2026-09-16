@@ -280,8 +280,14 @@ section("what can I do here");
   ensure("actions and questions are distinguished",
     caps.display.rows.some((r) => r.value === "action") && caps.display.rows.some((r) => r.value === "question"),
     caps.display.rows.map((r) => r.value));
-  // Tool names are for people here, not for the model.
-  ensure("names are readable", caps.display.rows.every((r) => !/[A-Z]/.test(r.name)), caps.display.rows.map((r) => r.name));
+  // Tool names are rewritten for people ("noaaSetBasemap" -> "set basemap").
+  // A page control keeps its own label, capitals and all, since that is what
+  // is printed on the page.
+  const toolNames = caps.display.rows.filter((r) => r.value !== "control").map((r) => r.name);
+  ensure("tool names are rewritten for people", toolNames.every((n) => !/[A-Z]/.test(n)), toolNames);
+  ensure("a page control keeps its own label",
+    caps.display.rows.some((r) => r.value === "button" && r.name === "View Layers"),
+    caps.display.rows.filter((r) => r.value === "button"));
   finishCaps();
 })();
 
