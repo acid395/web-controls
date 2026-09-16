@@ -2672,11 +2672,46 @@ async function runVerified(routeGlobal, toolCall) {
   };
 }
 
+// A tool's name is for the model; a person reading the result wants English.
+function friendlyToolName(name) {
+  return String(name || "")
+    .replace(/^(usgs|site|noaa|fcp|page)/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase().trim();
+}
+
+// An action changes one thing; a page changes several. A basemap switch also
+// closed a menu and flipped two navigation toggles, and reporting all of them
+// buries the answer. A change carrying a before and after value is the
+// substance; a boolean flipping is usually a panel opening or a menu closing.
+function rankedChanges(verified) {
+  const changes = (verified && verified.changes) || [];
+  const substantive = changes.filter((c) => c.was !== undefined && c.now !== undefined
+    && typeof c.was !== "boolean" && typeof c.now !== "boolean");
+  return (substantive.length ? substantive : changes).slice(0, 4);
+}
+
+// Selectors say nothing. A label, or failing that the tag, at least names the
+// thing that moved.
+function nameOfChange(change) {
+  if (change.label) return change.label;
+  const selector = String(change.selector || "");
+  const tail = selector.split(">").pop().trim();
+  return tail.split(/[.:#[]/)[0] || tail.slice(0, 30) || "a control";
+}
+
 // Turns the diff into something worth reading, rather than a selector dump.
 function describeVerification(verified, toolCall) {
   if (!verified) return undefined;
+  const top = rankedChanges(verified)[0];
+  if (top && top.was !== undefined && top.now !== undefined) {
+    return { tone: "ok", text: `${nameOfChange(top)}: ${top.was} -> ${top.now}` };
+  }
+  // A fragment change is the same page showing a different view, which is how
+  // most map pages record centre and zoom.
+  if (verified.viewChanged) return { tone: "ok", text: "the map view updated" };
   if (verified.navigated) {
-    return { tone: "ok", text: `page moved to ${verified.navigated.to.replace(/^https?:\/\//, "").slice(0, 60)}` };
+    return { tone: "ok", text: `moved to ${verified.navigated.to.replace(/^https?:\/\//, "").split("?")[0].slice(0, 50)}` };
   }
   if (!verified.changed) {
     // The important case. Silence here is what made a failed action look
@@ -2686,11 +2721,7 @@ function describeVerification(verified, toolCall) {
       text: `${toolCall.name} ran but nothing on the page changed - it may need a panel opened first, or the control may not apply here`,
     };
   }
-  const first = verified.changes[0];
-  const detail = first && first.now !== undefined && first.was !== undefined
-    ? `${first.was} -> ${first.now}`
-    : `${verified.changeCount} control${verified.changeCount === 1 ? "" : "s"}`;
-  return { tone: "ok", text: `changed ${detail}` };
+  return { tone: "ok", text: `${verified.changeCount} thing${verified.changeCount === 1 ? "" : "s"} on the page changed` };
 }
 
 // Control tools depend on which site is open; data tools never do.
@@ -3375,13 +3406,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           respond({
             ...result, plannedBy: "manifest", toolCall: manifestCall,
             display: {
-              title: manifestCall.name,
+              title: friendlyToolName(manifestCall.name),
               subtitle: note ? note.text : "done",
               stats: [],
-              rows: (result.verified && result.verified.changes || []).slice(0, 5).map((c) => ({
-                name: String(c.selector).slice(0, 50),
-                value: c.now === undefined ? "" : String(c.now).slice(0, 20),
-                meta: c.was === undefined ? "" : `was ${String(c.was).slice(0, 20)}`,
+              rows: rankedChanges(result.verified).map((c) => ({
+                name: nameOfChange(c),
+                value: c.now === undefined ? "" : String(c.now).slice(0, 24),
+                meta: c.was === undefined ? "" : `was ${String(c.was).slice(0, 24)}`,
                 tone: "ok",
               })),
               caveat: note && note.tone === "alert" ? note.text : undefined,

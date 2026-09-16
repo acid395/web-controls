@@ -297,6 +297,32 @@ section("what can I do here");
 
 function finishCaps() {
 
+section("an action's result has to be readable");
+// What a real NOAA basemap switch produced: the right change buried among a
+// closing menu and two navigation toggles, every row a raw CSS selector, and
+// a fragment change reported as "page moved to <long url>".
+const noisy = { changed: true, changeCount: 3, viewChanged: true, changes: [
+  { selector: "nav.navbar.svelte-jl30q0 > div.uk-contai", label: null, was: true, now: false },
+  { selector: "div.map-app-container > div.uk-card.box-shadow-sma", label: "Base map", was: "topographic", now: "satellite" },
+  { selector: "ul.uk-navbar-nav.layer-1", label: null, was: false, now: true },
+] };
+check("the tool name reads as English", sb.friendlyToolName("noaaSetBasemap"), "set basemap");
+// A value change is the substance; a boolean flip is usually a menu closing.
+check("the real change is surfaced, not the menu noise",
+  sb.rankedChanges(noisy).map((c) => c.label), ["Base map"]);
+check("described in terms of the control's label",
+  sb.describeVerification(noisy, { name: "noaaSetBasemap" }).text, "Base map: topographic -> satellite");
+// A fragment change is the same page showing a different view - how map pages
+// record centre and zoom - not a navigation.
+check("a view change is not called a navigation",
+  sb.describeVerification({ changed: true, changeCount: 0, viewChanged: true, changes: [] }, { name: "noaaZoomIn" }).text,
+  "the map view updated");
+// Without a label there is still no excuse for printing a raw selector.
+check("an unlabelled control is still named",
+  sb.nameOfChange({ selector: "div.map-app-container > ul.uk-navbar-nav.layer-1" }), "ul");
+check("a no-op is still called out",
+  sb.describeVerification({ changed: false, changes: [], changeCount: 0 }, { name: "x" }).tone, "alert");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

@@ -958,7 +958,10 @@
         value = el.getAttribute("aria-pressed") || el.getAttribute("aria-selected") || el.getAttribute("aria-expanded");
       }
       if (value === undefined || value === null) continue;
-      state[key] = value;
+      // The label travels with the value. Without it a diff can only report
+      // raw selectors - "div.map-app-container > div.uk-card..." - which says
+      // nothing about what actually changed.
+      state[key] = { value, label: rawLabelOf(el).slice(0, 60) || null, tag };
       n++;
     }
     return { url: location.href, title: document.title, controls: state, count: n };
@@ -968,18 +971,34 @@
   function signatureDiff(before, after) {
     const changes = [];
     const seen = new Set();
-    for (const [key, value] of Object.entries(after.controls || {})) {
+    const valueOf = (entry) => (entry && typeof entry === "object" ? entry.value : entry);
+    const labelOfEntry = (entry) => (entry && typeof entry === "object" ? entry.label : null);
+
+    for (const [key, entry] of Object.entries(after.controls || {})) {
       seen.add(key);
-      const was = (before.controls || {})[key];
-      if (was === undefined) { changes.push({ selector: key, appeared: true, now: value }); continue; }
-      if (String(was) !== String(value)) changes.push({ selector: key, was, now: value });
+      const prior = (before.controls || {})[key];
+      if (prior === undefined) {
+        changes.push({ selector: key, label: labelOfEntry(entry), appeared: true, now: valueOf(entry) });
+        continue;
+      }
+      if (String(valueOf(prior)) !== String(valueOf(entry))) {
+        changes.push({ selector: key, label: labelOfEntry(entry) || labelOfEntry(prior), was: valueOf(prior), now: valueOf(entry) });
+      }
     }
-    for (const key of Object.keys(before.controls || {})) {
-      if (!seen.has(key)) changes.push({ selector: key, disappeared: true, was: before.controls[key] });
+    for (const [key, entry] of Object.entries(before.controls || {})) {
+      if (!seen.has(key)) changes.push({ selector: key, label: labelOfEntry(entry), disappeared: true, was: valueOf(entry) });
     }
+
+    // A fragment change is the same document with a different view - most map
+    // pages write their centre and zoom there. Reporting it as "page moved
+    // to <long url>" is both ugly and wrong.
+    const stripHash = (u) => String(u || "").split("#")[0];
+    const hashOnly = before.url !== after.url && stripHash(before.url) === stripHash(after.url);
+
     return {
       changed: changes.length > 0 || before.url !== after.url,
-      navigated: before.url !== after.url ? { from: before.url, to: after.url } : undefined,
+      navigated: before.url !== after.url && !hashOnly ? { from: before.url, to: after.url } : undefined,
+      viewChanged: hashOnly || undefined,
       changes: changes.slice(0, 20),
       changeCount: changes.length,
     };

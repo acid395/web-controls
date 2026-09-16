@@ -276,6 +276,19 @@ back, assert it changed. `runVerified()` generalises it: snapshot every
 control's state, act, wait, snapshot again, report what moved. A no-op is now
 said out loud, with the likeliest reason.
 
+Reporting the result is its own problem. A real NOAA basemap switch changed
+three things - the basemap, a closing menu, and a navigation toggle - and
+listing all three as raw CSS selectors buried the one that mattered. So the
+snapshot carries each control's *label* alongside its value, changes carrying
+a before and after value are preferred over booleans flipping (usually a panel
+opening), and the tool's name is rewritten for a reader: `noaaSetBasemap`
+becomes "set basemap", and the card says *"Base map: topographic ->
+satellite"*.
+
+A URL fragment change is also not a navigation. Map pages record centre and
+zoom there, so zooming reported *"page moved to water.noaa.gov/#@=-96.4..."* -
+ugly and wrong. Same document, different view, and it says so.
+
 Timing is half of it. These actions are asynchronous far more often than not -
 a click starts a fetch or a re-render - so comparing immediately reports a
 working action as a no-op. `settle()` waits for the DOM to stop mutating,
