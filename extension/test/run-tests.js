@@ -362,6 +362,38 @@ setTimeout(() => {
 
 function finishFailures() {
 
+section("a site nobody has mapped");
+// Shapes taken from real government sites the extension has no knowledge of:
+// tidesandcurrents.noaa.gov ships the same search box twice for responsive
+// layout, and drought.gov buries a state picker among navigation chrome.
+const unmapped = { controls: [
+  { kind: "a", label: "Skip to main content", selector: "#skip", confidence: "high" },
+  { kind: "button", label: "Toggle navigation", selector: "#nav", confidence: "high" },
+  { kind: "input", type: "search", label: "Search Text Box", selector: "#query", confidence: "high" },
+  { kind: "input", type: "search", label: "Mobile Search Text Box", selector: "#mquery", confidence: "high" },
+  { kind: "select", label: "State", selector: "#state-select-list", confidence: "high",
+    options: [{ value: "idaho", text: "Idaho" }, { value: "ohio", text: "Ohio" }] },
+] };
+const u = (q) => {
+  const r = sb.planGenericTool(q, unmapped);
+  if (!r) return null;
+  if (r.ambiguous) return `ambiguous: ${r.ambiguous.map((c) => c.label).join(" | ")}`;
+  return r.calls.map((c) => `${c.name} ${JSON.stringify(c.args)}`).join(" + ");
+};
+// A responsive site's duplicate controls are one logical control, not a
+// choice to put to the user - this refused outright before.
+check("duplicated responsive controls are not ambiguous",
+  u("search for Boston"), 'pageFill {"selector":"#query","text":"Boston"}');
+// "Open the search box" is a request to open it. Taking "box" as the query
+// and typing that is a confidently wrong action.
+check("a control's own name is not a query",
+  u("open the search box"), 'pageClick {"selector":"#query"}');
+// A bare identifier matches no label, but the intent is not in doubt.
+check("a search cue outranks an unrelated tie",
+  u("look up 8443970"), 'pageFill {"selector":"#query","text":"8443970"}');
+check("a real dropdown still wins on its own words",
+  u("select idaho"), 'pageSelectOption {"selector":"#state-select-list","value":"idaho"}');
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

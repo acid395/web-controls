@@ -90,6 +90,34 @@ shared page bridge resolves each call against whichever global owns the
 function, named manifests first, so a verified implementation always beats
 GENERIC's selector-driven fallback.
 
+### What an unmapped site actually looks like
+
+Tested against live government sites the extension knows nothing about -
+tidesandcurrents.noaa.gov, drought.gov, epa.gov. `inventory()` finds plenty
+(117-332 controls each), but three things are worth knowing.
+
+**Navigation dominates.** The first controls on every one of them are "Skip to
+main content", "Toggle navigation", "Menu", "Home". The page's actual
+functional controls are further down, so matching has to be driven by the
+words asked for rather than by position.
+
+**Responsive sites ship every control twice.** A desktop copy and a mobile
+one, both in the DOM, both matching equally - "Search Text Box" against
+"Mobile Search Text Box". The ambiguity guard treated them as rivals and
+refused, which is the wrong answer for what is one logical control. Labels are
+now normalised past the responsive qualifiers before deciding anything is
+ambiguous.
+
+**Server HTML is mostly empty of data.** All three returned zero tables: their
+content is built in JavaScript. Controls are in the markup, data usually is
+not, which is why feed capture exists.
+
+The result on drought.gov is a fair picture of what works: "search for Idaho"
+found the state dropdown *and* the search button, with no site-specific code.
+The result on epa.gov is a fair picture of what does not: its search lives
+behind a drawer that has to be opened first, and the best match was a large
+container rather than the button.
+
 ## Reading the page, not just driving it
 
 `inventory()` answers "what can I click here"; `readPage()` answers "what does

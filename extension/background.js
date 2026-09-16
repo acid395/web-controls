@@ -2075,13 +2075,31 @@ function checkboxIntent(instruction) {
 // follows a search cue is the query, since "search for Boise" means Boise and
 // not "search for". Falling back to the leftover words handles "Boise in the
 // search box".
+// Words that name the control rather than anything to put in it. "Open the
+// search box" is a request to open it; taking "box" as the query and typing
+// that is a confidently wrong action.
+const CONTROL_NOUNS = /\b(box|bar|field|input|form|textbox|text box|widget|control|panel)\b/gi;
+
 function valueToType(instruction, control) {
   const quoted = (instruction || "").match(/["']([^"']{2,60})["']/);
   if (quoted) return quoted[1];
+
   const cue = (instruction || "").match(/\b(?:search(?:\s+for)?|look\s*up|find|type|enter|query)\b[:\s]+(.{2,60})$/i);
-  if (cue) return cue[1].replace(/\s+(in|into|on)\s+the\s+(search|box|field|bar).*$/i, "").trim();
+  if (cue) {
+    const cleaned = cue[1]
+      .replace(/\s+(in|into|on)\s+the\s+(search|box|field|bar).*$/i, "")
+      .replace(CONTROL_NOUNS, " ")
+      .replace(/\b(the|a|an)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Nothing left but the control's own name: there is no query here.
+    return cleaned.length >= 2 ? cleaned : null;
+  }
+
   const label = (control.label || "").toLowerCase();
-  const leftovers = meaningfulWords(instruction).filter((w) => !label.includes(w));
+  const leftovers = meaningfulWords(instruction)
+    .filter((w) => !label.includes(w) && !CONTROL_NOUNS.test(w));
+  CONTROL_NOUNS.lastIndex = 0; // the /g flag makes .test stateful
   return leftovers.length ? leftovers.join(" ") : null;
 }
 
@@ -2102,7 +2120,9 @@ function toolCallFor(control, words, instruction = "") {
   // the action was useless.
   if (TEXT_INPUT_KINDS.has(type) || TEXT_INPUT_KINDS.has(kind)) {
     const value = valueToType(instruction, control);
-    if (!value) return null;
+    // "Open the search box" names no query, so clicking it - which focuses
+    // and opens a collapsed one - is what was actually asked for.
+    if (!value) return { name: "pageClick", args: { selector: control.selector } };
     return { name: "pageFill", args: { selector: control.selector, text: value } };
   }
 
@@ -2115,6 +2135,26 @@ function toolCallFor(control, words, instruction = "") {
   }
 
   return { name: "pageClick", args: { selector: control.selector } };
+}
+
+// A responsive site ships the same control twice - a desktop copy and a
+// mobile one, both in the DOM - so "Search Text Box" and "Mobile Search Text
+// Box" tie, and treating them as rivals refuses a request that is not
+// actually ambiguous. Normalising away the responsive qualifiers reveals they
+// are the same thing, and either will do.
+const RESPONSIVE_QUALIFIERS = /\b(mobile|desktop|tablet|small|large|compact|mini|primary|secondary|top|bottom|header|footer|sr[- ]only|screen[- ]reader)\b/gi;
+
+function normalizedLabel(control) {
+  return String(control.label || "")
+    .toLowerCase()
+    .replace(RESPONSIVE_QUALIFIERS, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function sameControlRepeated(candidates) {
+  const labels = candidates.map(normalizedLabel).filter(Boolean);
+  return labels.length === candidates.length && new Set(labels).size === 1;
 }
 
 // Returns one or more tool calls, a short list to disambiguate, or null.
@@ -2163,9 +2203,26 @@ function planGenericTool(instruction, inventory) {
       const y = wordsCoveredBy(b, remaining).slice().sort().join(" ");
       return x === y;
     };
-    const rivals = runnerUp && best.score - runnerUp.score < 2 && sameWords(best.control, runnerUp.control);
+    const tied = scored.filter((x) => best.score - x.score < 2 && sameWords(x.control, best.control));
+    // Several copies of one control are not a choice to put to the user.
+    const duplicates = tied.length > 1 && sameControlRepeated(tied.map((x) => x.control));
+    const rivals = !duplicates && runnerUp && best.score - runnerUp.score < 2 && sameWords(best.control, runnerUp.control);
     if (rivals) {
       if (!calls.length) {
+        // "look up 8443970" tied three unrelated links on a real site, and
+        // asking which was meant is the wrong answer when the instruction
+        // plainly says to search and the page has somewhere to type.
+        const searching = /\b(search|look\s*up|find|query|enter|type)\b/i.test(instruction);
+        const box = searching && controls.find((c) => {
+          const t = String(c.type || c.kind || "").toLowerCase();
+          return t === "search" || TEXT_INPUT_KINDS.has(t) || /\bsearch\b/i.test(c.label || "");
+        });
+        if (box) {
+          const call = toolCallFor(box, allWords, instruction);
+          if (call) {
+            return { calls: [call], matched: [{ label: box.label, selector: box.selector, covered: allWords }], unmatchedWords: [], phrase };
+          }
+        }
         return {
           ambiguous: scored
             .filter((x) => sameWords(x.control, best.control))
