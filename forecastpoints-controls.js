@@ -249,7 +249,13 @@
     zoomOut() { return clickByText(DISCOVERED.zoomOutButtonText); },
     toggleFullscreen() { return clickByText(DISCOVERED.fullscreenButtonText); },
     toggleAttributions() { return clickByText(DISCOVERED.attributionsButtonText); },
-    openLayers() { return clickByText(DISCOVERED.layersButtonText); },
+    // Same reasoning as NOAA.openLayers: asking for a state the page is
+    // already in should not throw.
+    openLayers() {
+      if (deepQuery(DISCOVERED.basemapSelectSelector)) return "already open";
+      clickByText(DISCOVERED.layersButtonText);
+      return "opening";
+    },
     toggleOverview() { return clickByText(DISCOVERED.overviewButtonText); },
 
     listBasemaps() {

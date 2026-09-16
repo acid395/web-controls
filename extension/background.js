@@ -2793,7 +2793,10 @@ async function askGemini(instruction, defs, context) {
 // invokeOnActiveTab expects, run it.
 async function executeToolCall(routeGlobal, toolCall) {
   const def = findToolDef(routeGlobal, toolCall.name);
-  if (!def) throw new Error(`model picked an unknown tool "${toolCall.name}"`);
+  // Deliberately not "the model picked" - every planner here is
+  // deterministic, and blaming a model that was never consulted sends anyone
+  // debugging this in the wrong direction.
+  if (!def) throw new Error(`no tool named "${toolCall.name}" is available on this page`);
   // A data tool answers from an API and never touches the page, so it skips
   // the whole permission/injection/bridge path a control tool needs.
   if (def.run) {
@@ -3327,12 +3330,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 error: failed ? `"${failed.part}" failed: ${failed.error}` : undefined,
                 display: {
                   title: `${steps.length} step${steps.length === 1 ? "" : "s"}`,
-                  subtitle: failed ? "stopped at the first failure" : "done in order",
+                  subtitle: failed
+                    ? `stopped: ${String(failed.error || "the first step failed").slice(0, 80)}`
+                    : "done in order",
                   stats: [],
+                  // A bare "failed" tells you nothing about what to do next.
+                  // The page's own error usually says exactly what is wrong -
+                  // a button not found, a panel not open.
                   rows: steps.map((st) => ({
                     name: st.part.slice(0, 44),
                     value: !st.ok ? "failed" : st.changed === false ? "no change" : "done",
-                    meta: "",
+                    meta: !st.ok ? String(st.error || "no reason given").slice(0, 70)
+                      : st.changed === false ? "ran, but nothing on the page changed" : "",
                     tone: !st.ok ? "alert" : st.changed === false ? "warn" : "ok",
                   })),
                   source: route.global,
@@ -3527,7 +3536,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   return {
                     name: m.label || m.selector,
                     value: !st || !st.ok ? "failed" : noop ? "no change" : "done",
-                    meta: m.covered.join(" "),
+                    meta: st && !st.ok ? String(st.error || "no reason given").slice(0, 70) : m.covered.join(" "),
                     tone: !st || !st.ok ? "alert" : noop ? "warn" : "ok",
                   };
                 }),

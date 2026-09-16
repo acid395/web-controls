@@ -339,6 +339,29 @@ for (const name of plannable) {
   ensure(`${name} resolves on a named route`, !!sb.findToolDef("NOAA", name), name);
 }
 
+section("a failure has to say why");
+// "failed" on its own tells you nothing about what to do next. The page's own
+// error usually says exactly what is wrong - a button not found, a panel not
+// open - and it was being discarded.
+const failing = { part: "open the layers panel", ok: false, error: 'clickByText: "View Layers" not found' };
+const row = {
+  name: failing.part.slice(0, 44),
+  value: !failing.ok ? "failed" : "done",
+  meta: !failing.ok ? String(failing.error || "no reason given").slice(0, 70) : "",
+};
+ensure("the reason reaches the row", /View Layers/.test(row.meta), row);
+// Every planner here is deterministic, so blaming a model sends anyone
+// debugging in the wrong direction.
+let unknownToolError = null;
+sb.executeToolCall("NOAA", { name: "definitelyNotATool", args: {} }).catch((e) => { unknownToolError = e.message; });
+setTimeout(() => {
+  ensure("an unknown tool does not blame a model", unknownToolError && !/model/i.test(unknownToolError), unknownToolError);
+  ensure("and names the tool", unknownToolError && /definitelyNotATool/.test(unknownToolError), unknownToolError);
+  finishFailures();
+}, 30);
+
+function finishFailures() {
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
@@ -711,6 +734,7 @@ if (process.argv.includes("--live")) {
 }
 }
 
+}
 }
 }
 }

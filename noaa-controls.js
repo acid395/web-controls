@@ -292,8 +292,20 @@
     zoomOut() { return clickByText(DISCOVERED.zoomOutButtonText); },
     home() { return clickByText(DISCOVERED.homeButtonText); },
 
-    openLayers() { return clickByText(DISCOVERED.viewLayersButtonText); },
-    closeLayers() { return clickByText(DISCOVERED.closePanelButtonText); },
+    // Idempotent, the way SITE.openTimeSpanPanel already is. Clicking "View
+    // Layers" when the panel is open throws, because that button is no longer
+    // there - so asking for a state the page is already in failed, which is
+    // both surprising and stops any sequence that begins by opening a panel.
+    openLayers() {
+      if (deepQuery(DISCOVERED.basemapSelectSelector)) return "already open";
+      clickByText(DISCOVERED.viewLayersButtonText);
+      return "opening";
+    },
+    closeLayers() {
+      if (!deepQuery(DISCOVERED.basemapSelectSelector)) return "already closed";
+      clickByText(DISCOVERED.closePanelButtonText);
+      return "closing";
+    },
     listBasemaps() {
       const sel = deepQuery(DISCOVERED.basemapSelectSelector);
       return sel ? [...sel.options].map((o) => ({ value: o.value, text: o.text, selected: o.selected })) : [];
