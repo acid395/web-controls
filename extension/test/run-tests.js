@@ -323,6 +323,22 @@ check("an unlabelled control is still named",
 check("a no-op is still called out",
   sb.describeVerification({ changed: false, changes: [], changeCount: 0 }, { name: "x" }).tone, "alert");
 
+section("anything plannable must be executable");
+// A page control matched on a NOAA page planned as pageClick and then failed
+// with "model picked an unknown tool", because GENERIC's definitions were
+// absent from a named route's list even though the GENERIC bundle is injected
+// there. Planning something the executor cannot find is the worst of both.
+for (const route of ["USGS", "SITE", "NOAA", "FCP", "GENERIC"]) {
+  ensure(`${route}: generic page tools are executable`, !!sb.findToolDef(route, "pageClick"), route);
+}
+check("a named route keeps its own tools", !!sb.findToolDef("NOAA", "noaaSetBasemap"), true);
+check("and data tools stay everywhere", !!sb.findToolDef("FCP", "waterCurrentConditions"), true);
+// The guarantee that matters: every tool any planner can emit resolves.
+const plannable = ["pageClick", "pageFill", "pageCheck", "pagePickRadio", "pageSelectOption"];
+for (const name of plannable) {
+  ensure(`${name} resolves on a named route`, !!sb.findToolDef("NOAA", name), name);
+}
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

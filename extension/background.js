@@ -2725,8 +2725,16 @@ function describeVerification(verified, toolCall) {
 }
 
 // Control tools depend on which site is open; data tools never do.
+//
+// GENERIC's tools belong on every route, because the GENERIC bundle is now
+// injected alongside every named manifest - so a page control can be matched
+// on a NOAA page, planned as pageClick, and then fail to execute because the
+// definition was missing from that route's list. Planning something the
+// executor cannot find is the worst of both.
 function toolsFor(routeGlobal) {
-  return [...(TOOL_DEFS[routeGlobal] || []), ...DATA_TOOLS];
+  const named = TOOL_DEFS[routeGlobal] || [];
+  const generic = routeGlobal === "GENERIC" ? [] : (TOOL_DEFS.GENERIC || []);
+  return [...named, ...generic, ...DATA_TOOLS];
 }
 
 function toOpenAITools(defs) {
