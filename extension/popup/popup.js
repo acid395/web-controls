@@ -184,6 +184,67 @@ document.getElementById("enable").addEventListener("click", () => {
   });
 });
 
+/* ---------------------------------------------------------------------------
+ * The header badge and the example chips.
+ *
+ * Both are functional rather than decorative. The badge answers the first
+ * question anyone has - does this thing even work on the page I'm looking at,
+ * and what does it know about it - which previously required opening Debug
+ * tools and reading a wall of text. The chips replace the paragraph that used
+ * to explain what to type, and are drawn from the route's real tools, so they
+ * cannot suggest something this page cannot do.
+ */
+const EXAMPLES = {
+  USGS: ["select Alaska", "set the parameter to gage height", "group by county", "gage height in Alaska"],
+  SITE: ["graph discharge", "set the time span to 30 days", "view tabular data"],
+  NOAA: ["zoom in", "open the layers panel", "set the basemap to satellite", "is there flooding in Idaho"],
+  FCP: ["toggle the legend", "set the basemap to terrain", "zoom out"],
+  GENERIC: ["read this page", "what can I do here", "gage height in Alaska", "weather in Chicago"],
+};
+
+function renderChips(route) {
+  const box = document.getElementById("chips");
+  box.textContent = "";
+  for (const text of (EXAMPLES[route] || EXAMPLES.GENERIC).slice(0, 4)) {
+    const chip = el("button", "chip", text);
+    chip.addEventListener("click", () => {
+      const field = document.getElementById("smartInstruction");
+      field.value = text;
+      field.focus();
+      document.getElementById("smartAsk").click();
+    });
+    box.appendChild(chip);
+  }
+}
+
+function describeRoute() {
+  chrome.runtime.sendMessage({ type: "capabilities" }, (res) => {
+    const pill = document.getElementById("routePill");
+    const text = document.getElementById("routeText");
+    if (chrome.runtime.lastError || !res || !res.ok) {
+      // Almost always an un-enabled site, which is the one case where the
+      // enable button is worth showing at all.
+      text.textContent = "not enabled here";
+      document.getElementById("enableRow").classList.add("show");
+      renderChips("GENERIC");
+      return;
+    }
+    const named = res.route !== "GENERIC";
+    pill.classList.add(named ? "live" : "generic");
+    text.textContent = named
+      ? `${res.route} · ${res.tools.length} tools`
+      : `any site · ${res.pageControls} controls`;
+    renderChips(res.route);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", describeRoute);
+
+// Enter submits, which is what anyone types into a single-line box expects.
+document.getElementById("smartInstruction").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("smartAsk").click();
+});
+
 document.getElementById("smartAsk").addEventListener("click", () => {
   const instruction = document.getElementById("smartInstruction").value.trim();
   if (!instruction) return;

@@ -2,175 +2,269 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>web-controls proof of concept</title>
+<title>web-controls</title>
 <style>
-  body { font: 13px/1.4 -apple-system, sans-serif; width: 360px; padding: 10px; }
-  h1 { font-size: 13px; margin: 0 0 8px; }
-  h2 { font-size: 12px; margin: 14px 0 4px; border-top: 1px solid #ddd; padding-top: 10px; }
-  h2.primary { border-top: none; padding-top: 0; margin-top: 4px; }
-  label { display: block; margin-top: 8px; font-size: 11px; color: #555; }
-  input { width: 100%; box-sizing: border-box; padding: 4px; font: 12px monospace; }
-  button { margin-top: 10px; width: 100%; padding: 6px; }
-  details { margin-top: 14px; border-top: 1px solid #ddd; padding-top: 6px; }
-  summary { font-size: 12px; cursor: pointer; color: #555; }
-  pre { margin: 0; background: #f4f4f4;
-        padding: 6px; font: 11px monospace; white-space: pre-wrap; word-break: break-word; }
-  .hint { color: #888; font-size: 11px; margin-top: 4px; }
-  .logbar { display: flex; align-items: center; justify-content: space-between; margin-top: 12px;
-            border-top: 1px solid #ddd; padding-top: 6px; }
-  .logbar .hint { margin: 0; }
-  button.linky { width: auto; margin: 0; padding: 2px 6px; font-size: 11px; background: none;
-                 border: 1px solid #ddd; border-radius: 3px; color: #666; cursor: pointer; }
-  .running { font-size: 11px; color: #9a6700; background: #fdf6e3; border-left: 2px solid #d9a441;
-             padding: 5px 7px; border-radius: 0 3px 3px 0; }
+  /* One palette, flipped for dark mode, so nothing is hard-coded twice. */
+  :root {
+    --bg: #ffffff;        --panel: #f7f8fa;     --sunken: #f1f3f5;
+    --ink: #1a1d21;       --muted: #6b7280;     --faint: #9ca3af;
+    --line: #e3e6ea;      --line-soft: #eef0f3;
+    --accent: #1f6feb;    --accent-ink: #ffffff;
+    --ok: #1a7f37;        --warn: #9a6700;      --alert: #b3261e;
+    --warn-bg: #fdf6e3;   --warn-line: #d9a441;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;      --panel: #1d2026;     --sunken: #23272e;
+      --ink: #e6e8eb;     --muted: #9aa3ad;     --faint: #6f7883;
+      --line: #2c313a;    --line-soft: #23272e;
+      --accent: #4c8dff;  --accent-ink: #0d1117;
+      --ok: #3fb950;      --warn: #d29922;      --alert: #f85149;
+      --warn-bg: #2a2418; --warn-line: #9a6700;
+    }
+  }
 
-  #log { margin-top: 10px; max-height: 320px; overflow: auto; }
-  #log > * { margin-top: 6px; }
-  .echo { color: #666; font-size: 11px; font-style: italic; }
+  * { box-sizing: border-box; }
+  body {
+    width: 380px; margin: 0; padding: 0;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+  }
 
-  /* Rendered data-tool results. Everything below is filled in via
-     textContent, never innerHTML - gauge names and alert headlines come
-     from external APIs and are not to be trusted as markup. */
-  .card { border: 1px solid #dcdcdc; border-radius: 6px; overflow: hidden; background: #fff; }
-  .card-head { padding: 7px 9px; background: #f7f9fb; border-bottom: 1px solid #e6e6e6; }
-  .card-title { font-size: 12px; font-weight: 600; }
-  .card-sub { font-size: 11px; color: #666; margin-top: 1px; }
-  .stats { display: flex; gap: 6px; padding: 7px 9px 0; }
-  .stat { flex: 1; background: #f4f6f8; border-radius: 4px; padding: 4px 6px; }
-  .stat-label { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #7a7a7a; }
-  .stat-value { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .caveat { margin: 7px 9px 0; padding: 5px 7px; background: #fdf6e3; border-left: 2px solid #d9a441;
-            color: #6b5420; font-size: 10px; line-height: 1.35; border-radius: 0 3px 3px 0; }
-  .checked { padding: 6px 9px 0; }
-  .checked-label { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #7a7a7a; }
-  .checked-item { font-size: 10px; color: #777; padding-left: 9px; position: relative; }
-  .checked-item::before { content: "\2713"; position: absolute; left: 0; color: #1a7f37; }
-  .rows { padding: 4px 9px 7px; }
-  .row { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; border-top: 1px solid #f0f0f0; }
+  /* ---- header: what this page is, which is genuinely useful ---- */
+  .top {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .mark { font-size: 15px; line-height: 1; }
+  .name { font-size: 12px; font-weight: 600; letter-spacing: .01em; }
+  .pill {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 999px; background: var(--sunken);
+    border: 1px solid var(--line); font-size: 10.5px; color: var(--muted); white-space: nowrap;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+  .pill.live .dot { background: var(--ok); }
+  .pill.generic .dot { background: var(--warn); }
+
+  /* ---- ask ---- */
+  .ask { padding: 12px; }
+  .ask-row { display: flex; gap: 6px; }
+  input[type=text], input[type=password], input:not([type]) {
+    flex: 1; min-width: 0; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: 13px/1.3 inherit;
+  }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  button.go {
+    padding: 8px 14px; border: none; border-radius: 7px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); font: 600 13px/1 inherit;
+  }
+  button.go:hover { filter: brightness(1.08); }
+  button.go:active { transform: translateY(1px); }
+
+  /* Examples instead of a paragraph explaining what to type. */
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+  .chip {
+    padding: 4px 9px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--sunken);
+    color: var(--muted); font-size: 11px; line-height: 1.35;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  .enable-row { margin-top: 10px; display: none; }
+  .enable-row.show { display: block; }
+  button.secondary {
+    width: 100%; padding: 7px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 7px;
+    background: var(--sunken); color: var(--ink); font: 13px/1 inherit;
+  }
+  button.secondary:hover { border-color: var(--accent); }
+
+  /* ---- results ---- */
+  .logbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 12px; border-top: 1px solid var(--line); background: var(--panel);
+  }
+  .logbar .hint { margin: 0; font-size: 10.5px; }
+  button.linky {
+    padding: 2px 8px; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--bg);
+    color: var(--muted); font: 11px/1.4 inherit;
+  }
+  button.linky:hover { color: var(--ink); border-color: var(--faint); }
+
+  #log { max-height: 340px; overflow: auto; padding: 0 12px 12px; }
+  #log > * { margin-top: 8px; }
+  #log:empty { padding: 0; }
+  .echo { color: var(--muted); font-size: 11px; font-style: italic; }
+  .running {
+    font-size: 11px; color: var(--warn); background: var(--warn-bg);
+    border-left: 2px solid var(--warn-line); padding: 6px 8px; border-radius: 0 4px 4px 0;
+  }
+
+  /* Result cards. Filled via textContent - never innerHTML - because gauge
+     names and alert headlines come from external APIs. */
+  .card { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--bg); }
+  .card-head { padding: 9px 11px; background: var(--panel); border-bottom: 1px solid var(--line-soft); }
+  .card-title { font-size: 12.5px; font-weight: 600; }
+  .card-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .stats { display: flex; gap: 6px; padding: 9px 11px 0; }
+  .stat { flex: 1; background: var(--sunken); border-radius: 6px; padding: 6px 8px; }
+  .stat-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+  .stat-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .caveat {
+    margin: 9px 11px 0; padding: 7px 9px; background: var(--warn-bg);
+    border-left: 2px solid var(--warn-line); color: var(--warn);
+    font-size: 10.5px; line-height: 1.4; border-radius: 0 4px 4px 0;
+  }
+  .checked { padding: 8px 11px 0; }
+  .checked-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+  .checked-item { font-size: 10.5px; color: var(--muted); padding-left: 12px; position: relative; margin-top: 1px; }
+  .checked-item::before { content: "\2713"; position: absolute; left: 0; color: var(--ok); }
+  .rows { padding: 5px 11px 9px; }
+  .row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
   .rows .row:first-child { border-top: none; }
-  .row-name { flex: 1; font-size: 11px; line-height: 1.3; }
-  .row-meta { display: block; color: #8a8a8a; font-size: 10px; }
-  .row-value { font-size: 11px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .row.alert .row-value { color: #b3261e; }
-  .row.warn  .row-value { color: #9a6700; }
-  .row.ok    .row-value { color: #1a7f37; }
-  .card-foot { padding: 5px 9px; border-top: 1px solid #f0f0f0; color: #8a8a8a; font-size: 10px;
-               display: flex; justify-content: space-between; gap: 8px; }
+  .row-name { flex: 1; font-size: 11.5px; line-height: 1.35; min-width: 0; }
+  .row-meta { display: block; color: var(--faint); font-size: 10px; margin-top: 1px; }
+  .row-value { font-size: 11.5px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .row.alert .row-value { color: var(--alert); }
+  .row.warn  .row-value { color: var(--warn); }
+  .row.ok    .row-value { color: var(--ok); }
+  .card-foot {
+    padding: 7px 11px; border-top: 1px solid var(--line-soft); color: var(--faint);
+    font-size: 10px; display: flex; justify-content: space-between; gap: 10px;
+  }
   details.raw { margin: 0; border: none; padding: 0; }
-  details.raw > summary { font-size: 10px; color: #999; padding: 4px 9px; }
+  details.raw > summary { font-size: 10px; color: var(--faint); padding: 5px 11px; cursor: pointer; }
+  pre {
+    margin: 0; padding: 8px 11px; background: var(--sunken); color: var(--ink);
+    font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; border-radius: 7px;
+  }
+
+  /* ---- debug ---- */
+  details.tools { border-top: 1px solid var(--line); }
+  details.tools > summary {
+    padding: 9px 12px; cursor: pointer; font-size: 11.5px; color: var(--muted);
+    list-style: none; user-select: none;
+  }
+  details.tools > summary::-webkit-details-marker { display: none; }
+  details.tools > summary::before { content: "\25B8 "; color: var(--faint); }
+  details.tools[open] > summary::before { content: "\25BE "; }
+  details.tools > summary:hover { color: var(--ink); }
+  .tools-body { padding: 0 12px 12px; }
+  .tool-group { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line-soft); }
+  .tool-group:first-child { padding-top: 0; margin-top: 0; border-top: none; }
+  h2 { font-size: 11.5px; font-weight: 600; margin: 0 0 3px; }
+  .hint { color: var(--muted); font-size: 10.5px; line-height: 1.45; margin: 0 0 7px; }
+  label { display: block; margin-top: 7px; font-size: 10px; color: var(--faint); }
+  .tools-body input { width: 100%; margin-top: 2px; font-size: 12px; padding: 6px 8px; }
+  .tools-body button:not(.linky) {
+    width: 100%; margin-top: 8px; padding: 7px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--sunken); color: var(--ink); font: 12px/1 inherit;
+  }
+  .tools-body button:not(.linky):hover { border-color: var(--accent); }
+  .switch { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 12px; color: var(--ink); }
+  .switch input { width: auto; margin: 0; }
+  a { color: var(--accent); }
 </style>
 </head>
 <body>
-  <h1>web-controls proof of concept</h1>
-  <div class="hint">
-    waterdata.usgs.gov/state/... uses the USGS manifest (setParameter, groupBy, getState, ...).
-    Any other site uses the zero-manifest GENERIC fallback (inventory, mapInfo,
-    click, fill, selectOption, ...) once enabled below.
+  <div class="top">
+    <span class="mark">🌊</span>
+    <span class="name">web-controls</span>
+    <span class="pill" id="routePill"><span class="dot"></span><span id="routeText">checking page...</span></span>
   </div>
 
-  <h2>This site</h2>
-  <button id="enable">Enable on this site</button>
-  <div class="hint" id="enableStatus"></div>
-
-  <h2 class="primary">Ask</h2>
-  <div class="hint">
-    Two kinds of request. <b>Control</b> the page you're on ("set the
-    parameter to gage height"), or <b>ask a question</b> answered from USGS's
-    public API, with no clicking and no matter which page is open ("what's
-    the gage height in Alaska"). Both are instant when recognized, with no
-    model involved at all. Anything it doesn't recognize says so rather than
-    guessing - the local model that would handle the rest is off by default
-    (see Debug tools), because it downloads gigabytes and slows the machine.
+  <div class="ask">
+    <div class="ask-row">
+      <input id="smartInstruction" placeholder="Ask in plain English..." autofocus>
+      <button id="smartAsk" class="go">Ask</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="enable-row" id="enableRow">
+      <button id="enable" class="secondary">Enable on this site</button>
+      <div class="hint" id="enableStatus" style="margin-top:6px"></div>
+    </div>
   </div>
-  <label for="smartInstruction">plain-English instruction</label>
-  <input id="smartInstruction" value="set the parameter to gage height">
-  <button id="smartAsk">Ask</button>
-
-  <details>
-    <summary>Debug tools (call things directly, bypass Ask)</summary>
-
-    <h2>Run a tool call by hand (no model)</h2>
-    <div class="hint">
-      Feeds a tool call straight into the same path a model's output takes:
-      tool-name lookup, argument remapping, injection, the page bridge. No
-      model, no download, no key - isolates "does execution work" from "is
-      the model any good." Tool names come from TOOL_DEFS, e.g.
-      usgsSetParameter, siteGraphParameter, noaaSetBasemap, pageSelectOption.
-    </div>
-    <label for="toolName">tool name</label>
-    <input id="toolName" value="usgsSetParameter">
-    <label for="toolArgs">arguments (JSON object)</label>
-    <input id="toolArgs" value='{"parameter":"discharge"}'>
-    <button id="runToolCall">Run tool call</button>
-
-    <h2>Show the model's context</h2>
-    <div class="hint">
-      Exactly what a model would be handed for this page: the tools it can
-      pick from, plus env-vocab and (on GENERIC sites) the live inventory
-      with real selectors.
-    </div>
-    <button id="showContext">Show context</button>
-
-    <h2>Local model (off by default)</h2>
-    <div class="hint">
-      Off unless you switch it on. Now a 3B model (roughly 2GB) rather than
-      8B: the native tool-calling API is restricted to 7-8B models, which
-      took over two minutes per answer here and slowed the whole machine, so
-      Ask prompts for JSON instead and is free to use a smaller one.
-      Everything above works without it.
-    </div>
-    <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
-      <input type="checkbox" id="localModelEnabled" style="width:auto">
-      <span>Enable the local model for Ask</span>
-    </label>
-
-    <h2>WebLLM test</h2>
-    <div class="hint">
-      First click downloads the model (~2GB, real bandwidth) and needs WebGPU.
-      Note this button and "Ask WebLLM" use the native tools API, which needs
-      MODEL_ID switched back to the 8B Hermes model in offscreen.js; Ask uses
-      the JSON path with the 3B model instead.
-    </div>
-    <label for="prompt">test prompt</label>
-    <input id="prompt" value="Say hello in exactly five words.">
-    <button id="llmTest">Load model + ask</button>
-
-    <h2>Ask WebLLM directly (skips the fast path)</h2>
-    <label for="llmInstruction">plain-English instruction</label>
-    <input id="llmInstruction" value="set the parameter to gage height">
-    <button id="llmAsk">Ask WebLLM</button>
-
-    <h2>Ask Gemini (free tier, needs an API key)</h2>
-    <div class="hint">
-      Not part of Ask above on purpose - it stays an explicit, separate
-      choice since it needs your own key. Get a free one at
-      <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.
-    </div>
-    <label for="geminiKey">API key</label>
-    <input id="geminiKey" type="password" placeholder="paste your Gemini API key">
-    <button id="saveKey">Save key</button>
-    <label for="geminiInstruction">plain-English instruction</label>
-    <input id="geminiInstruction" value="set the parameter to gage height">
-    <button id="geminiAsk">Ask Gemini</button>
-
-    <h2>Ask (stub planner only, USGS route)</h2>
-    <label for="instruction">plain-English instruction</label>
-    <input id="instruction" value="set gage height">
-    <button id="ask">Ask</button>
-
-    <h2>Call a function directly</h2>
-    <label for="fn">function</label>
-    <input id="fn" value="getState">
-    <label for="args">arguments (JSON array)</label>
-    <input id="args" value="[]">
-    <button id="call">Call</button>
-  </details>
 
   <div class="logbar">
-    <span class="hint" id="logNote">results are kept even if this popup closes</span>
+    <span class="hint">results are kept even if this popup closes</span>
     <button id="clearLog" class="linky">clear</button>
   </div>
   <div id="log"></div>
+
+  <details class="tools">
+    <summary>Debug tools</summary>
+    <div class="tools-body">
+
+      <div class="tool-group">
+        <h2>Run a tool call by hand</h2>
+        <div class="hint">
+          Feeds a tool call straight into the path a model's output takes - no
+          model, no download, no key. Names come from TOOL_DEFS.
+        </div>
+        <label for="toolName">tool name</label>
+        <input id="toolName" value="usgsSetParameter">
+        <label for="toolArgs">arguments (JSON object)</label>
+        <input id="toolArgs" value='{"parameter":"discharge"}'>
+        <button id="runToolCall">Run tool call</button>
+      </div>
+
+      <div class="tool-group">
+        <h2>Show the model's context</h2>
+        <div class="hint">Exactly what a model would be handed for this page.</div>
+        <button id="showContext">Show context</button>
+      </div>
+
+      <div class="tool-group">
+        <h2>Local model</h2>
+        <div class="hint">
+          Off unless switched on. A 3B model, roughly 2GB, which saturates the
+          GPU while it runs. Everything above works without it.
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="localModelEnabled">
+          <span>Enable the local model for Ask</span>
+        </label>
+        <label for="prompt">test prompt</label>
+        <input id="prompt" value="Say hello in exactly five words.">
+        <button id="llmTest">Load model + ask</button>
+        <label for="llmInstruction">ask it directly (skips the fast path)</label>
+        <input id="llmInstruction" value="set the parameter to gage height">
+        <button id="llmAsk">Ask WebLLM</button>
+      </div>
+
+      <div class="tool-group">
+        <h2>Gemini (needs your own key)</h2>
+        <div class="hint">
+          Kept out of Ask on purpose, since it needs a key. Free one at
+          <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.
+        </div>
+        <label for="geminiKey">API key</label>
+        <input id="geminiKey" type="password" placeholder="paste your Gemini API key">
+        <button id="saveKey">Save key</button>
+        <label for="geminiInstruction">instruction</label>
+        <input id="geminiInstruction" value="set the parameter to gage height">
+        <button id="geminiAsk">Ask Gemini</button>
+      </div>
+
+      <div class="tool-group">
+        <h2>Call a function directly</h2>
+        <label for="fn">function</label>
+        <input id="fn" value="getState">
+        <label for="args">arguments (JSON array)</label>
+        <input id="args" value="[]">
+        <button id="call">Call</button>
+        <label for="instruction">stub planner only (USGS route)</label>
+        <input id="instruction" value="set gage height">
+        <button id="ask">Ask</button>
+      </div>
+
+    </div>
+  </details>
 
   <script src="popup.js"></script>
 </body>

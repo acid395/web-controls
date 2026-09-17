@@ -618,6 +618,30 @@ and once granted, that site works immediately - no code change, no reload.
 count as a real user gesture, so that one call lives directly in `popup.js`,
 not relayed through `background.js` like everything else.
 
+## The popup
+
+Three things in it are functional rather than decorative.
+
+**The badge** answers the first question anyone has - does this work on the
+page I'm looking at, and what does it know about it - which previously meant
+opening Debug tools and reading. It shows the route and its tool count
+("NOAA · 17 tools"), or the control count on an unmapped page, or "not
+enabled here" - and the enable button appears *only* in that last case,
+instead of sitting there permanently on pages where it means nothing.
+
+**The example chips** replace the paragraph that used to explain what to type.
+They are route-specific, and a test reads them straight out of `popup.js` and
+asserts every one resolves to a real tool, because a suggested example that
+does nothing is a bad first impression. It caught one immediately: "show
+discharge" looked reasonable and matched nothing.
+
+**Dark mode** follows the system, through one set of tokens rather than
+colours hard-coded twice.
+
+The result cards were kept as they were and only re-skinned; they had already
+earned their shape. Everything is still filled via `textContent`, never
+`innerHTML`, since gauge names and alert headlines come from external APIs.
+
 ## Tests
 
 ```

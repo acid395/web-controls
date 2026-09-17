@@ -2913,13 +2913,28 @@ function planManifestTool(instruction, routeGlobal) {
     .filter((x) => x.score >= 4)          // a single description word is not enough
     .sort((a, b) => b.score - a.score);
   if (!scored.length) return null;
-  // A near-tie means two tools fit the words equally, and picking one would
-  // be a coin flip on a real action.
-  if (scored[1] && scored[0].score - scored[1].score < 2) return null;
 
-  const args = argsForTool(scored[0].def, instruction, words);
-  if (!args) return null;
-  return { name: scored[0].def.name, args };
+  // A near-tie is usually a coin flip on a real action, but not always. When
+  // the instruction supplies a value, a tool that takes one is what was
+  // meant: "graph discharge" tied siteGraphParameter against
+  // siteListGraphParameters - one sets, one lists - and naming a parameter
+  // settles which. Tools whose arguments cannot be filled at all drop out.
+  const tied = scored.filter((x) => scored[0].score - x.score < 2);
+  const viable = tied
+    .map((x) => ({ ...x, args: argsForTool(x.def, instruction, words) }))
+    .filter((x) => x.args);
+  if (!viable.length) return null;
+  if (viable.length > 1) {
+    const argCount = (x) => Object.keys(x.args).length;
+    const most = Math.max(...viable.map(argCount));
+    const takers = viable.filter((x) => argCount(x) === most);
+    // Still tied among tools that consume the same values: genuinely
+    // ambiguous, so refuse rather than guess.
+    if (takers.length > 1 && most === 0) return null;
+    if (takers.length > 1) return null;
+    return { name: takers[0].def.name, args: takers[0].args };
+  }
+  return { name: viable[0].def.name, args: viable[0].args };
 }
 
 /* ---------------------------------------------------------------------------
