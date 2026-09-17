@@ -303,6 +303,7 @@ function planDataTool(instruction, route) {
   const routeGlobal = (route && route.global) || "GENERIC";
   const bareTemperature = /\btemp(erature)?\b/i.test(text) && !/\bwater\s+temp/i.test(text) && !/\bair\s+temp/i.test(text);
   const wantsWeather = /\bhumidity\b|\bdew ?point\b|\bwind\b|\bbarometric\b|\bpressure\b|\bweather\b|\bair temp\w*\b|\bhow (?:hot|cold|windy|humid)\b/i.test(text)
+    || /\bprobability of precip\w*\b|\bchance of (rain|precip\w*|showers|storms)\b|\bwill it (rain|snow)\b|\bforecast\b/i.test(text)
     || (bareTemperature && !WATER_ROUTES.has(routeGlobal));
 
   const city = findCityInText(text);
@@ -1727,6 +1728,14 @@ function findDayInText(text) {
 
 function forecastWhen(text) {
   const t = (text || "").toLowerCase();
+  // "Probability of precipitation" is a forecast NWS publishes, not something
+  // a gauge measures. Matching it against the USGS precipitation parameter
+  // answered with rain gauges reading zero - measured rainfall so far, which
+  // is a different quantity from the chance of rain to come.
+  if (/\bprobability of precip\w*\b|\bchance of (rain|precip\w*|showers|storms)\b|\bwill it (rain|snow)\b|\bpop\b/.test(t)) {
+    const namedDay = findDayInText(t);
+    return namedDay ? `rain:${namedDay}` : "rain";
+  }
   // A maximum or minimum is not a current reading. Answering "max
   // temperature in Chicago" with whatever the thermometer says right now is
   // the same silent substitution as answering "Friday" with today - and it
@@ -1769,6 +1778,36 @@ async function nwsForecast({ state, place, when }) {
 
   const label = place || located.stateCode.toUpperCase();
   const dayLike = (p) => p.name.toLowerCase();
+
+  // The chance of rain, optionally for a named day.
+  if (when === "rain" || /^rain:/.test(when)) {
+    const day = when.split(":")[1];
+    const wanted = day
+      ? periods.filter((p) => p.name.toLowerCase().includes(day))
+      : periods.slice(0, 4);
+    if (!wanted.length) {
+      throw new Error(`NWS's forecast reaches ${periods[periods.length - 1].name}, which doesn't include ${day}`);
+    }
+    const chance = (p) => {
+      const v = p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value;
+      return v == null ? 0 : v;
+    };
+    const peak = wanted.reduce((a, b) => (chance(b) > chance(a) ? b : a), wanted[0]);
+    return {
+      place: label, when: "chance of precipitation",
+      periods: wanted.map((p) => ({ name: p.name, chance: chance(p), forecast: p.shortForecast })),
+      locatedBy: located.basis,
+      source: "National Weather Service forecast, no API key required",
+      display: {
+        title: `Chance of precipitation · ${label}`,
+        subtitle: `${peak.name}: ${chance(peak)}% · forecast, not measured rainfall`,
+        stats: [{ label: "peak", value: `${chance(peak)}%` }],
+        rows: wanted.map((p) => ({ name: p.name, value: `${chance(p)}%`, meta: p.shortForecast })),
+        note: located.basis,
+        source: "NWS forecast",
+      },
+    };
+  }
 
   // An extreme, optionally for a named day: "high:tuesday" means Tuesday's
   // daytime period rather than the next one available.

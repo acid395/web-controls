@@ -708,6 +708,18 @@ nothing else does - a confirmation on every click is noise that gets clicked
 through. It reuses the choice buttons, so confirming is one click and nothing
 happens until it is.
 
+### Two different quantities called precipitation
+
+"Probability of precipitation in San Francisco" answered with USGS rain gauges
+reading zero. Not wrong about the gauges - it was the right lookup for the
+wrong question. Measured rainfall so far and the chance of rain to come are
+different quantities that share a word, and only one of them is a forecast.
+
+A probability, a chance of rain, or "will it rain" now routes to the NWS
+forecast, which publishes exactly that per period, and the card says *"forecast,
+not measured rainfall"* so the two cannot be confused. Plain "precipitation"
+still means the gauges, on any route.
+
 ## Tests
 
 ```

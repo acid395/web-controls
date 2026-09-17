@@ -554,6 +554,22 @@ check("thousands are separated", sb.readable(536000), "536,000");
 check("small numbers are left alone", sb.readable(4.59), "4.59");
 check("and precision is capped", sb.readable(25.550000000000004), "25.55");
 
+section("a chance of rain is not a rain gauge");
+// "Probability of precipitation in san francisco" matched the USGS
+// precipitation parameter and answered with rain gauges reading zero -
+// measured rainfall so far, which is a different quantity from the chance of
+// rain to come. Both are precipitation; only one is a forecast.
+const rain = (q, route) => { const p = plan(q, { global: route || "FCP" }); return p ? `${p.name} ${p.args.when || ""}`.trim() : null; };
+check("probability of precipitation is a forecast",
+  rain("probability of precipitation in san francisco"), "weatherForecast rain");
+check("so is a chance of rain", rain("chance of rain in boise"), "weatherForecast rain");
+check("and a named day is carried", rain("will it rain in seattle on friday"), "weatherForecast rain:friday");
+// Plain "precipitation" is still what gauges measure.
+check("measured precipitation still goes to USGS",
+  rain("precipitation in california"), "waterCurrentConditions");
+// On a water page, gauges remain the sensible reading of the bare word.
+check("and on a USGS page too", rain("precipitation in california", "USGS"), "waterCurrentConditions");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
