@@ -2754,6 +2754,38 @@ function pageIsAbout(pageData, place) {
   return place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || hay.includes(w));
 }
 
+// How many places this page names at all. Only the well-known ones can be
+// counted, so this is a floor, not a census - which is the safe direction:
+// it under-reports, and under-reporting keeps a page trusted.
+function placesNamedIn(text) {
+  const t = (text || "").toLowerCase();
+  const seen = new Set();
+  for (const name of Object.keys(US_CITIES)) {
+    if (name.includes("_")) continue;
+    if (new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(t)) seen.add(US_CITIES[name] + ":" + name);
+  }
+  return seen.size;
+}
+
+// Whether a table on this page can be read as being about the place asked
+// for. Title and headings are a strong claim and settle it. Body prose is
+// weaker but necessary: weather.gov's point forecast names its point in a
+// bare paragraph, with nothing but "Point Forecast" in the title.
+//
+// The weak form needs a limit, or any place named anywhere vouches for a
+// table belonging to a different one - an IDSS page listing Denver, Pueblo
+// and Fort Collins as forecast points answered for all of them with the one
+// table it happened to be showing, and every answer looked deliberate. So
+// prose counts only while the page names a single place; past that, the page
+// is a directory and the question goes to the API, which cannot confuse them.
+function tableIsAbout(pageData, place) {
+  if (!place) return true;
+  if (pageIsAbout(pageData, place)) return true;
+  const text = (pageData.text || "").toLowerCase();
+  if (!place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || text.includes(w))) return false;
+  return placesNamedIn(text) <= 1;
+}
+
 // A place can be one row of a table rather than the subject of the page - a
 // regional forecast lists dozens of towns, and the answer for the one asked
 // about is in its row. Title-and-headings matching never sees that, so the
@@ -2807,8 +2839,7 @@ function findInTables(pageData, { wants, place, day }) {
 // text - the table itself never mentions it.
 function findMeasurementRows(pageData, { wants, place, day }) {
   if (!wants.length) return null;
-  const haystack = [pageData.title || "", ...(pageData.headings || []), pageData.text || ""].join(" ").toLowerCase();
-  if (place && !place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || haystack.includes(w))) return null;
+  if (!tableIsAbout(pageData, place)) return null;
 
   for (const table of pageData.tables || []) {
     const columns = table.columns || [];

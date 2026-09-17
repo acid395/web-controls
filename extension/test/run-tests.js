@@ -608,6 +608,33 @@ check("a PoP column reads as a chance", sb.conceptMatches("precipChance", "pop 1
 check("and not as rainfall", sb.conceptMatches("precipitation", "pop 15%"), false);
 check("population is not a forecast", sb.pageValueWants("population of san francisco").length, 0);
 
+section("one table, one place");
+// A page can name many places and hold a table about one of them. Matching
+// the place anywhere in the body let every name on the page claim that table:
+// "denver colorado max temp" and "pueblo max temp" returned the same number
+// from the same row, and both looked deliberate.
+const idssPage = {
+  url: "https://www.weather.gov/forecastpoints/", title: "IDSS Forecast Points",
+  headings: ["Boulder Creek at Boulder, CO"],
+  text: "Forecast points: Boulder, Denver, Fort Collins, Greeley, Pueblo",
+  pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["", "Thu Sep 17", "Fri Sep 18"], rows: [["Max Temp, \u00b0F", "82", "79"]] }],
+};
+const fromIdss = (place) => {
+  const hits = sb.findOnPage(idssPage, { wants: sb.pageValueWants("max temp"), place, day: null });
+  return hits ? hits[0].value : null;
+};
+check("the heading's place gets the table", fromIdss("boulder"), "82");
+check("a place merely listed does not", fromIdss("denver"), null);
+check("nor does another one", fromIdss("pueblo"), null);
+check("and with no place asked, the table stands", fromIdss(null), "82");
+// The weak form still has to work, or weather.gov's own point forecast
+// breaks: it names its point in a bare paragraph under a generic title.
+check("a lone place in prose still vouches",
+  sb.tableIsAbout({ title: "Point Forecast", headings: [], text: "0 miles N of Hermantown, MN" }, "hermantown"), true);
+check("a directory of places does not",
+  sb.tableIsAbout({ title: "Forecast Points", headings: [], text: "denver, pueblo, fort collins" }, "denver"), false);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

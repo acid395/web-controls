@@ -725,6 +725,20 @@ there: a forecast page prints "Precipitation last hour 0.00 in" directly above
 "Chance of precipitation 15%". Asking for the chance now excludes the measured
 row and vice versa, in prose, in a table row, and in a `PoP` column.
 
+### One table, one place
+
+A page can name fifty places and show a table about one of them. Matching the
+asked-for place anywhere in the body text let every name on the page claim that
+table, so on an IDSS forecast-points page "denver max temp" and "pueblo max
+temp" returned the same row - each answer as confident as if it had been looked
+up.
+
+The page's title and headings are a strong claim and still settle it. Body
+prose is weaker but necessary, because weather.gov's point forecast names its
+point in a bare paragraph under the title "Point Forecast". So prose now counts
+only while the page names a single place; past that the page is a directory,
+and the question goes to the API, which cannot confuse two places.
+
 ## Tests
 
 ```
