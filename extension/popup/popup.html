@@ -98,6 +98,20 @@
   #log > * { margin-top: 8px; }
   #log:empty { padding: 0; }
   .echo { color: var(--muted); font-size: 11px; font-style: italic; }
+
+  /* Older results, collapsed to one line so the newest answer is not buried. */
+  details.past { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+  details.past > summary {
+    display: flex; align-items: baseline; gap: 8px; padding: 6px 9px;
+    cursor: pointer; list-style: none; font-size: 11px;
+  }
+  details.past > summary::-webkit-details-marker { display: none; }
+  details.past > summary::before { content: "\25B8"; color: var(--faint); font-size: 9px; }
+  details.past[open] > summary::before { content: "\25BE"; }
+  details.past > summary:hover { background: var(--sunken); border-radius: 7px; }
+  .past-q { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .past-a { color: var(--faint); font-size: 10px; white-space: nowrap; }
+  details.past > div { padding: 0 9px 9px; }
   .running {
     font-size: 11px; color: var(--warn); background: var(--warn-bg);
     border-left: 2px solid var(--warn-line); padding: 6px 8px; border-radius: 0 4px 4px 0;

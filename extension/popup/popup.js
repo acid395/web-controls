@@ -29,6 +29,10 @@ function logEcho(s) {
 // The renderer stays generic - each tool decides its title, stats and rows,
 // since it's the thing that knows what its numbers mean.
 function renderCard(display, raw) {
+  append(buildCard(display, raw));
+}
+
+function buildCard(display, raw) {
   const card = el("div", "card");
 
   const head = el("div", "card-head");
@@ -82,7 +86,7 @@ function renderCard(display, raw) {
   details.appendChild(el("pre", null, JSON.stringify(raw, null, 2)));
   card.appendChild(details);
 
-  append(card);
+  return card;
 }
 
 // One place that decides how any response gets shown: a formatted card when
@@ -108,16 +112,40 @@ function logResult(res) {
  * popup is shut is simply there on reopening, and why a slow ask shows as
  * running rather than as nothing.
  */
-function renderEntry(entry) {
-  logEcho(`ask: "${entry.instruction}"`);
+// Older results collapse to a one-line summary. History is worth keeping -
+// an answer that arrived while the popup was shut has to be here - but a
+// stack of full cards buries the one just asked for.
+function renderEntry(entry, { collapsed = false } = {}) {
+  const body = document.createElement("div");
+  const into = (node) => body.appendChild(node);
+
   if (entry.status === "running") {
-    const el2 = el("div", "running", "still running - this stays here if you close the popup");
-    append(el2);
+    into(el("div", "running", "still running - this stays here if you close the popup"));
+  } else if (entry.display) {
+    into(buildCard(entry.display, entry));
+  } else if (entry.error) {
+    into(el("pre", null, entry.error + (entry.hint ? `\n\nhint: ${entry.hint}` : "")));
+  } else {
+    into(el("pre", null, JSON.stringify(entry, null, 2)));
+  }
+
+  if (!collapsed) {
+    append(el("div", "echo", `ask: "${entry.instruction}"`));
+    append(body);
     return;
   }
-  if (entry.display) { renderCard(entry.display, entry); return; }
-  if (entry.error) { log(entry.error + (entry.hint ? `\n\nhint: ${entry.hint}` : "")); return; }
-  log(JSON.stringify(entry, null, 2));
+
+  // Collapsed: the question, plus whatever the answer's own headline was.
+  const box = el("details", "past");
+  const summary = el("summary", null);
+  summary.appendChild(el("span", "past-q", entry.instruction));
+  const gist = entry.status === "running" ? "running"
+    : entry.error ? "no match"
+    : (entry.display && (entry.display.title || entry.display.subtitle)) || "done";
+  summary.appendChild(el("span", "past-a", String(gist).slice(0, 34)));
+  box.appendChild(summary);
+  box.appendChild(body);
+  append(box);
 }
 
 let renderedIds = new Set();
@@ -128,10 +156,11 @@ function restoreHistory() {
     const box = logEl();
     box.textContent = "";
     renderedIds = new Set();
-    for (const entry of res.history) {
-      renderEntry(entry);
+    const last = res.history.length - 1;
+    res.history.forEach((entry, i) => {
+      renderEntry(entry, { collapsed: i !== last });
       if (entry.status !== "running") renderedIds.add(entry.id);
-    }
+    });
     box.scrollTop = box.scrollHeight;
   });
 }

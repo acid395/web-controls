@@ -642,6 +642,23 @@ The result cards were kept as they were and only re-skinned; they had already
 earned their shape. Everything is still filled via `textContent`, never
 `innerHTML`, since gauge names and alert headlines come from external APIs.
 
+### Nothing is dropped in silence
+
+"zoom in on alaska" ran a bare zoom and discarded "alaska". The map moved, so
+it was indistinguishable from success - the same shape as every other bug
+here. Two things now prevent it.
+
+Words the chosen tool could not account for are reported rather than
+discarded, so an action that answers a narrower question than the one asked
+says so.
+
+And on a map, "zoom in on X" is not a zoom at all: it is a request to go
+there, which is what the site's search box does, a relative zoom taking no
+location. The substitution is stated - *"went there by searching, rather than
+a relative zoom"* - because doing something other than what was literally
+asked is only acceptable when it is visible. A tool that genuinely consumes
+the place, like `usgsSelectState`, is left alone.
+
 ## Tests
 
 ```

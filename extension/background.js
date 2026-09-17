@@ -2902,6 +2902,32 @@ function isCommand(instruction) {
   return CONTROL_VERB.test(instruction || "");
 }
 
+// Words the chosen tool did not account for. Silently discarding them is how
+// "zoom in on alaska" became a bare zoom: the action ran, the map moved, and
+// the place was gone - indistinguishable from success.
+function wordsLeftOver(def, args, words) {
+  const consumed = new Set(toolVocabulary(def).fromName.split(/\s+/));
+  for (const value of Object.values(args || {})) {
+    for (const w of String(value).toLowerCase().split(/[^a-z0-9]+/)) if (w) consumed.add(w);
+  }
+  return words.filter((w) => !consumed.has(w) && !CONTROL_VERB.test(w));
+}
+
+// On a map, "zoom in on Alaska" is not a zoom - it is a request to go there,
+// which is what the site's search box does. A relative zoom takes no
+// location, so the place would otherwise be dropped.
+function redirectToSearch(instruction, routeGlobal, leftovers) {
+  if (!leftovers.length) return null;
+  const place = findStateInText(leftovers.join(" ")) || findCityInText(leftovers.join(" "));
+  if (!place) return null;
+  const search = (TOOL_DEFS[routeGlobal] || []).find((d) => !d.run && /search/i.test(d.name));
+  if (!search) return null;
+  const key = Object.keys((search.parameters && search.parameters.properties) || {})[0];
+  if (!key) return null;
+  const name = place.name || place.city;
+  return { name: search.name, args: { [key]: name.replace(/\b\w/g, (c) => c.toUpperCase()) }, insteadOf: "a relative zoom" };
+}
+
 function planManifestTool(instruction, routeGlobal) {
   const defs = (TOOL_DEFS[routeGlobal] || []).filter((d) => !d.run);
   if (!defs.length) return null;
@@ -2924,17 +2950,21 @@ function planManifestTool(instruction, routeGlobal) {
     .map((x) => ({ ...x, args: argsForTool(x.def, instruction, words) }))
     .filter((x) => x.args);
   if (!viable.length) return null;
+  let chosen = viable[0];
   if (viable.length > 1) {
     const argCount = (x) => Object.keys(x.args).length;
     const most = Math.max(...viable.map(argCount));
     const takers = viable.filter((x) => argCount(x) === most);
-    // Still tied among tools that consume the same values: genuinely
-    // ambiguous, so refuse rather than guess.
-    if (takers.length > 1 && most === 0) return null;
+    // Still tied among tools consuming the same values: genuinely ambiguous,
+    // so refuse rather than guess at a real action.
     if (takers.length > 1) return null;
-    return { name: takers[0].def.name, args: takers[0].args };
+    chosen = takers[0];
   }
-  return { name: viable[0].def.name, args: viable[0].args };
+
+  const leftovers = wordsLeftOver(chosen.def, chosen.args, words);
+  const redirected = redirectToSearch(instruction, routeGlobal, leftovers);
+  if (redirected) return redirected;
+  return { name: chosen.def.name, args: chosen.args, unmatchedWords: leftovers.length ? leftovers : undefined };
 }
 
 /* ---------------------------------------------------------------------------
@@ -3730,11 +3760,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (manifestCall) {
           const result = await runVerified(route.global, manifestCall);
           const note = describeVerification(result.verified, manifestCall);
+          // Anything the tool could not account for is said out loud - a
+          // dropped word is how an action ends up answering a different
+          // question than the one asked.
+          const ignored = manifestCall.unmatchedWords;
           respond({
             ...result, plannedBy: "manifest", toolCall: manifestCall,
             display: {
               title: friendlyToolName(manifestCall.name),
-              subtitle: note ? note.text : "done",
+              // Say when the action taken was not the one literally named:
+              // asking to zoom and getting a search is right, but only if it
+              // is visible.
+              subtitle: manifestCall.insteadOf
+                ? `went there by searching, rather than ${manifestCall.insteadOf}`
+                : ignored
+                  ? `${note ? note.text : "done"} · ignored: ${ignored.join(", ")}`
+                  : note ? note.text : "done",
               stats: [],
               rows: rankedChanges(result.verified).map((c) => ({
                 name: nameOfChange(c),

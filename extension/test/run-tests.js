@@ -482,6 +482,27 @@ check("naming a value picks the tool that takes one",
 check("without a value the listing tool still wins",
   (sb.planManifestTool("list graph parameters", "SITE") || {}).name, "siteListGraphParameters");
 
+section("nothing is dropped in silence");
+// "zoom in on alaska" ran a bare zoom and discarded "alaska". The map moved,
+// so it was indistinguishable from success - the same shape as every other
+// bug here.
+const mt2 = (q, route) => sb.planManifestTool(q, route);
+check("a bare zoom is still a zoom", (mt2("zoom in", "NOAA") || {}).name, "noaaZoomIn");
+// On a map, "zoom in on X" is a request to go there, which is what the site's
+// search box does; a relative zoom takes no location.
+check("zooming on a place searches for it instead",
+  (mt2("zoom in on alaska", "NOAA") || {}).name, "noaaSearch");
+check("carrying the place as the query",
+  (mt2("zoom in on alaska", "NOAA") || {}).args.query, "Alaska");
+check("the substitution is recorded, not hidden",
+  (mt2("zoom in on alaska", "NOAA") || {}).insteadOf, "a relative zoom");
+check("and works on other map routes", (mt2("zoom in on texas", "FCP") || {}).name, "fcpSearch");
+// A tool that genuinely consumes the place is left alone.
+check("a tool that takes the place keeps it",
+  (mt2("select Alaska", "USGS") || {}).name, "usgsSelectState");
+check("an argument-taking tool reports nothing left over",
+  (mt2("set the basemap to satellite", "NOAA") || {}).unmatchedWords, undefined);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
