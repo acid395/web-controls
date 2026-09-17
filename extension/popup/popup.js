@@ -32,11 +32,26 @@ function renderCard(display, raw) {
   append(buildCard(display, raw));
 }
 
+// "3m ago" rather than a timestamp: the question is always whether a result
+// is still current, never what o'clock it was.
+function ago(iso) {
+  if (!iso) return "";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(mins)) return "";
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 48 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+}
+
 function buildCard(display, raw) {
   const card = el("div", "card");
 
   const head = el("div", "card-head");
   head.appendChild(el("div", "card-title", display.title));
+  // Without this an old collapsed result looks exactly as current as a new
+  // one, which is the mistake this whole project keeps guarding against.
+  if (raw && raw.at) head.appendChild(el("div", "card-when", ago(raw.at)));
   if (display.subtitle) head.appendChild(el("div", "card-sub", display.subtitle));
   card.appendChild(head);
 
@@ -98,6 +113,34 @@ function buildCard(display, raw) {
   foot.appendChild(el("span", null, display.note || ""));
   foot.appendChild(el("span", null, display.source || ""));
   card.appendChild(foot);
+
+  // Undo is possible only because verification records the previous value of
+  // everything it changed - it existed as a tool and was never reachable.
+  const acts = el("div", "card-acts");
+  const changes = raw && raw.verified && raw.verified.changes;
+  if (changes && changes.some((c) => c.was !== undefined)) {
+    const undo = el("button", "act", "undo");
+    undo.addEventListener("click", () => {
+      logEcho("undoing that");
+      chrome.runtime.sendMessage({ type: "runToolCall", toolCall: { name: "pageUndo", args: { changes } } }, logResult);
+    });
+    acts.appendChild(undo);
+  }
+  const copy = el("button", "act", "copy");
+  copy.addEventListener("click", () => {
+    // The readable form, not the JSON: someone copying a reading wants the
+    // reading, and the raw response is already one click away below.
+    const lines = [display.title, display.subtitle]
+      .concat((display.stats || []).map((x) => `${x.label}: ${x.value}`))
+      .concat((display.rows || []).map((r) => [r.name, r.value, r.meta].filter(Boolean).join("  ")))
+      .filter(Boolean);
+    navigator.clipboard.writeText(lines.join("\n")).then(
+      () => { copy.textContent = "copied"; setTimeout(() => { copy.textContent = "copy"; }, 1200); },
+      () => { copy.textContent = "couldn't copy"; }
+    );
+  });
+  acts.appendChild(copy);
+  card.appendChild(acts);
 
   // The exact JSON stays one click away - this is still a debugging tool.
   const details = el("details", "raw");
@@ -169,12 +212,26 @@ function renderEntry(entry, { collapsed = false } = {}) {
 
 let renderedIds = new Set();
 
+// Past instructions, newest first, for up-arrow recall.
+let recallList = [];
+let recallAt = -1;
+
 function restoreHistory() {
   chrome.runtime.sendMessage({ type: "askHistory" }, (res) => {
     if (chrome.runtime.lastError || !res || !res.ok) return;
     const box = logEl();
     box.textContent = "";
     renderedIds = new Set();
+    recallList = res.history.map((h) => h.instruction).filter(Boolean).reverse();
+    recallAt = -1;
+
+    if (!res.history.length) {
+      const empty = el("div", "empty");
+      empty.appendChild(el("div", null, "Nothing asked yet."));
+      empty.appendChild(el("div", null, "Try one of the examples above, or describe what you want in your own words."));
+      box.appendChild(empty);
+      return;
+    }
     const last = res.history.length - 1;
     res.history.forEach((entry, i) => {
       renderEntry(entry, { collapsed: i !== last });
@@ -289,8 +346,19 @@ function describeRoute() {
 document.addEventListener("DOMContentLoaded", describeRoute);
 
 // Enter submits, which is what anyone types into a single-line box expects.
+// Up and down walk previous instructions, as any prompt does - most asks here
+// are a small edit of the last one.
 document.getElementById("smartInstruction").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") document.getElementById("smartAsk").click();
+  const field = e.target;
+  if (e.key === "Enter") { document.getElementById("smartAsk").click(); return; }
+  if (e.key === "ArrowUp" && recallAt + 1 < recallList.length) {
+    e.preventDefault();
+    field.value = recallList[++recallAt];
+    field.setSelectionRange(field.value.length, field.value.length);
+  } else if (e.key === "ArrowDown" && recallAt > -1) {
+    e.preventDefault();
+    field.value = --recallAt === -1 ? "" : recallList[recallAt];
+  }
 });
 
 document.getElementById("smartAsk").addEventListener("click", () => {

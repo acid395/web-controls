@@ -618,9 +618,17 @@ and once granted, that site works immediately - no code change, no reload.
 count as a real user gesture, so that one call lives directly in `popup.js`,
 not relayed through `background.js` like everything else.
 
-## The popup
+## The panel
 
-Three things in it are functional rather than decorative.
+It is a **side panel**, not a popup. A popup is destroyed the instant it loses
+focus - clicking the page, another tab, another window - and almost everything
+awkward here descended from that: results vanishing mid-flight, the ask-history
+store, the "still running" markers. A panel stays open beside the page, so a
+slow answer has somewhere to land and the page can be watched while it
+changes. The history store remains, but as a convenience rather than a
+crutch. `Ctrl+Shift+Space` (`Cmd+Shift+Space` on a Mac) opens it.
+
+Several things in it are functional rather than decorative.
 
 **The badge** answers the first question anyone has - does this work on the
 page I'm looking at, and what does it know about it - which previously meant
@@ -681,6 +689,24 @@ a question, and a selector is unreadable besides.
 Each candidate now carries the exact call it would make, so the card renders
 them as buttons and picking one is a click rather than a retyped instruction.
 Labels are what a person sees; the selector is not shown at all.
+
+### Small things that were missing
+
+**Undo** on any action that changed something - possible only because
+verification records the previous value, so it had been fully enabled and
+entirely unreachable. **Copy** puts the readable form on the clipboard, not
+the JSON, since someone copying a reading wants the reading. **Up and down**
+walk previous instructions, most asks being a small edit of the last.
+**Timestamps** on cards, because a collapsed result otherwise looks exactly as
+current as a fresh one - the mistake this project keeps guarding against.
+**Thousands separators**, since 536000 beside 1320 is hard to compare at a
+glance.
+
+And a **confirmation** before anything that cannot be undone: a download that
+has started, a page that has navigated away. Four tools carry that flag and
+nothing else does - a confirmation on every click is noise that gets clicked
+through. It reuses the choice buttons, so confirming is one click and nothing
+happens until it is.
 
 ## Tests
 

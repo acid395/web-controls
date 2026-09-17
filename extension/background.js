@@ -138,6 +138,17 @@ async function registerFeedCapture() {
     console.log("[feed-capture] could not register at document_start:", String((e && e.message) || e));
   }
 }
+// Clicking the toolbar icon opens the side panel rather than a popup. A
+// popup is destroyed the moment it loses focus - clicking the page, another
+// tab - which is the constraint the ask-history mechanism exists to work
+// around. A panel stays open beside the page, so a slow answer has somewhere
+// to land and the page can be watched while it changes.
+chrome.runtime.onInstalled.addListener(() => {
+  if (!chrome.sidePanel) return;
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((e) => console.log("[sidePanel]", String((e && e.message) || e)));
+});
+
 chrome.runtime.onStartup.addListener(registerFeedCapture);
 chrome.runtime.onInstalled.addListener(registerFeedCapture);
 chrome.permissions.onAdded.addListener(registerFeedCapture);
@@ -481,7 +492,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { match: { type: "string", enum: ["all", "any"] } }, required: ["match"] },
     },
     {
-      name: "usgsOpenSite", fn: "openSite", argOrder: ["siteId"],
+      name: "usgsOpenSite", fn: "openSite", argOrder: ["siteId"], destructive: "leaves this page",
       description: "Navigate away from this page to one gauge's own monitoring-location page, by USGS site id.",
       parameters: { type: "object", properties: { siteId: { type: "string", description: "USGS site number, e.g. 13206000" } }, required: ["siteId"] },
     },
@@ -533,7 +544,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { days: { type: "number" } }, required: ["days"] },
     },
     {
-      name: "siteDownloadData", fn: "downloadData", argOrder: ["sets"],
+      name: "siteDownloadData", fn: "downloadData", argOrder: ["sets"], destructive: "starts a file download",
       description: "Download data from this monitoring location as a file. Opens the download dialog itself.",
       parameters: { type: "object", properties: { sets: { type: "array", items: { type: "string", enum: ["data", "location", "metadata"] }, description: "which data sets to include; defaults to ['data']" } } },
     },
@@ -721,12 +732,12 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: {} },
     },
     {
-      name: "fcpRemoveLastRing", fn: "removeLastRing", argOrder: [],
+      name: "fcpRemoveLastRing", fn: "removeLastRing", argOrder: [], destructive: "removes a range ring",
       description: "Remove the most recently added range ring.",
       parameters: { type: "object", properties: {} },
     },
     {
-      name: "fcpClearRings", fn: "clearRings", argOrder: [],
+      name: "fcpClearRings", fn: "clearRings", argOrder: [], destructive: "removes every range ring",
       description: "Remove all range rings.",
       parameters: { type: "object", properties: {} },
     },
@@ -1330,14 +1341,14 @@ async function usgsCurrentConditions({ state, parameter, nameContains }) {
           ? `no gauge named "${nameContains}" · showing all ${readings.length} in ${stateCode.toUpperCase()}`
           : `${readings.length} gauge${readings.length === 1 ? "" : "s"} reporting${filter ? ` near ${nameContains}` : ""}`,
       stats: values.length && canAggregate ? [
-        { label: "low", value: `${Math.min(...values)} ${unit}` },
-        { label: "median", value: `${median(values)} ${unit}` },
-        { label: "high", value: `${Math.max(...values)} ${unit}` },
+        { label: "low", value: `${readable(Math.min(...values))} ${unit}` },
+        { label: "median", value: `${readable(median(values))} ${unit}` },
+        { label: "high", value: `${readable(Math.max(...values))} ${unit}` },
       ] : [],
       caveat: notComparable || undefined,
       rows: readings.slice(0, 5).map((r) => ({
         name: r.name,
-        value: `${r.value} ${r.unit}`,
+        value: `${readable(r.value)} ${r.unit}`,
         meta: relativeAge(r.observedAt),
       })),
       note: [
@@ -1612,9 +1623,9 @@ async function usgsFindGauges({ place, parameter }) {
         ? `${readings.length} of ${gauges.length} gauges reporting · ${states.join(", ")}`
         : `${gauges.length} gauge${gauges.length === 1 ? "" : "s"} found in ${states.join(", ")}, but none report ${known.canonical}`,
       stats: values.length && canAggregate ? [
-        { label: "low", value: `${Math.min(...values)} ${unit}` },
-        { label: "median", value: `${median(values)} ${unit}` },
-        { label: "high", value: `${Math.max(...values)} ${unit}` },
+        { label: "low", value: `${readable(Math.min(...values))} ${unit}` },
+        { label: "median", value: `${readable(median(values))} ${unit}` },
+        { label: "high", value: `${readable(Math.max(...values))} ${unit}` },
       ] : [],
       caveat: canAggregate ? undefined
         : "gage height is measured from each gauge's own datum, so readings are not comparable between gauges",
@@ -1837,6 +1848,12 @@ async function nwsForecast({ state, place, when }) {
 }
 
 const cToF = (c) => (c == null ? null : Math.round((c * 9 / 5 + 32) * 10) / 10);
+
+// 536000 and 1320 are hard to compare at a glance; 536,000 and 1,320 are not.
+function readable(n) {
+  if (n == null || !Number.isFinite(Number(n))) return String(n);
+  return Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
 
 // Both weather tools need the same thing: a state, and a coordinate inside
 // it. Kept in one place so they can't drift apart.
@@ -3566,6 +3583,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // time. This answers the first question in about a second, for free.
   if (msg.type === "runToolCall") {
     (async () => {
+      // Reached from a confirmation button as well as the debug field, so a
+      // destructive tool called this way has already been agreed to.
       const finish = (res) => {
         console.log("[runToolCall]", msg.toolCall, "->", res);
         sendResponse(res);
@@ -3811,6 +3830,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // selector guessing below, having been checked against the real site.
         const manifestCall = planManifestTool(msg.instruction || "", route.global);
         if (manifestCall) {
+          // An action that cannot simply be undone is worth a question first.
+          // Verification makes most things reversible; a download that has
+          // started and a page that has navigated away are not among them.
+          const def = findToolDef(route.global, manifestCall.name);
+          if (def && def.destructive && !msg.confirmed) {
+            respond({
+              ok: false, needsConfirm: true, toolCall: manifestCall,
+              error: `That ${def.destructive}.`,
+              display: {
+                title: "Confirm first",
+                subtitle: `${friendlyToolName(manifestCall.name)} ${def.destructive}`,
+                stats: [], rows: [],
+                choices: [{ label: `Yes, ${friendlyToolName(manifestCall.name)}`, hint: "", call: manifestCall, confirmed: true }],
+                note: "ask again to change your mind - nothing has happened yet",
+                source: route.global,
+              },
+            });
+            return;
+          }
           const result = await runVerified(route.global, manifestCall);
           const note = describeVerification(result.verified, manifestCall);
           // Anything the tool could not account for is said out loud - a

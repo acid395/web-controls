@@ -2,8 +2,14 @@
   "manifest_version": 3,
   "name": "web-controls (proof of concept)",
   "version": "0.5.0",
-  "description": "Calls web-controls functions on a live page from an extension popup. USGS gets its own manifest; any other site uses the zero-manifest GENERIC fallback, enabled per-site at runtime. Two model options for the real tool-calling: WebLLM (local, offscreen document, no cost, real download time) or Gemini's free tier (cloud, instant, needs an API key).",
-  "permissions": ["scripting", "activeTab", "offscreen", "storage"],
+  "description": "Ask a water or weather site a question in plain English. Reads the page you're on, drives its controls, or answers from public USGS, NOAA and NWS data. No account, no API key.",
+  "permissions": [
+    "activeTab",
+    "offscreen",
+    "scripting",
+    "sidePanel",
+    "storage"
+  ],
   "host_permissions": [
     "https://waterdata.usgs.gov/*",
     "https://dashboard.waterdata.usgs.gov/*",
@@ -14,7 +20,10 @@
     "https://api.water.noaa.gov/*",
     "https://api.weather.gov/*"
   ],
-  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
@@ -22,6 +31,18 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup/popup.html"
+    "default_title": "web-controls - ask about this page"
+  },
+  "side_panel": {
+    "default_path": "popup/popup.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Space",
+        "mac": "Command+Shift+Space"
+      },
+      "description": "Open web-controls"
+    }
   }
 }

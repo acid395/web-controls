@@ -533,6 +533,27 @@ ensure("labels are what a person reads, not selectors",
 check("an exact name is not a choice",
   (sb.planGenericTool("air quality alert", twoLinks).calls || [])[0].args.selector, "#aqa");
 
+section("asking before something irreversible");
+// Verification makes most actions reversible; a download that has started and
+// a page that has navigated away are not among them.
+const destructive = ["usgsOpenSite", "siteDownloadData", "fcpClearRings", "fcpRemoveLastRing"];
+for (const name of destructive) {
+  const route = name.startsWith("usgs") ? "USGS" : name.startsWith("site") ? "SITE" : "FCP";
+  const def = sb.findToolDef(route, name);
+  ensure(`${name} is flagged irreversible`, def && !!def.destructive, def && def.destructive);
+}
+// Everything else must not be, or a confirmation on every click is noise that
+// gets clicked through.
+const overCautious = ["USGS", "SITE", "NOAA", "FCP"].flatMap((r) =>
+  sb.toolsFor(r).filter((t) => t.destructive && !destructive.includes(t.name)).map((t) => t.name));
+ensure("nothing else demands confirmation", overCautious.length === 0, overCautious);
+
+section("numbers people can read");
+// 536000 beside 1320 is hard to compare at a glance.
+check("thousands are separated", sb.readable(536000), "536,000");
+check("small numbers are left alone", sb.readable(4.59), "4.59");
+check("and precision is capped", sb.readable(25.550000000000004), "25.55");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
