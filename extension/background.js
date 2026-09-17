@@ -2464,10 +2464,16 @@ function planGenericTool(instruction, inventory) {
           }
         }
         return {
+          // Each candidate carries the call it would make, so picking one is
+          // a click rather than a retyped instruction.
           ambiguous: scored
             .filter((x) => sameWords(x.control, best.control))
             .slice(0, 5)
-            .map((x) => ({ label: x.control.label, selector: x.control.selector, kind: x.control.kind })),
+            .map((x) => ({
+              label: x.control.label, selector: x.control.selector, kind: x.control.kind,
+              call: toolCallFor(x.control, allWords, instruction),
+            }))
+            .filter((c) => c.call),
         };
       }
       break; // some controls already settled; don't guess at the leftovers
@@ -3948,13 +3954,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             respond({
               ok: false,
               needsChoice: true,
-              error: `Several controls on this page could match that. Say which, or use the exact label.`,
+              error: "Several controls on this page could match that.",
               candidates: guess.ambiguous,
               display: {
                 title: "Which one did you mean?",
-                subtitle: `${guess.ambiguous.length} controls on this page match`,
-                stats: [],
-                rows: guess.ambiguous.map((c) => ({ name: c.label || "(no label)", value: c.kind || "", meta: c.selector })),
+                subtitle: `${guess.ambiguous.length} controls match - pick one`,
+                stats: [], rows: [],
+                // Buttons rather than rows: a selector is unreadable, and a
+                // question with no way to answer it is barely a question.
+                choices: guess.ambiguous.map((c) => ({
+                  label: c.label || "(unlabelled)",
+                  hint: c.kind || "",
+                  call: c.call,
+                })),
                 source: "this page",
               },
             });

@@ -62,6 +62,25 @@ function buildCard(display, raw) {
     card.appendChild(box);
   }
 
+  // A choice with no way to take it is barely a choice. Each button carries
+  // the exact call it would make, so picking one needs no retyping.
+  if (display.choices && display.choices.length) {
+    const box = el("div", "choices");
+    for (const choice of display.choices) {
+      const button = el("button", "choice");
+      button.appendChild(el("span", "choice-label", choice.label));
+      if (choice.hint) button.appendChild(el("span", "choice-hint", choice.hint));
+      button.addEventListener("click", () => {
+        logEcho(`chose: ${choice.label}`);
+        chrome.runtime.sendMessage({ type: "runToolCall", toolCall: choice.call }, (res) => {
+          logResult(res);
+        });
+      });
+      box.appendChild(button);
+    }
+    card.appendChild(box);
+  }
+
   if (display.rows && display.rows.length) {
     const rows = el("div", "rows");
     for (const r of display.rows) {

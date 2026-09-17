@@ -672,6 +672,16 @@ Both facts are now reported together - the substitution *and* whether anything
 actually changed - because either alone can mislead. A tool that genuinely
 consumes the place, like `usgsSelectState`, is left alone.
 
+### Asking which one
+
+When two controls genuinely tie, the card used to list them with their CSS
+selectors and no way to choose - a question with no way to answer it is barely
+a question, and a selector is unreadable besides.
+
+Each candidate now carries the exact call it would make, so the card renders
+them as buttons and picking one is a click rather than a retyped instruction.
+Labels are what a person sees; the selector is not shown at all.
+
 ## Tests
 
 ```

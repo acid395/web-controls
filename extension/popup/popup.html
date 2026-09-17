@@ -136,6 +136,15 @@
   .checked-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
   .checked-item { font-size: 10.5px; color: var(--muted); padding-left: 12px; position: relative; margin-top: 1px; }
   .checked-item::before { content: "\2713"; position: absolute; left: 0; color: var(--ok); }
+  .choices { padding: 9px 11px; display: flex; flex-direction: column; gap: 5px; }
+  button.choice {
+    display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+    padding: 7px 9px; cursor: pointer; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--sunken); color: var(--ink); font: 12px/1.35 inherit;
+  }
+  button.choice:hover { border-color: var(--accent); background: var(--bg); }
+  .choice-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .choice-hint { color: var(--faint); font-size: 10px; }
   .rows { padding: 5px 11px 9px; }
   .row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
   .rows .row:first-child { border-top: none; }

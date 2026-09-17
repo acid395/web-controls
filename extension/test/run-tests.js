@@ -514,6 +514,25 @@ check("a tool that takes the place keeps it",
 check("an argument-taking tool reports nothing left over",
   (mt2("set the basemap to satellite", "NOAA") || {}).unmatchedWords, undefined);
 
+section("an ambiguous choice has to be answerable");
+// The disambiguation card listed raw CSS selectors and offered no way to
+// choose - a question with no way to answer it is barely a question.
+const twoLinks = { controls: [
+  { kind: "a", label: "AIR QUALITY", selector: "#aq", confidence: "high" },
+  { kind: "a", label: "Air Quality Alert", selector: "#aqa", confidence: "high" },
+] };
+const amb = sb.planGenericTool("quality", twoLinks);
+ensure("genuinely tied controls still ask", !!amb.ambiguous, amb);
+// Each candidate carries the exact call, so picking one is a click rather
+// than a retyped instruction.
+ensure("every candidate carries its call", amb.ambiguous.every((c) => c.call && c.call.name), amb.ambiguous);
+check("and they differ", amb.ambiguous.map((c) => c.call.args.selector), ["#aq", "#aqa"]);
+ensure("labels are what a person reads, not selectors",
+  amb.ambiguous.every((c) => c.label && !/[>.:]/.test(c.label)), amb.ambiguous.map((c) => c.label));
+// Naming one exactly is not ambiguous at all.
+check("an exact name is not a choice",
+  (sb.planGenericTool("air quality alert", twoLinks).calls || [])[0].args.selector, "#aqa");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
