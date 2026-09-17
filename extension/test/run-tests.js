@@ -570,6 +570,44 @@ check("measured precipitation still goes to USGS",
 // On a water page, gauges remain the sensible reading of the bare word.
 check("and on a USGS page too", rain("precipitation in california", "USGS"), "waterCurrentConditions");
 
+// The page you're on is read before any agency API, so the same two
+// quantities have to be told apart there too - a forecast page prints
+// inches and a percentage side by side.
+const forecastPage = {
+  url: "https://forecast.weather.gov/MapClick.php?lat=37.77&lon=-122.42",
+  title: "National Weather Service Forecast for: San Francisco CA",
+  headings: ["San Francisco CA"], text: "san francisco ca",
+  pairs: [
+    { label: "Precipitation last hour", value: "0.00 in" },
+    { label: "Chance of precipitation", value: "15%" },
+  ],
+  readouts: [], labelledNumbers: [], tables: [],
+};
+// Days across the top, the measurement down the side - the layout that once
+// answered a Wednesday question with Tuesday's column.
+const forecastTable = { ...forecastPage, pairs: [],
+  tables: [{ columns: ["", "Wednesday", "Thursday"], rows: [
+    ["Chance of precipitation", "5%", "15%"],
+    ["Precipitation", "0.00 in", "0.00 in"],
+  ] }],
+};
+const onPage = (page, q, day) => {
+  const hits = sb.findOnPage(page, { wants: sb.pageValueWants(q), place: "san francisco", day: day || null });
+  return hits ? hits.map((h) => `${h.label} = ${h.value}`).join(" | ") : null;
+};
+check("the page's chance is not the page's rainfall",
+  onPage(forecastPage, "probability of precipitation in san francisco"), "Chance of precipitation = 15%");
+check("and the rainfall is not the chance",
+  onPage(forecastPage, "how much rain has fallen in san francisco"), "Precipitation last hour = 0.00 in");
+check("a named day picks its column",
+  onPage(forecastTable, "chance of rain on thursday in san francisco", "thursday"),
+  "Chance of precipitation \u00b7 Thursday: 15% = 15%");
+// "PoP" is a column header, never how anyone phrases a question - so it
+// matches a row and not an instruction, where it would catch "population".
+check("a PoP column reads as a chance", sb.conceptMatches("precipChance", "pop 15%"), true);
+check("and not as rainfall", sb.conceptMatches("precipitation", "pop 15%"), false);
+check("population is not a forecast", sb.pageValueWants("population of san francisco").length, 0);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

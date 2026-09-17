@@ -2708,7 +2708,23 @@ const PAGE_VALUE_TERMS = {
   dewpoint: { terms: ["dew point", "dewpoint", "dew"] },
   wind: { terms: ["wind", "gust"], unit: /\bmph\b|\bkts?\b|\bkm\/h\b/i },
   pressure: { terms: ["pressure", "barometric", "inhg"] },
-  precipitation: { terms: ["precipitation", "precip", "rain", "rainfall"] },
+  // Two quantities share the word "precipitation": how much has fallen, and
+  // how likely it is to fall. A forecast page prints both, inches beside a
+  // percentage, so a question about one must not be answered with the other.
+  // The chance terms double as row matchers - "Chance of precipitation" is
+  // both how it is asked and how weather.gov labels it.
+  precipChance: {
+    terms: ["chance of precip", "chance of rain", "chance of showers", "chance of storms",
+      "chance of snow", "probability of precip", "precipitation probability",
+      "will it rain", "will it snow"],
+    // A "PoP" column header, which no one types as a question.
+    unit: /\bpop\b/,
+  },
+  precipitation: {
+    terms: ["precipitation", "precip", "rain", "rainfall"],
+    // Keeps the measured concept off the chance row, which also says "precip".
+    exclude: /\bchance\b|\bprobabilit|\bpop\b/,
+  },
   gageHeight: { terms: ["gage height", "gauge height", "stage"] },
   discharge: { terms: ["discharge", "streamflow", "flow", "cfs"] },
 };
@@ -2716,6 +2732,7 @@ const PAGE_VALUE_TERMS = {
 function conceptMatches(concept, text) {
   const def = PAGE_VALUE_TERMS[concept];
   if (!def) return false;
+  if (def.exclude && def.exclude.test(text)) return false;
   if (def.terms.some((t) => text.includes(t))) return true;
   return def.unit ? def.unit.test(text) : false;
 }
@@ -2858,6 +2875,10 @@ function pageValueWants(text) {
   }
   // A bare "high" or "max" with nothing else is a qualifier, not a subject.
   if (wants.length === 1 && (wants[0] === "high" || wants[0] === "low")) return [];
+  // "Chance of rain" matches the rainfall terms too, and every want has to
+  // hold at once - so keeping both would demand a row that is somehow
+  // measured and forecast together, and nothing on the page would match.
+  if (wants.includes("precipChance")) return wants.filter((w) => w !== "precipitation");
   return wants;
 }
 

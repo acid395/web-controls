@@ -720,6 +720,11 @@ forecast, which publishes exactly that per period, and the card says *"forecast,
 not measured rainfall"* so the two cannot be confused. Plain "precipitation"
 still means the gauges, on any route.
 
+The page you are on is read before any API, so the same split had to happen
+there: a forecast page prints "Precipitation last hour 0.00 in" directly above
+"Chance of precipitation 15%". Asking for the chance now excludes the measured
+row and vice versa, in prose, in a table row, and in a `PoP` column.
+
 ## Tests
 
 ```
