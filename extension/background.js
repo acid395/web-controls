@@ -550,6 +550,20 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
     },
     {
+      name: "noaaGoToView", fn: "goToView", argOrder: ["lon", "lat", "zoom"],
+      description: "Move the map to a longitude, latitude and zoom. Reliable where search is not, because this page records its map view in the URL.",
+      parameters: {
+        type: "object",
+        properties: { lon: { type: "number" }, lat: { type: "number" }, zoom: { type: "number", description: "roughly 3 for a large state, 8 for a city" } },
+        required: ["lon", "lat"],
+      },
+    },
+    {
+      name: "noaaMapView", fn: "mapView", argOrder: [],
+      description: "Read where the map is currently centred and how far it is zoomed in.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
       name: "noaaGeolocate", fn: "geolocate", argOrder: [],
       description: "Center the map on the browser's current geolocation.",
       parameters: { type: "object", properties: {} },
@@ -2913,18 +2927,47 @@ function wordsLeftOver(def, args, words) {
   return words.filter((w) => !consumed.has(w) && !CONTROL_VERB.test(w));
 }
 
+// A bounding box gives both a centre and a sensible zoom: a big state has to
+// be further out than a small one to fit on screen. Tuned against the zoom
+// values the NOAA map itself writes into its URL.
+function viewForBox(box) {
+  const [w, s, e, n] = box;
+  const span = Math.max(Math.abs(e - w), Math.abs(n - s));
+  const zoom = span > 30 ? 3 : span > 12 ? 4.5 : span > 6 ? 5.5 : span > 3 ? 6.5 : 7.5;
+  return { lon: (w + e) / 2, lat: (s + n) / 2, zoom };
+}
+
 // On a map, "zoom in on Alaska" is not a zoom - it is a request to go there,
-// which is what the site's search box does. A relative zoom takes no
-// location, so the place would otherwise be dropped.
-function redirectToSearch(instruction, routeGlobal, leftovers) {
+// and a relative zoom takes no location, so the place would be dropped.
+//
+// Moving the map directly is preferred over the site's search box wherever
+// the route can: NOAA's search is best-effort by its own manifest's account
+// (its result list was never reachable), so redirecting there produced a
+// confident report and a map that had not moved.
+function redirectToPlace(instruction, routeGlobal, leftovers) {
   if (!leftovers.length) return null;
-  const place = findStateInText(leftovers.join(" ")) || findCityInText(leftovers.join(" "));
-  if (!place) return null;
+  const text = leftovers.join(" ");
+  const state = findStateInText(text);
+  const city = findCityInText(text);
+  if (!state && !city) return null;
+
+  const mover = (TOOL_DEFS[routeGlobal] || []).find((d) => !d.run && /goToView$/i.test(d.name));
+  const box = state && STATE_BBOX[state.code];
+  if (mover && box) {
+    const view = viewForBox(box);
+    return {
+      name: mover.name,
+      args: { lon: Math.round(view.lon * 1e4) / 1e4, lat: Math.round(view.lat * 1e4) / 1e4, zoom: view.zoom },
+      insteadOf: "a relative zoom",
+      movedTo: state.name,
+    };
+  }
+
   const search = (TOOL_DEFS[routeGlobal] || []).find((d) => !d.run && /search/i.test(d.name));
   if (!search) return null;
   const key = Object.keys((search.parameters && search.parameters.properties) || {})[0];
   if (!key) return null;
-  const name = place.name || place.city;
+  const name = (state && state.name) || city.city;
   return { name: search.name, args: { [key]: name.replace(/\b\w/g, (c) => c.toUpperCase()) }, insteadOf: "a relative zoom" };
 }
 
@@ -2938,7 +2981,11 @@ function planManifestTool(instruction, routeGlobal) {
     .map((def) => ({ def, score: scoreManifestTool(def, words, instruction) }))
     .filter((x) => x.score >= 4)          // a single description word is not enough
     .sort((a, b) => b.score - a.score);
-  if (!scored.length) return null;
+  if (!scored.length) {
+    // "show me Texas" names no tool, but on a map page the intent is plain
+    // and the same redirect applies.
+    return redirectToPlace(instruction, routeGlobal, words);
+  }
 
   // A near-tie is usually a coin flip on a real action, but not always. When
   // the instruction supplies a value, a tool that takes one is what was
@@ -2962,7 +3009,7 @@ function planManifestTool(instruction, routeGlobal) {
   }
 
   const leftovers = wordsLeftOver(chosen.def, chosen.args, words);
-  const redirected = redirectToSearch(instruction, routeGlobal, leftovers);
+  const redirected = redirectToPlace(instruction, routeGlobal, leftovers);
   if (redirected) return redirected;
   return { name: chosen.def.name, args: chosen.args, unmatchedWords: leftovers.length ? leftovers : undefined };
 }
@@ -3768,14 +3815,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             ...result, plannedBy: "manifest", toolCall: manifestCall,
             display: {
               title: friendlyToolName(manifestCall.name),
-              // Say when the action taken was not the one literally named:
-              // asking to zoom and getting a search is right, but only if it
-              // is visible.
-              subtitle: manifestCall.insteadOf
-                ? `went there by searching, rather than ${manifestCall.insteadOf}`
-                : ignored
-                  ? `${note ? note.text : "done"} · ignored: ${ignored.join(", ")}`
-                  : note ? note.text : "done",
+              // A substitution has to be stated, but never at the cost of
+              // the verification result - saying "went there by searching"
+              // while hiding that nothing moved is worse than either alone.
+              subtitle: [
+                manifestCall.movedTo ? `moved the map to ${manifestCall.movedTo}`
+                  : manifestCall.insteadOf ? `searched instead of ${manifestCall.insteadOf}` : null,
+                note ? note.text : "done",
+                ignored ? `ignored: ${ignored.join(", ")}` : null,
+              ].filter(Boolean).join(" · "),
               stats: [],
               rows: rankedChanges(result.verified).map((c) => ({
                 name: nameOfChange(c),

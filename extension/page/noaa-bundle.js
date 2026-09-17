@@ -287,6 +287,29 @@
       box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter" }));
       return box;
     },
+    // The map records its own view in the URL fragment - "#@=lon,lat,zoom" -
+    // which is both readable and settable. That matters because search() is
+    // best-effort here (its result list was never reachable, see the header),
+    // so "show me Alaska" had nothing reliable behind it. Moving the map this
+    // way needs no result list and no clicking, and the fragment can be read
+    // back afterwards to confirm it took.
+    mapView() {
+      const m = String(location.hash || "").match(/@=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)/);
+      if (!m) return { found: false, note: "this page is not carrying a map view in its URL" };
+      return { found: true, lon: Number(m[1]), lat: Number(m[2]), zoom: Number(m[3]) };
+    },
+
+    // lon/lat/zoom, matching the fragment's own order.
+    goToView(lon, lat, zoom = 6) {
+      const before = location.hash;
+      const rest = String(location.hash || "").replace(/^#/, "").replace(/@=[^&]*/, "").replace(/^&|&$/g, "");
+      location.hash = `@=${Number(lon)},${Number(lat)},${Number(zoom)}${rest ? "&" + rest : ""}`;
+      // A hash change alone does not always redraw a map library, so nudge
+      // the listeners that do.
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      return { from: before, to: location.hash };
+    },
+
     geolocate() { return clickByText(DISCOVERED.geolocateButtonText); },
     zoomIn() { return clickByText(DISCOVERED.zoomInButtonText); },
     zoomOut() { return clickByText(DISCOVERED.zoomOutButtonText); },

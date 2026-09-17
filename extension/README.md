@@ -653,11 +653,24 @@ discarded, so an action that answers a narrower question than the one asked
 says so.
 
 And on a map, "zoom in on X" is not a zoom at all: it is a request to go
-there, which is what the site's search box does, a relative zoom taking no
-location. The substitution is stated - *"went there by searching, rather than
-a relative zoom"* - because doing something other than what was literally
-asked is only acceptable when it is visible. A tool that genuinely consumes
-the place, like `usgsSelectState`, is left alone.
+there, a relative zoom taking no location.
+
+The first attempt redirected to the site's search box, which was worse than
+useless on NOAA: its own manifest records that search is best-effort there,
+the result list never having been reachable. So the report said it had gone to
+Alaska and the map had not moved - a confident claim behind a tool that cannot
+deliver. Worse, stating the substitution had *replaced* the verification line,
+hiding the fact that nothing changed.
+
+The page records its map view in its URL fragment, which is both readable and
+settable, so `noaaGoToView` moves the map directly. The centre and zoom come
+from `STATE_BBOX`, already on hand: a large state has to sit further out than
+a small one to fit on screen, so Alaska lands at zoom 3 and Rhode Island at
+7.5. Routes without a map mover still fall back to their search box.
+
+Both facts are now reported together - the substitution *and* whether anything
+actually changed - because either alone can mislead. A tool that genuinely
+consumes the place, like `usgsSelectState`, is left alone.
 
 ## Tests
 

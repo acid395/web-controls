@@ -490,13 +490,24 @@ const mt2 = (q, route) => sb.planManifestTool(q, route);
 check("a bare zoom is still a zoom", (mt2("zoom in", "NOAA") || {}).name, "noaaZoomIn");
 // On a map, "zoom in on X" is a request to go there, which is what the site's
 // search box does; a relative zoom takes no location.
-check("zooming on a place searches for it instead",
-  (mt2("zoom in on alaska", "NOAA") || {}).name, "noaaSearch");
-check("carrying the place as the query",
-  (mt2("zoom in on alaska", "NOAA") || {}).args.query, "Alaska");
+// NOAA's own search is best-effort by its manifest's account - its result
+// list was never reachable - so redirecting there produced a confident report
+// and a map that had not moved. This page records its view in the URL, which
+// can simply be set.
+check("zooming on a place moves the map",
+  (mt2("zoom in on alaska", "NOAA") || {}).name, "noaaGoToView");
+check("centred on that state", (mt2("zoom in on alaska", "NOAA") || {}).args.lat, 61.3);
+// A big state has to sit further out than a small one to fit on screen.
+ensure("zoomed out for a large state", (mt2("zoom in on alaska", "NOAA") || {}).args.zoom < 4,
+  (mt2("zoom in on alaska", "NOAA") || {}).args.zoom);
+ensure("and closer in for a small one", (mt2("zoom in on rhode island", "NOAA") || {}).args.zoom > 6,
+  (mt2("zoom in on rhode island", "NOAA") || {}).args.zoom);
 check("the substitution is recorded, not hidden",
   (mt2("zoom in on alaska", "NOAA") || {}).insteadOf, "a relative zoom");
-check("and works on other map routes", (mt2("zoom in on texas", "FCP") || {}).name, "fcpSearch");
+// A place naming no tool at all still reaches the map.
+check("a bare place still moves the map", (mt2("show me texas", "NOAA") || {}).name, "noaaGoToView");
+// A route with no map mover falls back to its search box.
+check("routes without one fall back to search", (mt2("zoom in on texas", "FCP") || {}).name, "fcpSearch");
 // A tool that genuinely consumes the place is left alone.
 check("a tool that takes the place keeps it",
   (mt2("select Alaska", "USGS") || {}).name, "usgsSelectState");
