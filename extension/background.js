@@ -1776,7 +1776,14 @@ async function nwsForecast({ state, place, when }) {
   const periods = (((await fRes.json()).properties) || {}).periods || [];
   if (!periods.length) throw new Error("NWS returned an empty forecast");
 
-  const label = place || located.stateCode.toUpperCase();
+  // A named place that could not be found falls back to the middle of its
+  // state, which is a real forecast for somewhere nobody asked about -
+  // Hermantown's high came back as 72 when the town's own was 62, under the
+  // heading "hermantown". The basis said "centre of MN" further down, but the
+  // headline is what gets read. So a miss is named in the headline instead.
+  const missed = place && /^centre of /.test(located.basis || "");
+  const label = missed ? `${place} not found · ${located.basis}`
+    : place || located.stateCode.toUpperCase();
   const dayLike = (p) => p.name.toLowerCase();
 
   // The chance of rain, optionally for a named day.
@@ -2754,36 +2761,35 @@ function pageIsAbout(pageData, place) {
   return place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || hay.includes(w));
 }
 
-// How many places this page names at all. Only the well-known ones can be
-// counted, so this is a floor, not a census - which is the safe direction:
-// it under-reports, and under-reporting keeps a page trusted.
-function placesNamedIn(text) {
-  const t = (text || "").toLowerCase();
-  const seen = new Set();
-  for (const name of Object.keys(US_CITIES)) {
-    if (name.includes("_")) continue;
-    if (new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(t)) seen.add(US_CITIES[name] + ":" + name);
-  }
-  return seen.size;
+// A heading that ends in a state - "Boulder Creek at Boulder, CO", "2 Miles
+// S Hermantown MN" - is the page declaring what it is about. A heading like
+// "IDSS Forecast Points" declares nothing.
+function locationHeadings(pageData) {
+  return (pageData.headings || []).filter((h) => {
+    const m = String(h).match(/\b([A-Za-z]{2})\s*$/) || String(h).match(/,\s*([A-Za-z]{2})\b/);
+    return m && Object.prototype.hasOwnProperty.call(STATE_BBOX, m[1].toLowerCase());
+  });
 }
 
 // Whether a table on this page can be read as being about the place asked
-// for. Title and headings are a strong claim and settle it. Body prose is
-// weaker but necessary: weather.gov's point forecast names its point in a
-// bare paragraph, with nothing but "Point Forecast" in the title.
+// for. Title and headings are a strong claim and settle it.
 //
-// The weak form needs a limit, or any place named anywhere vouches for a
-// table belonging to a different one - an IDSS page listing Denver, Pueblo
-// and Fort Collins as forecast points answered for all of them with the one
-// table it happened to be showing, and every answer looked deliberate. So
-// prose counts only while the page names a single place; past that, the page
-// is a directory and the question goes to the API, which cannot confuse them.
+// Body prose is weaker but necessary: weather.gov's point forecast names its
+// point in a bare paragraph, and an IDSS page names the point you clicked
+// with nothing but "IDSS Forecast Points" in its headings. Left unqualified,
+// though, prose let any name printed anywhere claim the table - a page
+// listing Denver, Pueblo and Fort Collins answered for all three from the one
+// table it was showing, each answer looking deliberate.
+//
+// The line between the two: if any heading names a location, that heading is
+// the subject and prose cannot overrule it. Only when no heading names one
+// does prose get to decide.
 function tableIsAbout(pageData, place) {
   if (!place) return true;
   if (pageIsAbout(pageData, place)) return true;
+  if (locationHeadings(pageData).length) return false;
   const text = (pageData.text || "").toLowerCase();
-  if (!place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || text.includes(w))) return false;
-  return placesNamedIn(text) <= 1;
+  return place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || text.includes(w));
 }
 
 // A place can be one row of a table rather than the subject of the page - a

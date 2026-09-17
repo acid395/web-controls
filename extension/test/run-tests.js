@@ -628,12 +628,19 @@ check("the heading's place gets the table", fromIdss("boulder"), "82");
 check("a place merely listed does not", fromIdss("denver"), null);
 check("nor does another one", fromIdss("pueblo"), null);
 check("and with no place asked, the table stands", fromIdss(null), "82");
-// The weak form still has to work, or weather.gov's own point forecast
-// breaks: it names its point in a bare paragraph under a generic title.
-check("a lone place in prose still vouches",
-  sb.tableIsAbout({ title: "Point Forecast", headings: [], text: "0 miles N of Hermantown, MN" }, "hermantown"), true);
-check("a directory of places does not",
-  sb.tableIsAbout({ title: "Forecast Points", headings: [], text: "denver, pueblo, fort collins" }, "denver"), false);
+// Prose still has to work where no heading names a place, or two real pages
+// break: weather.gov's point forecast names its point in a bare paragraph,
+// and an IDSS page names the point you clicked with nothing but "IDSS
+// Forecast Points" above it.
+check("prose decides when no heading names a place",
+  sb.tableIsAbout({ title: "Point Forecast", headings: [], text: "0 miles n of hermantown, mn" }, "hermantown"), true);
+check("and an IDSS page is read the same way",
+  sb.tableIsAbout({ title: "IDSS Forecast Points", headings: ["IDSS Forecast Points"], text: "hermantown mn max temp" }, "hermantown"), true);
+// A heading ending in a state is the page naming its own subject.
+check("a state-suffixed heading is a subject",
+  sb.locationHeadings({ headings: ["Boulder Creek at Boulder, CO", "Detailed Forecast"] }).length, 1);
+check("a generic heading is not",
+  sb.locationHeadings({ headings: ["IDSS Forecast Points", "Weekly Summary"] }).length, 0);
 
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
@@ -995,6 +1002,19 @@ if (process.argv.includes("--live")) {
       const fc = await run("weatherForecast", { state: "WI", place: "milwaukee", when: "week" });
       ensure("forecast returns days", fc.result.days.length > 0, fc.result.days.length);
       ensure("forecast is labelled a forecast", /forecast/i.test(fc.result.display.caveat || ""), fc.result.display.caveat);
+
+      // A town NWS cannot place falls back to the middle of its state - a
+      // real forecast for somewhere nobody asked about. Hermantown's high
+      // came back as the state centre's, under the heading "hermantown".
+      const miss = await run("weatherForecast", { state: "MN", place: "hermantown", when: "high" });
+      ensure("a missed place says so in the headline",
+        /not found/.test(miss.result.display.title), miss.result.display.title);
+      ensure("and still names what it did use",
+        /centre of MN/.test(miss.result.display.title), miss.result.display.title);
+      // A place it can find must not be tarred with the same label.
+      const hit = await run("weatherForecast", { state: "WI", place: "milwaukee", when: "high" });
+      ensure("a found place is headlined plainly",
+        !/not found/.test(hit.result.display.title), hit.result.display.title);
     } catch (err) {
       failed++; failures.push({ label: "live APIs", actual: err.message, expected: "no throw" });
       console.log(`  FAIL live APIs threw: ${err.message}`);

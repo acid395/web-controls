@@ -733,11 +733,27 @@ table, so on an IDSS forecast-points page "denver max temp" and "pueblo max
 temp" returned the same row - each answer as confident as if it had been looked
 up.
 
-The page's title and headings are a strong claim and still settle it. Body
-prose is weaker but necessary, because weather.gov's point forecast names its
-point in a bare paragraph under the title "Point Forecast". So prose now counts
-only while the page names a single place; past that the page is a directory,
-and the question goes to the API, which cannot confuse two places.
+The page's title and headings are a strong claim and settle it. Prose is weaker
+but necessary, because weather.gov's point forecast names its point in a bare
+paragraph, and an IDSS page names the point you clicked with nothing but "IDSS
+Forecast Points" above it.
+
+The line between them: a heading ending in a state - "Boulder Creek at Boulder,
+CO" - is the page naming its own subject, and prose cannot overrule it. Only
+where no heading names a location does prose decide. On such a page any name in
+the body can still claim the table; that is the cost of reading pages that
+never say what they are about.
+
+### A place it cannot find
+
+A town NWS has no gauge or station for falls back to the centre of its state.
+That returns a real forecast for somewhere nobody asked about: Hermantown's
+high came back 72 when the town's own was 62, under the heading
+"High - hermantown". The basis said "centre of MN" further down, but the
+headline is what gets read.
+
+The headline now carries the miss - "hermantown not found - centre of MN" - so
+a fallback cannot pass for an answer.
 
 ## Tests
 
