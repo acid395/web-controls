@@ -750,6 +750,16 @@ const TOOL_DEFS = {
   ],
   GENERIC: [
     {
+      name: "pageCompute",
+      description: "Calculate a statistic over numbers this page shows - the average, total, highest, lowest, median, count or spread of a table row or column, a chart's series, or a map's features. Use whenever the question asks for a calculation rather than a single reading, such as 'average temperature this week' or 'total rainfall across the gauges'. Lists the numbers it used so the result can be checked.",
+      parameters: { type: "object", properties: {
+        fn: { type: "string", enum: ["mean", "sum", "max", "min", "median", "count", "range"], description: "which calculation" },
+        of: { type: "string", description: "what to calculate over, in the page's own words, e.g. 'temperature', 'discharge', 'gage height'" },
+        source: { type: "string", enum: ["auto", "table", "chart", "map"], description: "where to read the numbers from; auto tries the table, then the chart, then the map" },
+      }, required: ["fn", "of"] },
+      run: ({ fn, of, source }) => pageComputeRun({ fn, of, source }),
+    },
+    {
       name: "pageHoverChart", fn: "hoverSeries", argOrder: ["selector"],
       description: "Read a chart's values by hovering across it, for charts that only reveal numbers in a tooltip. Slower and sampled; prefer pageFeeds when the underlying data request was captured.",
       parameters: { type: "object", properties: { selector: { type: "string", description: "optional CSS selector for the chart; the largest one is used otherwise" } } },
@@ -2761,6 +2771,238 @@ function pageIsAbout(pageData, place) {
   return place.toLowerCase().split(/\s+/).every((w) => w.length < 3 || hay.includes(w));
 }
 
+/* ---------------------------------------------------------------------------
+ * Arithmetic over what the page shows.
+ *
+ * "Average temperature this week" answered with Thursday's max: the row was
+ * found, one cell was picked, and the words "average" and "this week" were
+ * discarded without trace. A table of seven days holds the answer, but only
+ * if something adds them up.
+ *
+ * These are deliberately plain functions over numbers already extracted from
+ * the page - a table row, a chart series, a map's features. Nothing here
+ * fetches, and nothing guesses at a number's meaning: the caller has already
+ * decided which row is the subject.
+ */
+const STATS = {
+  mean: (v) => v.reduce((a, b) => a + b, 0) / v.length,
+  sum: (v) => v.reduce((a, b) => a + b, 0),
+  max: (v) => Math.max(...v),
+  min: (v) => Math.min(...v),
+  count: (v) => v.length,
+  range: (v) => Math.max(...v) - Math.min(...v),
+  median: (v) => {
+    const s = [...v].sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  },
+};
+
+// A cell is "64", "64 °F", "1,240 cfs", "-3.5", "15%". A cell that is only a
+// label, a date or a dash carries no number and must not read as zero.
+const UNIT_RE = /(°\s?[CF]|%|\b(?:ft|cfs|in|mph|kts?|cms)\b)/i;
+function cellNumber(cell) {
+  const t = String(cell == null ? "" : cell).trim();
+  if (!t || /^[-–—.\s]*$/.test(t)) return null;
+  // A chart tooltip reads "Sep 14: 56 °F", and taking the first number in it
+  // gives 14 - the date. A series of those averages to a confident number
+  // with nothing to do with the chart. So a number wearing a unit wins, then
+  // the number after the last colon, and only then the first one.
+  const withUnit = t.match(new RegExp(`(-?\\d[\\d,]*\\.?\\d*)\\s*${UNIT_RE.source}`, "i"));
+  const afterColon = t.includes(":") ? t.slice(t.lastIndexOf(":") + 1).match(/-?\d[\d,]*\.?\d*/) : null;
+  const m = withUnit ? [withUnit[1]] : afterColon || t.match(/-?\d[\d,]*\.?\d*/);
+  if (!m) return null;
+  const n = Number(String(m[0]).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function cellUnit(cell) {
+  const m = String(cell == null ? "" : cell).match(UNIT_RE);
+  return m ? m[1].replace(/\s+/g, "") : "";
+}
+
+// Which calculation the question asks for, if any.
+//
+// "Average" and "total" ask for one on their own. "Max" and "min" do not:
+// "max temp" names the row called "Max Temp", and treating that as a
+// calculation would answer a different question than the one asked. They
+// count only alongside a span - "max temp this week" - where a single cell
+// cannot be what was meant.
+const SPAN_CUE = /\b(this|next|the)\s+(week|month)\b|\bover the (week|month|period)\b|\ball (days?|week)\b|\beach day\b|\b\d+[- ]day\b|\bweekly\b|\bacross\b/;
+function aggregateWanted(text) {
+  const t = (text || "").toLowerCase();
+  const span = SPAN_CUE.test(t);
+  if (/\b(average|avg|mean)\b/.test(t)) return { fn: "mean", word: "average" };
+  if (/\b(total|sum|combined|altogether)\b/.test(t)) return { fn: "sum", word: "total" };
+  if (/\b(median)\b/.test(t)) return { fn: "median", word: "median" };
+  if (/\b(how many|count of|number of)\b/.test(t)) return { fn: "count", word: "count" };
+  if (/\b(spread|difference between|swing)\b/.test(t)) return { fn: "range", word: "spread" };
+  if (!span) return null;
+  if (/\b(highest|hottest|warmest|max|maximum|peak)\b/.test(t)) return { fn: "max", word: "highest" };
+  if (/\b(lowest|coldest|coolest|min|minimum)\b/.test(t)) return { fn: "min", word: "lowest" };
+  return null;
+}
+
+// Rounded the way the inputs were written: whole degrees stay whole, a stage
+// in hundredths keeps them. An average of integers is the one case that
+// earns a decimal it was not given, because that is what an average is.
+function formatStat(fn, value, samples) {
+  if (fn === "count") return String(value);
+  const decimals = Math.max(...samples.map((s) => {
+    const m = String(s).match(/\.(\d+)/);
+    return m ? m[1].length : 0;
+  }), fn === "mean" ? 1 : 0);
+  return value.toFixed(Math.min(decimals, 3));
+}
+
+function computeOver(fn, values) {
+  const nums = values.map(cellNumber).filter((n) => n !== null);
+  if (!nums.length) return null;
+  return { value: STATS[fn](nums), used: nums.length, numbers: nums };
+}
+
+// Aggregating a table needs both of its orientations. A forecast grid puts
+// the measurement down the side and days across the top; a gauge listing puts
+// the measurement in a column header and one site per row. Either way the
+// series is there, read along a different axis.
+function aggregateOnPage(pageData, { wants, place, agg, match }) {
+  // Either a known concept ("temperature") or, when the caller names
+  // something this vocabulary has never heard of, a plain word match against
+  // the page's own labels.
+  const hits = match || ((label) => wants.every((c) => conceptMatches(c, label)));
+  if (!agg || (!match && !wants.length)) return null;
+  if (!tableIsAbout(pageData, place)) return null;
+
+  for (const table of pageData.tables || []) {
+    const columns = table.columns || [];
+
+    // The measurement names a row: read across it.
+    for (const row of table.rows || []) {
+      const label = String(row[0] || "");
+      if (!label || !hits(label.toLowerCase())) continue;
+      const cells = row.slice(1);
+      const got = computeOver(agg.fn, cells);
+      if (!got || got.used < 2) continue;
+      return {
+        subject: label, statistic: agg.word, over: `${got.used} columns`,
+        value: formatStat(agg.fn, got.value, cells), unit: cellUnit(label) || cellUnit(cells.find((c) => cellNumber(c) !== null)),
+        points: cells.map((c, i) => ({ name: String(columns[i + 1] || `column ${i + 2}`), value: String(c) }))
+          .filter((pt) => cellNumber(pt.value) !== null),
+      };
+    }
+
+    // The measurement names a column: read down it.
+    const col = columns.findIndex((c) => c && hits(String(c).toLowerCase()));
+    if (col === -1) continue;
+    const cells = (table.rows || []).map((r) => r[col]);
+    const got = computeOver(agg.fn, cells);
+    if (!got || got.used < 2) continue;
+    return {
+      subject: String(columns[col]), statistic: agg.word, over: `${got.used} rows`,
+      value: formatStat(agg.fn, got.value, cells), unit: cellUnit(String(columns[col])) || cellUnit(cells.find((c) => cellNumber(c) !== null)),
+      points: (table.rows || []).map((r) => ({ name: String(r[0] || "row"), value: String(r[col]) }))
+        .filter((pt) => cellNumber(pt.value) !== null),
+    };
+  }
+  return null;
+}
+
+// The same arithmetic over a series that was never in the DOM - a chart read
+// by hover, or a map's features. Both hand back objects with a numeric field
+// rather than table cells, so the values are pulled out first.
+function aggregateOverSeries(points, agg, subject) {
+  if (!agg || !Array.isArray(points) || points.length < 2) return null;
+  const cells = points.map((p) => (p && typeof p === "object" ? (p.value != null ? p.value : p.text) : p));
+  const got = computeOver(agg.fn, cells);
+  if (!got || got.used < 2) return null;
+  return {
+    subject: subject || "series", statistic: agg.word, over: `${got.used} points`,
+    value: formatStat(agg.fn, got.value, cells), unit: cellUnit(cells.find((c) => cellNumber(c) !== null)),
+    points: points.slice(0, 40).map((p, i) => ({
+      name: String((p && (p.label || p.name || p.at)) || `point ${i + 1}`),
+      value: String((p && (p.value != null ? p.value : p.text)) != null ? (p.value != null ? p.value : p.text) : p),
+    })).filter((pt) => cellNumber(pt.value) !== null),
+  };
+}
+
+// One card for any of them, so a number that was calculated never looks like
+// a number that was read.
+function computedDisplay(result, pageTitle) {
+  const unit = result.unit ? ` ${result.unit}` : "";
+  return {
+    title: `${result.statistic} ${result.subject}`.replace(/\s+/g, " ").slice(0, 70),
+    subtitle: `${result.value}${unit} · calculated from ${result.over} on this page`,
+    stats: [{ label: result.statistic, value: `${result.value}${unit}` }],
+    rows: result.points.slice(0, 12).map((pt) => ({ name: pt.name.slice(0, 40), value: pt.value.slice(0, 20), meta: "" })),
+    note: (pageTitle || "").slice(0, 70),
+    source: "calculated from this page",
+  };
+}
+
+const STAT_WORDS = { mean: "average", sum: "total", max: "highest", min: "lowest",
+  median: "median", count: "count", range: "spread" };
+
+// pageCompute: arithmetic over whichever of the page's surfaces actually
+// holds the numbers. A table is tried first because its labels are readable
+// and its values exact. A chart is next, and is a reading of a picture - the
+// series is sampled by hover, so it is approximate and says so. A map's
+// features are last, since their numbers live in whatever the site chose to
+// call its properties.
+async function pageComputeRun({ fn, of, source = "auto" }) {
+  if (!STATS[fn]) throw new Error(`no such calculation: ${fn}`);
+  const agg = { fn, word: STAT_WORDS[fn] || fn };
+  const subject = String(of || "").trim();
+  const wants = pageValueWants(subject);
+  const word = subject.toLowerCase();
+  // An unknown subject still has to find its row; the page's own wording is
+  // the only guide left.
+  const match = wants.length ? null : (label) => word.length > 2 && label.includes(word);
+  const tried = [];
+
+  if (source === "auto" || source === "table") {
+    const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+    if (read.ok) {
+      const r = aggregateOnPage(read.result, { wants, place: null, agg, match });
+      if (r) return { ...r, source: "table", display: computedDisplay(r, read.result.title) };
+    }
+    tried.push("table");
+  }
+
+  if (source === "auto" || source === "chart") {
+    const hov = await invokeOnActiveTab("hoverSeries", [{}]).catch(() => ({ ok: false }));
+    const pts = hov.ok && hov.result && hov.result.points;
+    if (pts && pts.length) {
+      const r = aggregateOverSeries(pts, agg, subject || "chart");
+      if (r) {
+        const d = computedDisplay(r, "chart");
+        d.subtitle += " · read by hovering, so sampled";
+        return { ...r, source: "chart", approximate: true, display: d };
+      }
+    }
+    tried.push("chart");
+  }
+
+  if (source === "auto" || source === "map") {
+    const mf = await invokeOnActiveTab("mapFeatures", [{}]).catch(() => ({ ok: false }));
+    const feats = mf.ok && mf.result && (mf.result.features || mf.result.markers);
+    if (feats && feats.length) {
+      // The numbers are in properties the site named itself, so the subject
+      // is matched against those keys rather than assumed.
+      const pts = feats.map((f) => {
+        const props = (f && f.properties) || {};
+        const key = Object.keys(props).find((k) => word && k.toLowerCase().includes(word));
+        const v = key ? props[key] : (f && f.label);
+        return { label: (f && (f.label || f.name)) || "feature", value: v };
+      });
+      const r = aggregateOverSeries(pts, agg, subject || "map features");
+      if (r) return { ...r, source: "map", display: computedDisplay(r, "map") };
+    }
+    tried.push("map");
+  }
+
+  throw new Error(`nothing on this page gave ${subject || "that"} as numbers to calculate over (tried ${tried.join(", ") || source})`);
+}
+
 // A heading that ends in a state - "Boulder Creek at Boulder, CO", "2 Miles
 // S Hermantown MN" - is the page declaring what it is about. A heading like
 // "IDSS Forecast Points" declares nothing.
@@ -3868,6 +4110,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             : (extractPlaceHint(msg.instruction || "", {}) || null);
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
+            // A calculation comes first: picking one cell out of a row that
+            // was asked about as a whole answers a different question, and
+            // the single-value path below cannot tell that it has done so.
+            const agg = aggregateWanted(msg.instruction || "");
+            const computed = agg && aggregateOnPage(read.result, { wants, place: askedPlace, agg });
+            if (computed) {
+              respond({
+                ok: true, plannedBy: "calculated-from-page", readFrom: read.result.url,
+                statistic: agg.fn, value: computed.value, over: computed.over, points: computed.points,
+                display: computedDisplay(computed, read.result.title),
+              });
+              return;
+            }
             // "high:tuesday" carries the day, which decides the column.
             const askedDay = dataCall && dataCall.args && typeof dataCall.args.when === "string" && dataCall.args.when.includes(":")
               ? dataCall.args.when.split(":")[1] : null;

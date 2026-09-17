@@ -642,6 +642,68 @@ check("a state-suffixed heading is a subject",
 check("a generic heading is not",
   sb.locationHeadings({ headings: ["IDSS Forecast Points", "Weekly Summary"] }).length, 0);
 
+section("arithmetic over what the page shows");
+// "Average temperature of pine level this week" returned 93 - Thursday's max
+// temperature. The row was right and the cell was real, but the words
+// "average" and "this week" were dropped without trace, so a question about
+// seven days was answered with one of them.
+const weekGrid = {
+  title: "IDSS Forecast Points", headings: ["IDSS Forecast Points"], text: "pine level nc",
+  pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["Weekly Summary", "Thu Sep 17", "Fri Sep 18", "Sat Sep 19"], rows: [
+    ["Max Temp, °F", "93", "89", "91"],
+    ["Min Temp, °F", "70", "68", "69"],
+  ] }],
+};
+const calc = (q) => {
+  const agg = sb.aggregateWanted(q);
+  const r = agg && sb.aggregateOnPage(weekGrid, { wants: sb.pageValueWants(q), place: "pine level", agg });
+  return r ? `${r.statistic} ${r.value}${r.unit} over ${r.over}` : null;
+};
+check("an average is averaged", calc("average temperature of pine level this week"),
+  "average 91.0°F over 3 columns");
+check("and it shows every number it used",
+  sb.aggregateOnPage(weekGrid, { wants: ["temperature"], place: null, agg: { fn: "mean", word: "average" } }).points.length, 3);
+
+// "Max temp" names the row called Max Temp. Reading it as a calculation
+// would answer a different question, so an extreme needs a span before it
+// counts as one.
+check("a bare extreme is a row, not a calculation", sb.aggregateWanted("max temp"), null);
+check("the same extreme over a week is a calculation", sb.aggregateWanted("max temp this week").fn, "max");
+check("an average needs no span at all", sb.aggregateWanted("average temperature").fn, "mean");
+
+// A cell that is a dash, a heading or empty is not zero. Averaging it in
+// would drag every result toward nothing.
+check("a dash is not zero", sb.cellNumber("—"), null);
+check("nor is a heading", sb.cellNumber("Max Temp, °F"), null);
+check("a thousands separator survives", sb.cellNumber("1,240 cfs"), 1240);
+check("a negative survives", sb.cellNumber("-3.5"), -3.5);
+
+// Tables come in both orientations, so the series runs along either axis.
+const downColumn = { title: "Gauges", headings: [], text: "",
+  pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["Site", "Discharge, cfs"], rows: [["A", "100"], ["B", "300"], ["C", "200"]] }] };
+const byCol = sb.aggregateOnPage(downColumn, { wants: ["discharge"], place: null, agg: { fn: "sum", word: "total" } });
+check("a column is summed down", `${byCol.value} over ${byCol.over}`, "600 over 3 rows");
+
+// A chart's series and a map's features are numbers too.
+const series = [{ label: "Sep 14", value: "56" }, { label: "Sep 15", value: "64" }, { label: "Sep 16", value: "63" }];
+check("a chart series averages", sb.aggregateOverSeries(series, { fn: "mean", word: "average" }, "temperature").value, "61.0");
+check("one point is not a series", sb.aggregateOverSeries(series.slice(0, 1), { fn: "mean", word: "average" }, "x"), null);
+// Hovered points arrive as tooltip text, not tidy values.
+const hovered = [{ text: "Sep 14: 56 °F" }, { text: "Sep 15: 64 °F" }];
+check("tooltip text still yields numbers", sb.aggregateOverSeries(hovered, { fn: "max", word: "highest" }, "temp").value, "64");
+// The date in "Sep 14: 56 °F" is a number too, and the nearer one.
+check("a date is not the reading", sb.cellNumber("Sep 14: 56 \u00b0F"), 56);
+check("even with no unit to go on", sb.cellNumber("Sep 15: 64"), 64);
+check("a plain cell is unaffected", sb.cellNumber("93"), 93);
+
+// A calculated number must never read as one that was simply on the page.
+const card = sb.computedDisplay(sb.aggregateOnPage(weekGrid, { wants: ["temperature"], place: null, agg: { fn: "mean", word: "average" } }), "IDSS");
+check("the card says it calculated", /calculated from 3 columns/.test(card.subtitle), true);
+check("and the tool is on every route",
+  ["GENERIC", "USGS", "NOAA", "FCP", "SITE"].every((r) => sb.toolsFor(r).some((d) => d.name === "pageCompute")), true);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

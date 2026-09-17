@@ -755,6 +755,25 @@ headline is what gets read.
 The headline now carries the miss - "hermantown not found - centre of MN" - so
 a fallback cannot pass for an answer.
 
+### Arithmetic over what the page shows
+
+"Average temperature of pine level this week" returned 93 - Thursday's max.
+The row was right and the cell was real, but "average" and "this week" were
+dropped without trace, so a question about seven days was answered with one of
+them.
+
+`pageCompute` calculates over the numbers a page is already showing: average,
+total, highest, lowest, median, count or spread, taken along a table row, down
+a table column, across a chart's hovered series, or over a map's features. It
+lists every number it used, and the card says *"calculated from 3 columns on
+this page"* so a computed figure never reads as one that was simply there.
+
+Two distinctions it has to keep. "Max temp" names the row called *Max Temp* -
+an extreme only counts as a calculation alongside a span like "this week",
+where one cell cannot be what was meant. And a tooltip reading "Sep 14: 56 °F"
+has two numbers in it; taking the first averages a series of dates. A number
+wearing a unit wins, then the number after the last colon.
+
 ## Tests
 
 ```
