@@ -774,6 +774,28 @@ where one cell cannot be what was meant. And a tooltip reading "Sep 14: 56 °F"
 has two numbers in it; taking the first averages a series of dates. A number
 wearing a unit wins, then the number after the last colon.
 
+### Three ways to be confidently wrong
+
+Found by auditing rather than by hitting them:
+
+**"Sign in" is not Indiana.** Half the state codes are also ordinary words -
+`in`, `me`, `hi`, `ok`, `la`, `pa`, `co`. A heading ending in one was read as
+the page naming its own location, so a login link declared the page to be about
+Indiana and switched off page reading for the whole site. A state written as a
+state is capitalised; the match is now case-sensitive.
+
+**Stage has no common datum.** Averaging gage height across gauges gives a
+number that means nothing - 0.46 ft and 2004 ft are both correct readings of
+different rivers, and their average, 669 ft, is nowhere. The API path already
+refused this; `pageCompute` reached the same figure off a table instead. It now
+refuses down a column and says why, while still averaging along a row, which is
+one gauge over time and shares its datum.
+
+**Pine Level is a town.** "Level" is stripped from a place name because "water
+level" is a measurement, which turned Pine Level, NC into Pine. A measurement
+noun that follows an ordinary word is part of a name; one that follows another
+measurement word is not.
+
 ## Tests
 
 ```

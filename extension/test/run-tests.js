@@ -704,6 +704,39 @@ check("the card says it calculated", /calculated from 3 columns/.test(card.subti
 check("and the tool is on every route",
   ["GENERIC", "USGS", "NOAA", "FCP", "SITE"].every((r) => sb.toolsFor(r).some((d) => d.name === "pageCompute")), true);
 
+section("three ways to be confidently wrong");
+// Half the state codes are ordinary English words. Matching them without
+// regard to case made "Sign in" a location heading, which declared the page
+// to be about Indiana and shut off page reading for the whole site.
+const heads = (h) => sb.locationHeadings({ headings: [h] }).length;
+check("a login link is not Indiana", heads("Sign in"), 0);
+check("nor is a zoom control", heads("Zoom in"), 0);
+check("and a contact link is not Maine", heads("Contact me"), 0);
+check("a state written as a state still counts", heads("Boulder Creek at Boulder, CO"), 1);
+check("with or without the comma", heads("2 Miles S Hermantown MN"), 1);
+
+// Stage is measured from each gauge's own datum. The API path refuses to
+// average it across gauges; calculating it off a page reached the same
+// meaningless number - 0.46 ft and 2004 ft averaging to 669 - by another door.
+const stageTable = { title: "Gauges", headings: [], text: "", pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["Site", "Gage height, ft"], rows: [["A", "0.46"], ["B", "2004.1"], ["C", "3.2"]] }] };
+const stageCol = sb.aggregateOnPage(stageTable, { wants: ["gageHeight"], place: null, agg: { fn: "mean", word: "average" } });
+check("stage across gauges is refused", stageCol.value, null);
+check("and the refusal says why", /datum/.test(stageCol.refused), true);
+check("the card does not show a number",
+  sb.computedDisplay(stageCol, "Gauges").stats.length, 0);
+// One gauge over time shares a datum, so that average is real.
+const overTime = { title: "Site", headings: [], text: "", pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["Gage height, ft", "Mon", "Tue", "Wed"], rows: [["Gage height, ft", "3.1", "3.4", "3.2"]] }] };
+check("one gauge over time still averages",
+  sb.aggregateOnPage(overTime, { wants: ["gageHeight"], place: null, agg: { fn: "mean", word: "average" } }).value, "3.2");
+
+// "Pine Level, NC" is a town; "water level" is a reading. Stripping the
+// measurement noun from both turned the town into "Pine" and looked it up.
+check("a town keeps its second word", sb.extractPlaceHint("max temp of pine level", {}), "pine level");
+check("a measurement does not become one", sb.extractPlaceHint("water level in wyoming", {}), "wyoming");
+check("and a bare measurement is still no place", sb.extractPlaceHint("discharge of level", {}), null);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

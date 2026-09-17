@@ -212,6 +212,10 @@ function planTool(instruction) {
 // Anything subtler is what the model tier is for.
 // Words that carry no location information, so whatever survives them is
 // probably the river or place the person actually named.
+// Filler words that are also found inside real place names, kept when the
+// word before them is not itself filler.
+const NAMEABLE_FILLER = new Set(["level", "levels", "depth", "rate", "site", "station"]);
+
 const PLACE_FILLER = new Set([
   "the", "a", "an", "at", "in", "on", "of", "for", "near", "around", "by",
   "and", "or", "is", "are", "was", "what", "whats", "how", "show", "me", "my",
@@ -270,8 +274,16 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
   // height" is not.
   const tail = t.match(/\b(?:at|in|on|near|along|around|for|of)\s+(.+)$/);
   if (!tail) return null;
-  const words = tail[1].split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 1 && !PLACE_FILLER.has(w) && !/^\d+$/.test(w));
+  const raw = tail[1].split(/[^a-z0-9]+/).filter(Boolean);
+  const words = raw.filter((w, i) => {
+    if (w.length <= 1 || /^\d+$/.test(w)) return false;
+    if (!PLACE_FILLER.has(w)) return true;
+    // A measurement noun can also be half a town's name. "Pine Level, NC" is
+    // a place; "water level" is a reading. What separates them is what comes
+    // before: an ordinary word makes it a name, a measurement word does not.
+    // Dropping it turned Pine Level into Pine and searched for the wrong town.
+    return NAMEABLE_FILLER.has(w) && i > 0 && !PLACE_FILLER.has(raw[i - 1]);
+  });
   return words.length ? words.join(" ") : null;
 }
 
@@ -2865,6 +2877,16 @@ function computeOver(fn, values) {
 // the measurement down the side and days across the top; a gauge listing puts
 // the measurement in a column header and one site per row. Either way the
 // series is there, read along a different axis.
+// Stage is measured from each gauge's own datum, so a column of it spanning
+// several sites is arithmetic on incompatible references - 0.46 ft and 2004 ft
+// are both correct readings of different rivers. The API path already refuses
+// this; calculating it off a page reaches the same wrong number by a
+// different route. Along a row is fine: that is one site over time.
+function datumBlocked(subject, orientation) {
+  if (orientation !== "column") return false;
+  return conceptMatches("gageHeight", String(subject).toLowerCase());
+}
+
 function aggregateOnPage(pageData, { wants, place, agg, match }) {
   // Either a known concept ("temperature") or, when the caller names
   // something this vocabulary has never heard of, a plain word match against
@@ -2897,6 +2919,14 @@ function aggregateOnPage(pageData, { wants, place, agg, match }) {
     const cells = (table.rows || []).map((r) => r[col]);
     const got = computeOver(agg.fn, cells);
     if (!got || got.used < 2) continue;
+    if (datumBlocked(columns[col], "column") && agg.fn !== "count") {
+      return {
+        subject: String(columns[col]), statistic: agg.word, over: `${got.used} rows`,
+        value: null, unit: "", refused: "each gauge measures stage from its own datum, so these cannot be combined",
+        points: (table.rows || []).map((r) => ({ name: String(r[0] || "row"), value: String(r[col]) }))
+          .filter((pt) => cellNumber(pt.value) !== null),
+      };
+    }
     return {
       subject: String(columns[col]), statistic: agg.word, over: `${got.used} rows`,
       value: formatStat(agg.fn, got.value, cells), unit: cellUnit(String(columns[col])) || cellUnit(cells.find((c) => cellNumber(c) !== null)),
@@ -2928,6 +2958,16 @@ function aggregateOverSeries(points, agg, subject) {
 // One card for any of them, so a number that was calculated never looks like
 // a number that was read.
 function computedDisplay(result, pageTitle) {
+  if (result.refused) {
+    return {
+      title: `${result.subject} cannot be combined`.slice(0, 70),
+      subtitle: result.refused,
+      stats: [],
+      rows: result.points.slice(0, 12).map((pt) => ({ name: pt.name.slice(0, 40), value: pt.value.slice(0, 20), meta: "" })),
+      note: (pageTitle || "").slice(0, 70),
+      source: "read from this page, not combined",
+    };
+  }
   const unit = result.unit ? ` ${result.unit}` : "";
   return {
     title: `${result.statistic} ${result.subject}`.replace(/\s+/g, " ").slice(0, 70),
@@ -3008,7 +3048,13 @@ async function pageComputeRun({ fn, of, source = "auto" }) {
 // "IDSS Forecast Points" declares nothing.
 function locationHeadings(pageData) {
   return (pageData.headings || []).filter((h) => {
-    const m = String(h).match(/\b([A-Za-z]{2})\s*$/) || String(h).match(/,\s*([A-Za-z]{2})\b/);
+    // Case-sensitive, because half the state codes are also ordinary words:
+    // "Sign in" ends in Indiana, "Contact me" in Maine, "Zoom in" again in
+    // Indiana. Matching those made a login heading the page's subject and
+    // shut off page reading entirely. A state written as a state is
+    // capitalised - "Boulder, CO", "Hermantown MN" - and a sentence ending
+    // in a lowercase word is a sentence.
+    const m = String(h).match(/,\s*([A-Z]{2})\b/) || String(h).match(/\b([A-Z]{2})\s*$/);
     return m && Object.prototype.hasOwnProperty.call(STATE_BBOX, m[1].toLowerCase());
   });
 }
