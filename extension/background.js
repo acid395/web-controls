@@ -3948,7 +3948,12 @@ async function buildCapabilities() {
   if (!tab || !tab.url) throw new Error("no active tab");
   const route = routeFor(tab.url);
 
-  const manifestTools = (TOOL_DEFS[route.global] || []).filter((d) => !d.run);
+  // A tool with a run() of its own is normally a data lookup, listed further
+  // down as a kind of question. pageCompute is neither: it orchestrates page
+  // reads to do arithmetic, so filtering on run() alone dropped it from the
+  // one card whose whole job is to say what you can do here.
+  const dataNames = new Set(DATA_TOOLS.map((d) => d.name));
+  const manifestTools = (TOOL_DEFS[route.global] || []).filter((d) => !d.run || !dataNames.has(d.name));
   // Swallowing this error reported "0 controls" - a confident count, from a
   // look that never happened. The commonest reason is that the site has not
   // been enabled yet, and the panel hides the Enable button precisely when
