@@ -4728,7 +4728,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Every route now carries GENERIC alongside its named manifest, so
         // page controls can be matched anywhere - including the ones a
         // hand-written manifest never covered.
-        const inv = await invokeOnActiveTab("inventory", []).catch(() => ({ ok: false }));
+        // Keep the reason. This catch threw the error away, so the failure
+        // card said "could not read this page's controls" and stopped there -
+        // and the fix that was supposed to append the reason had nothing to
+        // append. On a page whose controls the badge had just counted, that
+        // message reads as nonsense with no way to act on it.
+        const inv = await invokeOnActiveTab("inventory", [])
+          .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
         if (inv.ok) {
           const guess = planGenericTool(msg.instruction || "", inv.result);
           if (guess && guess.calls) {

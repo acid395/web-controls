@@ -948,6 +948,18 @@ else {
       ensure("webmcp answers on any page", mcp.ok === true, mcp.error || mcp);
       check("with its own card", (mcp.display || {}).title, "WebMCP on this page");
 
+      // A page that could not be read has to say why. The reason was being
+      // discarded by the catch, so the card said only "could not read this
+      // page's controls" - on a page whose controls the badge had counted
+      // moments earlier, which reads as nonsense with nothing to act on.
+      const broken = loadBackground({ page: realPage });
+      broken.chrome.tabs.sendMessage = async () => { throw new Error("timed out waiting for the page bundle to reply"); };
+      console.log = () => {};
+      const unreadable = await broken.__ask({ type: "smartAsk", instruction: "go to contact" });
+      console.log = quietly;
+      ensure("an unreadable page says why",
+        (unreadable.checked || []).some((c) => /timed out/.test(c)), unreadable.checked);
+
       // Nonsense must fail as an answer, not as a crash.
       console.log = () => {};
       const junk = await ask("fly me to the moon");
