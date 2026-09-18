@@ -939,6 +939,23 @@ hand-written one.
 as WebMCP tools, so any agent that speaks the API can drive USGS or NOAA
 without those sites ever implementing it.
 
+The two directions are tested very differently, and that asymmetry is not
+incidental. **Consuming** needs a page that declares tools, and no live site
+does yet, so it can only be exercised against a page written for the purpose.
+**Publishing** needs nothing from anybody: the extension publishes each route's
+verified tools onto every page it runs on, so water.noaa.gov is agent-usable as
+it stands.
+
+Publishing is best-effort and its result is ignored on purpose. It is for other
+agents, not for this extension - a browser without the API registers nothing and
+everything carries on unchanged.
+
+Which makes provenance load-bearing. A tool this extension published comes back
+from the browser's own list looking exactly like one the site declared, and
+preferring those would route our own functions through a longer pipe to reach
+themselves, hiding the hand-written path behind a layer that adds nothing. So
+the cascade takes only tools marked `declaredBy: "page"`.
+
 Reading tools back is the awkward part: `registerTool()` is designed for the
 browser to consume, and no enumeration surface is guaranteed to page script. So
 several are probed in order, and anything registered here is kept in a local

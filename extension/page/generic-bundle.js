@@ -1226,7 +1226,13 @@
       try {
         const got = how === "call" ? (typeof api[key] === "function" ? api[key]() : null) : api[key];
         if (Array.isArray(got) && got.length) {
-          return { available: true, readFrom: `navigator.modelContext.${key}`, tools: got.map((t) => normaliseTool(t, "page")) };
+          // Provenance matters downstream. Tools this extension registered
+          // come back from the browser's own list looking exactly like the
+          // page's, and preferring those over reading the page would mean
+          // calling ourselves through a longer pipe.
+          const mine = new Set(MCP_REGISTRY.map((t) => t.name));
+          return { available: true, readFrom: `navigator.modelContext.${key}`,
+            tools: got.map((t) => normaliseTool(t, mine.has(t.name) ? "extension" : "page")) };
         }
       } catch (e) { /* try the next one */ }
     }

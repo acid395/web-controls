@@ -1048,6 +1048,36 @@ else {
   const listed = mcpPage.GENERIC.mcpTools();
   check("what was registered can be read back", listed.tools.map((t) => t.name), ["pageClick"]);
   check("and it says where it read them", listed.readFrom, "local registry");
+
+  // Provenance decides the cascade. Tools this extension publishes come back
+  // from the browser's own list looking exactly like the page's, and
+  // preferring those over reading the page would route our own functions
+  // through a longer pipe to reach themselves.
+  check("a published tool is marked as ours", listed.tools[0].declaredBy, "extension");
+  check("and is not counted as page-declared",
+    listed.tools.filter((t) => t.declaredBy === "page").length, 0);
+}
+
+// Same again, but where the browser exposes its own enumeration - the case
+// where the two provenances arrive side by side and have to be told apart.
+const mixedPage = loadPage("<!doctype html><html><body><p>x</p></body></html>", { url: "https://water.noaa.gov/" });
+if (!mixedPage) skip("WebMCP provenance", "jsdom not installed");
+else {
+  const shelf = [];
+  Object.defineProperty(mixedPage.navigator, "modelContext", {
+    configurable: true,
+    value: { registerTool: (d) => shelf.push(d), getTools: () => shelf },
+  });
+  // The site's own tool, registered before the extension arrives.
+  shelf.push({ name: "siteOwnTool", description: "Something the site declares", inputSchema: { type: "object", properties: {} } });
+  mixedPage.GENERIC.mcpRegister([
+    { name: "pageClick", fn: "click", argOrder: ["selector"], description: "Click something",
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } },
+  ]);
+  const all = mixedPage.GENERIC.mcpTools();
+  check("both are visible", all.tools.length, 2);
+  check("the site's is the page's", all.tools.find((t) => t.name === "siteOwnTool").declaredBy, "page");
+  check("ours is still ours", all.tools.find((t) => t.name === "pageClick").declaredBy, "extension");
 }
 
 section("charts, maps and other pages");

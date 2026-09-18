@@ -113,6 +113,27 @@ async function ensureInjected(tabId, bundle) {
   });
 }
 
+// Publishing this route's verified tools onto the page, so the site becomes
+// usable by any agent that speaks WebMCP - without the site implementing a
+// line of it.
+//
+// This is also what makes the feature testable on a real site. Consuming
+// needs a page that declares tools, and no live site does yet, so that half
+// can only be exercised against a page written for the purpose. Publishing
+// needs nothing from anybody: it runs on water.noaa.gov as it stands.
+//
+// Best-effort by design. A browser without navigator.modelContext returns a
+// count of zero and the extension carries on exactly as before - nothing
+// above this depends on it having worked.
+async function publishTools(routeGlobal) {
+  const defs = (TOOL_DEFS[routeGlobal] || [])
+    .filter((d) => !d.run && d.fn)
+    .map((d) => ({ name: d.name, fn: d.fn, argOrder: d.argOrder || [], description: d.description, parameters: d.parameters }));
+  if (!defs.length) return { registered: 0 };
+  const out = await invokeOnActiveTab("mcpRegister", [defs]).catch(() => ({ ok: false }));
+  return out.ok ? out.result : { registered: 0, note: "could not reach the page" };
+}
+
 // A chart asks for its data while the page loads, so an interceptor injected
 // when someone finally types a question has already missed it. Registering
 // feed-capture as a document_start content script means an enabled site is
@@ -4470,9 +4491,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // in its own words, with real schemas. Everything below this line is
         // a reconstruction from markup - so when the page has stated the
         // answer, the guessing never runs.
+        // Hand this route's verified tools to any WebMCP agent watching. Its
+        // result is deliberately ignored: this is for other agents, not for
+        // this extension, and a browser without the API changes nothing.
+        publishTools(route.global).catch(() => {});
+
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
-        if (mcp.ok && mcp.result && mcp.result.tools && mcp.result.tools.length) {
-          const pick = planDeclaredTool(msg.instruction || "", mcp.result.tools);
+        // Only the page's own tools count here. This extension publishes its
+        // verified controls as WebMCP tools so other agents can use the site,
+        // and those come back indistinguishable from the page's - routing our
+        // own tools back through WebMCP would be a detour through a longer
+        // pipe to the same function, and would hide the hand-written path
+        // behind a layer that adds nothing.
+        const pageDeclared = (mcp.ok && mcp.result && mcp.result.tools || [])
+          .filter((t) => t.declaredBy === "page");
+        if (pageDeclared.length) {
+          const pick = planDeclaredTool(msg.instruction || "", pageDeclared);
           if (pick) {
             const ran = await runVerified(route.global, {
               name: "pageMcpCall", args: { name: pick.tool.name, args: pick.args },
