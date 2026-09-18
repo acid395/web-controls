@@ -1327,6 +1327,37 @@ else {
   ensure("and the manifest is replaced too", typeof reinject.GENERIC.click === "function", "GENERIC lost");
 }
 
+// A shadow DOM made the whole page unreadable. createTreeWalker's
+// SHOW_ELEMENT filters what nextNode() returns but not currentNode, which
+// starts as the root - and for a shadow tree that root is a ShadowRoot, with
+// no tagName and no getAttribute. inventory() threw on the first such page it
+// met and the extension reported "could not read this page's controls" on a
+// page full of them. USGS state pages are built this way, so it was all of
+// them.
+const shadowPage = loadPage(`<!doctype html><html><body>
+  <div id="host"></div>
+  <a href="/x">Plain link</a>
+  <script>
+    const r = document.getElementById("host").attachShadow({ mode: "open" });
+    r.innerHTML = "<button id=inner>Get more information</button><select id=s><option>A</option></select>";
+  <\/script></body></html>`, { url: "https://waterdata.usgs.gov/state/Minnesota/" });
+if (!shadowPage) skip("shadow DOM", "jsdom not installed");
+else {
+  let inv = null, threw = null;
+  try { inv = shadowPage.GENERIC.inventory(); } catch (e) { threw = e.message; }
+  ensure("a shadow DOM does not crash the inventory", !threw, threw);
+  ensure("and its controls are found",
+    (inv.controls || []).some((c) => c.label === "Get more information"),
+    (inv.controls || []).map((c) => c.label));
+  ensure("alongside the ones in the light DOM",
+    (inv.controls || []).some((c) => c.label === "Plain link"),
+    (inv.controls || []).map((c) => c.label));
+  // Reading the page has to survive it too.
+  let read = null;
+  try { read = shadowPage.GENERIC.readPage(); } catch (e) { read = { error: e.message }; }
+  ensure("and the page can still be read", !read.error, read.error);
+}
+
 section("charts, maps and other pages");
 const chartPage = loadPage(`<!doctype html><html><head><title>Gauge</title></head><body>
   <canvas id="c" width="400" height="200"></canvas>

@@ -207,10 +207,23 @@
    * act on it immediately with the functions below.
    * ========================================================================== */
 
+  // SHOW_ELEMENT filters what nextNode() returns, but not currentNode, which
+  // starts as the root - and for a shadow tree that root is a ShadowRoot, not
+  // an Element. Yielding it handed callers a node with no getAttribute and no
+  // tagName, so inventory() threw on the first page with a shadow DOM it met:
+  // "Cannot read properties of undefined (reading 'toLowerCase')", then
+  // "el.getAttribute is not a function". The page was full of controls and
+  // reported itself unreadable.
+  //
+  // USGS state pages are built this way, so this was every one of them.
   function* walk(root) {
     const tw = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     let n = tw.currentNode;
-    while (n) { yield n; if (n.shadowRoot) yield* walk(n.shadowRoot); n = tw.nextNode(); }
+    while (n) {
+      if (n.nodeType === 1) yield n;
+      if (n.shadowRoot) yield* walk(n.shadowRoot);
+      n = tw.nextNode();
+    }
   }
 
   const isVisible = (el) => {
@@ -253,9 +266,16 @@
   // <path>/<line> inherit "pointer" from their already-captured clickable
   // parent button, so counting them too just duplicates that one real
   // control under three more entries instead of finding anything new.
+  // tagName exists on Elements and on nothing else. Walking shadow roots and
+  // parent chains turns up ShadowRoot and Document nodes, which have none, so
+  // an unguarded tagOf(el) threw "Cannot read properties of
+  // undefined (reading 'toLowerCase')" out of inventory() - and the whole
+  // page then read as unreadable, on a page full of controls.
+  const tagOf = (el) => String((el && el.tagName) || "").toLowerCase();
+
   const GRAPHIC_TAGS = new Set(["svg", "path", "line", "circle", "rect", "polygon", "polyline", "g", "ellipse", "use"]);
   const looksClickable = (el) => {
-    if (GRAPHIC_TAGS.has(el.tagName.toLowerCase())) return false;
+    if (GRAPHIC_TAGS.has(tagOf(el))) return false;
     try { return getComputedStyle(el).cursor === "pointer"; } catch (e) { return false; }
   };
 
@@ -264,7 +284,7 @@
     const parts = [];
     let cur = el;
     while (cur && cur.nodeType === 1 && parts.length < 6) {
-      let s = cur.tagName.toLowerCase();
+      let s = tagOf(cur);
       if (cur.classList.length) s += "." + [...cur.classList].map((c) => CSS.escape(c)).join(".");
       const p = cur.parentNode;
       if (p && p.children) {
@@ -301,7 +321,7 @@
     const seen = new Set();
     const all = [];
     for (const el of walk(document.documentElement)) {
-      const tag = el.tagName.toLowerCase();
+      const tag = tagOf(el);
       const role = el.getAttribute("role");
       const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
       // Real signals (a native interactive tag, an ARIA role, a tab stop, or
@@ -677,7 +697,7 @@
     const points = [...seen.entries()].map(([text, at]) => ({ text, at }));
     return {
       found: points.length > 0,
-      element: target.tagName.toLowerCase(),
+      element: tagOf(target),
       samples,
       points,
       note: points.length
@@ -952,7 +972,7 @@
       if (!isVisible(el)) continue;
       const key = cssPath(el);
       if (!key) continue;
-      const tag = el.tagName.toLowerCase();
+      const tag = tagOf(el);
       let value;
       if (tag === "select") value = el.value;
       else if (el.type === "checkbox" || el.type === "radio") value = !!el.checked;
@@ -1097,7 +1117,7 @@
   function readControl(selector) {
     const el = deepQuery(selector);
     if (!el) return { found: false, selector, note: `no element matches ${selector}` };
-    const tag = el.tagName.toLowerCase();
+    const tag = tagOf(el);
     const out = {
       found: true, selector, tag,
       type: el.type || null,
@@ -1134,7 +1154,7 @@
       const el = deepQuery(change.selector);
       if (!el) { results.push({ selector: change.selector, ok: false, why: "no longer on the page" }); continue; }
       try {
-        const tag = el.tagName.toLowerCase();
+        const tag = tagOf(el);
         if (tag === "select") setSelect(el, String(change.was));
         else if (el.type === "checkbox" || el.type === "radio") setChecked(el, change.was === true || change.was === "true");
         else if (tag === "input" || tag === "textarea") fill(el, String(change.was));

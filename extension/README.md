@@ -1095,6 +1095,22 @@ Note what a reload still cannot do: a change to `permissions` or
 does not re-prompt on reload and the new permission simply stays ungranted.
 The panel shows its version for exactly this reason.
 
+### A shadow DOM made every USGS page unreadable
+
+`createTreeWalker`'s `SHOW_ELEMENT` filters what `nextNode()` returns but not
+`currentNode`, which starts as the root - and for a shadow tree that root is a
+`ShadowRoot`, with no `tagName` and no `getAttribute`. The walker yielded it,
+`inventory()` threw *"Cannot read properties of undefined (reading
+'toLowerCase')"*, and the extension reported **"could not read this page's
+controls"** on a page that was full of them.
+
+USGS state pages are built with shadow DOM, so this was all of them.
+
+It only became findable once the failure card started naming its cause. Before
+that it was a blank sentence on a page whose controls the badge had just
+counted - which is unfalsifiable from the outside, and cost several rounds of
+guessing at permissions and timeouts.
+
 ## Tests
 
 ```
