@@ -773,6 +773,33 @@ check("so are weather.gov forecast points", grantedBy("https://www.weather.gov/f
 // Anything else is opt-in by design, not by oversight.
 check("an unrelated site is still opt-in", grantedBy("https://example.gov/"), false);
 
+section("the verb is not the instruction");
+// "Click Alaska" and "select Alaska" are the same request. A tool's name
+// carries one verb - selectState - so scoring against that literal word gave
+// the synonym nothing: "select alaska" worked and "click alaska" planned
+// nothing at all.
+const asked = (q, route) => { const p = sb.planManifestTool(q, route || "USGS"); return p ? `${p.name} ${JSON.stringify(p.args)}` : null; };
+const want = asked("select alaska");
+check("select is the baseline", want, 'usgsSelectState {"state":"alaska"}');
+for (const verb of ["click", "click on", "choose", "pick", "tap", "press", "switch to"]) {
+  check(`${verb} means the same`, asked(`${verb} alaska`), want);
+}
+// The synonym must not survive into the value. Stripping only the literal
+// name word left selectState returning {state: "pick alaska"}.
+check("the verb never lands in the argument",
+  ["click", "pick", "tap", "press"].every((v) => sb.planManifestTool(`${v} alaska`, "USGS").args.state === "alaska"), true);
+// Enumerated values work the same way on another route.
+const base = asked("set the basemap to satellite", "NOAA");
+check("and on NOAA too", asked("click satellite", "NOAA"), base);
+// Families stay apart: opening a panel is not setting a value.
+check("open is not select", sb.verbFamily("open").includes("select"), false);
+check("but click is", sb.verbFamily("click").includes("select"), true);
+
+// The side panel needs Chrome 114. Without a declared minimum the panel
+// simply never opens on anything older, with nothing said about why.
+const mfv = require(require("path").join(__dirname, "..", "manifest.json"));
+check("a minimum Chrome version is declared", mfv.minimum_chrome_version, "114");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

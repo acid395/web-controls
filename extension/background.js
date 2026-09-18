@@ -3235,6 +3235,40 @@ function toolVocabulary(def) {
   return { fromName, description: (def.description || "").toLowerCase(), enums };
 }
 
+// "Click Alaska" and "select Alaska" ask for exactly the same thing, but a
+// tool's name carries only one verb - selectState - and scoring against that
+// literal word gave the synonym someone actually typed nothing at all. So
+// "select alaska" worked and "click alaska" planned nothing.
+//
+// Grouped rather than flattened, because the families are not interchangeable
+// with each other: "open the layers panel" and "set the basemap" are
+// different requests, and collapsing every verb into one would make them
+// score alike.
+const VERB_FAMILIES = [
+  ["select", "choose", "pick", "click", "tap", "press", "set", "switch", "change", "use", "make"],
+  ["toggle", "turn", "enable", "disable", "check", "uncheck", "tick"],
+  ["open", "expand", "show", "display", "reveal"],
+  ["close", "collapse", "hide", "dismiss"],
+  ["search", "find", "lookup", "query"],
+  ["download", "export", "save"],
+  ["zoom", "pan", "move", "centre", "center"],
+];
+function verbFamily(word) {
+  return VERB_FAMILIES.find((f) => f.includes(word)) || null;
+}
+
+// A tool's name word against the instruction, with any verb standing in for
+// the rest of its family.
+function nameWordHit(word, text) {
+  const family = verbFamily(word);
+  if (!family) return wordMatchesText(word, text);
+  for (const synonym of family) {
+    const hit = wordMatchesText(synonym, text);
+    if (hit) return hit;
+  }
+  return false;
+}
+
 function scoreManifestTool(def, words, instruction) {
   const { fromName, description, enums } = toolVocabulary(def);
   const text = instruction.toLowerCase();
@@ -3244,11 +3278,11 @@ function scoreManifestTool(def, words, instruction) {
   // setBasemap is not a coincidence.
   const nameWords = fromName.split(/\s+/).filter((w) => w.length > 2);
   for (const w of nameWords) {
-    const hit = wordMatchesText(w, text);
+    const hit = nameWordHit(w, text);
     if (hit === "exact") score += 3;
     else if (hit === "fuzzy") score += 2.25;
   }
-  if (nameWords.length && nameWords.every((w) => wordMatchesText(w, text))) score += 4;
+  if (nameWords.length && nameWords.every((w) => nameWordHit(w, text))) score += 4;
 
   // An enumerated value appearing verbatim all but names the tool -
   // "satellite" belongs to exactly one.
@@ -3299,8 +3333,13 @@ function argsForTool(def, instruction, words) {
     // already account for.
     const quoted = instruction.match(/["']([^"']{2,60})["']/);
     if (quoted) { args[key] = quoted[1]; continue; }
+    // The tool's own name words, plus whatever stood in for them. Stripping
+    // only the literal name left the synonym in the value: selectState ate
+    // "select alaska" down to "alaska" but handed back "pick alaska".
     const nameWords = new Set(toolVocabulary(def).fromName.split(/\s+/));
-    const leftover = words.filter((w) => !nameWords.has(w));
+    const standIns = new Set();
+    for (const w of nameWords) for (const v of (verbFamily(w) || [])) standIns.add(v);
+    const leftover = words.filter((w) => !nameWords.has(w) && !standIns.has(w));
     if (leftover.length) args[key] = leftover.join(" ");
   }
 
@@ -3332,7 +3371,9 @@ function wordsLeftOver(def, args, words) {
   for (const value of Object.values(args || {})) {
     for (const w of String(value).toLowerCase().split(/[^a-z0-9]+/)) if (w) consumed.add(w);
   }
-  return words.filter((w) => !consumed.has(w) && !CONTROL_VERB.test(w));
+  // A synonym that stood in for the tool's verb was accounted for, even
+  // though it never appears in the tool's name.
+  return words.filter((w) => !consumed.has(w) && !CONTROL_VERB.test(w) && !verbFamily(w));
 }
 
 // A bounding box gives both a centre and a sensible zoom: a big state has to

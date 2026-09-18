@@ -826,6 +826,22 @@ answered questions while no command ever worked.
 Both hosts are granted at install now, and a test asserts that every route in
 `NAMED_MANIFESTS` is reachable without the user finding a button first.
 
+### The verb is not the instruction
+
+"Click Alaska" planned nothing while "select Alaska" worked. A tool's name
+carries exactly one verb - `selectState` - and scoring an instruction against
+that literal word gave whatever synonym the person actually typed a score of
+zero.
+
+Verbs are now grouped into families, and any member stands in for the rest:
+click, tap, press, choose, pick, set, switch all reach `selectState` and
+`setBasemap` alike. The families stay separate, because "open the layers panel"
+and "set the basemap" are different requests and collapsing every verb into one
+would make them score alike.
+
+The synonym also had to stop landing in the value. Stripping only the tool's
+literal name word left `selectState` returning `{state: "pick alaska"}`.
+
 ## Tests
 
 ```
