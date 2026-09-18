@@ -1163,6 +1163,127 @@
     return { found: true, selector, label: rawLabelOf(el).slice(0, 60) || null };
   }
 
+  /* ==========================================================================
+   * WebMCP: tools the page declares about itself.
+   *
+   * Everything else in this file infers what a page can do by looking at it -
+   * reading labels, guessing which control a sentence meant, then checking
+   * afterwards whether anything moved. That is a reconstruction, and it is
+   * wrong whenever the markup is unusual.
+   *
+   * A page that registers navigator.modelContext tools has stated what it can
+   * do, in its own words, with real parameter schemas. There is nothing to
+   * infer and nothing to verify by diffing - it is the difference between
+   * reading a menu and guessing at the kitchen. So when a page offers them,
+   * they come first and the scraping never runs.
+   *
+   * The API is young: a W3C Community Group report, shipping natively in
+   * Edge 147 and behind an origin trial in Chrome 149, absent everywhere
+   * else. Every function here reports that plainly instead of failing.
+   *
+   * Reading them back is the awkward part. registerTool() is designed for the
+   * browser to consume, and no enumeration surface is guaranteed to exist for
+   * page script - so several are probed, and anything this extension
+   * registered itself is kept in a local registry that is always readable.
+   * ========================================================================== */
+  const MCP_REGISTRY = (window.__wcMcpRegistry = window.__wcMcpRegistry || []);
+
+  const mcpApi = () => (typeof navigator !== "undefined" && navigator.modelContext) || null;
+
+  // A tool's shape differs slightly between the drafts, so it is normalised
+  // to one thing before anyone upstream has to reason about it.
+  const normaliseTool = (t, origin) => ({
+    name: String(t.name || ""),
+    description: String(t.description || ""),
+    inputSchema: t.inputSchema || t.parameters || { type: "object", properties: {} },
+    declaredBy: origin,
+  });
+
+  function mcpInfo() {
+    const api = mcpApi();
+    if (!api) {
+      return { available: false, tools: 0,
+        note: "this browser has no navigator.modelContext - needs Edge 147+, or Chrome with the WebMCP origin trial" };
+    }
+    const found = mcpTools();
+    return {
+      available: true,
+      canRegister: typeof api.registerTool === "function",
+      readableFrom: found.readFrom,
+      tools: found.tools.length,
+      note: found.tools.length
+        ? "this page declares its own tools; they are preferred over reading the page"
+        : "navigator.modelContext exists but this page has registered nothing",
+    };
+  }
+
+  function mcpTools() {
+    const api = mcpApi();
+    if (!api) return { available: false, readFrom: null, tools: [] };
+
+    // Whatever this draft exposes, in decreasing order of officialness.
+    for (const [key, how] of [["getTools", "call"], ["listTools", "call"], ["tools", "value"]]) {
+      try {
+        const got = how === "call" ? (typeof api[key] === "function" ? api[key]() : null) : api[key];
+        if (Array.isArray(got) && got.length) {
+          return { available: true, readFrom: `navigator.modelContext.${key}`, tools: got.map((t) => normaliseTool(t, "page")) };
+        }
+      } catch (e) { /* try the next one */ }
+    }
+    // Nothing readable from the API: fall back to what we registered here.
+    return {
+      available: true,
+      readFrom: MCP_REGISTRY.length ? "local registry" : null,
+      tools: MCP_REGISTRY.map((t) => normaliseTool(t, t.declaredBy || "extension")),
+    };
+  }
+
+  async function mcpCall(name, args) {
+    const api = mcpApi();
+    if (!api) throw new Error("this browser has no navigator.modelContext");
+
+    // A tool we registered can be run directly - no round trip through an API
+    // that may not expose invocation to page script at all.
+    const mine = MCP_REGISTRY.find((t) => t.name === name);
+    if (mine && typeof mine.execute === "function") {
+      return { ranVia: "local registry", result: await mine.execute(args || {}) };
+    }
+    for (const key of ["callTool", "invokeTool", "invoke"]) {
+      if (typeof api[key] === "function") {
+        return { ranVia: `navigator.modelContext.${key}`, result: await api[key](name, args || {}) };
+      }
+    }
+    throw new Error(`navigator.modelContext offers no way to call "${name}" from page script`);
+  }
+
+  // The other direction: hand this page's verified controls to any agent that
+  // speaks WebMCP, whether or not the site ever writes a line of code for it.
+  function mcpRegister(tools) {
+    const api = mcpApi();
+    if (!api || typeof api.registerTool !== "function") {
+      return { registered: 0, note: "this browser has no navigator.modelContext.registerTool" };
+    }
+    const names = [];
+    for (const t of tools || []) {
+      const target = ["USGS", "SITE", "NOAA", "FCP", "GENERIC"]
+        .map((n) => window[n]).find((m) => m && typeof m[t.fn] === "function");
+      if (!target) continue;
+      const def = {
+        name: t.name,
+        description: t.description || "",
+        inputSchema: t.parameters || { type: "object", properties: {} },
+        execute: async (args) => target[t.fn](...(t.argOrder || []).map((k) => (args || {})[k])),
+      };
+      try {
+        api.registerTool(def);
+        def.declaredBy = "extension";
+        MCP_REGISTRY.push(def);
+        names.push(t.name);
+      } catch (e) { /* a duplicate or a rejected schema - skip it, report the rest */ }
+    }
+    return { registered: names.length, names, note: names.length ? "" : "nothing could be registered" };
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -1220,6 +1341,7 @@
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
+    mcpInfo, mcpTools, mcpCall, mcpRegister,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
   };

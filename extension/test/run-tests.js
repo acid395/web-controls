@@ -999,6 +999,57 @@ else {
     (() => { try { structuredClone(r); return true; } catch (e) { return false; } })(), r);
 }
 
+section("WebMCP: what the page says about itself");
+// Everything else here reconstructs a page's abilities from its markup. A
+// page that registers navigator.modelContext tools has stated them outright,
+// with real schemas - so those come first and the guessing never runs.
+const declared = [
+  { name: "setBasemap", description: "Change the map basemap style",
+    inputSchema: { type: "object", properties: { style: { type: "string", enum: ["satellite", "topographic"] } }, required: ["style"] } },
+  { name: "clearAllFilters", description: "Remove every filter currently applied",
+    inputSchema: { type: "object", properties: {} } },
+];
+const chose = (q) => { const p = sb.planDeclaredTool(q, declared); return p ? `${p.tool.name} ${JSON.stringify(p.args)}` : null; };
+check("a declared tool is matched from plain English", chose("set the basemap to satellite"), 'setBasemap {"style":"satellite"}');
+check("with the same verb synonyms as everything else", chose("click satellite"), chose("set the basemap to satellite"));
+check("a no-argument tool still matches", chose("clear all filters"), "clearAllFilters {}");
+check("and an unrelated question matches nothing", chose("what is the weather in boise"), null);
+// pageMcpCall's name must come from the page, so it is never planned blind.
+check("calling a declared tool is not guessed at",
+  (sb.planManifestTool("call the mcp tool", "GENERIC") || {}).name !== "pageMcpCall", true);
+
+const mcpPage = loadPage("<!doctype html><html><body><p>plain</p></body></html>", { url: "https://example.gov/" });
+if (!mcpPage) skip("WebMCP on a page", "jsdom not installed");
+else {
+  // A browser without the API says so, rather than failing somewhere later.
+  const bare = mcpPage.GENERIC.mcpInfo();
+  check("an unsupporting browser is reported plainly", bare.available, false);
+  ensure("and says what it would need", /modelContext/.test(bare.note), bare.note);
+
+  // Now a browser that has it.
+  const registered = [];
+  Object.defineProperty(mcpPage.navigator, "modelContext", {
+    configurable: true,
+    value: { registerTool: (def) => registered.push(def) },
+  });
+  const out = mcpPage.GENERIC.mcpRegister([
+    { name: "pageClick", fn: "click", argOrder: ["selector"],
+      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+      description: "Click something on the page" },
+    { name: "notARealFunction", fn: "nopeNotHere", argOrder: [] },
+  ]);
+  check("the page's verified controls are published", out.registered, 1);
+  check("a tool with no implementation is skipped", out.names, ["pageClick"]);
+  check("and the browser actually received it", registered.length, 1);
+  ensure("with a schema attached", !!registered[0].inputSchema, registered[0]);
+
+  // Registered tools are readable and runnable even where the API exposes
+  // no way to enumerate or invoke from page script.
+  const listed = mcpPage.GENERIC.mcpTools();
+  check("what was registered can be read back", listed.tools.map((t) => t.name), ["pageClick"]);
+  check("and it says where it read them", listed.readFrom, "local registry");
+}
+
 section("charts, maps and other pages");
 const chartPage = loadPage(`<!doctype html><html><head><title>Gauge</title></head><body>
   <canvas id="c" width="400" height="200"></canvas>

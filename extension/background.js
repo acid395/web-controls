@@ -772,6 +772,24 @@ const TOOL_DEFS = {
       run: ({ fn, of, source }) => pageComputeRun({ fn, of, source }),
     },
     {
+      name: "pageMcpTools", fn: "mcpTools", argOrder: [],
+      description: "List the WebMCP tools this page declares about itself through navigator.modelContext. A page that publishes its own tools has stated what it can do, with real schemas, so these are more reliable than anything inferred from its markup.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "pageMcpCall", fn: "mcpCall", argOrder: ["name", "args"], needsPageKnowledge: true,
+      description: "Run one of the WebMCP tools this page declares. Use the exact name from pageMcpTools.",
+      parameters: { type: "object", properties: {
+        name: { type: "string", description: "the tool's name, exactly as pageMcpTools reported it" },
+        args: { type: "object", description: "arguments matching that tool's own inputSchema" },
+      }, required: ["name"] },
+    },
+    {
+      name: "pageMcpPublish", fn: "mcpRegister", argOrder: ["tools"], needsPageKnowledge: true,
+      description: "Publish this page's verified controls as WebMCP tools, so any agent that speaks navigator.modelContext can drive the site - whether or not the site itself ever implements it.",
+      parameters: { type: "object", properties: { tools: { type: "array", description: "tool definitions to register" } } },
+    },
+    {
       name: "pageHoverChart", fn: "hoverSeries", argOrder: ["selector"],
       description: "Read a chart's values by hovering across it, for charts that only reveal numbers in a tooltip. Slower and sampled; prefer pageFeeds when the underlying data request was captured.",
       parameters: { type: "object", properties: { selector: { type: "string", description: "optional CSS selector for the chart; the largest one is used otherwise" } } },
@@ -3295,6 +3313,10 @@ function needsRealSelector(def) {
   // this runs, so "read the url https://waterdata.usgs.gov/wi" arrives as
   // "https waterdata usgs gov wi" - a real URL cannot survive the trip, and
   // anything that does survive is not one.
+  // Some tools say so outright, because the giveaway is not in the schema:
+  // pageMcpCall's "name" must be one the page declared, and no sentence
+  // contains it.
+  if (def.needsPageKnowledge) return true;
   return ["selector", "group", "url"].some((k) => Boolean(props[k]) && required.includes(k));
 }
 
@@ -3454,6 +3476,26 @@ function redirectToPlace(instruction, routeGlobal, leftovers) {
   if (!key) return null;
   const name = (state && state.name) || city.city;
   return { name: search.name, args: { [key]: name.replace(/\b\w/g, (c) => c.toUpperCase()) }, insteadOf: "a relative zoom" };
+}
+
+// Scoring a sentence against tools the page declared. The same scorer the
+// hand-written manifests use, pointed at schemas that arrived at runtime -
+// a declared tool carries a name, a description and an inputSchema, which is
+// everything scoreManifestTool reads.
+function planDeclaredTool(instruction, tools) {
+  const words = meaningfulWords(instruction);
+  if (!words.length || !tools || !tools.length) return null;
+  const defs = tools.map((t) => ({
+    name: t.name, description: t.description, parameters: t.inputSchema, __tool: t,
+  }));
+  const scored = defs
+    .map((def) => ({ def, score: scoreManifestTool(def, words, instruction) }))
+    .filter((x) => x.score >= 4)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  const args = argsForTool(scored[0].def, instruction, words);
+  if (args === null) return null;
+  return { tool: scored[0].def.__tool, args };
 }
 
 function planManifestTool(instruction, routeGlobal) {
@@ -4418,6 +4460,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 caveat: feeds && !feeds.count ? feeds.note : d.note,
                 note: d.headings && d.headings.length ? d.headings[0].slice(0, 60) : undefined,
                 source: feeds && feeds.count ? "captured requests" : "live DOM",
+              },
+            });
+            return;
+          }
+        }
+
+        // A page that declares its own WebMCP tools has said what it can do,
+        // in its own words, with real schemas. Everything below this line is
+        // a reconstruction from markup - so when the page has stated the
+        // answer, the guessing never runs.
+        const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
+        if (mcp.ok && mcp.result && mcp.result.tools && mcp.result.tools.length) {
+          const pick = planDeclaredTool(msg.instruction || "", mcp.result.tools);
+          if (pick) {
+            const ran = await runVerified(route.global, {
+              name: "pageMcpCall", args: { name: pick.tool.name, args: pick.args },
+            });
+            respond({
+              ...ran, plannedBy: "declared-by-page", toolCall: pick.tool.name,
+              display: {
+                title: friendlyToolName(pick.tool.name),
+                subtitle: `${pick.tool.description || "declared by this page"}`.slice(0, 90),
+                stats: [],
+                rows: Object.entries(pick.args || {}).map(([k, v]) => ({ name: k, value: String(v).slice(0, 30), meta: "" })),
+                caveat: `this page declares its own tools (${mcp.result.readFrom}) - used instead of reading its markup`,
+                source: "WebMCP",
               },
             });
             return;

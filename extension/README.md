@@ -913,6 +913,41 @@ https://waterdata.usgs.gov/wi" reaches the planner as "https waterdata usgs gov
 wi". Colour is handled by a schema `pattern`, so `#ff0000` plans and "blue"
 does not.
 
+## WebMCP
+
+Everything else in this project reconstructs what a page can do by looking at
+it: read the labels, guess which control a sentence meant, act, then diff the
+page to see whether anything moved. That reconstruction is wrong whenever the
+markup is unusual, which is most of why this README is as long as it is.
+
+A page that registers `navigator.modelContext` tools has *stated* what it can
+do - its own names, its own descriptions, real parameter schemas. There is
+nothing to infer and nothing to verify by diffing. So the cascade gained a new
+top rung: when a page declares tools, they are matched first and the scraping
+never runs. The card says so, and names where the tools were read from.
+
+It works in both directions.
+
+**Consuming** - `pageMcpTools` lists what the page declares, `pageMcpCall` runs
+one. Matching a sentence to a declared tool reuses the same scorer the
+hand-written manifests use, because a declared tool carries exactly what that
+scorer reads: a name, a description and a schema. Verb families apply too, so
+"click satellite" reaches a declared `setBasemap` the same way it reaches the
+hand-written one.
+
+**Publishing** - `pageMcpPublish` registers this extension's verified controls
+as WebMCP tools, so any agent that speaks the API can drive USGS or NOAA
+without those sites ever implementing it.
+
+Reading tools back is the awkward part: `registerTool()` is designed for the
+browser to consume, and no enumeration surface is guaranteed to page script. So
+several are probed in order, and anything registered here is kept in a local
+registry that is always readable and always callable.
+
+The API is young - a W3C Community Group report, native in Edge 147, origin
+trial in Chrome 149, absent elsewhere. Every entry point reports that in plain
+words instead of failing somewhere later.
+
 ## Tests
 
 ```
