@@ -946,6 +946,19 @@ else {
       const mcp = await ask("webmcp");
       console.log = quietly;
       ensure("webmcp answers on any page", mcp.ok === true, mcp.error || mcp);
+      // A browser without the API still derives tools, and saying only
+      // "unavailable" hid the part that works on a site nobody wrote code
+      // for. The count must be what the page yielded, not what got
+      // registered.
+      ensure("and reports tools derived without the API",
+        (mcp.webmcp || {}).derived > 0 || /derived/.test((mcp.display || {}).subtitle || ""),
+        mcp.webmcp || mcp.display);
+      console.log = () => {};
+      const capsMcp = await ask("what can I do here");
+      console.log = quietly;
+      const mcpRow = (capsMcp.display.rows || []).find((r) => r.name === "WebMCP");
+      ensure("the capability card counts them too", mcpRow && /\d+ tools/.test(mcpRow.value), mcpRow);
+      ensure("and does not just say unavailable", mcpRow && mcpRow.value !== "unavailable", mcpRow);
       check("with its own card", (mcp.display || {}).title, "WebMCP on this page");
 
       // A page that could not be read has to say why. The reason was being

@@ -4278,6 +4278,12 @@ async function buildCapabilities() {
   const mcpTools = (mcp.ok && mcp.result && mcp.result.tools) || [];
   const mcpMine = mcpTools.filter((t) => t.declaredBy === "extension");
   const mcpTheirs = mcpTools.filter((t) => t.declaredBy === "page");
+  // Deriving tools from the page needs no browser API; only registering them
+  // does. Reporting "unavailable" and stopping there described the missing
+  // API and hid the forty tools that exist regardless - which is the part
+  // that actually works on a site nobody wrote code for.
+  const mcpDerived = await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }));
+  const mcpOffered = (mcpDerived.ok && mcpDerived.result && mcpDerived.result.tools) || [];
   const blocked = inv.ok ? null : (inv.error || "this page could not be read");
   const controls = inv.ok ? (inv.result.controls || []).filter((c) => c.label && c.confidence !== "low") : [];
 
@@ -4296,6 +4302,7 @@ async function buildCapabilities() {
     pageBlocked: blocked,
     webmcp: {
       available: !!(mcp.ok && mcp.result && mcp.result.available),
+      derived: mcpOffered.length,
       published: mcpMine.length,
       declaredByPage: mcpTheirs.length,
       readFrom: (mcp.ok && mcp.result && mcp.result.readFrom) || null,
@@ -4311,17 +4318,15 @@ async function buildCapabilities() {
       stats: [],
       rows: [
         // Agents first: it is the only place this is visible at all.
-        ...(mcpTools.length ? [{
+        ...(mcpOffered.length || mcpTools.length ? [{
           name: "WebMCP",
-          value: `${mcpTools.length} tools`,
+          value: `${mcpOffered.length || mcpTools.length} tools`,
           meta: mcpTheirs.length
-            ? `${mcpTheirs.length} declared by this site, ${mcpMine.length} published by this extension`
-            : `${mcpMine.length} published by this extension for any agent - this site declares none of its own`,
-        }] : (mcp.ok && mcp.result && !mcp.result.available ? [{
-          name: "WebMCP",
-          value: "unavailable",
-          meta: "this browser has no navigator.modelContext - needs Edge 147+, or Chrome with the origin trial",
-        }] : [])),
+            ? `${mcpTheirs.length} declared by this site, ${mcpOffered.length} derived from it`
+            : mcp.ok && mcp.result && !mcp.result.available
+              ? `derived from this page - this browser cannot publish them (no modelContext API), but a model is offered them`
+              : `${mcpOffered.length} derived from this page, ${mcpMine.length} published for other agents`,
+        }] : []),
         ...manifestTools.slice(0, 10).map((t) => ({
           name: friendly(t.name), value: "action", meta: firstSentence(t.description).slice(0, 70),
         })),
