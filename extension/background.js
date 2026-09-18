@@ -4642,27 +4642,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const mine = tools.filter((t) => t.declaredBy === "extension");
           const theirs = tools.filter((t) => t.declaredBy === "page");
           const unavailable = mcp.ok && mcp.result && !mcp.result.available;
+          // What an agent would be offered here regardless of whether this
+          // browser can register anything. Registration needs an API most
+          // browsers lack; the tools are derived either way, and without
+          // showing them the layer that makes this work on an unmapped site
+          // is invisible - there was no way to check it at all.
+          const derived = await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }));
+          const offered = (derived.ok && derived.result && derived.result.tools) || [];
           respond({
             ok: true, plannedBy: "webmcp-status",
             webmcp: { published: mine.length, declaredByPage: theirs.length, readFrom: (mcp.result || {}).readFrom },
             tools: tools.map((t) => ({ name: t.name, declaredBy: t.declaredBy, description: t.description })),
             display: {
               title: "WebMCP on this page",
-              subtitle: unavailable
-                ? "this browser has no navigator.modelContext - needs Edge 147+, or Chrome with the origin trial"
-                : `${tools.length} tool${tools.length === 1 ? "" : "s"} an agent can call${(mcp.result || {}).readFrom ? ` · read from ${mcp.result.readFrom}` : ""}`,
+              subtitle: `${offered.length} tool${offered.length === 1 ? "" : "s"} derived from this page` +
+                (unavailable
+                  ? " · this browser cannot publish them (no modelContext API), but they are what a model is offered"
+                  : ` · ${tools.length} registered${(mcp.result || {}).readFrom ? `, read from ${mcp.result.readFrom}` : ""}`),
               stats: [
+                { label: "derived here", value: String(offered.length) },
                 { label: "by this site", value: String(theirs.length) },
-                { label: "published here", value: String(mine.length) },
+                { label: "published", value: String(mine.length) },
               ],
-              rows: [...theirs, ...mine].slice(0, 14).map((t) => ({
-                name: t.name.slice(0, 40),
-                value: t.declaredBy === "page" ? "site" : "published",
-                meta: String(t.description || "").slice(0, 70),
-              })),
+              rows: [
+                ...theirs.map((t) => ({ name: t.name.slice(0, 40), value: "site", meta: String(t.description || "").slice(0, 70) })),
+                ...offered.slice(0, 14).map((t) => ({
+                  name: t.name.slice(0, 40),
+                  value: mine.some((m) => m.name === t.name) ? "published" : "derived",
+                  meta: String(t.description || "").slice(0, 70),
+                })),
+              ].slice(0, 16),
               caveat: theirs.length
                 ? "this site declares its own tools, so they are used instead of reading the page"
-                : "this site declares none of its own - the published ones are for other agents, and this extension still reads the page itself",
+                : "this site declares none of its own - these were derived from its controls, with no code written for this site",
               source: "WebMCP",
             },
           });
