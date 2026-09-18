@@ -4579,7 +4579,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Data questions come first, and on every route - "what's the gage
         // height in Alaska" is answerable from anywhere, and shouldn't be
         // hijacked by a control rule just because the USGS page is open.
-        const dataCall = planDataTool(msg.instruction || "", route);
+        // "model: <instruction>" skips every cheap path and puts the question
+        // to the model with the page's own tools. Without it the model is
+        // only ever reached when everything else has failed, so there is no
+        // way to see whether it would have got something right.
+        const forceModel = /^\s*model:\s*/i.test(msg.instruction || "");
+        const wanted = String(msg.instruction || "").replace(/^\s*model:\s*/i, "");
+
+        const dataCall = forceModel ? null : planDataTool(wanted, route);
 
         // Control is the primary job, so an instruction phrased as an action
         // is not diverted into answering about the page. "set the parameter
@@ -4588,12 +4595,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // them below if nothing on the page turned out to match.
         // "What can I do here" is neither a command nor a data question, and
         // would otherwise be matched against control labels word by word.
-        if (/\bwhat can (i|you)\b|\bwhat( is|'s)? (possible|available|supported)\b|\bhelp\b|\bwhat do you do\b|\bcapabilities\b/i.test(msg.instruction || "")) {
+        if (/\bwhat can (i|you)\b|\bwhat( is|'s)? (possible|available|supported)\b|\bhelp\b|\bwhat do you do\b|\bcapabilities\b/i.test(wanted)) {
           respond(await buildCapabilities());
           return;
         }
 
-        const commandLike = isCommand(msg.instruction || "");
+        const commandLike = !forceModel && isCommand(wanted);
 
         // Real tasks are sequences - "switch to Alaska then show discharge".
         // Split only where both halves independently plan to something, so an
@@ -4662,7 +4669,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
 
         // The self-test, before anything that could fail on its own.
-        if (/^\s*(diagnose|diagnostics?|debug|self ?test|why (is it |isn.t it )?(not )?working)\b/i.test(msg.instruction || "")) {
+        if (/^\s*(diagnose|diagnostics?|debug|self ?test|why (is it |isn.t it )?(not )?working)\b/i.test(wanted)) {
           respond(await runDiagnostics());
           return;
         }
@@ -4671,7 +4678,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // WebMCP on the site you are actually on was to read the service
         // worker's console - so testing it meant opening a page written to
         // demonstrate it, which proves nothing about this site.
-        if (/\bweb ?mcp\b|\bmodel ?context\b|\b(declared|published) tools\b/i.test(msg.instruction || "")) {
+        if (/\bweb ?mcp\b|\bmodel ?context\b|\b(declared|published) tools\b/i.test(wanted)) {
           const tools = (mcp.ok && mcp.result && mcp.result.tools) || [];
           const mine = tools.filter((t) => t.declaredBy === "extension");
           const theirs = tools.filter((t) => t.declaredBy === "page");
@@ -4723,7 +4730,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const pageDeclared = (mcp.ok && mcp.result && mcp.result.tools || [])
           .filter((t) => t.declaredBy === "page");
         if (pageDeclared.length) {
-          const pick = planDeclaredTool(msg.instruction || "", pageDeclared);
+          const pick = planDeclaredTool(wanted, pageDeclared);
           if (pick) {
             const ran = await runVerified(route.global, {
               name: "pageMcpCall", args: { name: pick.tool.name, args: pick.args },
@@ -4743,18 +4750,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
-        const wants = commandLike ? [] : pageValueWants(msg.instruction || "");
+        const wants = commandLike || forceModel ? [] : pageValueWants(wanted);
         // An aggregate is a reason to read the page even when the thing being
         // aggregated is a word this vocabulary has never met. "Total
         // reservoir storage" on a page with a column called "Reservoir
         // Storage (acre-ft)" found no known concept, skipped the page
         // entirely, and ended up clicking two navigation links - a question
         // answered by navigating away from the answer.
-        const wantsAgg = commandLike ? null : aggregateWanted(msg.instruction || "");
+        const wantsAgg = commandLike || forceModel ? null : aggregateWanted(wanted);
         if (wants.length || wantsAgg) {
           const askedPlace = dataCall && dataCall.args
             ? (dataCall.args.place || dataCall.args.nameContains || null)
-            : (extractPlaceHint(msg.instruction || "", {}) || null);
+            : (extractPlaceHint(wanted, {}) || null);
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
             // A calculation comes first: picking one cell out of a row that
@@ -4765,7 +4772,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // the only guide: the words left after the aggregate verb are
             // matched against the labels the page uses.
             const subjectWords = agg && !wants.length
-              ? meaningfulWords(msg.instruction || "").filter((word) => !AGGREGATE_WORDS.has(word))
+              ? meaningfulWords(wanted).filter((word) => !AGGREGATE_WORDS.has(word))
               : [];
             // The same typo tolerance everything else here has. A plain
             // substring test meant "total resevoir storage" - the way it was
@@ -4829,7 +4836,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         if (route.global === "USGS") {
-          const fast = planTool(msg.instruction || "");
+          const fast = forceModel ? null : planTool(wanted);
           if (fast) {
             const result = await invokeOnActiveTab(fast.fn, fast.args);
             respond({ ...result, plannedBy: "fast-path", plannedCall: fast });
@@ -4841,7 +4848,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // and FCP usable at all without the model - 46 tools that previously
         // only it could reach. A hand-written manifest beats GENERIC's
         // selector guessing below, having been checked against the real site.
-        const manifestCall = planManifestTool(msg.instruction || "", route.global);
+        const manifestCall = forceModel ? null : planManifestTool(wanted, route.global);
         if (manifestCall) {
           // An action that cannot simply be undone is worth a question first.
           // Verification makes most things reversible; a download that has
@@ -4901,7 +4908,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "What does this page say" is a different request from "click
         // something on it", and the control matcher would only ever find a
         // button whose label happened to share a word.
-        if (/\bread\b.*\b(page|this|site)\b|\bwhat('?s| is| does)\b.*\b(page|shown|displayed|say)\b|\bon (this|the) (page|screen)\b|\bsummari[sz]e\b/i.test(msg.instruction || "")) {
+        if (/\bread\b.*\b(page|this|site)\b|\bwhat('?s| is| does)\b.*\b(page|shown|displayed|say)\b|\bon (this|the) (page|screen)\b|\bsummari[sz]e\b/i.test(wanted)) {
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
             const d = read.result;
@@ -4966,7 +4973,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const inv = await invokeOnActiveTab("inventory", [])
           .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
         if (inv.ok) {
-          const guess = planGenericTool(msg.instruction || "", inv.result);
+          const guess = forceModel ? null : planGenericTool(wanted, inv.result);
           if (guess && guess.calls) {
             // Run them in order and stop at the first failure - a later step
             // usually depends on an earlier one having opened or switched
@@ -5044,7 +5051,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
         if (commandLike) {
-          const pageWants = pageValueWants(msg.instruction || "");
+          const pageWants = pageValueWants(wanted);
           if (pageWants.length && inv.ok) {
             const readForValues = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
             if (readForValues.ok) {
@@ -5063,6 +5070,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }
             }
           }
+        }
+
+        if (forceModel && !(await isLocalModelEnabled())) {
+          // Asked for the model by name, so say the model is off rather than
+          // reporting that nothing matched - nothing was tried.
+          respond({
+            ok: false,
+            error: 'The local model is off. Turn on "local model" in Debug tools, wait for it to finish loading, then ask again.',
+            display: {
+              title: "The model is switched off",
+              subtitle: 'you asked for it by name with "model:", so nothing else was tried',
+              stats: [], rows: [],
+              note: "it is several gigabytes on first load and needs WebGPU",
+              source: "model",
+            },
+          });
+          return;
         }
 
         if (!(await isLocalModelEnabled())) {
@@ -5089,14 +5113,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        const defs = toolsFor(route.global);
+        // The page's own tools, ranked - not the static selector primitives.
+        // This wiring existed but only in the debug handler, so the path
+        // anyone actually reaches was still offering the model
+        // pageClick{selector} and a wall of CSS.
+        const known = await agentTools(route.global, wanted);
         const context = await buildContext(route.global);
         // llmPlanJson, not llmPlan: the native tools API is restricted to
         // 7-8B models, which measured as unusable on ordinary hardware.
         // Prompting for JSON works with a 3B model instead.
         const plan = await chrome.runtime.sendMessage({
           target: "offscreen", type: "llmPlanJson",
-          instruction: msg.instruction, tools: defs, context,
+          instruction: wanted, tools: known.all, context,
         });
         if (!plan.ok) { respond(plan); return; }
         if (!plan.toolCall) {
@@ -5104,10 +5132,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
         // A prompted model can name a tool that does not exist, which the
-        // native API could not - executeToolCall rejects it by name, and
-        // saying so beats a bare failure.
-        const known = findToolDef(route.global, plan.toolCall.name);
-        if (!known) {
+        // native API could not. Page tools are not in TOOL_DEFS and are
+        // resolved by executeToolCall, so only a name in neither is wrong.
+        const isKnown = findToolDef(route.global, plan.toolCall.name)
+          || known.page.some((t) => t.name === plan.toolCall.name);
+        if (!isKnown) {
           respond({
             ok: false,
             error: `the model asked for "${plan.toolCall.name}", which isn't a tool here`,

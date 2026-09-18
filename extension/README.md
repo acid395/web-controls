@@ -1139,6 +1139,23 @@ the list is ranked by the same scorer that answers most instructions outright
 and capped at 24 - with the readers always kept, since a model that can act but
 cannot see the result is the same blind agent in different clothes.
 
+### Putting a question to the model on purpose
+
+The model sat at the bottom of the cascade, reached only once everything cheap
+had failed. That makes it untestable in the one case that matters: you can
+never find out whether it would have got right something the scorer already
+handles.
+
+Prefixing an instruction with **`model:`** skips every cheap path - data
+lookups, the keyword planner, manifest scoring, page-control matching - and
+puts the question to the model with the page's own tools. With the model
+switched off it says so, rather than reporting that nothing matched when
+nothing was tried.
+
+That path was also still handing the model `pageClick{selector}` and a wall of
+CSS: the page-tool wiring had landed in the debug handler only, not in the
+path anyone actually reaches.
+
 ### How much of this needs a model
 
 Measured, not assumed. A fixture of twelve instruction shapes against pages

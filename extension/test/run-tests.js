@@ -1008,6 +1008,23 @@ else {
         .then(() => null).catch((e) => e.message);
       ensure("an unknown tool is refused", /no tool named/.test(bogus || ""), bogus);
 
+      // "model:" puts a question to the model with the page's own tools,
+      // skipping every cheap path. Without it the model is only reached once
+      // everything else has failed, so there is no way to find out whether it
+      // would have got something right.
+      console.log = () => {};
+      const forced = await ask("model: select 30 day precipitation");
+      console.log = quietly;
+      ensure("model: is recognised as a request for the model",
+        /model is switched off|still loading|webllm/i.test(
+          `${(forced.display || {}).title || ""} ${forced.error || ""} ${forced.plannedBy || ""}`), forced);
+      // The same question without the prefix is answered without it.
+      console.log = () => {};
+      const unforced = await ask("select 30 day precipitation");
+      console.log = quietly;
+      ensure("and the prefix is what makes the difference",
+        unforced.ok === true && unforced.plannedBy !== "webllm", unforced);
+
       // Nonsense must fail as an answer, not as a crash.
       console.log = () => {};
       const junk = await ask("fly me to the moon");
