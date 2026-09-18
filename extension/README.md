@@ -1160,6 +1160,30 @@ That is the shape of the answer: the page describes itself, the scorer takes
 the easy majority offline and instantly, the model takes the residue, and
 verification catches both when they are wrong.
 
+### Three things a real site found in one question
+
+waterdatafortexas.org has no manifest and was never opened while this was
+being built. "Total reservoir storage" on its statewide page found three
+separate faults.
+
+**It clicked two navigation links.** "Storage" is not a word this vocabulary
+knows, so `pageValueWants` returned nothing, the page was never read, and the
+question fell through to matching controls - where "storage" and "reservoir"
+each matched a nav item. A question answered by navigating away from the
+answer. An aggregate is now reason enough to read the page, and the words left
+after the aggregate verb are matched against the page's own labels. The column
+is called "Reservoir Storage (acre-ft)" and it finds it.
+
+**Then it summed eight snapshots of the same number.** The rows are Today,
+Yesterday, 2 days ago, 1 week ago - one reservoir at eight moments. Adding them
+gave a statewide total of 219,891,203 acre-ft, against a real value of 26.8
+million. A column of time labels is now refused for `sum`, with the reason
+given; average and the extremes are still allowed, because those mean something
+over a time series.
+
+**And the unit was wrong.** `ft` lives inside `acre-ft`, so 26.8 million
+acre-feet came back as feet. Longest unit first.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

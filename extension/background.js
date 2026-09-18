@@ -2985,7 +2985,9 @@ const STATS = {
 
 // A cell is "64", "64 °F", "1,240 cfs", "-3.5", "15%". A cell that is only a
 // label, a date or a dash carries no number and must not read as zero.
-const UNIT_RE = /(°\s?[CF]|%|\b(?:ft|cfs|in|mph|kts?|cms)\b)/i;
+// Longest first: "acre-ft" must not read as "ft", which turned 26.8 million
+// acre-feet into 26.8 million feet.
+const UNIT_RE = /(acre-?ft|°\s?[CF]|%|\b(?:ft|cfs|in|mph|kts?|cms)\b)/i;
 function cellNumber(cell) {
   const t = String(cell == null ? "" : cell).trim();
   if (!t || /^[-–—.\s]*$/.test(t)) return null;
@@ -3013,6 +3015,11 @@ function cellUnit(cell) {
 // calculation would answer a different question than the one asked. They
 // count only alongside a span - "max temp this week" - where a single cell
 // cannot be what was meant.
+// The words that name the calculation rather than the thing calculated.
+const AGGREGATE_WORDS = new Set(["average", "avg", "mean", "total", "sum", "combined",
+  "altogether", "median", "count", "spread", "highest", "hottest", "warmest", "max",
+  "maximum", "peak", "lowest", "coldest", "coolest", "min", "minimum", "how", "many", "of"]);
+
 const SPAN_CUE = /\b(this|next|the)\s+(week|month)\b|\bover the (week|month|period)\b|\ball (days?|week)\b|\beach day\b|\b\d+[- ]day\b|\bweekly\b|\bacross\b/;
 function aggregateWanted(text) {
   const t = (text || "").toLowerCase();
@@ -3055,6 +3062,19 @@ function computeOver(fn, values) {
 // are both correct readings of different rivers. The API path already refuses
 // this; calculating it off a page reaches the same wrong number by a
 // different route. Along a row is fine: that is one site over time.
+// "Today", "Yesterday", "2 days ago", "1 week ago" down the side means each
+// row is the same measurement at a different moment. Averaging or taking an
+// extreme over that is meaningful; adding them together is not - it produced
+// a statewide reservoir "total" of 219,891,203 acre-ft by summing eight
+// snapshots of the same 26.8 million.
+const TIME_LABEL = /^(today|yesterday|tomorrow|now|current)\b|\b\d+\s*(day|week|month|year)s?\s*ago\b|^\w{3,9}\s+\d{1,2}(,\s*\d{4})?$/i;
+function looksLikeTimeSeries(labels) {
+  const named = labels.filter((l) => String(l).trim());
+  if (named.length < 3) return false;
+  const timeish = named.filter((l) => TIME_LABEL.test(String(l).trim()));
+  return timeish.length >= Math.ceil(named.length * 0.6);
+}
+
 function datumBlocked(subject, orientation) {
   if (orientation !== "column") return false;
   return conceptMatches("gageHeight", String(subject).toLowerCase());
@@ -3092,6 +3112,15 @@ function aggregateOnPage(pageData, { wants, place, agg, match }) {
     const cells = (table.rows || []).map((r) => r[col]);
     const got = computeOver(agg.fn, cells);
     if (!got || got.used < 2) continue;
+    if (agg.fn === "sum" && looksLikeTimeSeries((table.rows || []).map((r) => r[0]))) {
+      return {
+        subject: String(columns[col]), statistic: agg.word, over: `${got.used} rows`,
+        value: null, unit: "",
+        refused: "these rows are the same measurement at different times, so adding them together means nothing - ask for the average instead, or name the row you want",
+        points: (table.rows || []).map((r) => ({ name: String(r[0] || "row"), value: String(r[col]) }))
+          .filter((pt) => cellNumber(pt.value) !== null),
+      };
+    }
     if (datumBlocked(columns[col], "column") && agg.fn !== "count") {
       return {
         subject: String(columns[col]), statistic: agg.word, over: `${got.used} rows`,
@@ -4710,7 +4739,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         const wants = commandLike ? [] : pageValueWants(msg.instruction || "");
-        if (wants.length) {
+        // An aggregate is a reason to read the page even when the thing being
+        // aggregated is a word this vocabulary has never met. "Total
+        // reservoir storage" on a page with a column called "Reservoir
+        // Storage (acre-ft)" found no known concept, skipped the page
+        // entirely, and ended up clicking two navigation links - a question
+        // answered by navigating away from the answer.
+        const wantsAgg = commandLike ? null : aggregateWanted(msg.instruction || "");
+        if (wants.length || wantsAgg) {
           const askedPlace = dataCall && dataCall.args
             ? (dataCall.args.place || dataCall.args.nameContains || null)
             : (extractPlaceHint(msg.instruction || "", {}) || null);
@@ -4719,8 +4755,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // A calculation comes first: picking one cell out of a row that
             // was asked about as a whole answers a different question, and
             // the single-value path below cannot tell that it has done so.
-            const agg = aggregateWanted(msg.instruction || "");
-            const computed = agg && aggregateOnPage(read.result, { wants, place: askedPlace, agg });
+            const agg = wantsAgg;
+            // With no known concept to match on, the page's own wording is
+            // the only guide: the words left after the aggregate verb are
+            // matched against the labels the page uses.
+            const subjectWords = agg && !wants.length
+              ? meaningfulWords(msg.instruction || "").filter((word) => !AGGREGATE_WORDS.has(word))
+              : [];
+            const match = subjectWords.length
+              ? (label) => subjectWords.every((word) => label.includes(word))
+              : null;
+            const computed = agg && aggregateOnPage(read.result, { wants, place: askedPlace, agg, match });
             if (computed) {
               respond({
                 ok: true, plannedBy: "calculated-from-page", readFrom: read.result.url,

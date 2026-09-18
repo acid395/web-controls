@@ -1102,6 +1102,52 @@ else {
     wrong.length <= 3, wrong.map((m) => `${m.q} -> ${m.got} (wanted ${m.want})`));
 }
 
+section("a real site nobody wrote code for");
+// From waterdatafortexas.org, which has no manifest and was never opened
+// while this was being built. Its statewide page has a column called
+// "Reservoir Storage (acre-ft)" and eight rows that are the same reservoir on
+// eight different dates.
+const txPage = {
+  title: "Statewide reservoir conditions", headings: [], text: "texas reservoirs",
+  pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["", "Date", "Percent Full", "Reservoir Storage (acre-ft)"], rows: [
+    ["Today", "2026-09-18", "71", "26,810,632"],
+    ["Yesterday", "2026-09-17", "71", "26,839,775"],
+    ["2 days ago", "2026-09-16", "71", "26,919,558"],
+    ["1 week ago", "2026-09-11", "72", "27,081,104"],
+    ["1 month ago", "2026-08-18", "73", "27,500,000"],
+  ] }],
+};
+const txAsk = (q) => {
+  const agg = sb.aggregateWanted(q);
+  if (!agg) return null;
+  const subject = sb.meaningfulWords(q).filter((w) => !["total", "sum", "average", "avg", "mean", "highest", "of"].includes(w));
+  const match = subject.length ? (label) => subject.every((w) => label.includes(w)) : null;
+  return sb.aggregateOnPage(txPage, { wants: sb.pageValueWants(q), place: null, agg, match });
+};
+// The subject is a word this vocabulary has never met, so it has to be matched
+// against the page's own wording. Without that the question skipped the page
+// and ended up clicking two navigation links - answered by navigating away.
+const totalled = txAsk("total reservoir storage");
+ensure("an unknown subject still finds its column", !!totalled, "no column matched");
+// And then the sum is refused, because those rows are eight snapshots of one
+// number: adding them gave a statewide total of 219,891,203 acre-ft.
+check("summing a time series is refused", totalled.value, null);
+ensure("and says what to ask instead", /average/.test(totalled.refused || ""), totalled.refused);
+// An average over the same rows is meaningful, and carries the right unit.
+const averaged = txAsk("average reservoir storage");
+check("an average is allowed", averaged.value !== null, true);
+check("and acre-ft is not ft", averaged.unit, "acre-ft");
+// The unit trap on its own: "ft" lives inside "acre-ft".
+check("acre-ft reads whole", sb.cellUnit("26,810,632 acre-ft"), "acre-ft");
+check("plain ft still reads", sb.cellUnit("3.21 ft"), "ft");
+// A table of places, not times, is summable as before.
+const byPlace = { ...txPage, tables: [{ columns: ["Reservoir", "Storage"], rows: [
+  ["Lake A", "100"], ["Lake B", "200"], ["Lake C", "300"]] }] };
+const placeSum = sb.aggregateOnPage(byPlace, { wants: [], place: null,
+  agg: { fn: "sum", word: "total" }, match: (l) => l.includes("storage") });
+check("a total across places still works", placeSum.value, "600");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
