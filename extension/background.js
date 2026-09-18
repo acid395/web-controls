@@ -4066,6 +4066,15 @@ async function buildCapabilities() {
   // facts and are now reported as different facts.
   const inv = await invokeOnActiveTab("inventory", [])
     .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
+
+  // What agents can see of this page. Publishing happens on every page load
+  // and left no trace anywhere in the UI, so the only way to observe WebMCP
+  // working was to open a page written to demonstrate it - which says nothing
+  // about the site you are actually on.
+  const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
+  const mcpTools = (mcp.ok && mcp.result && mcp.result.tools) || [];
+  const mcpMine = mcpTools.filter((t) => t.declaredBy === "extension");
+  const mcpTheirs = mcpTools.filter((t) => t.declaredBy === "page");
   const blocked = inv.ok ? null : (inv.error || "this page could not be read");
   const controls = inv.ok ? (inv.result.controls || []).filter((c) => c.label && c.confidence !== "low") : [];
 
@@ -4082,6 +4091,13 @@ async function buildCapabilities() {
     tools: manifestTools.map((t) => t.name),
     pageControls: blocked ? null : controls.length,
     pageBlocked: blocked,
+    webmcp: {
+      available: !!(mcp.ok && mcp.result && mcp.result.available),
+      published: mcpMine.length,
+      declaredByPage: mcpTheirs.length,
+      readFrom: (mcp.ok && mcp.result && mcp.result.readFrom) || null,
+      names: mcpMine.slice(0, 8).map((t) => t.name),
+    },
     display: {
       title: "What you can do here",
       subtitle: blocked
@@ -4091,6 +4107,18 @@ async function buildCapabilities() {
           : `${manifestTools.length} verified tools for ${route.global}, plus ${controls.length} controls found on the page`,
       stats: [],
       rows: [
+        // Agents first: it is the only place this is visible at all.
+        ...(mcpTools.length ? [{
+          name: "WebMCP",
+          value: `${mcpTools.length} tools`,
+          meta: mcpTheirs.length
+            ? `${mcpTheirs.length} declared by this site, ${mcpMine.length} published by this extension`
+            : `${mcpMine.length} published by this extension for any agent - this site declares none of its own`,
+        }] : (mcp.ok && mcp.result && !mcp.result.available ? [{
+          name: "WebMCP",
+          value: "unavailable",
+          meta: "this browser has no navigator.modelContext - needs Edge 147+, or Chrome with the origin trial",
+        }] : [])),
         ...manifestTools.slice(0, 10).map((t) => ({
           name: friendly(t.name), value: "action", meta: firstSentence(t.description).slice(0, 70),
         })),
@@ -4420,6 +4448,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         publishTools(route.global).catch(() => {});
 
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
+
+        // Asking about it directly. Without this, the only way to observe
+        // WebMCP on the site you are actually on was to read the service
+        // worker's console - so testing it meant opening a page written to
+        // demonstrate it, which proves nothing about this site.
+        if (/\bweb ?mcp\b|\bmodel ?context\b|\b(declared|published) tools\b/i.test(msg.instruction || "")) {
+          const tools = (mcp.ok && mcp.result && mcp.result.tools) || [];
+          const mine = tools.filter((t) => t.declaredBy === "extension");
+          const theirs = tools.filter((t) => t.declaredBy === "page");
+          const unavailable = mcp.ok && mcp.result && !mcp.result.available;
+          respond({
+            ok: true, plannedBy: "webmcp-status",
+            webmcp: { published: mine.length, declaredByPage: theirs.length, readFrom: (mcp.result || {}).readFrom },
+            tools: tools.map((t) => ({ name: t.name, declaredBy: t.declaredBy, description: t.description })),
+            display: {
+              title: "WebMCP on this page",
+              subtitle: unavailable
+                ? "this browser has no navigator.modelContext - needs Edge 147+, or Chrome with the origin trial"
+                : `${tools.length} tool${tools.length === 1 ? "" : "s"} an agent can call${(mcp.result || {}).readFrom ? ` · read from ${mcp.result.readFrom}` : ""}`,
+              stats: [
+                { label: "by this site", value: String(theirs.length) },
+                { label: "published here", value: String(mine.length) },
+              ],
+              rows: [...theirs, ...mine].slice(0, 14).map((t) => ({
+                name: t.name.slice(0, 40),
+                value: t.declaredBy === "page" ? "site" : "published",
+                meta: String(t.description || "").slice(0, 70),
+              })),
+              caveat: theirs.length
+                ? "this site declares its own tools, so they are used instead of reading the page"
+                : "this site declares none of its own - the published ones are for other agents, and this extension still reads the page itself",
+              source: "WebMCP",
+            },
+          });
+          return;
+        }
         // Only the page's own tools count here. This extension publishes its
         // verified controls as WebMCP tools so other agents can use the site,
         // and those come back indistinguishable from the page's - routing our

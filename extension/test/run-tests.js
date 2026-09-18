@@ -1066,6 +1066,17 @@ const bgSrc = require("fs").readFileSync(
 ensure("declared tools are consulted before the page is read",
   bgSrc.indexOf('invokeOnActiveTab("mcpTools"') < bgSrc.indexOf("const wants = commandLike"),
   "the WebMCP rung sits below scraping");
+// Publishing left no trace in the UI, so the only way to see WebMCP working
+// was to open a page written to demonstrate it - which says nothing about the
+// site you are actually on. Asking about it is now a question the panel
+// answers, on whatever page you happen to be.
+const asksAboutMcp = (q) => /\bweb ?mcp\b|\bmodel ?context\b|\b(declared|published) tools\b/i.test(q);
+for (const q of ["webmcp", "what webmcp tools are here", "list published tools", "model context"]) {
+  check(`"${q}" is answerable`, asksAboutMcp(q), true);
+}
+check("and an ordinary command is not swallowed", asksAboutMcp("set the basemap to satellite"), false);
+check("nor is a data question", asksAboutMcp("north fork elkhorn river discharge"), false);
+
 check("calling a declared tool is not guessed at",
   (sb.planManifestTool("call the mcp tool", "GENERIC") || {}).name !== "pageMcpCall", true);
 

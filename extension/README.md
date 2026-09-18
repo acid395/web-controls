@@ -977,6 +977,14 @@ originally placed below both the page reader and the data lookups, which meant
 a page that declared its tools got scraped anyway and the whole feature was
 inert. A test now asserts the ordering in the source.
 
+Publishing left no trace anywhere in the UI, which made the feature
+unobservable on any real site: the tools were registered on every page load and
+the only evidence was a line in the service worker's console. Testing it meant
+opening a page written to demonstrate it, which proves nothing about the site
+you are actually on. Asking "webmcp" now answers on whatever page you are on,
+listing every tool an agent can call and which of them the site declared versus
+which this extension published. The capability card carries the same count.
+
 The two directions are tested very differently, and that asymmetry is not
 incidental. **Consuming** needs a page that declares tools, and no live site
 does yet, so it can only be exercised against a page written for the purpose.
