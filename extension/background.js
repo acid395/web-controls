@@ -3869,10 +3869,20 @@ async function askGemini(instruction, defs, context) {
 // invokeOnActiveTab expects, run it.
 async function executeToolCall(routeGlobal, toolCall) {
   const def = findToolDef(routeGlobal, toolCall.name);
-  // Deliberately not "the model picked" - every planner here is
-  // deterministic, and blaming a model that was never consulted sends anyone
-  // debugging this in the wrong direction.
-  if (!def) throw new Error(`no tool named "${toolCall.name}" is available on this page`);
+  // Not in TOOL_DEFS, so it is one of the page's own - derived from its
+  // controls and named after them, which is the whole point of offering
+  // those to a model. Without this the loop was open at the last step: the
+  // model was handed click30DayPrecipitation, picked it correctly, and the
+  // executor said no tool by that name exists.
+  if (!def) {
+    const viaPage = await invokeOnActiveTab("pageToolCall", [toolCall.name, toolCall.args || {}])
+      .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
+    if (viaPage.ok) return { ...viaPage, calledOn: "page tool" };
+    // Deliberately not "the model picked" - every planner here is
+    // deterministic, and blaming a model that was never consulted sends
+    // anyone debugging this in the wrong direction.
+    throw new Error(`no tool named "${toolCall.name}" is available on this page${viaPage.error ? ` (${viaPage.error})` : ""}`);
+  }
   // A data tool answers from an API and never touches the page, so it skips
   // the whole permission/injection/bridge path a control tool needs.
   if (def.run) {
@@ -3967,14 +3977,6 @@ async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
     : combined;
 
   return { verified, page: pageTools, all: ranked.slice(0, max), considered: combined.length };
-}
-
-// Running whichever the model picked. A page tool is named, not selected, so
-// it goes back through the page by name.
-async function runAgentTool(routeGlobal, pick, known) {
-  const isPageTool = known.page.some((t) => t.name === pick.name);
-  if (!isPageTool) return runVerified(routeGlobal, pick);
-  return runVerified(routeGlobal, { name: "pageToolCall", args: { name: pick.name, args: pick.args || {} } });
 }
 
 async function buildContext(routeGlobal) {

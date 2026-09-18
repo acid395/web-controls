@@ -981,6 +981,20 @@ else {
       ensure("and names the first failure in the headline",
         /page bundle reachable/.test((broke.display || {}).subtitle || ""), (broke.display || {}).subtitle);
 
+      // The last step of the agent loop. A model shown the page's own tools
+      // picks one by name - click30DayPrecipitation - and the executor has to
+      // know how to run it. It was looking only in TOOL_DEFS, so a correct
+      // choice came back as "no tool by that name exists" and the loop was
+      // open at the end.
+      for (const call of [{ name: "clickCurrentConditions", args: {} }, { name: "readThisPage", args: {} }]) {
+        const ran = await live.executeToolCall("GENERIC", call).catch((e) => ({ ok: false, error: e.message }));
+        ensure(`a model-chosen page tool runs: ${call.name}`, ran.ok === true, ran.error || ran);
+      }
+      // And one that does not exist is refused, not invented.
+      const bogus = await live.executeToolCall("GENERIC", { name: "notARealTool", args: {} })
+        .then(() => null).catch((e) => e.message);
+      ensure("an unknown tool is refused", /no tool named/.test(bogus || ""), bogus);
+
       // Nonsense must fail as an answer, not as a crash.
       console.log = () => {};
       const junk = await ask("fly me to the moon");
