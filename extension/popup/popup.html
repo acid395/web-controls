@@ -240,46 +240,45 @@
     <div class="tools-body">
 
       <div class="tool-group">
-        <h2>Run a tool call by hand</h2>
-        <div class="hint">
-          Feeds a tool call straight into the path a model's output takes - no
-          model, no download, no key. Names come from TOOL_DEFS.
-        </div>
-        <label for="toolName">tool name</label>
-        <input id="toolName" value="usgsSetParameter">
-        <label for="toolArgs">arguments (JSON object)</label>
-        <input id="toolArgs" value='{"parameter":"discharge"}'>
-        <button id="runToolCall">Run tool call</button>
-      </div>
-
-      <div class="tool-group">
-        <h2>Show the model's context</h2>
-        <div class="hint">Exactly what a model would be handed for this page.</div>
-        <button id="showContext">Show context</button>
-      </div>
-
-      <div class="tool-group">
         <h2>Local model</h2>
         <div class="hint">
-          Off unless switched on. A 3B model, roughly 2GB, which saturates the
-          GPU while it runs. Everything above works without it.
+          Off unless switched on: a 3B model, roughly 2GB on first load, which
+          needs WebGPU and saturates it while running. Everything else here
+          works without it. Once on, prefix any question with
+          <code>model:</code> to put it to the model directly.
         </div>
         <label class="switch">
           <input type="checkbox" id="localModelEnabled">
           <span>Enable the local model for Ask</span>
         </label>
-        <label for="prompt">test prompt</label>
-        <input id="prompt" value="Say hello in exactly five words.">
-        <button id="llmTest">Load model + ask</button>
-        <label for="llmInstruction">ask it directly (skips the fast path)</label>
-        <input id="llmInstruction" value="set the parameter to gage height">
-        <button id="llmAsk">Ask WebLLM</button>
+      </div>
+
+      <div class="tool-group">
+        <h2>Look inside</h2>
+        <div class="hint">What this page looks like from in here.</div>
+        <button id="showContext">Show the model's context</button>
+        <label for="toolName">run one tool by name</label>
+        <input id="toolName" value="pageRead">
+        <label for="toolArgs">arguments (JSON object)</label>
+        <input id="toolArgs" value='{}'>
+        <button id="runToolCall">Run tool call</button>
+      </div>
+
+      <div class="tool-group">
+        <h2>Call a page function directly</h2>
+        <div class="hint">Bypasses every planner - straight to the manifest.</div>
+        <label for="fn">function</label>
+        <input id="fn" value="inventory">
+        <label for="args">arguments (JSON array)</label>
+        <input id="args" value="[]">
+        <button id="call">Call</button>
       </div>
 
       <div class="tool-group">
         <h2>Gemini (needs your own key)</h2>
         <div class="hint">
-          Kept out of Ask on purpose, since it needs a key. Free one at
+          A second model path with no download, kept out of Ask because it
+          needs a key. Free one at
           <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.
         </div>
         <label for="geminiKey">API key</label>
@@ -288,18 +287,6 @@
         <label for="geminiInstruction">instruction</label>
         <input id="geminiInstruction" value="set the parameter to gage height">
         <button id="geminiAsk">Ask Gemini</button>
-      </div>
-
-      <div class="tool-group">
-        <h2>Call a function directly</h2>
-        <label for="fn">function</label>
-        <input id="fn" value="getState">
-        <label for="args">arguments (JSON array)</label>
-        <input id="args" value="[]">
-        <button id="call">Call</button>
-        <label for="instruction">stub planner only (USGS route)</label>
-        <input id="instruction" value="set gage height">
-        <button id="ask">Ask</button>
       </div>
 
     </div>

@@ -1,5 +1,13 @@
 const logEl = () => document.getElementById("log");
 
+// A handler bound to a control that no longer exists throws at load and takes
+// the whole panel down with it - a removed debug field should never be able
+// to break Ask.
+function on(id, event, fn) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener(event, fn);
+}
+
 function append(node) {
   const box = logEl();
   box.appendChild(node);
@@ -253,7 +261,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 document.addEventListener("DOMContentLoaded", restoreHistory);
 
-document.getElementById("clearLog").addEventListener("click", () => {
+on("clearLog", "click", () => {
   chrome.runtime.sendMessage({ type: "clearHistory" }, () => {
     logEl().textContent = "";
     renderedIds = new Set();
@@ -303,7 +311,7 @@ if (chrome.tabs.onUpdated) {
 }
 if (chrome.windows && chrome.windows.onFocusChanged) chrome.windows.onFocusChanged.addListener(rememberOrigin);
 
-document.getElementById("enable").addEventListener("click", () => {
+on("enable", "click", () => {
   const status = document.getElementById("enableStatus");
   if (!currentOriginPattern) {
     // Say which of the two it is. "Couldn't read this tab's URL" described
@@ -417,7 +425,7 @@ chrome.windows.onFocusChanged.addListener(refreshRoute);
 // Enter submits, which is what anyone types into a single-line box expects.
 // Up and down walk previous instructions, as any prompt does - most asks here
 // are a small edit of the last one.
-document.getElementById("smartInstruction").addEventListener("keydown", (e) => {
+on("smartInstruction", "keydown", (e) => {
   const field = e.target;
   if (e.key === "Enter") { document.getElementById("smartAsk").click(); return; }
   if (e.key === "ArrowUp" && recallAt + 1 < recallList.length) {
@@ -430,7 +438,7 @@ document.getElementById("smartInstruction").addEventListener("keydown", (e) => {
   }
 });
 
-document.getElementById("smartAsk").addEventListener("click", () => {
+on("smartAsk", "click", () => {
   const instruction = document.getElementById("smartInstruction").value.trim();
   if (!instruction) return;
 
@@ -450,7 +458,7 @@ document.getElementById("smartAsk").addEventListener("click", () => {
 // Same shape a model's tool call arrives in ({name, args}), typed by hand.
 // Everything downstream of the model - findToolDef, argOrder remapping,
 // invokeOnActiveTab, the bridge - runs exactly as it would for a real one.
-document.getElementById("runToolCall").addEventListener("click", () => {
+on("runToolCall", "click", () => {
   const name = document.getElementById("toolName").value.trim();
   const argsText = document.getElementById("toolArgs").value.trim() || "{}";
   let args;
@@ -468,7 +476,7 @@ document.getElementById("runToolCall").addEventListener("click", () => {
   });
 });
 
-document.getElementById("showContext").addEventListener("click", () => {
+on("showContext", "click", () => {
   logEcho("building the context a model would see...");
   chrome.runtime.sendMessage({ type: "showContext" }, (res) => {
     if (chrome.runtime.lastError) {
@@ -483,7 +491,7 @@ document.getElementById("showContext").addEventListener("click", () => {
   });
 });
 
-document.getElementById("call").addEventListener("click", () => {
+on("call", "click", () => {
   const fn = document.getElementById("fn").value.trim();
   const argsText = document.getElementById("args").value.trim() || "[]";
   let args;
@@ -528,24 +536,6 @@ localModelBox.addEventListener("change", () => {
   });
 });
 
-document.getElementById("llmTest").addEventListener("click", () => {
-  const prompt = document.getElementById("prompt").value.trim();
-  logEcho(`llm test: "${prompt}" (first run downloads the model, can take a while)`);
-  chrome.runtime.sendMessage({ type: "llmPing", prompt }, (res) => {
-    logResult(res);
-  });
-});
-
-document.getElementById("llmAsk").addEventListener("click", () => {
-  const instruction = document.getElementById("llmInstruction").value.trim();
-  if (!instruction) return;
-
-  logEcho(`ask webllm: "${instruction}"`);
-  chrome.runtime.sendMessage({ type: "llmPlan", instruction }, (res) => {
-    logResult(res);
-  });
-});
-
 // Shows "(key saved)" as a placeholder rather than the real key, so the
 // field doesn't need to hold and display the actual secret every time the
 // popup reopens - chrome.storage.local already has it.
@@ -553,7 +543,7 @@ chrome.storage.local.get("geminiApiKey", ({ geminiApiKey }) => {
   if (geminiApiKey) document.getElementById("geminiKey").placeholder = "(key saved)";
 });
 
-document.getElementById("saveKey").addEventListener("click", () => {
+on("saveKey", "click", () => {
   const key = document.getElementById("geminiKey").value.trim();
   if (!key) {
     log("no key entered");
@@ -566,7 +556,7 @@ document.getElementById("saveKey").addEventListener("click", () => {
   });
 });
 
-document.getElementById("geminiAsk").addEventListener("click", () => {
+on("geminiAsk", "click", () => {
   const instruction = document.getElementById("geminiInstruction").value.trim();
   if (!instruction) return;
 
@@ -576,12 +566,3 @@ document.getElementById("geminiAsk").addEventListener("click", () => {
   });
 });
 
-document.getElementById("ask").addEventListener("click", () => {
-  const instruction = document.getElementById("instruction").value.trim();
-  if (!instruction) return;
-
-  logEcho(`ask: "${instruction}"`);
-  chrome.runtime.sendMessage({ type: "ask", instruction }, (res) => {
-    logResult(res);
-  });
-});

@@ -3040,11 +3040,16 @@ function aggregateWanted(text) {
 // earns a decimal it was not given, because that is what an average is.
 function formatStat(fn, value, samples) {
   if (fn === "count") return String(value);
+  // Grouped the way the page wrote them. The rows read 26,803,406 and the
+  // answer read 27485497.1 - the same quantity in two notations, one of them
+  // unreadable at that size.
+  const grouped = samples.some((x) => /\d,\d{3}/.test(String(x)));
   const decimals = Math.max(...samples.map((s) => {
     const m = String(s).match(/\.(\d+)/);
     return m ? m[1].length : 0;
   }), fn === "mean" ? 1 : 0);
-  return value.toFixed(Math.min(decimals, 3));
+  const fixed = value.toFixed(Math.min(decimals, 3));
+  return grouped ? Number(fixed).toLocaleString("en-US", { maximumFractionDigits: Math.min(decimals, 3) }) : fixed;
 }
 
 function computeOver(fn, values) {

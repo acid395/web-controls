@@ -882,6 +882,17 @@ const panel = require("fs").readFileSync(
   require("path").join(__dirname, "..", "popup", "popup.js"), "utf8");
 ensure("the current origin is re-read on navigation",
   /onUpdated[\s\S]{0,200}rememberOrigin/.test(panel), "popup.js caches the origin once");
+// A handler bound to a control that no longer exists throws at load and takes
+// the whole panel with it, so trimming a debug field could silently break
+// Ask. Every id the panel binds has to exist in its markup.
+const panelMarkup = require("fs").readFileSync(
+  require("path").join(__dirname, "..", "popup", "popup.html"), "utf8");
+const boundIds = [...new Set([...panel.matchAll(/getElementById\("([^"]+)"\)|\bon\("([^"]+)",/g)]
+  .map((m) => m[1] || m[2]))];
+const orphans = boundIds.filter((id) => !panelMarkup.includes(`id="${id}"`));
+check("every control the panel binds exists", orphans, []);
+ensure("and there are some to check", boundIds.length > 10, boundIds.length);
+
 ensure("and on a tab switch",
   /onActivated\.addListener\(rememberOrigin\)/.test(panel), "no onActivated listener");
 
@@ -1172,6 +1183,12 @@ ensure("and says what to ask instead", /average/.test(totalled.refused || ""), t
 // An average over the same rows is meaningful, and carries the right unit.
 const averaged = txAsk("average reservoir storage");
 check("an average is allowed", averaged.value !== null, true);
+// The rows read 26,803,406 and the answer read 27485497.1 - one quantity in
+// two notations, one of them unreadable at that size.
+check("and is grouped the way the page writes its numbers",
+  /^\d{1,3}(,\d{3})+/.test(averaged.value), true);
+check("a page that does not group is left alone",
+  sb.formatStat("mean", 61, ["56", "64", "63"]), "61.0");
 check("and acre-ft is not ft", averaged.unit, "acre-ft");
 // The unit trap on its own: "ft" lives inside "acre-ft".
 check("acre-ft reads whole", sb.cellUnit("26,810,632 acre-ft"), "acre-ft");
