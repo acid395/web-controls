@@ -960,6 +960,27 @@ else {
       ensure("an unreadable page says why",
         (unreadable.checked || []).some((c) => /timed out/.test(c)), unreadable.checked);
 
+      // The self-test has to survive whatever it is diagnosing, or it tells
+      // you less than the problem did.
+      console.log = () => {};
+      const diag = await ask("diagnose");
+      console.log = quietly;
+      ensure("diagnose answers", !!(diag.display && diag.display.rows.length), diag);
+      ensure("and names the build", diag.steps.some((x) => x.name === "extension version" && x.state === "ok"), diag.steps);
+      ensure("a browser without WebMCP is not a failure",
+        !diag.steps.some((x) => x.name === "WebMCP" && x.state === "failed"), diag.steps);
+
+      // The same test, run where the page cannot be reached at all.
+      const blind = loadBackground({ page: realPage });
+      blind.chrome.tabs.sendMessage = async () => { throw new Error("timed out waiting for the page bundle to reply"); };
+      console.log = () => {};
+      const broke = await blind.__ask({ type: "smartAsk", instruction: "diagnose" });
+      console.log = quietly;
+      ensure("it still reports when the page is unreachable",
+        broke.steps.some((x) => x.name === "page bundle reachable" && x.state === "failed"), broke.steps);
+      ensure("and names the first failure in the headline",
+        /page bundle reachable/.test((broke.display || {}).subtitle || ""), (broke.display || {}).subtitle);
+
       // Nonsense must fail as an answer, not as a crash.
       console.log = () => {};
       const junk = await ask("fly me to the moon");

@@ -21,7 +21,8 @@ function loadBackground({ onFetch, page } = {}) {
   let messageHandler = null;
   const sandbox = {
     console,
-    setTimeout, clearTimeout, setInterval, clearInterval, URL,
+    setTimeout, clearTimeout, setInterval, clearInterval, URL, Intl,
+    navigator: { userAgent: "Mozilla/5.0 Chrome/141.0.0.0 Safari/537.36" },
     fetch: (url, opts) => {
       requests.push(String(url));
       if (onFetch) onFetch(String(url));
@@ -38,6 +39,7 @@ function loadBackground({ onFetch, page } = {}) {
         getPlatformInfo(cb) { cb && cb({}); },
         sendMessage() {},
         getURL: (p) => `chrome-extension://test/${p}`,
+        getManifest: () => JSON.parse(fs.readFileSync(path.join(EXT, "manifest.json"), "utf8")),
         getContexts: async () => [],
       },
       tabs: {

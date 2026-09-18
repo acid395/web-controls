@@ -4076,6 +4076,94 @@ async function recordAsk(id, instruction, patch) {
  * routing "what can I do here" through messaging looked right and silently
  * answered nothing at all.
  */
+// A self-test, because diagnosing this from screenshots has been the slowest
+// part of building it. Each step is the real call the extension makes, run in
+// the order it makes them, reporting what came back. One command, one output,
+// no interpretation needed - and it never throws, because a diagnostic that
+// crashes tells you less than one that reports the crash.
+async function runDiagnostics() {
+  const steps = [];
+  // Three outcomes, not two. A browser with no WebMCP is not a fault to fix -
+  // counting it as one would put a red mark on every working install and bury
+  // the failure that matters underneath it.
+  const step = async (name, fn, { optional = false } = {}) => {
+    const t0 = Date.now();
+    try {
+      const value = await fn();
+      steps.push({ name, state: "ok", value: String(value).slice(0, 90), ms: Date.now() - t0 });
+    } catch (err) {
+      steps.push({ name, state: optional ? "n/a" : "failed",
+        value: String((err && err.message) || err).slice(0, 90), ms: Date.now() - t0 });
+    }
+  };
+
+  // Nothing above the steps may throw, or the diagnostic fails to diagnose.
+  const mf = (() => { try { return chrome.runtime.getManifest(); } catch (e) { return { version: "unknown" }; } })();
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+  const url = (tab && tab.url) || "";
+
+  await step("extension version", () => mf.version);
+  await step("browser", () => ((typeof navigator !== "undefined" && navigator.userAgent) || "")
+    .match(/Edg\/[\d.]+|Chrome\/[\d.]+/) || "unknown");
+  await step("timezone", () => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  await step("this tab", () => url || "no URL - is a normal http/https page open?");
+  await step("route", () => routeFor(url).global);
+  await step("permission for this origin", async () => {
+    const pattern = originPatternFor(url);
+    if (!pattern) throw new Error("not an http(s) page, so nothing can run here");
+    const ok = await chrome.permissions.contains({ origins: [pattern] });
+    if (!ok) throw new Error(`not granted - click "Enable on this site"`);
+    return pattern;
+  });
+  await step("page bundle reachable", async () => {
+    const r = await invokeOnActiveTab("pageSignature", []);
+    if (!r.ok) throw new Error(r.error || "the page did not answer");
+    return "bridge answered";
+  });
+  await step("inventory", async () => {
+    const r = await invokeOnActiveTab("inventory", []);
+    if (!r.ok) throw new Error(r.error || "inventory failed");
+    return `${r.result.controlCount} controls, ${r.result.patternCount} patterns`;
+  });
+  await step("read page", async () => {
+    const r = await invokeOnActiveTab("readPage", []);
+    if (!r.ok) throw new Error(r.error || "readPage failed");
+    const d = r.result;
+    return `${(d.tables || []).length} tables, ${(d.labelledNumbers || []).length} numbers`;
+  });
+  await step("WebMCP", async () => {
+    const r = await invokeOnActiveTab("mcpTools", []);
+    if (!r.ok) throw new Error(r.error || "could not check");
+    if (!r.result.available) throw new Error("no modelContext API in this browser (expected outside Edge 147+)");
+    return `${r.result.tools.length} tools · ${r.result.readFrom || "none readable"}`;
+  }, { optional: true });
+  await step("agency API", async () => {
+    const res = await fetch("https://api.weather.gov/points/44.98,-93.26", { headers: { Accept: "application/geo+json" } });
+    if (!res.ok) throw new Error(`NWS returned ${res.status}`);
+    return "NWS reachable";
+  });
+
+  const failed = steps.filter((x) => x.state === "failed");
+  return {
+    ok: failed.length === 0,
+    steps,
+    display: {
+      title: failed.length ? `${failed.length} of ${steps.length} checks failed` : "All checks passed",
+      subtitle: failed.length
+        ? `first failure: ${failed[0].name} - ${failed[0].value}`
+        : `v${mf.version} · everything this extension needs is working here`,
+      stats: [],
+      rows: steps.map((x) => ({
+        name: x.name, value: x.state,
+        meta: `${x.value}${x.ms > 200 ? ` · ${x.ms}ms` : ""}`,
+        tone: x.state === "ok" ? "ok" : x.state === "n/a" ? "warn" : "alert",
+      })),
+      caveat: failed.length ? "copy this card and send it - the first failure is the one to fix" : undefined,
+      source: "self-test",
+    },
+  };
+}
+
 async function buildCapabilities() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url) throw new Error("no active tab");
@@ -4480,6 +4568,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         publishOnce(sender && sender.tab && sender.tab.id, route.global).catch(() => {});
 
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
+
+        // The self-test, before anything that could fail on its own.
+        if (/^\s*(diagnose|diagnostics?|debug|self ?test|why (is it |isn.t it )?(not )?working)\b/i.test(msg.instruction || "")) {
+          respond(await runDiagnostics());
+          return;
+        }
 
         // Asking about it directly. Without this, the only way to observe
         // WebMCP on the site you are actually on was to read the service

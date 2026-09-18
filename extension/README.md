@@ -1111,6 +1111,37 @@ that it was a blank sentence on a page whose controls the badge had just
 counted - which is unfalsifiable from the outside, and cost several rounds of
 guessing at permissions and timeouts.
 
+## Diagnosing an install
+
+Type **`diagnose`** into the panel. It runs the real calls the extension makes,
+in the order it makes them, and reports what came back:
+
+```
+All checks passed | v0.8.0 - everything this extension needs is working here
+  ok     extension version           0.8.0
+  ok     browser                     Chrome/141.0.0.0
+  ok     timezone                    America/Los_Angeles
+  ok     this tab                    https://waterdata.usgs.gov/state/Minnesota/
+  ok     route                       USGS
+  ok     permission for this origin  https://waterdata.usgs.gov/*
+  ok     page bundle reachable       bridge answered
+  ok     inventory                   181 controls, 44 patterns
+  ok     read page                   3 tables, 61 numbers
+  n/a    WebMCP                      no modelContext API in this browser
+  ok     agency API                  NWS reachable
+```
+
+The first failing row is the one to fix, and it is named in the headline. Three
+outcomes rather than two: a browser without WebMCP is `n/a`, not a fault, or
+every working install would show a red mark and bury the failure that matters.
+
+Nothing in it throws - a diagnostic that crashes tells you less than the problem
+did - and it is tested both against a working page and against one whose bridge
+is deliberately broken.
+
+Most of this project's slowest debugging was screenshots and inference. One
+command that names the first thing that is actually wrong replaces all of it.
+
 ## Tests
 
 ```
