@@ -11,6 +11,10 @@
  * Those are invisible to type checking and to "does it crash" testing, which
  * is why they are pinned here by name.
  */
+// Declared up here, not beside report(): the nested call sites below run
+// first, and a `let` declared after them is in the temporal dead zone.
+let reported = false;
+
 const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
 
 let passed = 0, failed = 0, skipped = 0;
@@ -1160,10 +1164,36 @@ if (process.argv.includes("--live")) {
 }
 }
 
+// Every jsdom guard above is written `if (!page) skip(...) else { ...`, and
+// those else blocks nest instead of closing - so a single missing jsdom made
+// the whole remainder of the file unreachable, the summary included. On a
+// clean clone the suite printed a wall of skips, no counts at all, and exited
+// 0, which reads as "all fine" to a person and to CI alike.
 function report() {
+  if (reported) return;
+  reported = true;
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
+  if (skipped) {
+    console.log(`\n  ${skipped} section(s) skipped. For the full suite:` +
+      `\n    cd extension/test && npm install`);
+  }
   for (const f of failures) {
     console.log(`\n  ${f.label}\n    got      ${JSON.stringify(f.actual)}\n    expected ${JSON.stringify(f.expected)}`);
   }
   process.exit(failed ? 1 : 0);
 }
+
+// Much of the suite runs asynchronously, so a plain call here would print a
+// summary and process.exit() out from under tests still in flight - it cut
+// 287 down to 71. An exit hook fires once the event loop has drained, which
+// is the only point at which "did the summary ever run" can be answered.
+process.on("exit", () => {
+  if (reported) return;
+  reported = true;
+  console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
+  if (skipped) {
+    console.log(`\n  ${skipped} section(s) skipped. For the full suite:` +
+      `\n    cd extension/test && npm install`);
+  }
+  process.exitCode = failed ? 1 : 0;
+});
