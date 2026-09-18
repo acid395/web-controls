@@ -267,19 +267,50 @@ document.getElementById("clearLog").addEventListener("click", () => {
 // (there's nothing else competing for the gesture at that point), cached,
 // and the click handler below calls chrome.permissions.request as its
 // first and only step, synchronously, using that cached value.
+// Read once at load, this was a dead end on any site that was not already
+// granted. Two faults compounded.
+//
+// Without the "tabs" permission chrome.tabs.query omits url for a tab the
+// extension has no host permission for - which is every site the Enable
+// button exists to grant. So enabling a new site needed its URL, and reading
+// its URL needed the site to be enabled.
+//
+// And it was cached once, at panel load. A popup died on every blur so that
+// was the same as reading it fresh; a side panel outlives navigation, so a
+// panel first opened on a new tab kept a null origin for the rest of its
+// life and the button never worked again.
 let currentOriginPattern = null;
-chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-  if (!tab || !tab.url) return;
-  try {
-    const u = new URL(tab.url);
-    currentOriginPattern = `${u.protocol}//${u.hostname}/*`;
-  } catch (e) { /* not a http(s) page, e.g. chrome:// - leave it null */ }
-});
+let currentUrl = null;
+function rememberOrigin() {
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    currentOriginPattern = null;
+    currentUrl = (tab && tab.url) || null;
+    if (!currentUrl) return;
+    try {
+      const u = new URL(currentUrl);
+      if (u.protocol === "http:" || u.protocol === "https:") {
+        currentOriginPattern = `${u.protocol}//${u.hostname}/*`;
+      }
+    } catch (e) { /* leave it null; the button explains why below */ }
+  });
+}
+rememberOrigin();
+if (chrome.tabs.onActivated) chrome.tabs.onActivated.addListener(rememberOrigin);
+if (chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener((id, info, tab) => {
+    if (tab && tab.active && (info.url || info.status === "complete")) rememberOrigin();
+  });
+}
+if (chrome.windows && chrome.windows.onFocusChanged) chrome.windows.onFocusChanged.addListener(rememberOrigin);
 
 document.getElementById("enable").addEventListener("click", () => {
   const status = document.getElementById("enableStatus");
   if (!currentOriginPattern) {
-    status.textContent = "couldn't read this tab's URL (not a normal http/https page?)";
+    // Say which of the two it is. "Couldn't read this tab's URL" described
+    // the symptom and left nothing to do about it.
+    status.textContent = currentUrl
+      ? `this is a ${String(currentUrl).split(":")[0]}: page - extensions cannot run on browser pages, only on http and https sites`
+      : "no page open in this tab yet - open a site first, then try again";
     return;
   }
   chrome.permissions.request({ origins: [currentOriginPattern] }, (granted) => {

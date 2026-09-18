@@ -995,6 +995,29 @@ The API is young - a W3C Community Group report, native in Edge 147, origin
 trial in Chrome 149, absent elsewhere. Every entry point reports that in plain
 words instead of failing somewhere later.
 
+### Enabling a site you have not enabled
+
+"Enable on this site" answered *"couldn't read this tab's URL"* on every site
+it had not already been enabled on - which is precisely the set of sites the
+button exists for. Two faults compounding.
+
+Without the `tabs` permission, `chrome.tabs.query` omits `url` for any tab the
+extension holds no host permission for. So enabling a new site needed its URL,
+and reading its URL needed the site already enabled. A closed loop with no way
+in.
+
+And the origin was read once, at panel load. A popup died on every blur, so
+once was the same as fresh; a side panel outlives navigation, so a panel first
+opened on a new tab kept a null origin for the rest of its life and the button
+never worked again - the same staleness that froze the route badge, in a place
+where it locked the user out instead of just misinforming them.
+
+`tabs` is declared, the origin is re-read on navigation, tab switch and window
+focus, and the two genuine failures now say which is which: a `chrome:` page
+says extensions cannot run on browser pages, an empty tab says to open a site
+first. Host access stays narrow - broad access is still opt-in, with a test
+that it has not quietly widened.
+
 ## Tests
 
 ```

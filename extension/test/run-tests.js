@@ -855,6 +855,27 @@ check("a group is page knowledge too",
 check("and so is a url",
   sb.needsRealSelector({ parameters: { properties: { url: { type: "string" } }, required: ["url"] } }), true);
 
+section("enabling a site you have not enabled");
+// "Enable on this site" could not read the URL of any site it had not already
+// been enabled on. Without the "tabs" permission chrome.tabs.query omits url
+// for a tab the extension holds no host permission for - which is every site
+// that button exists for. Enabling needed the URL; the URL needed enabling.
+const mfp = require(require("path").join(__dirname, "..", "manifest.json"));
+check("the tabs permission is declared", (mfp.permissions || []).includes("tabs"), true);
+// It must not have been bought by widening host access instead.
+check("and host access stays narrow",
+  (mfp.host_permissions || []).some((h) => /^https:\/\/\*\/|^<all_urls>$/.test(h)), false);
+check("broad access is still opt-in",
+  (mfp.optional_host_permissions || []).includes("https://*/*"), true);
+// The panel outlives navigation, so nothing about the current tab may be
+// read once and kept.
+const panel = require("fs").readFileSync(
+  require("path").join(__dirname, "..", "popup", "popup.js"), "utf8");
+ensure("the current origin is re-read on navigation",
+  /onUpdated[\s\S]{0,200}rememberOrigin/.test(panel), "popup.js caches the origin once");
+ensure("and on a tab switch",
+  /onActivated\.addListener\(rememberOrigin\)/.test(panel), "no onActivated listener");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
