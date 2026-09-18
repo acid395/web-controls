@@ -4767,8 +4767,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const subjectWords = agg && !wants.length
               ? meaningfulWords(msg.instruction || "").filter((word) => !AGGREGATE_WORDS.has(word))
               : [];
+            // The same typo tolerance everything else here has. A plain
+            // substring test meant "total resevoir storage" - the way it was
+            // actually typed - matched no column, while the correctly spelled
+            // version worked. Fixing only what I typed myself is how a fix
+            // passes its own test and fails the person who reported it.
             const match = subjectWords.length
-              ? (label) => subjectWords.every((word) => label.includes(word))
+              ? (label) => subjectWords.every((word) => wordMatchesText(word, label))
               : null;
             const computed = agg && aggregateOnPage(read.result, { wants, place: askedPlace, agg, match });
             if (computed) {

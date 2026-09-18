@@ -1135,12 +1135,17 @@ const txAsk = (q) => {
   const agg = sb.aggregateWanted(q);
   if (!agg) return null;
   const subject = sb.meaningfulWords(q).filter((w) => !["total", "sum", "average", "avg", "mean", "highest", "of"].includes(w));
-  const match = subject.length ? (label) => subject.every((w) => label.includes(w)) : null;
+  const match = subject.length ? (label) => subject.every((w) => sb.wordMatchesText(w, label)) : null;
   return sb.aggregateOnPage(txPage, { wants: sb.pageValueWants(q), place: null, agg, match });
 };
 // The subject is a word this vocabulary has never met, so it has to be matched
 // against the page's own wording. Without that the question skipped the page
 // and ended up clicking two navigation links - answered by navigating away.
+// Typed as it was actually typed. A plain substring match handled the
+// correctly spelled version and missed this one, so the fix passed its own
+// test and failed the person who reported it.
+const misspelt = txAsk("total resevoir storage");
+ensure("a typo still finds the column", !!misspelt, "resevoir did not match Reservoir Storage");
 const totalled = txAsk("total reservoir storage");
 ensure("an unknown subject still finds its column", !!totalled, "no column matched");
 // And then the sum is refused, because those rows are eight snapshots of one
