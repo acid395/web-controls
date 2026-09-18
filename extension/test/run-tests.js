@@ -809,6 +809,15 @@ check("but click is", sb.verbFamily("click").includes("select"), true);
 // simply never opens on anything older, with nothing said about why.
 const mfv = require(require("path").join(__dirname, "..", "manifest.json"));
 check("a minimum Chrome version is declared", mfv.minimum_chrome_version, "114");
+// Every build called itself 0.5.0 for thirty commits, so a stale extension
+// was indistinguishable from a current one and "did you reload" could not be
+// answered by either side. The panel shows the version; the version has to
+// move when the extension does.
+ensure("the extension declares a version past 0.5.0",
+  mfv.version !== "0.5.0" && /^\d+\.\d+/.test(mfv.version), mfv.version);
+const panelHtml = require("fs").readFileSync(
+  require("path").join(__dirname, "..", "popup", "popup.html"), "utf8");
+ensure("and the panel shows it", /id="buildTag"/.test(panelHtml), "no build tag in the panel");
 
 section("a sentence is not a selector");
 // pageClick and its neighbours take a real CSS selector, and nothing anyone

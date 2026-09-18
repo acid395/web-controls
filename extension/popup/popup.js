@@ -384,6 +384,15 @@ function describeRoute() {
   });
 }
 
+// Which build is loaded, where it can be read without opening anything. Most
+// of the confusion about whether a fix had landed came down to having no way
+// to tell a reloaded extension from a stale one - every build called itself
+// 0.5.0, so "did you reload" was unanswerable by either side.
+document.addEventListener("DOMContentLoaded", () => {
+  const tag = document.getElementById("buildTag");
+  if (tag) tag.textContent = "v" + chrome.runtime.getManifest().version;
+});
+
 document.addEventListener("DOMContentLoaded", describeRoute);
 
 // The badge was read once, at load. A popup was destroyed on every blur, so
