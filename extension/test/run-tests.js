@@ -876,6 +876,29 @@ ensure("the current origin is re-read on navigation",
 ensure("and on a tab switch",
   /onActivated\.addListener\(rememberOrigin\)/.test(panel), "no onActivated listener");
 
+section("a river that names itself");
+// "North fork elkhorn river discharge" came back as an offer to click two
+// unrelated links. Two faults in a row, each of which alone would have been
+// enough.
+//
+// extractPlaceHint required a locational preposition - at, in, on, near, of -
+// so a question that simply names a river found no place, and the data
+// planner had nothing to plan with.
+const wb = (q, ctx) => sb.extractPlaceHint(q, ctx || {});
+check("a river names itself without a preposition",
+  wb("north fork elkhorn river discharge", { parameterMatched: "discharge" }), "north fork elkhorn river");
+check("to the last waterbody word, not the first",
+  wb("middle fork salmon river discharge", { parameterMatched: "discharge" }), "middle fork salmon river");
+check("a preposition still works", wb("discharge of the boise river", { parameterMatched: "discharge" }), "boise river");
+// The rule that stopped "parameter" becoming a river has to survive: this
+// needs a real waterbody word, and a control instruction has none.
+check("a control instruction is still not a place",
+  wb("set the parameter to gage height", { parameterMatched: "gage height" }), null);
+check("nor is a question about the page", wb("what is the current state"), null);
+// And the whole question now plans as data rather than falling through.
+check("so the question plans as data",
+  sb.planDataTool("north fork elkhorn river discharge", { global: "NOAA" }).name, "waterFindGauges");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
@@ -1397,6 +1420,14 @@ if (process.argv.includes("--live")) {
       const snake = await run("waterFindGauges", { place: "snake river" });
       ensure("snake river excludes Snake Creek",
         snake.result.gauges.every((x) => /\bsnake\b/i.test(x.name)), snake.result.gauges.slice(0, 3));
+
+      // The generics were dropped from the search, which threw away the word
+      // order: NORTH FORK ELKHORN RIVER became "%NORTH ELKHORN F%" and
+      // matched none of its two real gauges.
+      const nf = await run("waterFindGauges", { place: "north fork elkhorn river", parameter: "discharge" });
+      ensure("a generic in the middle of a name survives", nf.result.found > 0, nf.result.found);
+      ensure("and the gauges really are that river",
+        (nf.result.gauges || []).every((g) => /NORTH FORK ELKHORN/i.test(g.name)), (nf.result.gauges || []).map((g) => g.name));
 
       const bighorn = await run("waterFindGauges", { place: "bighorn river", parameter: "discharge" });
       ensure("bighorn river is found without a state", bighorn.result.found > 0, bighorn.result.found);

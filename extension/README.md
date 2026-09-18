@@ -1018,6 +1018,28 @@ says extensions cannot run on browser pages, an empty tab says to open a site
 first. Host access stays narrow - broad access is still opt-in, with a test
 that it has not quietly widened.
 
+### A river that names itself
+
+"North fork elkhorn river discharge" came back as an offer to click two
+unrelated links. Two faults in a row, either of which alone would have done it.
+
+`extractPlaceHint` required a locational preposition - at, in, on, near, of -
+because without one, "set the parameter to gage height" searched the country
+for a river called *parameter*. But the most natural way anybody names a river
+carries no preposition at all, so the question found no place, the data planner
+had nothing to plan with, and it fell through to matching page controls, where
+two weak label matches were the best on offer. A waterbody now names itself,
+guarded by needing an actual waterbody word, so the rule that stops *parameter*
+becoming a river still holds.
+
+Then the search would have missed it anyway. Generics were dropped from the
+name before querying, which threw away the word order: NORTH FORK ELKHORN RIVER
+became the tokens NORTH + ELKHORN and the pattern `%NORTH ELKHORN F%`, matching
+neither of its two real gauges. The pattern is now built from the words as
+written, generics included, joined by wildcards - only a *trailing* generic is
+shortened to its first letter, which is the one USGS abbreviates
+unpredictably ("SNAKE R AT").
+
 ## Tests
 
 ```

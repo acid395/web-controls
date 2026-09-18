@@ -362,8 +362,27 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
   // the current state" for one called "state" - both control instructions
   // turned into data queries. "at big sandy river" is a place; "to gage
   // height" is not.
-  const tail = t.match(/\b(?:at|in|on|near|along|around|for|of)\s+(.+)$/);
-  if (!tail) return null;
+  let tail = t.match(/\b(?:at|in|on|near|along|around|for|of)\s+(.+)$/);
+  if (!tail) {
+    // A waterbody names itself. "North Fork Elkhorn River discharge" carries
+    // no preposition, and requiring one meant the most natural way anybody
+    // names a river resolved to no place at all - the question then fell
+    // past the data planner entirely and came back as an offer to click an
+    // unrelated link.
+    //
+    // Safe because it needs an actual waterbody word: "set the parameter to
+    // gage height" has none, so the rule that stops "parameter" becoming a
+    // river still holds.
+    const named = Array.from(WATERBODY_GENERICS)
+      .filter((w) => w.length > 3 && !["the", "near", "above", "below"].includes(w))
+      .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Greedy to the LAST waterbody word, not the first: "north fork elkhorn
+    // river" is one name, and stopping at "fork" searched for a river called
+    // North Fork.
+    const wb = t.match(new RegExp(`\\b([a-z0-9'\\- ]*\\b(?:${named.join("|")}))\\b`));
+    if (!wb) return null;
+    tail = [wb[0], wb[1]];
+  }
   const raw = tail[1].split(/[^a-z0-9]+/).filter(Boolean);
   const words = raw.filter((w, i) => {
     if (w.length <= 1 || /^\d+$/.test(w)) return false;
@@ -1646,11 +1665,27 @@ async function usgsFindGauges({ place, parameter }) {
   // RIVER AT..." and the abbreviated "SNAKE R AT...", while excluding SNAKE
   // CREEK and SNAKEDEN. Some names put the generic first ("LAKE TAHOE"), so
   // both orders are tried.
-  const generic = (place || "").toLowerCase().split(/[^a-z0-9]+/).find((w) => WATERBODY_GENERICS.has(w) && w.length > 2);
-  const stem = tokens.join(" ").toUpperCase();
-  const patterns = generic
-    ? [`%${stem} ${generic[0].toUpperCase()}%`, `%${generic.toUpperCase()} ${stem}%`]
-    : [`%${tokens.join("%").toUpperCase()}%`];
+  // Order matters, and dropping the generics threw it away. "North Fork
+  // Elkhorn River" became the tokens NORTH + ELKHORN and the pattern
+  // "%NORTH ELKHORN F%", which matches nothing: the real gauge is NORTH FORK
+  // ELKHORN RIVER, with the generic in the middle. The river exists, has two
+  // gauges, and the search returned zero - so the question fell past the data
+  // planner and came back as an offer to click an unrelated link.
+  //
+  // So the pattern is built from the words as written, generics included,
+  // joined by wildcards. Only a trailing generic is shortened to its first
+  // letter, which is the one USGS abbreviates unpredictably ("SNAKE R AT"),
+  // and which was the reason for dropping them in the first place.
+  const words = (place || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+  const last = words[words.length - 1];
+  const trailingGeneric = WATERBODY_GENERICS.has(last) && last.length > 2 ? last : null;
+  const body = (trailingGeneric ? words.slice(0, -1) : words).map((w) => w.toUpperCase());
+  const forward = trailingGeneric
+    ? `%${body.join("%")} ${trailingGeneric[0].toUpperCase()}%`
+    : `%${body.join("%")}%`;
+  // Some names put the generic first - "LAKE TAHOE", "FORK CREEK".
+  const reversed = trailingGeneric ? `%${trailingGeneric.toUpperCase()} ${body.join("%")}%` : null;
+  const patterns = reversed ? [forward, reversed] : [forward];
 
   // Only letters, digits and spaces survive tokenizing, so nothing can break
   // out of the quoted CQL strings below.
