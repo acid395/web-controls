@@ -856,6 +856,32 @@ and says so. `form.requestSubmit()` is deliberately not used on a select - a
 page that wraps its controls in a form for styling would reload and lose
 everything.
 
+### A sentence is not a selector
+
+`pageClick` and its neighbours take a real CSS selector. Nothing anyone types
+is one - but the argument is a free string, so the scorer filled it with
+whatever words were left over. "Set the basemap to satellite" planned
+`pageClick{selector: "basemap satellite"}`, reported *"click - done"*, and
+changed nothing on the page.
+
+Verb families had made it total: select, choose, pick and set all reach
+`pageClick`'s own name word, so it hijacked nearly every command before the
+planner that actually reads the page could run.
+
+Tools whose schema requires a `selector` are now excluded from blind planning.
+They are still reachable the two ways that work - `planGenericTool`, which
+matches a live inventory and emits the selector it found, and the model, which
+is shown that same inventory. "Click 30 day precipitation" now finds the option
+inside the dropdown and follows through to it.
+
+### The badge froze on the page it was born on
+
+The route badge was read once, at load. A popup was destroyed on every blur, so
+that was the same as reading it fresh. A side panel is not: it stays open across
+navigations and tab switches, so the badge kept reporting "USGS - 13 tools" long
+after the user had moved somewhere else. It now refreshes on tab activation,
+navigation and window focus.
+
 ## Tests
 
 ```

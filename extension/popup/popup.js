@@ -355,6 +355,25 @@ function describeRoute() {
 
 document.addEventListener("DOMContentLoaded", describeRoute);
 
+// The badge was read once, at load. A popup was destroyed on every blur, so
+// that was the same as reading it fresh - a side panel is not. It stays open
+// across navigations and tab switches, so the badge froze on whichever page
+// happened to be open when the panel first appeared, and went on reporting
+// "USGS - 13 tools" long after the user had moved somewhere else entirely.
+let routeDebounce = null;
+function refreshRoute() {
+  clearTimeout(routeDebounce);
+  routeDebounce = setTimeout(describeRoute, 150);
+}
+chrome.tabs.onActivated.addListener(refreshRoute);
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  // A page announces itself many times while loading; only a settled URL or
+  // a finished load changes the answer.
+  if (!tab || !tab.active) return;
+  if (info.url || info.status === "complete") refreshRoute();
+});
+chrome.windows.onFocusChanged.addListener(refreshRoute);
+
 // Enter submits, which is what anyone types into a single-line box expects.
 // Up and down walk previous instructions, as any prompt does - most asks here
 // are a small edit of the last one.

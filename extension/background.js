@@ -3273,6 +3273,23 @@ function nameWordHit(word, text) {
   return false;
 }
 
+// pageClick, pageFill and their neighbours take a real CSS selector. Nothing
+// in a typed sentence is one, but the argument is a free string, so scoring
+// filled it with whatever words were left over: "set the basemap to
+// satellite" planned pageClick{selector: "basemap satellite"}. The verb
+// families made it total - select, choose, pick and set all reach pageClick's
+// name word - so it hijacked nearly every command before the planner that
+// actually reads the page ever ran.
+//
+// These tools are reachable two ways that do work: planGenericTool, which
+// matches against a live inventory and emits the selector it found, and the
+// model, which is shown that same inventory. Neither needs this one.
+function needsRealSelector(def) {
+  const props = (def.parameters && def.parameters.properties) || {};
+  const required = (def.parameters && def.parameters.required) || [];
+  return Boolean(props.selector) && required.includes("selector");
+}
+
 function scoreManifestTool(def, words, instruction) {
   const { fromName, description, enums } = toolVocabulary(def);
   const text = instruction.toLowerCase();
@@ -3425,7 +3442,7 @@ function redirectToPlace(instruction, routeGlobal, leftovers) {
 }
 
 function planManifestTool(instruction, routeGlobal) {
-  const defs = (TOOL_DEFS[routeGlobal] || []).filter((d) => !d.run);
+  const defs = (TOOL_DEFS[routeGlobal] || []).filter((d) => !d.run && !needsRealSelector(d));
   if (!defs.length) return null;
   const words = meaningfulWords(instruction);
   if (!words.length) return null;

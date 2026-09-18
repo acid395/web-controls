@@ -810,6 +810,27 @@ check("but click is", sb.verbFamily("click").includes("select"), true);
 const mfv = require(require("path").join(__dirname, "..", "manifest.json"));
 check("a minimum Chrome version is declared", mfv.minimum_chrome_version, "114");
 
+section("a sentence is not a selector");
+// pageClick and its neighbours take a real CSS selector, and nothing anyone
+// types is one - but the argument is a free string, so scoring filled it with
+// the leftover words: "set the basemap to satellite" planned
+// pageClick{selector: "basemap satellite"}, reported "click ... done", and
+// changed nothing. Verb families made it total, since select, choose, pick
+// and set all reach pageClick's own name word.
+for (const q of ["click 30 day precipitation", "select 30 day precipitation", "set the basemap to satellite"]) {
+  check(`"${q}" is not planned blind`, sb.planManifestTool(q, "GENERIC"), null);
+}
+// The tools that do know the page still plan normally.
+check("a named route is unaffected",
+  sb.planManifestTool("select alaska", "USGS").name, "usgsSelectState");
+check("and so is an enum on another route",
+  sb.planManifestTool("click satellite", "NOAA").name, "noaaSetBasemap");
+// Selector tools are recognised by their own schema, not by a hand-kept list.
+check("a selector tool is detected from its schema",
+  sb.needsRealSelector({ parameters: { properties: { selector: { type: "string" } }, required: ["selector"] } }), true);
+check("and a value tool is not",
+  sb.needsRealSelector({ parameters: { properties: { state: { type: "string" } }, required: ["state"] } }), false);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
@@ -915,6 +936,27 @@ else {
   ensure("the wind column does not answer a temperature question",
     !(hit("max temperature on hermantown mn", "hermantown") || []).some((h) => /wind|mph/i.test(h)),
     hit("max temperature on hermantown mn", "hermantown"));
+}
+
+// With the blind path closed, these reach the planner that reads the page -
+// which finds the option inside the dropdown and follows through to it.
+const dropPage = loadPage(`<!doctype html><html><body>
+  <label for="layer">Map layer</label>
+  <select id="layer">
+    <option value="cur">Current conditions</option>
+    <option value="p30">30 Day Precipitation</option>
+  </select><button type="submit">Go</button></body></html>`, { url: "https://example.gov/map" });
+if (!dropPage) skip("dropdown options", "jsdom not installed");
+else {
+  const inv = dropPage.GENERIC.inventory();
+  const pick = (q) => {
+    const g = sb.planGenericTool(q, inv);
+    return g && g.calls ? g.calls.map((c) => `${c.name} ${JSON.stringify(c.args)}`).join(" + ") : null;
+  };
+  const expected = 'pageSelectOption {"selector":"#layer","value":"p30"} + pageSubmit {"selector":"#layer"}';
+  check("an option inside a dropdown is found", pick("select 30 day precipitation"), expected);
+  check("clicking it means the same", pick("click 30 day precipitation"), expected);
+  check("and so does choosing it", pick("choose 30 day precipitation"), expected);
 }
 
 section("charts, maps and other pages");
