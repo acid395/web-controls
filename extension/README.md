@@ -796,6 +796,21 @@ level" is a measurement, which turned Pine Level, NC into Pine. A measurement
 noun that follows an ordinary word is part of a name; one that follows another
 measurement word is not.
 
+### Zero is not the same as could not look
+
+The badge read "any site - 0 controls" on a site that had never been enabled.
+`inventory()` had thrown, `.catch()` turned that into an empty array, and the
+length of the empty array was published as a count. Nothing was wrong with the
+page; nothing had looked at it.
+
+It compounded: the panel offers "Enable on this site" only when the capability
+call *fails*, and this one succeeded. So the failure presented as a finding and
+hid the single button that would have fixed it.
+
+A count and an inability to count are now different facts. `pageControls` is
+`null` when the page could not be read, `pageBlocked` carries the reason, and
+the badge shows "not enabled here" with the Enable button.
+
 ## Tests
 
 ```

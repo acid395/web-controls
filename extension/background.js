@@ -3809,7 +3809,15 @@ async function buildCapabilities() {
   const route = routeFor(tab.url);
 
   const manifestTools = (TOOL_DEFS[route.global] || []).filter((d) => !d.run);
-  const inv = await invokeOnActiveTab("inventory", []).catch(() => ({ ok: false }));
+  // Swallowing this error reported "0 controls" - a confident count, from a
+  // look that never happened. The commonest reason is that the site has not
+  // been enabled yet, and the panel hides the Enable button precisely when
+  // the answer looks successful, so the one action that would fix it becomes
+  // unreachable. A count of zero and an inability to count are different
+  // facts and are now reported as different facts.
+  const inv = await invokeOnActiveTab("inventory", [])
+    .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
+  const blocked = inv.ok ? null : (inv.error || "this page could not be read");
   const controls = inv.ok ? (inv.result.controls || []).filter((c) => c.label && c.confidence !== "low") : [];
 
   // Descriptions are written for people already, so their first sentence is
@@ -3823,12 +3831,15 @@ async function buildCapabilities() {
     ok: true,
     route: route.global,
     tools: manifestTools.map((t) => t.name),
-    pageControls: controls.length,
+    pageControls: blocked ? null : controls.length,
+    pageBlocked: blocked,
     display: {
       title: "What you can do here",
-      subtitle: route.global === "GENERIC"
-        ? `${controls.length} controls on this page, plus ${DATA_TOOLS.length} kinds of question`
-        : `${manifestTools.length} verified tools for ${route.global}, plus ${controls.length} controls found on the page`,
+      subtitle: blocked
+        ? `this page has not been read: ${blocked}`
+        : route.global === "GENERIC"
+          ? `${controls.length} controls on this page, plus ${DATA_TOOLS.length} kinds of question`
+          : `${manifestTools.length} verified tools for ${route.global}, plus ${controls.length} controls found on the page`,
       stats: [],
       rows: [
         ...manifestTools.slice(0, 10).map((t) => ({

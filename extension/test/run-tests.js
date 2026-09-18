@@ -618,7 +618,11 @@ const idssPage = {
   headings: ["Boulder Creek at Boulder, CO"],
   text: "Forecast points: Boulder, Denver, Fort Collins, Greeley, Pueblo",
   pairs: [], readouts: [], labelledNumbers: [],
-  tables: [{ columns: ["", "Thu Sep 17", "Fri Sep 18"], rows: [["Max Temp, \u00b0F", "82", "79"]] }],
+  // One data column on purpose. With several, "no day named" resolves to
+  // today's column, and the expected value would change with the day the
+  // suite is run - these tests are about which place may claim the table,
+  // not about which column wins.
+  tables: [{ columns: ["", "Thu Sep 17"], rows: [["Max Temp, \u00b0F", "82"]] }],
 };
 const fromIdss = (place) => {
   const hits = sb.findOnPage(idssPage, { wants: sb.pageValueWants("max temp"), place, day: null });
@@ -736,6 +740,21 @@ check("one gauge over time still averages",
 check("a town keeps its second word", sb.extractPlaceHint("max temp of pine level", {}), "pine level");
 check("a measurement does not become one", sb.extractPlaceHint("water level in wyoming", {}), "wyoming");
 check("and a bare measurement is still no place", sb.extractPlaceHint("discharge of level", {}), null);
+
+section("zero is not the same as could not look");
+// The capability badge reported "any site - 0 controls" on a site that had
+// never been enabled. The inventory call had thrown, the error was swallowed,
+// and the count of an empty array was published as a finding. Worse, the
+// panel only offers "Enable on this site" when the capability call fails -
+// so looking successful hid the one button that fixes it.
+const blockedCaps = { ok: true, route: "GENERIC", tools: [], pageControls: null,
+  pageBlocked: 'not enabled on this site yet. Click "Enable on this site" in the popup first.' };
+check("a blocked page reports no count", blockedCaps.pageControls, null);
+check("and says why instead", /not enabled/.test(blockedCaps.pageBlocked), true);
+// A page that really has nothing still reports a number, which is a finding.
+const emptyCaps = { ok: true, route: "GENERIC", tools: [], pageControls: 0, pageBlocked: null };
+check("an empty page still counts", emptyCaps.pageControls, 0);
+check("and is not called blocked", emptyCaps.pageBlocked, null);
 
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });

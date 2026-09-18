@@ -334,6 +334,16 @@ function describeRoute() {
       renderChips("GENERIC");
       return;
     }
+    // The page could not be read at all. Reporting a count here would be
+    // reporting the result of a look that never happened - and would hide the
+    // Enable button, which is the only thing that fixes the usual cause.
+    if (res.pageBlocked) {
+      text.textContent = /not enabled/i.test(res.pageBlocked)
+        ? "not enabled here" : "can't read this page";
+      document.getElementById("enableRow").classList.add("show");
+      renderChips(res.route);
+      return;
+    }
     const named = res.route !== "GENERIC";
     pill.classList.add(named ? "live" : "generic");
     text.textContent = named
