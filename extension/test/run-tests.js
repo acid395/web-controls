@@ -908,6 +908,57 @@ check("nor is a question about the page", wb("what is the current state"), null)
 check("so the question plans as data",
   sb.planDataTool("north fork elkhorn river discharge", { global: "NOAA" }).name, "waterFindGauges");
 
+section("the handler itself answers");
+// Every other test here drives a planner directly. None of them touches
+// chrome.runtime.onMessage -> smartAsk -> respond, which is the only thing
+// the extension actually runs. A throw or a missed respond() in that handler
+// fails every ask at once and is invisible to all 390 of them.
+const realPage = loadPage(
+  `<!doctype html><html><head><title>Drought</title></head><body>
+     <nav><a href="/skip">Skip to main content</a></nav>
+     <a class="nav-link" href="/current">Current Conditions</a>
+     <label for="layer">Data layer</label>
+     <select id="layer"><option value="cur">Current</option><option value="p30">30-Day Precipitation</option></select>
+     <table><tr><th>Gauge</th><th>Max Temp, °F</th></tr>
+       <tr><td>Site A</td><td>81</td></tr><tr><td>Site B</td><td>85</td></tr></table>
+   </body></html>`, { url: "https://www.drought.gov/" });
+if (!realPage) skip("end to end", "jsdom not installed");
+else {
+  const live = loadBackground({ page: realPage });
+  const ask = (q) => live.__ask({ type: "smartAsk", instruction: q });
+  const quietly = console.log;
+  runAsync(async () => {
+    console.log = () => {};                    // the handler logs every ask
+    try {
+      // A command reaches the page and acts on it.
+      const cmd = await ask("select 30 day precipitation");
+      console.log = quietly;
+      ensure("a command is planned and run", cmd.ok === true, cmd.error || cmd);
+      ensure("against a real control", /Applied|done/i.test((cmd.display || {}).title || ""), cmd.display);
+
+      console.log = () => {};
+      const caps = await ask("what can I do here");
+      console.log = quietly;
+      ensure("capabilities answer", caps.ok === true, caps.error || caps);
+      ensure("and count the page's controls", caps.pageControls > 0, caps.pageControls);
+
+      console.log = () => {};
+      const mcp = await ask("webmcp");
+      console.log = quietly;
+      ensure("webmcp answers on any page", mcp.ok === true, mcp.error || mcp);
+      check("with its own card", (mcp.display || {}).title, "WebMCP on this page");
+
+      // Nonsense must fail as an answer, not as a crash.
+      console.log = () => {};
+      const junk = await ask("fly me to the moon");
+      console.log = quietly;
+      ensure("nonsense is explained, not thrown", junk.ok === false && !!junk.display, junk);
+    } finally {
+      console.log = quietly;
+    }
+  });
+}
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
@@ -1541,8 +1592,23 @@ if (process.argv.includes("--live")) {
 // the whole remainder of the file unreachable, the summary included. On a
 // clean clone the suite printed a wall of skips, no counts at all, and exited
 // 0, which reads as "all fine" to a person and to CI alike.
+// The suite is otherwise synchronous; these few need to await. Tracked so the
+// summary cannot print before they have finished.
+let pendingAsync = 0;
+function runAsync(fn) {
+  pendingAsync++;
+  fn().catch((err) => {
+    failed++;
+    failures.push({ label: "end to end threw", actual: String((err && err.message) || err), expected: "no throw" });
+    console.log(`  FAIL end to end threw: ${(err && err.message) || err}`);
+  }).finally(() => { pendingAsync--; });
+}
+
 function report() {
   if (reported) return;
+  // The end-to-end checks are asynchronous; printing a summary before they
+  // finish would report a pass they had not earned.
+  if (pendingAsync > 0) { setTimeout(report, 25); return; }
   reported = true;
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
   if (skipped) {

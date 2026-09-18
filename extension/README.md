@@ -1062,6 +1062,21 @@ written, generics included, joined by wildcards - only a *trailing* generic is
 shortened to its first letter, which is the one USGS abbreviates
 unpredictably ("SNAKE R AT").
 
+### Testing the thing that actually runs
+
+Every test here drove a planner directly. None of them touched
+`chrome.runtime.onMessage` → `smartAsk` → `respond`, which is the only code
+path the extension actually executes. A throw or a missed `respond()` in that
+handler fails every ask at once and would have been invisible to all 390 of
+them - which is exactly the shape of "it just doesn't work" that is impossible
+to diagnose from a screenshot.
+
+`loadBackground({ page })` now wires the chrome stub to a real jsdom page:
+`chrome.tabs.sendMessage` resolves function names against that page's manifest,
+the way the bridge does in a browser. `__ask()` sends a message in and waits for
+what the handler sends back. So a test can ask a question the way the panel
+does and see the card that comes out.
+
 ## Tests
 
 ```
