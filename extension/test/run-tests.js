@@ -971,6 +971,35 @@ else {
   });
 }
 
+section("the same page on a different machine");
+// A question with no day named resolved the column from new Date(), so the
+// answer depended on where the reader was sitting: the same forecast table
+// read 79 in Los Angeles and 88 in Kiritimati, both confidently. A page that
+// labels a column "Today" has said which day it means, and that beats any
+// clock.
+const dayTable = (cols) => ({ title: "Point Forecast", headings: [], text: "x",
+  pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: cols, rows: [["Max Temp, \u00b0F", "82", "79", "88"]] }] });
+const columnFor = (cols) => {
+  const h = sb.findOnPage(dayTable(cols), { wants: ["high", "temperature"], place: null, day: null });
+  return h ? h[0].label : null;
+};
+check("the page's own label decides the day",
+  columnFor(["Weekly Summary", "Today", "Fri Sep 18", "Sat Sep 19"]),
+  "Max Temp, \u00b0F \u00b7 Today: 82");
+check("and so do the NWS period names",
+  columnFor(["Weekly Summary", "This Afternoon", "Tonight", "Saturday"]),
+  "Max Temp, \u00b0F \u00b7 This Afternoon: 82");
+// With nothing stated, the clock is the only guide left - but whichever
+// column it lands on is always named in the answer, so two readers who
+// disagree can see why.
+const fallback = columnFor(["Weekly Summary", "Thu Sep 17", "Fri Sep 18", "Sat Sep 19"]);
+ensure("a clock-chosen column still names itself", /Sep \d+:/.test(fallback || ""), fallback);
+// A named day always wins over both.
+const named = sb.findOnPage(dayTable(["Weekly Summary", "Today", "Fri Sep 18", "Sat Sep 19"]),
+  { wants: ["high", "temperature"], place: null, day: "saturday" });
+check("a day the user named beats the page's label", named[0].label, "Max Temp, \u00b0F \u00b7 Sat Sep 19: 88");
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

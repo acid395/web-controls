@@ -3318,6 +3318,17 @@ function findMeasurementRows(pageData, { wants, place, day }) {
       // begin with yesterday, so "first numeric cell" quietly answers about
       // the wrong day.
       if (index === -1) {
+        // The page's own word for it beats the reader's clock. A forecast
+        // table that labels a column "Today" is stating which day it means;
+        // deriving it from new Date() instead made the answer depend on where
+        // the reader is sitting - the same table read 79 in Los Angeles and 88
+        // in Kiritimati, both confidently, because their "today" differ.
+        index = columns.findIndex((c) => /\btoday\b|\bthis afternoon\b|\btonight\b/i.test(String(c)));
+      }
+      if (index === -1) {
+        // No such label: fall back to the reader's clock, which is right for
+        // a reader in the same timezone as the place and defensible anywhere,
+        // because the column it picks is always named in the answer.
         const today = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][new Date().getDay()];
         index = columns.findIndex((c) => String(c).toLowerCase().includes(today));
       }
