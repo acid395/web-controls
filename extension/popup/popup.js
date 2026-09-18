@@ -349,16 +349,33 @@ const EXAMPLES = {
 function renderChips(route) {
   const box = document.getElementById("chips");
   box.textContent = "";
-  for (const text of (EXAMPLES[route] || EXAMPLES.GENERIC).slice(0, 4)) {
+  const add = (text, { run = true, title = "" } = {}) => {
     const chip = el("button", "chip", text);
+    if (title) chip.title = title;
     chip.addEventListener("click", () => {
       const field = document.getElementById("smartInstruction");
       field.value = text;
       field.focus();
-      document.getElementById("smartAsk").click();
+      // A chip that fills the box but does not send it is for the ones you
+      // are meant to finish typing.
+      if (run) document.getElementById("smartAsk").click();
+      else field.setSelectionRange(field.value.length, field.value.length);
     });
     box.appendChild(chip);
-  }
+  };
+
+  for (const text of (EXAMPLES[route] || EXAMPLES.GENERIC).slice(0, 4)) add(text);
+  add("diagnose", { title: "check this install end to end" });
+  add("webmcp", { title: "the tools an agent can call on this page" });
+
+  // The model prefix only exists as text typed into the box, which made it
+  // unfindable: it was mentioned once, inside a collapsed panel. Offered here
+  // when the model is on, and left unsent so the question can be finished.
+  chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
+    if (localModelEnabled === true) {
+      add("model: ", { run: false, title: "put the next question straight to the local model" });
+    }
+  });
 }
 
 function describeRoute() {
@@ -530,6 +547,7 @@ chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
 });
 localModelBox.addEventListener("change", () => {
   chrome.storage.local.set({ localModelEnabled: localModelBox.checked }, () => {
+    describeRoute(); // the model chip appears or disappears with the switch
     logEcho(localModelBox.checked
       ? "local model enabled - it will start downloading/loading in the background"
       : "local model disabled - Ask will use the instant paths only");
