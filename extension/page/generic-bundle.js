@@ -1507,7 +1507,16 @@
  * background script. Function lookup walks every manifest global present, so
  * injecting a named manifest and GENERIC together works.
  */
-if (!window.__wcPageBridgeInstalled) {
+// Replace, do not skip. A boolean guard meant a tab that was already open
+// kept the bridge from whichever build first touched it: reloading the
+// extension replaced window.GENERIC but left the old listener in place, so
+// any fix to the bridge itself silently did not apply until the page was
+// reloaded too. That is invisible from the outside and looks exactly like a
+// fix that did not work.
+if (window.__wcPageBridge) {
+  window.removeEventListener("message", window.__wcPageBridge);
+}
+{
   window.__wcPageBridgeInstalled = true;
 
   // postMessage structured-clones its payload, and a DOM node cannot be
@@ -1537,7 +1546,7 @@ if (!window.__wcPageBridgeInstalled) {
       return out;
     }
   };
-  window.addEventListener("message", async (e) => {
+  window.__wcPageBridge = async (e) => {
     if (e.source !== window) return;
     if (!e.data || e.data.channel !== "web-controls-req") return;
     const { id, fn, args } = e.data;
@@ -1554,5 +1563,6 @@ if (!window.__wcPageBridgeInstalled) {
     } catch (err) {
       window.postMessage({ channel: "web-controls-res", id, ok: false, error: String((err && err.message) || err) }, "*");
     }
-  });
+  };
+  window.addEventListener("message", window.__wcPageBridge);
 }

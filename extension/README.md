@@ -1077,6 +1077,24 @@ the way the bridge does in a browser. `__ask()` sends a message in and waits for
 what the handler sends back. So a test can ask a question the way the panel
 does and see the card that comes out.
 
+### Reloading has to actually reload
+
+The page bridge guarded itself with a boolean, so the first build to touch a
+tab owned it. Reloading the extension replaced `window.GENERIC` on the next
+injection but left the old listener attached - so any fix to the bridge itself
+did nothing until the page was reloaded too. From outside that is
+indistinguishable from a fix that did not work, which is a bad way to spend an
+afternoon.
+
+The handler is kept on `window.__wcPageBridge` and removed before the new one
+is attached, so re-injection replaces it. A test re-injects the bundle into a
+live page and asserts the listener changed.
+
+Note what a reload still cannot do: a change to `permissions` or
+`host_permissions` needs the extension removed and re-added, because Chrome
+does not re-prompt on reload and the new permission simply stays ungranted.
+The panel shows its version for exactly this reason.
+
 ## Tests
 
 ```

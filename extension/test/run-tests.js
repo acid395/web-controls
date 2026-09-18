@@ -1307,6 +1307,26 @@ else {
     navMcp.GENERIC.mcpTools().readFrom, "navigator.modelContext.getTools");
 }
 
+// Reloading the extension must actually take effect on tabs that are already
+// open. The bridge guarded itself with a boolean, so the first build to touch
+// a page owned it: window.GENERIC was replaced on re-injection but the old
+// listener stayed, and any fix to the bridge did nothing until the page was
+// reloaded too - indistinguishable from a fix that did not work.
+const reinject = loadPage("<!doctype html><html><body><a id=a href=\"/x\">Contact</a></body></html>", { url: "https://example.gov/" });
+if (!reinject) skip("re-injection replaces the bridge", "jsdom not installed");
+else {
+  const first = reinject.__wcPageBridge;
+  ensure("the bridge handler is reachable", typeof first === "function", typeof first);
+  const again = reinject.document.createElement("script");
+  again.textContent = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "page", "generic-bundle.js"), "utf8");
+  const quiet = console.log; console.log = () => {};
+  reinject.document.body.appendChild(again);
+  console.log = quiet;
+  ensure("re-injection replaces it", reinject.__wcPageBridge !== first, "the old listener survived");
+  ensure("and the manifest is replaced too", typeof reinject.GENERIC.click === "function", "GENERIC lost");
+}
+
 section("charts, maps and other pages");
 const chartPage = loadPage(`<!doctype html><html><head><title>Gauge</title></head><body>
   <canvas id="c" width="400" height="200"></canvas>
