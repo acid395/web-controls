@@ -88,7 +88,10 @@
   const realClick = (elOrSel) => {
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`realClick: not found: ${elOrSel}`);
-    el.scrollIntoView({ block: "center", inline: "center" });
+    // Guarded so a click is testable outside a real browser: jsdom has no
+    // scrollIntoView, and without this every click threw there rather than
+    // being exercised.
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center", inline: "center" });
     el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
@@ -1207,7 +1210,13 @@
     capturedFeeds,
     capturedFeed,
     mapInfo,
-    click: (selector) => realClick(selector),
+    // What was clicked, in words. realClick hands back the element because
+    // callers inside this file use it; nothing outside can receive one.
+    click: (selector) => {
+      const el = realClick(selector);
+      return { clicked: String(el.tagName || "").toLowerCase(),
+        label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined };
+    },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
@@ -1239,6 +1248,34 @@
  */
 if (!window.__wcPageBridgeInstalled) {
   window.__wcPageBridgeInstalled = true;
+
+  // postMessage structured-clones its payload, and a DOM node cannot be
+  // cloned. click() returns the element it clicked, so a click that worked
+  // perfectly came back as "HTMLAnchorElement object could not be cloned" -
+  // an action reported as a failure after it had already happened, which is
+  // the one error people retry until they break something.
+  //
+  // Guarded here rather than at each call site so nothing a manifest returns,
+  // now or later, can fail on the way home.
+  const describeNode = (n) => ({
+    element: String(n.tagName || "node").toLowerCase(),
+    text: String(n.textContent || "").trim().slice(0, 80) || undefined,
+    id: n.id || undefined,
+    href: n.href || undefined,
+  });
+  const postable = (v) => {
+    if (v == null || typeof v !== "object") return v;
+    if (typeof Node !== "undefined" && v instanceof Node) return describeNode(v);
+    try {
+      if (typeof structuredClone === "function") structuredClone(v);
+      return v;
+    } catch (e) {
+      if (Array.isArray(v)) return v.map(postable);
+      const out = {};
+      for (const k of Object.keys(v)) { try { out[k] = postable(v[k]); } catch (e2) { out[k] = String(v[k]); } }
+      return out;
+    }
+  };
   window.addEventListener("message", async (e) => {
     if (e.source !== window) return;
     if (!e.data || e.data.channel !== "web-controls-req") return;
@@ -1252,7 +1289,7 @@ if (!window.__wcPageBridgeInstalled) {
         .find((t) => t && typeof t[fn] === "function");
       if (!owner) throw new Error(`${fn} is not a function on any manifest loaded here (tried ${names.join(", ")})`);
       const result = await owner[fn](...(args || []));
-      window.postMessage({ channel: "web-controls-res", id, ok: true, result }, "*");
+      window.postMessage({ channel: "web-controls-res", id, ok: true, result: postable(result) }, "*");
     } catch (err) {
       window.postMessage({ channel: "web-controls-res", id, ok: false, error: String((err && err.message) || err) }, "*");
     }

@@ -959,6 +959,22 @@ else {
   check("and so does choosing it", pick("choose 30 day precipitation"), expected);
 }
 
+// postMessage structured-clones its payload and a DOM node cannot be cloned.
+// click() returned the element it clicked, so a click that had already worked
+// came home as "HTMLAnchorElement object could not be cloned" - an action
+// reported as a failure after the fact, which is the kind of error people
+// retry until something breaks.
+const clickPage = loadPage(`<!doctype html><html><body>
+  <a id="tab" class="map-tab" href="https://example.gov/p">30-Day Precipitation</a>
+  </body></html>`, { url: "https://example.gov/" });
+if (!clickPage) skip("click results travel", "jsdom not installed");
+else {
+  const r = clickPage.GENERIC.click("#tab");
+  check("a click says what it clicked", r, { clicked: "a", label: "30-Day Precipitation" });
+  ensure("and the answer can be posted home",
+    (() => { try { structuredClone(r); return true; } catch (e) { return false; } })(), r);
+}
+
 section("charts, maps and other pages");
 const chartPage = loadPage(`<!doctype html><html><head><title>Gauge</title></head><body>
   <canvas id="c" width="400" height="200"></canvas>

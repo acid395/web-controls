@@ -88,7 +88,10 @@
   const realClick = (elOrSel) => {
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`realClick: not found: ${elOrSel}`);
-    el.scrollIntoView({ block: "center", inline: "center" });
+    // Guarded so a click is testable outside a real browser: jsdom has no
+    // scrollIntoView, and without this every click threw there rather than
+    // being exercised.
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center", inline: "center" });
     el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
@@ -1207,7 +1210,13 @@
     capturedFeeds,
     capturedFeed,
     mapInfo,
-    click: (selector) => realClick(selector),
+    // What was clicked, in words. realClick hands back the element because
+    // callers inside this file use it; nothing outside can receive one.
+    click: (selector) => {
+      const el = realClick(selector);
+      return { clicked: String(el.tagName || "").toLowerCase(),
+        label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined };
+    },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),

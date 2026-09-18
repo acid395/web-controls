@@ -882,6 +882,23 @@ navigations and tab switches, so the badge kept reporting "USGS - 13 tools" long
 after the user had moved somewhere else. It now refreshes on tab activation,
 navigation and window focus.
 
+### An action that worked, reported as a failure
+
+Clicking a map tab on drought.gov returned *"Failed to execute 'postMessage' on
+'Window': HTMLAnchorElement object could not be cloned."* The click had already
+happened. `postMessage` structured-clones its payload, `click()` returned the
+element it clicked, and a DOM node cannot be cloned - so the answer died on the
+way home and the action was reported as failed after succeeding.
+
+That is the worst shape an error can take, because the natural response is to
+try again, and the action runs twice.
+
+The page bridge now makes any result postable before sending it: a node becomes
+`{element, text, id, href}`, anything else unclonable is walked key by key.
+Guarded there rather than at each call site, so nothing a manifest returns, now
+or later, can fail on the way back. `click()` also returns `{clicked, label}` in
+its own right, which is what anyone reading the result wanted anyway.
+
 ## Tests
 
 ```
