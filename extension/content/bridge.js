@@ -40,7 +40,11 @@ if (!self.__wcBridgeInstalled) {
         pending.delete(id);
         sendResponse({ ok: false, error: "timed out waiting for the page bundle to reply" });
       }
-    }, 8000);
+      // Publishing forty tools onto a heavy page, then reading an inventory
+      // off it, does not always fit in eight seconds - and the symptom was
+      // "could not read this page's controls" on a page that had been read
+      // successfully moments before.
+    }, 20000);
 
     return true; // keep sendResponse valid across the async wait
   });

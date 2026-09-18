@@ -1007,6 +1007,12 @@ browser to consume, and no enumeration surface is guaranteed to page script. So
 several are probed in order, and anything registered here is kept in a local
 registry that is always readable and always callable.
 
+The API also moved. It began on `navigator.modelContext` and now lives on
+`document.modelContext`; the old spelling still works but logs a deprecation
+warning **on every access**, which on a page this extension touches repeatedly
+filled the browser's extension error list with noise and buried anything real.
+`document` is preferred, `navigator` is the fallback, and both are tested.
+
 The API is young - a W3C Community Group report, native in Edge 147, origin
 trial in Chrome 149, absent elsewhere. Every entry point reports that in plain
 words instead of failing somewhere later.

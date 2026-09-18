@@ -1171,7 +1171,7 @@
    * afterwards whether anything moved. That is a reconstruction, and it is
    * wrong whenever the markup is unusual.
    *
-   * A page that registers navigator.modelContext tools has stated what it can
+   * A page that registers modelContext tools has stated what it can
    * do, in its own words, with real parameter schemas. There is nothing to
    * infer and nothing to verify by diffing - it is the difference between
    * reading a menu and guessing at the kitchen. So when a page offers them,
@@ -1188,7 +1188,20 @@
    * ========================================================================== */
   const MCP_REGISTRY = (window.__wcMcpRegistry = window.__wcMcpRegistry || []);
 
-  const mcpApi = () => (typeof navigator !== "undefined" && navigator.modelContext) || null;
+  // The API moved. It began on navigator and now lives on document -
+  // navigator.modelContext still works but logs a deprecation warning on
+  // every single access, which on a page this extension touches repeatedly
+  // fills the extension's error list with noise and buries anything real.
+  //
+  // document first, navigator as the fallback, so both drafts work and the
+  // newer one is never the thing that warns.
+  const mcpApi = () => {
+    if (typeof document !== "undefined" && document.modelContext) return document.modelContext;
+    if (typeof navigator !== "undefined" && navigator.modelContext) return navigator.modelContext;
+    return null;
+  };
+  const mcpApiName = () =>
+    (typeof document !== "undefined" && document.modelContext) ? "document.modelContext" : "navigator.modelContext";
 
   // A tool's shape differs slightly between the drafts, so it is normalised
   // to one thing before anyone upstream has to reason about it.
@@ -1203,7 +1216,7 @@
     const api = mcpApi();
     if (!api) {
       return { available: false, tools: 0,
-        note: "this browser has no navigator.modelContext - needs Edge 147+, or Chrome with the WebMCP origin trial" };
+        note: "this browser has no modelContext API - needs Edge 147+, or Chrome with the WebMCP origin trial" };
     }
     const found = mcpTools();
     return {
@@ -1213,7 +1226,7 @@
       tools: found.tools.length,
       note: found.tools.length
         ? "this page declares its own tools; they are preferred over reading the page"
-        : "navigator.modelContext exists but this page has registered nothing",
+        : `${mcpApiName()} exists but this page has registered nothing`,
     };
   }
 
@@ -1231,7 +1244,7 @@
           // page's, and preferring those over reading the page would mean
           // calling ourselves through a longer pipe.
           const mine = new Set(MCP_REGISTRY.map((t) => t.name));
-          return { available: true, readFrom: `navigator.modelContext.${key}`,
+          return { available: true, readFrom: `${mcpApiName()}.${key}`,
             tools: got.map((t) => normaliseTool(t, mine.has(t.name) ? "extension" : "page")) };
         }
       } catch (e) { /* try the next one */ }
@@ -1246,7 +1259,7 @@
 
   async function mcpCall(name, args) {
     const api = mcpApi();
-    if (!api) throw new Error("this browser has no navigator.modelContext");
+    if (!api) throw new Error("this browser has no modelContext API");
 
     // A tool we registered can be run directly - no round trip through an API
     // that may not expose invocation to page script at all.
@@ -1256,7 +1269,7 @@
     }
     for (const key of ["callTool", "invokeTool", "invoke"]) {
       if (typeof api[key] === "function") {
-        return { ranVia: `navigator.modelContext.${key}`, result: await api[key](name, args || {}) };
+        return { ranVia: `${mcpApiName()}.${key}`, result: await api[key](name, args || {}) };
       }
     }
     throw new Error(`navigator.modelContext offers no way to call "${name}" from page script`);
@@ -1267,7 +1280,7 @@
   function mcpRegister(tools) {
     const api = mcpApi();
     if (!api || typeof api.registerTool !== "function") {
-      return { registered: 0, note: "this browser has no navigator.modelContext.registerTool" };
+      return { registered: 0, note: `this browser has no ${mcpApiName()}.registerTool` };
     }
     const names = [];
     for (const t of tools || []) {
@@ -1373,7 +1386,7 @@
   function mcpPublishControls({ max = 40 } = {}) {
     const api = mcpApi();
     if (!api || typeof api.registerTool !== "function") {
-      return { registered: 0, note: "this browser has no navigator.modelContext.registerTool" };
+      return { registered: 0, note: `this browser has no ${mcpApiName()}.registerTool` };
     }
     const taken = new Set(MCP_REGISTRY.map((t) => t.name));
     const names = [];

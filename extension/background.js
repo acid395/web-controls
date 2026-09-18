@@ -155,6 +155,19 @@ async function publishTools(routeGlobal, tabId) {
 // point. Every page load on an origin already granted gets the bundles and
 // the tools, whether or not the panel is ever opened.
 const PUBLISHED_RECENTLY = new Map();
+
+// Publishing is idempotent but not free. Guarded by the same map the page-load
+// path uses, so a page is published to once however it is reached.
+async function publishOnce(tabId, routeGlobal) {
+  const [tab] = tabId ? [{ id: tabId }] : await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id) return;
+  const full = await chrome.tabs.get(tab.id).catch(() => null);
+  const url = full && full.url;
+  if (!url) return;
+  if (PUBLISHED_RECENTLY.get(tab.id) === url) return;
+  PUBLISHED_RECENTLY.set(tab.id, url);
+  await publishTools(routeGlobal, tab.id);
+}
 async function autoPublish(tabId, url) {
   if (!url || !/^https?:/.test(url)) return;
   const pattern = originPatternFor(url);
@@ -2828,7 +2841,12 @@ function explainFailure(instruction, route, inv, { modelOff }) {
   const checked = [
     `data questions (${caps.dataQuestions.length} available)`,
     route.global !== "GENERIC" ? `${route.global} page tools (${caps.pageTools.length})` : null,
-    pageReadable ? `${controls.length} controls on this page` : "could not read this page's controls",
+    pageReadable ? `${controls.length} controls on this page`
+      // Why, not just that. "Could not read this page's controls" sent people
+      // rewording a question when the real answer was a timeout or a missing
+      // permission - and on a page whose controls had been read moments
+      // earlier it read as nonsense.
+      : `could not read this page's controls${inv && inv.error ? ` - ${String(inv.error).slice(0, 70)}` : ""}`,
   ].filter(Boolean);
 
   return {
@@ -4442,10 +4460,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // can do; scraping is our reconstruction of it. This block sat below
         // both the page reader and the data lookups, so a page that declared
         // its tools was scraped anyway and the rung did nothing.
-        // Hand this route's verified tools to any WebMCP agent watching. Its
-        // result is deliberately ignored: this is for other agents, not for
-        // this extension, and a browser without the API changes nothing.
-        publishTools(route.global).catch(() => {});
+        // Once per page, not once per ask. Publishing registers forty-odd
+        // tools through the page bridge, which has an eight second timeout;
+        // doing it again before every question spent that budget on work
+        // already done, and the inventory call behind it was the one that
+        // then came back empty - reported as "could not read this page's
+        // controls" on a page whose controls had been read moments earlier.
+        publishOnce(sender && sender.tab && sender.tab.id, route.global).catch(() => {});
 
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
 

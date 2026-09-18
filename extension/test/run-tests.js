@@ -1093,6 +1093,9 @@ const mcpPage = loadPage("<!doctype html><html><body><p>plain</p></body></html>"
 if (!mcpPage) skip("WebMCP on a page", "jsdom not installed");
 else {
   // A browser without the API says so, rather than failing somewhere later.
+  // The API moved from navigator to document. navigator still works but warns
+  // on every access, which filled the extension's error list with noise on
+  // any page this touches repeatedly.
   const bare = mcpPage.GENERIC.mcpInfo();
   check("an unsupporting browser is reported plainly", bare.available, false);
   ensure("and says what it would need", /modelContext/.test(bare.note), bare.note);
@@ -1117,6 +1120,7 @@ else {
   // Registered tools are readable and runnable even where the API exposes
   // no way to enumerate or invoke from page script.
   const listed = mcpPage.GENERIC.mcpTools();
+
   check("what was registered can be read back", listed.tools.map((t) => t.name), ["pageClick"]);
   check("and it says where it read them", listed.readFrom, "local registry");
 
@@ -1203,6 +1207,41 @@ else {
   // Publishing twice must not double-register.
   const again = agentPage.GENERIC.mcpPublishControls();
   check("republishing adds nothing", again.registered, 0);
+}
+
+// document.modelContext is the current spelling; navigator.modelContext is
+// deprecated and warns on every access.
+const docMcp = loadPage("<!doctype html><html><body><p>x</p></body></html>", { url: "https://example.gov/" });
+if (!docMcp) skip("modelContext on document", "jsdom not installed");
+else {
+  const shelf = [];
+  Object.defineProperty(docMcp.document, "modelContext", {
+    configurable: true, value: { registerTool: (d) => shelf.push(d), getTools: () => shelf },
+  });
+  docMcp.GENERIC.mcpRegister([{ name: "pageClick", fn: "click", argOrder: ["selector"], description: "Click",
+    parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } }]);
+  const got = docMcp.GENERIC.mcpTools();
+  check("document.modelContext is used", got.readFrom, "document.modelContext.getTools");
+  check("and its tools are found", got.tools.length, 1);
+  // Preferred over the deprecated one when both exist.
+  Object.defineProperty(docMcp.navigator, "modelContext", {
+    configurable: true, value: { registerTool() {}, getTools: () => [{ name: "fromNavigator" }] },
+  });
+  check("document wins over navigator", docMcp.GENERIC.mcpTools().readFrom, "document.modelContext.getTools");
+}
+
+// The older spelling still has to work, for a browser that only has that one.
+const navMcp = loadPage("<!doctype html><html><body><p>x</p></body></html>", { url: "https://example.gov/" });
+if (!navMcp) skip("modelContext on navigator", "jsdom not installed");
+else {
+  const shelf = [];
+  Object.defineProperty(navMcp.navigator, "modelContext", {
+    configurable: true, value: { registerTool: (d) => shelf.push(d), getTools: () => shelf },
+  });
+  navMcp.GENERIC.mcpRegister([{ name: "pageClick", fn: "click", argOrder: ["selector"], description: "Click",
+    parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } }]);
+  check("navigator alone still works",
+    navMcp.GENERIC.mcpTools().readFrom, "navigator.modelContext.getTools");
 }
 
 section("charts, maps and other pages");
