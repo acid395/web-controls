@@ -899,6 +899,20 @@ Guarded there rather than at each call site, so nothing a manifest returns, now
 or later, can fail on the way back. `click()` also returns `{clicked, label}` in
 its own right, which is what anyone reading the result wanted anyway.
 
+### The rest of that class
+
+Auditing every tool on every route for the same shape turned up three more
+arguments that are free strings by type and are nothing anyone types: a radio
+group's `name` attribute, a URL, and a hex colour. Each was being filled with
+leftover words, winning the plan, and then failing - having already shut out
+the planner that reads the page.
+
+Group and URL join selector as page knowledge, excluded from blind planning.
+A URL cannot survive word-splitting anyway: "read the url
+https://waterdata.usgs.gov/wi" reaches the planner as "https waterdata usgs gov
+wi". Colour is handled by a schema `pattern`, so `#ff0000` plans and "blue"
+does not.
+
 ## Tests
 
 ```

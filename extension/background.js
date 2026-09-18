@@ -737,7 +737,7 @@ const TOOL_DEFS = {
     {
       name: "fcpSetRingColor", fn: "setRingColor", argOrder: ["hex"],
       description: "Set the range ring's color. Opens the ring config panel itself.",
-      parameters: { type: "object", properties: { hex: { type: "string", description: "e.g. #ff0000" } }, required: ["hex"] },
+      parameters: { type: "object", properties: { hex: { type: "string", pattern: "^#?[0-9a-f]{3,8}$", description: "e.g. #ff0000" } }, required: ["hex"] },
     },
     {
       name: "fcpAddRing", fn: "addRing", argOrder: [],
@@ -3284,10 +3284,18 @@ function nameWordHit(word, text) {
 // These tools are reachable two ways that do work: planGenericTool, which
 // matches against a live inventory and emits the selector it found, and the
 // model, which is shown that same inventory. Neither needs this one.
+// A selector is the clearest case, but not the only one: pagePickRadio needs
+// the radio group's name attribute, which nobody types either - planned blind
+// it filled group and value with the same leftover words and picked a group
+// that does not exist.
 function needsRealSelector(def) {
   const props = (def.parameters && def.parameters.properties) || {};
   const required = (def.parameters && def.parameters.required) || [];
-  return Boolean(props.selector) && required.includes("selector");
+  // A url belongs here too. meaningfulWords strips punctuation before any of
+  // this runs, so "read the url https://waterdata.usgs.gov/wi" arrives as
+  // "https waterdata usgs gov wi" - a real URL cannot survive the trip, and
+  // anything that does survive is not one.
+  return ["selector", "group", "url"].some((k) => Boolean(props[k]) && required.includes(k));
 }
 
 function scoreManifestTool(def, words, instruction) {
@@ -3353,7 +3361,7 @@ function argsForTool(def, instruction, words) {
     // A free string: quoted text, else the words the tool's own name does not
     // already account for.
     const quoted = instruction.match(/["']([^"']{2,60})["']/);
-    if (quoted) { args[key] = quoted[1]; continue; }
+    if (quoted) { if (!spec.pattern || new RegExp(spec.pattern, "i").test(quoted[1])) args[key] = quoted[1]; continue; }
     // The tool's own name words, plus whatever stood in for them. Stripping
     // only the literal name left the synonym in the value: selectState ate
     // "select alaska" down to "alaska" but handed back "pick alaska".
@@ -3361,7 +3369,14 @@ function argsForTool(def, instruction, words) {
     const standIns = new Set();
     for (const w of nameWords) for (const v of (verbFamily(w) || [])) standIns.add(v);
     const leftover = words.filter((w) => !nameWords.has(w) && !standIns.has(w));
-    if (leftover.length) args[key] = leftover.join(" ");
+    if (!leftover.length) continue;
+    const value = leftover.join(" ");
+    // Some free strings are only free in type. A url is a url and a hex
+    // colour is a hex colour; filling either with leftover words produced a
+    // tool call that could only fail, having first won the plan and shut out
+    // the planner that would have got it right.
+    if (spec.pattern && !new RegExp(spec.pattern, "i").test(value)) continue;
+    args[key] = value;
   }
 
   // A required argument with nothing to fill it means this is the wrong tool.

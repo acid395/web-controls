@@ -825,11 +825,35 @@ check("a named route is unaffected",
   sb.planManifestTool("select alaska", "USGS").name, "usgsSelectState");
 check("and so is an enum on another route",
   sb.planManifestTool("click satellite", "NOAA").name, "noaaSetBasemap");
+// Auditing for the rest of the class turned up three more. A radio group's
+// name attribute, a URL and a hex colour are all "free strings" by type and
+// none of them is anything a person types - each was being filled with
+// leftover words, winning the plan, and then failing.
+check("a radio group is not guessed", sb.planManifestTool("pick observed radio", "GENERIC"), null);
+check("nor is a colour", sb.planManifestTool("set the ring color to blue", "FCP"), null);
+check("a real hex still works",
+  sb.planManifestTool("set the ring color to #ff0000", "FCP").args.hex, "ff0000");
+// A URL cannot survive word-splitting, so nothing that does survive is one.
+check("a url is never assembled from words",
+  ["pageReadUrl"].includes((sb.planManifestTool("read the url for precipitation", "GENERIC") || {}).name), false);
+// The tools that legitimately take words from the sentence are untouched.
+for (const [q, route, name] of [
+  ["search for boise", "NOAA", "noaaSearch"],
+  ["select alaska", "USGS", "usgsSelectState"],
+  ["click satellite", "NOAA", "noaaSetBasemap"],
+  ["open the layers panel", "NOAA", "noaaOpenLayers"],
+  ["download csv", "SITE", "siteDownloadData"],
+]) check(`${q} still plans`, sb.planManifestTool(q, route).name, name);
+
 // Selector tools are recognised by their own schema, not by a hand-kept list.
 check("a selector tool is detected from its schema",
   sb.needsRealSelector({ parameters: { properties: { selector: { type: "string" } }, required: ["selector"] } }), true);
 check("and a value tool is not",
   sb.needsRealSelector({ parameters: { properties: { state: { type: "string" } }, required: ["state"] } }), false);
+check("a group is page knowledge too",
+  sb.needsRealSelector({ parameters: { properties: { group: { type: "string" } }, required: ["group"] } }), true);
+check("and so is a url",
+  sb.needsRealSelector({ parameters: { properties: { url: { type: "string" } }, required: ["url"] } }), true);
 
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
