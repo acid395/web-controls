@@ -1403,6 +1403,50 @@
     { name: "listPageDataRequests", description: "List the data requests this page has made, which is where a chart's real numbers come from when the chart is a canvas.", run: () => capturedFeeds() },
   ];
 
+  // The descriptors, built without touching navigator/document.modelContext.
+  //
+  // Registration needs that API and most browsers do not have it yet, but the
+  // descriptors are useful with or without it: they are what a model should be
+  // choosing between. Deriving them separately means a local model gets named,
+  // schema'd tools on any browser, and registration becomes the extra step it
+  // actually is rather than a precondition.
+  const PAGE_TOOLS = new Map();
+
+  function pageToolDescriptors({ max = 40 } = {}) {
+    PAGE_TOOLS.clear();
+    const out = [];
+    const add = (name, description, inputSchema, execute) => {
+      if (PAGE_TOOLS.has(name)) return;
+      PAGE_TOOLS.set(name, { name, description, inputSchema, execute });
+      out.push({ name, description, inputSchema });
+    };
+
+    for (const r of READERS) {
+      add(r.name, r.description, { type: "object", properties: {} }, async () => r.run());
+    }
+    const inv = inventory();
+    const usable = (inv.controls || [])
+      .filter((c) => c.label && c.selector && c.confidence !== "low")
+      .slice(0, max);
+    for (const c of usable) {
+      add(toolName(c.label, verbFor(c)),
+        `${c.label} - ${c.kind || "control"} on this page`.slice(0, 160),
+        schemaFor(c), runnerFor(c));
+    }
+    return { tools: out, fromControls: usable.length, url: location.href };
+  }
+
+  // Run one by name. The selector never left this file, so a caller - model
+  // or agent - names the thing it wants and nothing else.
+  async function pageToolCall(name, args) {
+    if (!PAGE_TOOLS.size) pageToolDescriptors();
+    const tool = PAGE_TOOLS.get(name);
+    if (!tool) {
+      throw new Error(`no tool named "${name}" on this page (have: ${[...PAGE_TOOLS.keys()].slice(0, 8).join(", ")}...)`);
+    }
+    return tool.execute(args || {});
+  }
+
   function mcpPublishControls({ max = 40 } = {}) {
     const api = mcpApi();
     if (!api || typeof api.registerTool !== "function") {
@@ -1421,26 +1465,13 @@
       } catch (e) { /* duplicate or rejected schema - keep going */ }
     };
 
-    for (const r of READERS) {
-      add({ name: r.name, description: r.description, inputSchema: { type: "object", properties: {} }, execute: async () => r.run() });
+    // Same descriptors the model is offered, so the two can never drift.
+    const built = pageToolDescriptors({ max });
+    for (const d of built.tools) {
+      const impl = PAGE_TOOLS.get(d.name);
+      add({ name: d.name, description: d.description, inputSchema: d.inputSchema, execute: impl.execute });
     }
-
-    const inv = inventory();
-    // Low confidence means the detection was a guess - a cursor:pointer with
-    // no handler behind it. Publishing those would fill an agent's toolbox
-    // with things that do nothing.
-    const usable = (inv.controls || [])
-      .filter((c) => c.label && c.selector && c.confidence !== "low")
-      .slice(0, max);
-    for (const c of usable) {
-      add({
-        name: toolName(c.label, verbFor(c)),
-        description: `${c.label} - ${c.kind || "control"} on this page`.slice(0, 160),
-        inputSchema: schemaFor(c),
-        execute: runnerFor(c),
-      });
-    }
-    return { registered: names.length, names, fromControls: usable.length, note: "" };
+    return { registered: names.length, names, fromControls: built.fromControls, note: "" };
   }
 
   function readPage() {
@@ -1501,6 +1532,7 @@
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls,
+    pageTools: pageToolDescriptors, pageToolCall,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
   };

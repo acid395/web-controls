@@ -1111,6 +1111,55 @@ that it was a blank sentence on a page whose controls the badge had just
 counted - which is unfalsifiable from the outside, and cost several rounds of
 guessing at permissions and timeouts.
 
+## What a model is actually given
+
+The model used to be handed the static `TOOL_DEFS` - `pageClick{selector}`,
+`pageFill{selector}` - plus forty rows of inventory pasted into its context as
+prose, and was expected to read the CSS and construct a selector. That is the
+blind-selector problem this project spent its time removing from the
+deterministic planner, handed to the model instead. Choosing between named
+things is what models are good at; building selectors is what they are bad at.
+
+It now gets the page's own tools: named from the page's labels, with enums
+drawn from the page's own options, and nothing to construct.
+
+```
+click30DayPrecipitation   chooseBasemap { value: enum[Streets, Satellite, Topographic] }
+searchSearch { text, submit }   toggleEmailAlerts { on }   readThisPage
+```
+
+These are derived without `modelContext` being present at all. Registration
+needs that API and most browsers do not have it yet; the descriptors are useful
+either way, so building them is separate from publishing them. The manifests'
+verified tools join the list because they were checked against the real site.
+The generic selector primitives are left out.
+
+Tool choice degrades as the list grows and a page can easily publish fifty, so
+the list is ranked by the same scorer that answers most instructions outright
+and capped at 24 - with the readers always kept, since a model that can act but
+cannot see the result is the same blind agent in different clothes.
+
+### How much of this needs a model
+
+Measured, not assumed. A fixture of twelve instruction shapes against pages
+built like the sites this runs on, resolved by the deterministic path alone
+against the page's own tools:
+
+```
+click 30 day precipitation        -> click30DayPrecipitation {}
+set the basemap to satellite      -> chooseBasemap {"value":"Satellite"}
+turn on email alerts              -> toggleEmailAlerts {"on":true}
+search for boise                  -> searchSearch {"text":"boise","submit":true}
+...
+resolved without a model: 12/12
+```
+
+The tests assert a floor rather than that number, so a change that quietly
+pushes work onto the model shows up here instead of as a latency complaint.
+That is the shape of the answer: the page describes itself, the scorer takes
+the easy majority offline and instantly, the model takes the residue, and
+verification catches both when they are wrong.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

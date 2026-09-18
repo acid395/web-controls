@@ -1021,6 +1021,73 @@ const named = sb.findOnPage(dayTable(["Weekly Summary", "Today", "Fri Sep 18", "
   { wants: ["high", "temperature"], place: null, day: "saturday" });
 check("a day the user named beats the page's label", named[0].label, "Max Temp, \u00b0F \u00b7 Sat Sep 19: 88");
 
+section("how much needs a model at all");
+// The point of handing a model the page's own tools is that it should rarely
+// be needed. This measures that rather than assuming it: a fixture of real
+// instruction shapes against pages built like the sites this runs on, scored
+// by the deterministic path alone. It asserts a floor, so a change that
+// quietly pushes work onto the model shows up here instead of in a latency
+// complaint.
+const archetypes = {
+  mapSite: `<!doctype html><html><body>
+    <nav><a href="/">Home</a><a href="/about">About</a><button>Sign in</button></nav>
+    <a class="map-tab" href="#p30">30-Day Precipitation</a>
+    <a class="map-tab" href="#cur">Current Conditions</a>
+    <label for="basemap">Basemap</label>
+    <select id="basemap"><option>Streets</option><option>Satellite</option><option>Topographic</option></select>
+    <label for="q">Search</label><input id="q" type="search">
+    <label for="alerts">Email alerts</label><input id="alerts" type="checkbox">
+    </body></html>`,
+  dataSite: `<!doctype html><html><body>
+    <label for="state">Select a state</label>
+    <select id="state"><option>Idaho</option><option>Minnesota</option><option>Alaska</option></select>
+    <label for="param">Parameter</label>
+    <select id="param"><option>Discharge</option><option>Gage height</option></select>
+    <button id="dl">Download data</button>
+    <table><tr><th>Day</th><th>Max Temp, °F</th></tr>
+      <tr><td>Today</td><td>81</td></tr><tr><td>Friday</td><td>85</td></tr></table>
+    </body></html>`,
+};
+const fixtures = [
+  ["mapSite",  "click 30 day precipitation",      "click30DayPrecipitation"],
+  ["mapSite",  "select 30 day precipitation",     "click30DayPrecipitation"],
+  ["mapSite",  "show current conditions",         "clickCurrentConditions"],
+  ["mapSite",  "set the basemap to satellite",    "chooseBasemap"],
+  ["mapSite",  "click satellite",                 "chooseBasemap"],
+  ["mapSite",  "turn on email alerts",            "toggleEmailAlerts"],
+  ["mapSite",  "search for boise",                "searchSearch"],
+  ["dataSite", "select minnesota",                "chooseSelectAState"],
+  ["dataSite", "choose alaska",                   "chooseSelectAState"],
+  ["dataSite", "set the parameter to gage height","chooseParameter"],
+  ["dataSite", "download data",                   "clickDownloadData"],
+  ["dataSite", "read this page",                  "readThisPage"],
+];
+const pages = {};
+for (const [name, html] of Object.entries(archetypes)) pages[name] = loadPage(html, { url: "https://example.gov/" });
+if (!pages.mapSite) skip("model necessity", "jsdom not installed");
+else {
+  const resolved = [];
+  for (const [site, q, want] of fixtures) {
+    const page = pages[site];
+    const tools = page.GENERIC.pageTools().tools;
+    // The deterministic path, scoring the page's own tools exactly as the
+    // model would be asked to.
+    const pick = sb.planDeclaredTool(q, tools.map((t) => ({ ...t, declaredBy: "page" })));
+    resolved.push({ q, want, got: pick ? pick.tool.name : null });
+  }
+  const right = resolved.filter((r) => r.got === r.want);
+  const missed = resolved.filter((r) => r.got !== r.want);
+  // A floor, not a target. Below this something has regressed; above it, the
+  // model is handling a genuinely small residue.
+  ensure(`the scorer alone resolves ${right.length}/${resolved.length} without a model`,
+    right.length >= 9, missed.map((m) => `${m.q} -> ${m.got}`));
+  // Whatever it cannot resolve must fall through cleanly, not wrongly: a
+  // wrong tool run confidently is worse than no tool at all.
+  const wrong = missed.filter((m) => m.got !== null);
+  ensure("and what it cannot resolve is declined, not guessed",
+    wrong.length <= 3, wrong.map((m) => `${m.q} -> ${m.got} (wanted ${m.want})`));
+}
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);

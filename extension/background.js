@@ -894,6 +894,14 @@ const TOOL_DEFS = {
       run: ({ fn, of, source }) => pageComputeRun({ fn, of, source }),
     },
     {
+      name: "pageToolCall", fn: "pageToolCall", argOrder: ["name", "args"], needsPageKnowledge: true,
+      description: "Run one of this page's own tools by name, as listed for this page. No CSS selector is involved - the tool names the thing it acts on.",
+      parameters: { type: "object", properties: {
+        name: { type: "string", description: "the tool's name, exactly as listed for this page" },
+        args: { type: "object", description: "arguments matching that tool's own schema" },
+      }, required: ["name"] },
+    },
+    {
       name: "pageMcpTools", fn: "mcpTools", argOrder: [],
       description: "List the WebMCP tools this page declares about itself through navigator.modelContext. A page that publishes its own tools has stated what it can do, with real schemas, so these are more reliable than anything inferred from its markup.",
       parameters: { type: "object", properties: {} },
@@ -3922,6 +3930,53 @@ const ENV_VOCAB_CONTEXT = envVocabPreamble();
 // Combines the two context sources: ENV_VOCAB (every route) and, for
 // GENERIC specifically, the page's live inventory (see buildGenericContext
 // above). Single entry point for smartAsk/llmPlan/geminiPlan to call.
+// What a model should be choosing between on this page.
+//
+// It used to get the static TOOL_DEFS - pageClick{selector}, pageFill{selector}
+// - plus forty rows of inventory pasted into its context as prose, and was
+// expected to read the CSS and construct a selector. That is the blind-selector
+// problem this project spent its time removing from the deterministic planner,
+// handed to the model instead. Picking between named things is what models are
+// good at; building selectors is what they are bad at.
+//
+// So the page's own tools come first: named from its labels, with enums drawn
+// from its own options, and nothing to construct. The manifest's verified tools
+// join them, because those were checked against the real site. The generic
+// selector primitives are left out entirely.
+async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
+  const verified = (TOOL_DEFS[routeGlobal] || []).filter((d) => !d.run && !needsRealSelector(d));
+  const fromPage = await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }));
+  const pageTools = (fromPage.ok && fromPage.result && fromPage.result.tools) || [];
+  const combined = [
+    ...verified.map((d) => ({ name: d.name, description: d.description, parameters: d.parameters })),
+    ...pageTools.map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema })),
+  ];
+
+  // Tool choice degrades as the list grows, and a page can easily publish
+  // fifty. The scorer that answers most instructions on its own is a cheap
+  // relevance filter for the rest: rank by it, keep the top few, and always
+  // keep the readers - a model that can act but cannot see the result is the
+  // same blind agent in a different costume.
+  const words = meaningfulWords(instruction);
+  const always = new Set(["readThisPage", "listPageControls", "listPageDataRequests"]);
+  const ranked = words.length
+    ? combined
+        .map((t) => ({ t, score: always.has(t.name) ? Infinity : scoreManifestTool(t, words, instruction) }))
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.t)
+    : combined;
+
+  return { verified, page: pageTools, all: ranked.slice(0, max), considered: combined.length };
+}
+
+// Running whichever the model picked. A page tool is named, not selected, so
+// it goes back through the page by name.
+async function runAgentTool(routeGlobal, pick, known) {
+  const isPageTool = known.page.some((t) => t.name === pick.name);
+  if (!isPageTool) return runVerified(routeGlobal, pick);
+  return runVerified(routeGlobal, { name: "pageToolCall", args: { name: pick.name, args: pick.args || {} } });
+}
+
 async function buildContext(routeGlobal) {
   const parts = [];
   if (ENV_VOCAB_CONTEXT) parts.push(ENV_VOCAB_CONTEXT);
@@ -4311,11 +4366,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
         const defs = toolsFor(route.global);
+        const known = await agentTools(route.global, msg.instruction || "");
         const context = await buildContext(route.global);
         await ensureOffscreenDocument();
         const plan = await chrome.runtime.sendMessage({
           target: "offscreen", type: "llmPlan",
-          instruction: msg.instruction, tools: toOpenAITools(defs), context,
+          instruction: msg.instruction, tools: toOpenAITools(known.all), context,
         });
         if (!plan.ok) { sendResponse(plan); return; }
         if (!plan.toolCall) {
