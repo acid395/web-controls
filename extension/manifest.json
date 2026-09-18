@@ -16,6 +16,8 @@
     "https://mywaterway.epa.gov/*",
     "https://www.drought.gov/*",
     "https://generativelanguage.googleapis.com/*",
+    "https://water.noaa.gov/*",
+    "https://*.weather.gov/*",
     "https://waterservices.usgs.gov/*",
     "https://api.water.noaa.gov/*",
     "https://api.weather.gov/*"

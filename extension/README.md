@@ -811,6 +811,21 @@ A count and an inability to count are now different facts. `pageControls` is
 `null` when the page could not be read, `pageBlocked` carries the reason, and
 the badge shows "not enabled here" with the Enable button.
 
+### Commands failed where questions did not
+
+Two of the four hand-written routes - `water.noaa.gov` and
+`weather.gov/forecastpoints` - were missing from `host_permissions`. Only the
+matching *APIs* were listed, which is a different thing from the site.
+
+That produced a lopsided failure on every fresh install. A question loses its
+page read to a `.catch()` and falls through to USGS or NWS, which *are* granted,
+so it still answers - just from the agency rather than the page. A command has
+nowhere to fall through to, so it fails outright. The extension looked alive and
+answered questions while no command ever worked.
+
+Both hosts are granted at install now, and a test asserts that every route in
+`NAMED_MANIFESTS` is reachable without the user finding a button first.
+
 ## Tests
 
 ```

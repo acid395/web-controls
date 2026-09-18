@@ -756,6 +756,19 @@ const emptyCaps = { ok: true, route: "GENERIC", tools: [], pageControls: 0, page
 check("an empty page still counts", emptyCaps.pageControls, 0);
 check("and is not called blocked", emptyCaps.pageBlocked, null);
 
+// Every site the extension claims to have verified tools for has to be
+// reachable without the user finding a button first, or the tools are
+// decorative on a fresh install.
+const mf = require(require("path").join(__dirname, "..", "manifest.json"));
+const grantedBy = (url) => (mf.host_permissions || []).some((p) =>
+  new RegExp("^" + p.replace(/[.]/g, "\\.").replace(/\*/g, ".*")).test(url));
+check("USGS state pages are granted at install", grantedBy("https://waterdata.usgs.gov/state/wi"), true);
+check("so are monitoring locations", grantedBy("https://waterdata.usgs.gov/monitoring-location/05427718/"), true);
+check("so is NOAA water", grantedBy("https://water.noaa.gov/"), true);
+check("so are weather.gov forecast points", grantedBy("https://www.weather.gov/forecastpoints"), true);
+// Anything else is opt-in by design, not by oversight.
+check("an unrelated site is still opt-in", grantedBy("https://example.gov/"), false);
+
 section("failures explain themselves");
 const why = sb.explainFailure("barometric trend", { global: "GENERIC" }, { ok: true, result: inv }, { modelOff: true });
 ensure("says what it checked", why.checked.length >= 2, why.checked);
