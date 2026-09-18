@@ -1290,6 +1290,126 @@
     return { registered: names.length, names, note: names.length ? "" : "nothing could be registered" };
   }
 
+  // Turning what is on the page into tools an agent can actually call.
+  //
+  // Publishing the extension's own primitives - click(selector), fill(selector,
+  // text) - hands an agent half a toolbox it cannot use: it has to fetch an
+  // inventory, read a wall of CSS, and construct a selector before it can do
+  // anything. That is the same blind-selector problem this project spent its
+  // time removing from its own planner, handed straight to somebody else.
+  //
+  // So each control becomes its own tool, named and described from its own
+  // label, with the selector captured in the closure and absent from the
+  // schema. An agent sees "select30DayPrecipitation" and calls it. Nothing to
+  // discover, nothing to construct, nothing to get wrong.
+  // Named verb-first, for two reasons. An agent choosing between tools reads
+  // the name before anything else, and "choose" says more about what will
+  // happen than the label alone does. And a label like "30-Day Precipitation"
+  // cannot start an identifier - a verb in front solves that without a
+  // meaningless "control" prefix.
+  const VERB_FOR = { select: "choose", checkbox: "toggle", radio: "choose", textarea: "type" };
+  const verbFor = (c) => {
+    const kind = String(c.kind || "").toLowerCase();
+    const type = String(c.type || "").toLowerCase();
+    if (VERB_FOR[kind] || VERB_FOR[type]) return VERB_FOR[kind] || VERB_FOR[type];
+    if (c.options && c.options.length) return "choose";
+    if (["text", "search", "email", "url", "number", "tel"].includes(type)) return type === "search" ? "search" : "type";
+    return "click";
+  };
+  const toolName = (label, verb) => {
+    const words = String(label || "control").replace(/[^a-z0-9]+/gi, " ").trim().split(/\s+/).slice(0, 5);
+    const camel = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
+    return (verb || "use") + camel;
+  };
+
+  // What calling it needs, expressed as a schema rather than assumed. A
+  // dropdown's options become an enum, so an agent cannot invent a value the
+  // page does not offer.
+  const schemaFor = (c) => {
+    const kind = String(c.kind || "").toLowerCase();
+    const type = String(c.type || "").toLowerCase();
+    if (kind === "select" || (c.options && c.options.length)) {
+      const values = (c.options || []).map((o) => o.text || o.value).filter(Boolean).slice(0, 60);
+      return { type: "object", properties: { value: { type: "string", enum: values, description: "which option to choose" } }, required: ["value"] };
+    }
+    if (type === "checkbox" || kind === "checkbox") {
+      return { type: "object", properties: { on: { type: "boolean", description: "true to tick, false to untick" } }, required: ["on"] };
+    }
+    if (["text", "search", "email", "url", "number", "tel", "textarea"].includes(type) || kind === "textarea") {
+      return { type: "object", properties: {
+        text: { type: "string", description: "what to type" },
+        submit: { type: "boolean", description: "press enter / the go button afterwards" },
+      }, required: ["text"] };
+    }
+    return { type: "object", properties: {} };
+  };
+
+  const runnerFor = (c) => {
+    const kind = String(c.kind || "").toLowerCase();
+    const type = String(c.type || "").toLowerCase();
+    const sel = c.selector;
+    if (kind === "select" || (c.options && c.options.length)) {
+      return async ({ value }) => ({ chosen: setSelect(sel, value), then: submit(sel) });
+    }
+    if (type === "checkbox" || kind === "checkbox") return async ({ on }) => ({ checked: setChecked(sel, on !== false) });
+    if (["text", "search", "email", "url", "number", "tel", "textarea"].includes(type) || kind === "textarea") {
+      return async ({ text, submit: go }) => {
+        fill(sel, text);
+        return { filled: text, submitted: go === false ? null : submit(sel) };
+      };
+    }
+    return async () => { const el = realClick(sel); return { clicked: String(el.tagName || "").toLowerCase() }; };
+  };
+
+  // Reading is half of what an agent needs, and it is the half nothing else
+  // here publishes. Without these it can drive the page but never find out
+  // what the page now says.
+  const READERS = [
+    { name: "readThisPage", description: "Read what this page currently shows: its tables, labelled values, readouts and headings, as structured data.", run: () => readPage() },
+    { name: "listPageControls", description: "List every control on this page with its label and kind - useful for deciding what to do next.", run: () => inventory() },
+    { name: "listPageDataRequests", description: "List the data requests this page has made, which is where a chart's real numbers come from when the chart is a canvas.", run: () => capturedFeeds() },
+  ];
+
+  function mcpPublishControls({ max = 40 } = {}) {
+    const api = mcpApi();
+    if (!api || typeof api.registerTool !== "function") {
+      return { registered: 0, note: "this browser has no navigator.modelContext.registerTool" };
+    }
+    const taken = new Set(MCP_REGISTRY.map((t) => t.name));
+    const names = [];
+    const add = (def) => {
+      if (taken.has(def.name)) return;
+      try {
+        api.registerTool(def);
+        def.declaredBy = "extension";
+        MCP_REGISTRY.push(def);
+        taken.add(def.name);
+        names.push(def.name);
+      } catch (e) { /* duplicate or rejected schema - keep going */ }
+    };
+
+    for (const r of READERS) {
+      add({ name: r.name, description: r.description, inputSchema: { type: "object", properties: {} }, execute: async () => r.run() });
+    }
+
+    const inv = inventory();
+    // Low confidence means the detection was a guess - a cursor:pointer with
+    // no handler behind it. Publishing those would fill an agent's toolbox
+    // with things that do nothing.
+    const usable = (inv.controls || [])
+      .filter((c) => c.label && c.selector && c.confidence !== "low")
+      .slice(0, max);
+    for (const c of usable) {
+      add({
+        name: toolName(c.label, verbFor(c)),
+        description: `${c.label} - ${c.kind || "control"} on this page`.slice(0, 160),
+        inputSchema: schemaFor(c),
+        execute: runnerFor(c),
+      });
+    }
+    return { registered: names.length, names, fromControls: usable.length, note: "" };
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -1347,7 +1467,7 @@
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
-    mcpInfo, mcpTools, mcpCall, mcpRegister,
+    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
   };

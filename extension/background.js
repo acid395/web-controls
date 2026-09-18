@@ -125,13 +125,67 @@ async function ensureInjected(tabId, bundle) {
 // Best-effort by design. A browser without navigator.modelContext returns a
 // count of zero and the extension carries on exactly as before - nothing
 // above this depends on it having worked.
-async function publishTools(routeGlobal) {
+async function publishTools(routeGlobal, tabId) {
+  // Two sources, and the order matters. A hand-written manifest was verified
+  // against the real site, so its tools go first and own their names. The
+  // page's own controls fill in everything nobody thought to map - which on
+  // an unmapped site is all of it.
   const defs = (TOOL_DEFS[routeGlobal] || [])
-    .filter((d) => !d.run && d.fn)
+    .filter((d) => !d.run && d.fn && !needsRealSelector(d))
     .map((d) => ({ name: d.name, fn: d.fn, argOrder: d.argOrder || [], description: d.description, parameters: d.parameters }));
-  if (!defs.length) return { registered: 0 };
-  const out = await invokeOnActiveTab("mcpRegister", [defs]).catch(() => ({ ok: false }));
-  return out.ok ? out.result : { registered: 0, note: "could not reach the page" };
+
+  const call = (fn, args) => (tabId
+    ? invokeOnTab(tabId, fn, args).catch(() => ({ ok: false }))
+    : invokeOnActiveTab(fn, args).catch(() => ({ ok: false })));
+
+  const manifest = defs.length ? await call("mcpRegister", [defs]) : { ok: true, result: { registered: 0, names: [] } };
+  const page = await call("mcpPublishControls", [{}]);
+  const a = (manifest.ok && manifest.result) || { registered: 0, names: [] };
+  const b = (page.ok && page.result) || { registered: 0, names: [] };
+  return {
+    registered: (a.registered || 0) + (b.registered || 0),
+    fromManifest: a.registered || 0,
+    fromPage: b.registered || 0,
+    names: [...(a.names || []), ...(b.names || [])],
+  };
+}
+
+// Publishing has to happen without anybody asking, or a site is only
+// agent-usable once a human has opened this panel on it - which defeats the
+// point. Every page load on an origin already granted gets the bundles and
+// the tools, whether or not the panel is ever opened.
+const PUBLISHED_RECENTLY = new Map();
+async function autoPublish(tabId, url) {
+  if (!url || !/^https?:/.test(url)) return;
+  const pattern = originPatternFor(url);
+  if (!pattern) return;
+  // Never prompt from here. An origin the user has not granted is simply
+  // left alone - a permission prompt nobody asked for is worse than a site
+  // that is not yet agent-usable.
+  const granted = await chrome.permissions.contains({ origins: [pattern] }).catch(() => false);
+  if (!granted) return;
+  const last = PUBLISHED_RECENTLY.get(tabId);
+  if (last === url) return; // a SPA re-announcing the same page
+  PUBLISHED_RECENTLY.set(tabId, url);
+  try {
+    const route = routeFor(url);
+    await ensureInjected(tabId, route.bundle);
+    const out = await publishTools(route.global, tabId);
+    if (out.registered) console.log(`[webmcp] published ${out.registered} tools on ${url}`);
+  } catch (e) { /* a page that cannot be injected is not an error worth raising */ }
+}
+
+// Guarded. A listener registered against an API this browser does not have
+// throws at the top level of the service worker, which kills the worker
+// outright - every ask then fails with no error anyone can see, which is the
+// single worst failure this extension has.
+if (chrome.tabs && chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if (info.status === "complete" && tab && tab.url) autoPublish(tabId, tab.url);
+  });
+}
+if (chrome.tabs && chrome.tabs.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => PUBLISHED_RECENTLY.delete(tabId));
 }
 
 // A chart asks for its data while the page loads, so an interceptor injected
@@ -174,6 +228,21 @@ chrome.runtime.onStartup.addListener(registerFeedCapture);
 chrome.runtime.onInstalled.addListener(registerFeedCapture);
 chrome.permissions.onAdded.addListener(registerFeedCapture);
 chrome.permissions.onRemoved.addListener(registerFeedCapture);
+
+// The same call, aimed at a named tab rather than whichever is in front -
+// autopublishing runs on a page load that may not be the active tab.
+async function invokeOnTab(tabId, fn, args) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab || !tab.url) throw new Error("no such tab");
+  const pattern = originPatternFor(tab.url);
+  if (!pattern) throw new Error("can't determine this page's origin");
+  const granted = await chrome.permissions.contains({ origins: [pattern] });
+  if (!granted) throw new Error("not enabled on this site yet");
+  const route = routeFor(tab.url);
+  await ensureInjected(tabId, route.bundle);
+  const result = await chrome.tabs.sendMessage(tabId, { type: "call", fn, args });
+  return { ...result, calledOn: route.global };
+}
 
 async function invokeOnActiveTab(fn, args) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

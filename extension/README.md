@@ -939,6 +939,36 @@ hand-written one.
 as WebMCP tools, so any agent that speaks the API can drive USGS or NOAA
 without those sites ever implementing it.
 
+### Tools an agent can actually call
+
+Publishing this extension's own primitives handed an agent half a toolbox it
+could not use. `click(selector)` means nothing until the agent has fetched an
+inventory, read a wall of CSS and constructed a selector - the exact
+blind-selector problem this project spent its time removing from its own
+planner, passed straight to somebody else. Of 24 published tools, 12 were like
+that.
+
+So each control on the page becomes a tool in its own right, named verb-first
+from its own label, with the selector captured in a closure and **absent from
+the schema**. On drought.gov that is 43 tools: `click30DayPrecipitation`,
+`chooseDataLayer`, `searchQuery`, `toggleEmailAlerts`. Nothing to discover,
+nothing to construct.
+
+The schema says what each will accept, so an agent cannot invent a value the
+page does not offer: a dropdown publishes its options as an `enum`, a checkbox
+takes a boolean, a text field takes text and a flag for whether to submit.
+Low-confidence detections are left out - publishing a `cursor:pointer` with no
+handler behind it fills a toolbox with things that do nothing.
+
+Driving is only half. `readThisPage`, `listPageControls` and
+`listPageDataRequests` are published alongside, because an agent that can act
+but cannot read the result is working blind.
+
+This happens on every page load of an already-granted origin, without the panel
+ever being opened - a site that is only agent-usable after a human opens a side
+panel on it is not really agent-usable. Origins that have not been granted are
+left alone rather than prompted.
+
 The two directions are tested very differently, and that asymmetry is not
 incidental. **Consuming** needs a page that declares tools, and no live site
 does yet, so it can only be exercised against a page written for the purpose.

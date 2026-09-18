@@ -1080,6 +1080,60 @@ else {
   check("ours is still ours", all.tools.find((t) => t.name === "pageClick").declaredBy, "extension");
 }
 
+// Publishing the extension's own primitives gives an agent half a toolbox it
+// cannot use: click(selector) means nothing until it has fetched an inventory
+// and built a selector. That is the blind-selector problem this project spent
+// its time removing from its own planner, handed to somebody else.
+const agentPage = loadPage(`<!doctype html><html><body>
+  <a class="map-tab" href="#p30">30-Day Precipitation</a>
+  <label for="layer">Data layer</label>
+  <select id="layer"><option>Current</option><option>Drought Outlook</option></select>
+  <label for="q">Search</label><input id="q" type="search">
+  <label for="alerts">Email alerts</label><input id="alerts" type="checkbox">
+  </body></html>`, { url: "https://example.gov/" });
+if (!agentPage) skip("tools an agent can use", "jsdom not installed");
+else {
+  const shelf = [];
+  Object.defineProperty(agentPage.navigator, "modelContext", {
+    configurable: true, value: { registerTool: (d) => shelf.push(d), getTools: () => shelf },
+  });
+  const out = agentPage.GENERIC.mcpPublishControls();
+  const byName = (n) => shelf.find((t) => t.name === n);
+
+  ensure("controls become tools in their own right", out.registered > 4, out);
+  // The whole point: an agent never sees, and never needs, a selector.
+  check("no selector reaches the schema",
+    shelf.some((t) => JSON.stringify(t.inputSchema).includes("selector")), false);
+
+  // Named verb-first from the page's own words: an agent reads the name
+  // before anything else, and a label starting with a digit cannot begin an
+  // identifier on its own.
+  ensure("named verb-first from its own label", !!byName("click30DayPrecipitation"), shelf.map((t) => t.name));
+  ensure("a dropdown says choose", shelf.some((t) => /^chooseDataLayer/.test(t.name)), shelf.map((t) => t.name));
+  ensure("a checkbox says toggle", shelf.some((t) => /^toggleEmailAlerts/.test(t.name)), shelf.map((t) => t.name));
+
+  // A dropdown publishes what it will accept, so an agent cannot invent a
+  // value the page does not offer.
+  const layer = shelf.find((t) => /layer/i.test(t.name));
+  check("a dropdown declares its options",
+    layer.inputSchema.properties.value.enum, ["Current", "Drought Outlook"]);
+  // A checkbox is a boolean, not a click.
+  const alerts = shelf.find((t) => /alert/i.test(t.name));
+  check("a checkbox takes a boolean", alerts.inputSchema.properties.on.type, "boolean");
+  // A search box takes text, and says it can submit.
+  const search = shelf.find((t) => /search/i.test(t.name));
+  check("a text field takes text", search.inputSchema.required, ["text"]);
+
+  // Driving is half of it. An agent that cannot read the result is blind.
+  for (const r of ["readThisPage", "listPageControls", "listPageDataRequests"]) {
+    ensure(`${r} is published`, !!byName(r), shelf.map((t) => t.name));
+  }
+
+  // Publishing twice must not double-register.
+  const again = agentPage.GENERIC.mcpPublishControls();
+  check("republishing adds nothing", again.registered, 0);
+}
+
 section("charts, maps and other pages");
 const chartPage = loadPage(`<!doctype html><html><head><title>Gauge</title></head><body>
   <canvas id="c" width="400" height="200"></canvas>
