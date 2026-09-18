@@ -4409,6 +4409,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
+        // Above every form of reading the page, below the hand-written
+        // manifests. A declared tool is the site's own statement of what it
+        // can do; scraping is our reconstruction of it. This block sat below
+        // both the page reader and the data lookups, so a page that declared
+        // its tools was scraped anyway and the rung did nothing.
+        // Hand this route's verified tools to any WebMCP agent watching. Its
+        // result is deliberately ignored: this is for other agents, not for
+        // this extension, and a browser without the API changes nothing.
+        publishTools(route.global).catch(() => {});
+
+        const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
+        // Only the page's own tools count here. This extension publishes its
+        // verified controls as WebMCP tools so other agents can use the site,
+        // and those come back indistinguishable from the page's - routing our
+        // own tools back through WebMCP would be a detour through a longer
+        // pipe to the same function, and would hide the hand-written path
+        // behind a layer that adds nothing.
+        const pageDeclared = (mcp.ok && mcp.result && mcp.result.tools || [])
+          .filter((t) => t.declaredBy === "page");
+        if (pageDeclared.length) {
+          const pick = planDeclaredTool(msg.instruction || "", pageDeclared);
+          if (pick) {
+            const ran = await runVerified(route.global, {
+              name: "pageMcpCall", args: { name: pick.tool.name, args: pick.args },
+            });
+            respond({
+              ...ran, plannedBy: "declared-by-page", toolCall: pick.tool.name,
+              display: {
+                title: friendlyToolName(pick.tool.name),
+                subtitle: `${pick.tool.description || "declared by this page"}`.slice(0, 90),
+                stats: [],
+                rows: Object.entries(pick.args || {}).map(([k, v]) => ({ name: k, value: String(v).slice(0, 30), meta: "" })),
+                caveat: `this page declares its own tools (${mcp.result.readFrom}) - used instead of reading its markup`,
+                source: "WebMCP",
+              },
+            });
+            return;
+          }
+        }
+
         const wants = commandLike ? [] : pageValueWants(msg.instruction || "");
         if (wants.length) {
           const askedPlace = dataCall && dataCall.args
@@ -4600,41 +4640,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // in its own words, with real schemas. Everything below this line is
         // a reconstruction from markup - so when the page has stated the
         // answer, the guessing never runs.
-        // Hand this route's verified tools to any WebMCP agent watching. Its
-        // result is deliberately ignored: this is for other agents, not for
-        // this extension, and a browser without the API changes nothing.
-        publishTools(route.global).catch(() => {});
-
-        const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
-        // Only the page's own tools count here. This extension publishes its
-        // verified controls as WebMCP tools so other agents can use the site,
-        // and those come back indistinguishable from the page's - routing our
-        // own tools back through WebMCP would be a detour through a longer
-        // pipe to the same function, and would hide the hand-written path
-        // behind a layer that adds nothing.
-        const pageDeclared = (mcp.ok && mcp.result && mcp.result.tools || [])
-          .filter((t) => t.declaredBy === "page");
-        if (pageDeclared.length) {
-          const pick = planDeclaredTool(msg.instruction || "", pageDeclared);
-          if (pick) {
-            const ran = await runVerified(route.global, {
-              name: "pageMcpCall", args: { name: pick.tool.name, args: pick.args },
-            });
-            respond({
-              ...ran, plannedBy: "declared-by-page", toolCall: pick.tool.name,
-              display: {
-                title: friendlyToolName(pick.tool.name),
-                subtitle: `${pick.tool.description || "declared by this page"}`.slice(0, 90),
-                stats: [],
-                rows: Object.entries(pick.args || {}).map(([k, v]) => ({ name: k, value: String(v).slice(0, 30), meta: "" })),
-                caveat: `this page declares its own tools (${mcp.result.readFrom}) - used instead of reading its markup`,
-                source: "WebMCP",
-              },
-            });
-            return;
-          }
-        }
-
         // Every route now carries GENERIC alongside its named manifest, so
         // page controls can be matched anywhere - including the ones a
         // hand-written manifest never covered.

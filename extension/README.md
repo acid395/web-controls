@@ -969,6 +969,14 @@ ever being opened - a site that is only agent-usable after a human opens a side
 panel on it is not really agent-usable. Origins that have not been granted are
 left alone rather than prompted.
 
+The rung has to sit in the right place to mean anything. It belongs above every
+form of reading the page and below the hand-written manifests: a declared tool
+is the site's own statement of what it can do, scraping is our reconstruction
+of it, and a verified manifest was checked against the real site. It was
+originally placed below both the page reader and the data lookups, which meant
+a page that declared its tools got scraped anyway and the whole feature was
+inert. A test now asserts the ordering in the source.
+
 The two directions are tested very differently, and that asymmetry is not
 incidental. **Consuming** needs a page that declares tools, and no live site
 does yet, so it can only be exercised against a page written for the purpose.

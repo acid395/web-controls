@@ -1059,6 +1059,13 @@ check("with the same verb synonyms as everything else", chose("click satellite")
 check("a no-argument tool still matches", chose("clear all filters"), "clearAllFilters {}");
 check("and an unrelated question matches nothing", chose("what is the weather in boise"), null);
 // pageMcpCall's name must come from the page, so it is never planned blind.
+// Ordering is the whole feature. The block sat below both the page reader and
+// the data lookups, so a page that declared its tools was scraped anyway.
+const bgSrc = require("fs").readFileSync(
+  require("path").join(__dirname, "..", "background.js"), "utf8");
+ensure("declared tools are consulted before the page is read",
+  bgSrc.indexOf('invokeOnActiveTab("mcpTools"') < bgSrc.indexOf("const wants = commandLike"),
+  "the WebMCP rung sits below scraping");
 check("calling a declared tool is not guessed at",
   (sb.planManifestTool("call the mcp tool", "GENERIC") || {}).name !== "pageMcpCall", true);
 
