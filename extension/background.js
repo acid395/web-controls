@@ -2429,7 +2429,11 @@ function toolCallFor(control, words, instruction = "") {
   if (kind === "select" || (control.options && control.options.length)) {
     const option = matchOption(control, words);
     if (!option) return null;
-    return { name: "pageSelectOption", args: { selector: control.selector, value: option.value || option.text } };
+    // Picking an option is often only half of it: plenty of dropdowns sit in
+    // a form with a Go button and do nothing on change alone. "Click Alaska"
+    // means land on Alaska's page, not leave the box reading Alaska. submit()
+    // recognises a select that navigates on its own and stands down.
+    return { name: "pageSelectOption", args: { selector: control.selector, value: option.value || option.text }, thenSubmit: true };
   }
 
   // A search box needs filling, not clicking - clicking one does nothing

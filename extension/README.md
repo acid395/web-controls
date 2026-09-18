@@ -842,6 +842,20 @@ would make them score alike.
 The synonym also had to stop landing in the value. Stripping only the tool's
 literal name word left `selectState` returning `{state: "pick alaska"}`.
 
+### Picking an option is only half of it
+
+"Click Alaska" selected Alaska and left the page exactly where it started.
+Plenty of dropdowns sit beside a Go button and do nothing on `change` alone, so
+the box read Alaska and nothing else happened - and the change *was* real, so
+verification reported success.
+
+A dropdown pick now follows through. Which follow-through depends on the
+dropdown: one wired to `location.href` has already navigated and is left alone,
+one with a Go button gets the button clicked, and one with neither stops there
+and says so. `form.requestSubmit()` is deliberately not used on a select - a
+page that wraps its controls in a form for styling would reload and lose
+everything.
+
 ## Tests
 
 ```

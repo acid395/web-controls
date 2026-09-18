@@ -109,7 +109,7 @@ check("single control", g("year to date").calls.map((c) => c.args.selector), ["#
 // One instruction, three widgets. Matching only the best one set the variable
 // and ignored the rest, leaving a chart that looked answered.
 check("three controls from one instruction",
-  g("weekly average temperature").calls.map((c) => c.args.selector).sort(), ["#p-weekly", "#stat", "#var"]);
+  [...new Set(g("weekly average temperature").calls.map((c) => c.args.selector))].sort(), ["#p-weekly", "#stat", "#var"]);
 check("option named, not the dropdown's label",
   g("show precipitation").calls[0].args.value, "precip");
 // Ambiguity is judged on overlapping words, not score: complementary
@@ -153,8 +153,15 @@ check("a bare identifier still reaches the search box",
     { name: "pageFill", args: { selector: "#q", text: "13206000" } },
     { name: "pageSubmit", args: { selector: "#q" } },
   ]);
-check("a dropdown option is chosen",
-  act("set the basemap to satellite"), [{ name: "pageSelectOption", args: { selector: "#base", value: "sat" } }]);
+// Picking the option is only half of it. Plenty of dropdowns sit beside a Go
+// button and do nothing on change alone, so "click Alaska" left the box
+// reading Alaska on the same page it started on. The follow-through stands
+// down by itself when the dropdown navigates on its own.
+check("a dropdown option is chosen, then followed through",
+  act("set the basemap to satellite"), [
+    { name: "pageSelectOption", args: { selector: "#base", value: "sat" } },
+    { name: "pageSubmit", args: { selector: "#base" } },
+  ]);
 // A checkbox has two directions, and clicking blindly cannot express which.
 check("a checkbox can be ticked", act("turn on the flood inundation layer")[0].args.on, true);
 check("and unticked", act("hide the flood inundation layer")[0].args.on, false);
@@ -407,7 +414,10 @@ check("a control's own name is not a query",
 check("a search cue outranks an unrelated tie",
   u("look up 8443970"), 'pageFill {"selector":"#query","text":"8443970"} + pageSubmit {"selector":"#query"}');
 check("a real dropdown still wins on its own words",
-  u("select idaho"), 'pageSelectOption {"selector":"#state-select-list","value":"idaho"}');
+  u("select idaho"), 'pageSelectOption {"selector":"#state-select-list","value":"idaho"} + pageSubmit {"selector":"#state-select-list"}');
+// The verb is not what makes it a dropdown - the control is.
+check("and clicking it means the same",
+  u("click idaho"), u("select idaho"));
 
 section("typing is not searching");
 // fill() typed and stopped. Every hand-written manifest that wraps a search

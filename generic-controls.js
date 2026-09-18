@@ -1020,6 +1020,26 @@
   function submit(elOrSel) {
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`submit: not found: ${elOrSel}`);
+
+    // A <select> that navigates on change has already done the work by the
+    // time this runs - a state picker wired to location.href is exactly this
+    // shape. Submitting as well either double-navigates or cancels the
+    // navigation already in flight.
+    // A dropdown is its own case. Some navigate on change and have already
+    // done the work; some need the Go button beside them. None of them want
+    // form.requestSubmit(), which on a page that wraps its controls in a form
+    // for styling reloads everything and throws the page's state away. So a
+    // select follows through only via an explicit button, or not at all.
+    if (el.tagName === "SELECT") {
+      const inline = String(el.getAttribute("onchange") || "") + String(el.getAttribute("onblur") || "");
+      if (/location|navigate|\.submit\(|href/i.test(inline)) return { submitted: "change" };
+      const near = el.form || el.closest("form") || el.parentElement || document;
+      const go = near.querySelector('button[type=submit], input[type=submit], button[class*="go"], [aria-label*="Go"]')
+        || [...near.querySelectorAll("button, input[type=button], a[role=button]")]
+             .find((b) => /^(go|apply|view|submit|show)\b/i.test((b.textContent || b.value || "").trim()));
+      if (go) { realClick(go); return { submitted: "button" }; }
+      return { submitted: "change only - this dropdown has no go button" };
+    }
     el.focus();
 
     const enter = { bubbles: true, cancelable: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 };
