@@ -4896,15 +4896,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
-        const defs = toolsFor(route.global);
-        const context = await buildContext(route.global);
-        const plan = await askGemini(msg.instruction, defs, context);
+        // The page's own tools, like every other model path. This one was
+        // still being handed toolsFor(route) - the static selector
+        // primitives - so the only model in here capable of real judgment
+        // was getting the worst inputs of the three.
+        const known = await agentTools(route.global, msg.instruction || "", { max: 24 });
+        const context = known.page.length ? null : await buildContext(route.global);
+        const plan = await askGemini(msg.instruction, known.all, context);
         if (!plan.toolCall) {
           sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
           return;
         }
         const result = await executeToolCall(route.global, plan.toolCall);
-        sendResponse({ ...result, plannedBy: "gemini", toolCall: plan.toolCall });
+        sendResponse({ ...result, plannedBy: "gemini", toolCall: plan.toolCall,
+          fromPageTools: known.page.length });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
       } finally {
