@@ -92,6 +92,45 @@ else {
   });
 }
 
+// Links only reach what a site chose to link, and a data portal mostly does
+// not link its data: CDEC has a Smith River gauge and no page saying so,
+// because you are meant to search for it. A GET form is a URL with blanks in
+// it, so the search can be fetched without the page moving.
+const searchable = loadPage(`<!doctype html><html><head><title>Portal</title></head><body>
+  <a href="/about.html">About</a>
+  <form method="get" action="/stations">
+    <input type="hidden" name="active" value="true">
+    <label for="q">Station search</label><input id="q" type="text" name="sta_name">
+    <button type="submit">Go</button></form></body></html>`, { url: "https://portal.example.gov/" });
+if (!searchable) skip("searching a site", "jsdom not installed");
+else {
+  const built = searchable.GENERIC.searchUrl("smith river");
+  check("a GET search reads as a URL", built.url, "https://portal.example.gov/stations?active=true&sta_name=smith+river");
+  ensure("carrying the form's own hidden fields", /active=true/.test(built.url), built.url);
+
+  // A POST search cannot be a URL, and submitting one moves the page, so it
+  // is offered rather than done.
+  const posting = loadPage(`<!doctype html><html><body><form method="post" action="/find">
+    <label for="s">Search this site:</label><input id="s" name="q" type="text"></form></body></html>`,
+    { url: "https://portal.example.gov/" });
+  let threw = null;
+  try { posting.GENERIC.searchUrl("smith river"); } catch (e) { threw = e.message; }
+  ensure("a POST search says why it cannot", /post/i.test(threw || ""), threw);
+}
+
+// An agency writes "SMITH R NR CRESCENT CITY" where a person writes "Smith
+// River". A literal match finds neither the row nor the answer.
+const abbrevTable = { title: "Stations", headings: [], text: "", pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["Station", "Discharge, cfs"], rows: [
+    ["SMITH R NR CRESCENT CITY", "227"], ["EEL RIVER AT SCOTIA", "512"]] }] };
+const rowFor = (place) => {
+  const hit = sb.findOnPage(abbrevTable, { wants: ["discharge"], place, day: null });
+  return hit ? hit[0].value : null;
+};
+check("an abbreviated river still matches", rowFor("smith river"), "227");
+check("a spelled-out one still does too", rowFor("eel river"), "512");
+check("and a river that is not there does not", rowFor("snake river"), null);
+
 section("a site from another domain entirely");
 // The point of deriving tools from a page is that nothing may be known about
 // the page. So the guard is a site with no manifest, no hydrology, and no

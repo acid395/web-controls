@@ -903,6 +903,71 @@
   }
 
   // Links on this page, so a caller can find the other page worth reading.
+  /* ==========================================================================
+   * searchTargets() - the site's own search, as a URL.
+   *
+   * Following links only reaches what the site chose to link. A data portal
+   * mostly does not link its data: CDEC has a gauge on the Smith River and
+   * no page anywhere that says so, because you are expected to search for
+   * it. Link-walking cannot get there, and neither could anything else here.
+   *
+   * A GET form is a URL with blanks in it. Reading that off the form means a
+   * search can be *fetched* rather than submitted - the page in front of the
+   * person does not move, several queries can be tried, and a bad guess
+   * costs one request. A POST form cannot be done this way and is reported
+   * as such rather than silently skipped.
+   * ========================================================================== */
+  function searchTargets() {
+    const out = [];
+    for (const form of deepQueryAll("form")) {
+      const method = String(form.getAttribute("method") || "get").toLowerCase();
+      const field = [...form.elements].find((el) => {
+        const type = String(el.type || "").toLowerCase();
+        return el.name && (type === "search" || type === "text");
+      });
+      if (!field) continue;
+      let action;
+      try { action = new URL(form.getAttribute("action") || location.href, location.href); }
+      catch (e) { continue; }
+      if (action.origin !== location.origin) continue;
+      out.push({
+        label: (rawLabelOf(field) || form.getAttribute("aria-label") || "search").slice(0, 60),
+        field: field.name,
+        url: action.href,
+        method,
+        // Whatever else the form carries - a portal's search often needs
+        // half a dozen hidden fields to return anything at all.
+        extra: [...form.elements]
+          .filter((el) => {
+            if (!el.name || el === field || !el.value) return false;
+            const type = String(el.type || "").toLowerCase();
+            if (!["hidden", "checkbox", "radio", "select-one"].includes(type)) return false;
+            // .checked is false on a hidden input, not undefined, so testing
+            // it for every type silently dropped every hidden field - and a
+            // portal's search needs them: CDEC's station search carries a
+            // dozen and returns nothing without them.
+            if (type === "checkbox" || type === "radio") return !!el.checked;
+            return true;
+          })
+          .slice(0, 12)
+          .map((el) => [el.name, el.value]),
+      });
+      if (out.length >= 4) break;
+    }
+    return { url: location.href, count: out.length, targets: out };
+  }
+
+  // The URL a search would go to, without going to it.
+  function searchUrl(query, target) {
+    const t = target || (searchTargets().targets || [])[0];
+    if (!t) throw new Error("this page has no search form that can be read as a URL");
+    if (t.method !== "get") throw new Error(`"${t.label}" submits by ${t.method}, which cannot be turned into a URL`);
+    const u = new URL(t.url);
+    for (const [k, v] of t.extra || []) u.searchParams.set(k, v);
+    u.searchParams.set(t.field, query);
+    return { url: u.href, via: t.label };
+  }
+
   function pageLinks({ limit = 120 } = {}) {
     const out = [];
     const seen = new Set();
@@ -1532,7 +1597,7 @@
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls,
-    pageTools: pageToolDescriptors, pageToolCall,
+    pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
   };

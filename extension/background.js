@@ -3348,11 +3348,26 @@ function findInTables(pageData, { wants, place, day }) {
   const inB = findMeasurementRows(pageData, { wants, place, day });
   if (inB) return inB;
   if (!place) return null;
-  const needle = place.toLowerCase();
+  // "Smith River" appears in a gauge table as "SMITH R NR CRESCENT CITY".
+  // A literal includes() never matches it, which is the same abbreviation
+  // the USGS name search already had to handle - agencies shorten the
+  // generic word and nothing else. So the distinctive words must all be
+  // there, and a trailing river/creek/lake may be a single letter.
+  const parts = place.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const distinctive = parts.filter((w) => !WATERBODY_GENERICS.has(w) && w.length > 1);
+  const generic = parts.find((w) => WATERBODY_GENERICS.has(w) && w.length > 2);
+  const matchesPlace = (cell) => {
+    const text = String(cell).toLowerCase();
+    if (!distinctive.length) return text.includes(place.toLowerCase());
+    if (!distinctive.every((w) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(text))) return false;
+    if (!generic) return true;
+    // river | riv | r, immediately after the name.
+    return new RegExp(`\\b${generic[0]}[a-z]*\\b`).test(text);
+  };
   for (const table of pageData.tables || []) {
     const columns = table.columns || [];
     for (const row of table.rows || []) {
-      const rowIndex = row.findIndex((cell) => String(cell).toLowerCase().includes(needle));
+      const rowIndex = row.findIndex((cell) => matchesPlace(cell));
       if (rowIndex === -1) continue;
       const hits = [];
       for (let i = 0; i < row.length; i++) {
@@ -4432,8 +4447,49 @@ async function followToAnswer(instruction, { wants, agg, place, maxPages = 6, ma
   };
 
   const here = await invokeOnActiveTab("pageLinks", [{}]).catch(() => ({ ok: false }));
-  if (!here.ok) return null;
-  return walk(here.result.links || [], 1);
+  const byLink = here.ok ? await walk(here.result.links || [], 1) : null;
+  if (byLink) return byLink;
+
+  // Links only reach what a site chose to link, and a data portal mostly
+  // does not link its data - CDEC has a Smith River gauge and no page that
+  // says so, because you are meant to search for it. So: use the site's own
+  // search. A GET form is a URL with blanks in it and can be fetched without
+  // the page moving; a POST form cannot, and is offered rather than done,
+  // because submitting it navigates away from what someone was looking at.
+  const subject = place || words.filter((w) => !AGGREGATE_WORDS.has(w)).join(" ");
+  if (!subject) return null;
+  const targets = await invokeOnActiveTab("searchTargets", []).catch(() => ({ ok: false }));
+  const found = (targets.ok && targets.result && targets.result.targets) || [];
+  if (!found.length) return null;
+
+  const gettable = found.find((t) => t.method === "get");
+  if (gettable) {
+    const built = await invokeOnActiveTab("searchUrl", [subject, gettable]).catch(() => ({ ok: false }));
+    if (built.ok && !seen.has(built.result.url)) {
+      seen.add(built.result.url);
+      const got = await invokeOnActiveTab("readUrl", [built.result.url]).catch(() => ({ ok: false }));
+      if (got.ok) {
+        const answer = answerFrom(got.result);
+        trail.push({ label: `searched for "${subject}"`, url: built.result.url, ok: true, answered: !!answer });
+        if (answer) {
+          return { ...answer, from: { label: `search: ${subject}`, url: built.result.url }, trail: [...trail] };
+        }
+      }
+    }
+    return null;
+  }
+
+  // Only a POST search exists. Submitting it is a real action on the page in
+  // front of someone, so it is proposed, not performed.
+  return {
+    kind: "offer",
+    offer: {
+      label: `Search this site for "${subject}"`,
+      hint: `${found[0].label} submits by ${found[0].method}, so this will use the page itself`,
+      call: { name: "pageFill", args: { selector: `[name="${found[0].field}"]`, text: subject }, thenSubmit: true },
+    },
+    trail: [...trail],
+  };
 }
 
 async function buildCapabilities() {
@@ -5027,6 +5083,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const followed = await followToAnswer(wanted, {
             wants, agg: wantsAgg, place: askedPlace,
           }).catch(() => null);
+          if (followed && followed.kind === "offer") {
+            respond({
+              ok: false, needsChoice: true,
+              error: "Nothing on this page answers that, but the site has a search.",
+              candidates: [followed.offer],
+              display: {
+                title: "Search this site?",
+                subtitle: followed.offer.hint,
+                stats: [], rows: [],
+                choices: [{ label: followed.offer.label, hint: followed.offer.hint, call: followed.offer.call }],
+                source: "this site",
+              },
+            });
+            return;
+          }
           if (followed) {
             const where = `${followed.from.label}`.slice(0, 60);
             const display = followed.kind === "calculated"
