@@ -183,6 +183,42 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("publishing without the service worker in the loop");
+// Publishing ran through tabs.onUpdated and a message round trip, so a site
+// became agent-usable only once the worker had woken, the event had fired
+// and the message had landed. A content script registered in the MAIN world
+// needs none of them: it runs on the page, at document_end, and can see
+// document.modelContext directly.
+const atLoad = loadPage(`<!doctype html><html><body>
+  <a href="/x">Reservoirs</a><select id="s"><option>A</option></select></body></html>`,
+  { url: "https://example.gov/" });
+if (!atLoad) skip("publishing at load", "jsdom not installed");
+else {
+  const script = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "page", "publish-tools.js"), "utf8");
+  const run = () => {
+    const el = atLoad.document.createElement("script");
+    el.textContent = script;
+    atLoad.document.body.appendChild(el);
+  };
+
+  // Deriving tools walks every control, and a portal has hundreds. Doing
+  // that on every page load in a browser with no modelContext would be a
+  // cost paid for nothing, so the check comes before the work.
+  run();
+  check("a browser without the API does no work at all", !!atLoad.__wcPublishedAtLoad, false);
+
+  const shelf = [];
+  Object.defineProperty(atLoad.document, "modelContext", {
+    configurable: true, value: { registerTool: (d) => shelf.push(d), getTools: () => shelf },
+  });
+  run();
+  ensure("with the API, the page publishes itself", shelf.length > 0, shelf.length);
+  const once = shelf.length;
+  run();
+  check("and does not publish twice", shelf.length, once);
+}
+
 section("the page names its own columns");
 // "How full is lake conroe" clicked two links and left someone on a page
 // they never asked for. The answer was a column away - Percent Full, row

@@ -985,6 +985,19 @@ you are actually on. Asking "webmcp" now answers on whatever page you are on,
 listing every tool an agent can call and which of them the site declared versus
 which this extension published. The capability card carries the same count.
 
+Publishing happens on the page itself, from a content script registered in
+the MAIN world at `document_end` - the same mechanism the feed capture has
+always used, and the one thing a third-party extension needs in order to reach
+`document.modelContext` at all. It previously went through `tabs.onUpdated`
+and a message round trip, so a site became agent-usable only once the service
+worker had woken, the event had fired and the message had landed.
+
+Registered dynamically, for origins the user has already granted, rather than
+declared statically against `https://*/*` - the reach is the same and the
+install prompt stays narrow. And the script checks for the API before doing
+anything, because deriving tools walks every control on the page and a browser
+without `modelContext` would be paying that on every page load for nothing.
+
 The two directions are tested very differently, and that asymmetry is not
 incidental. **Consuming** needs a page that declares tools, and no live site
 does yet, so it can only be exercised against a page written for the purpose.

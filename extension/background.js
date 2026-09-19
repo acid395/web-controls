@@ -76,6 +76,8 @@ const NAMED_MANIFESTS = [
 const GENERIC_BUNDLE = "page/generic-bundle.js";
 const FEED_CAPTURE = "page/feed-capture.js";
 const FEED_CAPTURE_ID = "wc-feed-capture";
+const PUBLISH_TOOLS = "page/publish-tools.js";
+const PUBLISH_TOOLS_ID = "wc-publish-tools";
 
 function routeFor(url) {
   return NAMED_MANIFESTS.find((r) => r.test.test(url || "")) || { bundle: GENERIC_BUNDLE, global: "GENERIC" };
@@ -219,11 +221,26 @@ async function registerFeedCapture() {
     const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [FEED_CAPTURE_ID] }).catch(() => []);
     if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [FEED_CAPTURE_ID] });
     if (!origins.length) return;
+    const drop = await chrome.scripting.getRegisteredContentScripts({ ids: [PUBLISH_TOOLS_ID] }).catch(() => []);
+    if (drop.length) await chrome.scripting.unregisterContentScripts({ ids: [PUBLISH_TOOLS_ID] });
     await chrome.scripting.registerContentScripts([{
       id: FEED_CAPTURE_ID,
       matches: origins,
       js: [FEED_CAPTURE],
       runAt: "document_start",
+      world: "MAIN",
+      allFrames: false,
+    }, {
+      // Publishing, on the page, without the service worker in the loop.
+      // It ran through tabs.onUpdated and a message round trip, so a site
+      // became agent-usable only once three separate things had gone right.
+      // At document_end in the MAIN world it needs none of them - and it
+      // costs nothing where the browser has no modelContext, because the
+      // script checks for that before walking anything.
+      id: PUBLISH_TOOLS_ID,
+      matches: origins,
+      js: [GENERIC_BUNDLE, PUBLISH_TOOLS],
+      runAt: "document_end",
       world: "MAIN",
       allFrames: false,
     }]);
