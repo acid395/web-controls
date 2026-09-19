@@ -5609,7 +5609,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       : String(c.label || "").trim().toLowerCase() !== openedLabel)),
                 };
                 const inside = planGenericTool(wanted, within);
-                const next = inside && inside.calls && inside.calls[0];
+                const first = inside && inside.calls && inside.calls[0];
+                // Only ever a switch, never another click. This retry exists
+                // because pressing a panel open is not finishing the job, and
+                // what finishes it is a checkbox, radio or dropdown. Letting
+                // it pick a second click instead would mean any button that
+                // happens to sit in a row with a checkbox - and does nothing
+                // measurable, which is most buttons - quietly sets off
+                // something else somewhere on the page.
+                const next = first && /^page(Check|PickRadio|SelectOption)$/.test(first.name)
+                  ? first : null;
                 if (next) {
                   const after = await runVerified(route.global, next);
                   const r2 = after.result || {};

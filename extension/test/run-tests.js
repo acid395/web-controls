@@ -218,6 +218,27 @@ check("a graph button beats a box that would swallow the words",
   gb("select 30 day% normal"), "#n30");
 check("and the longer label beats the bare one", gb("go to 30 day% normal"), "#n30");
 
+section("a dead click does not set off something else");
+// The open-then-finish retry fires whenever a click leaves a nearby checkbox
+// untouched - which is true of most buttons that sit in a list row. If it
+// were allowed to pick another click, an ordinary button doing nothing
+// measurable would quietly press something else on the page. It may only
+// finish the job with a switch.
+const deadClick = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul><li><button id="info">Flood Inundation</button>
+    <input type="checkbox" name="unrelated"></li>
+    <li><a id="elsewhere" href="#x">Flood Inundation Details</a></li></ul>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!deadClick) skip("dead clicks", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: deadClick });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: "click flood inundation" });
+    check("a button that changes nothing does not trigger a second click",
+      deadClick.document.querySelector('[name="unrelated"]').checked, false);
+  });
+}
+
 section("a link cannot be enabled");
 // Straight off the live page. "Flood Inundation Mapping" exists twice on
 // water.noaa.gov: as a navbar link and as the map layer itself. The link
