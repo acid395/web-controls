@@ -1652,6 +1652,35 @@
     // as only working after noaaOpenLayers - and it is the entire reason
     // "enable precipitation estimate" worked while "enable the flood layer"
     // did not. Doing it here makes that true for any site.
+    // A selector captured while the page was being read stops pointing at the
+    // same control the moment the list it indexes into reflows - and opening
+    // the panel is exactly that. "div.row:nth-of-type(3)" was Flood
+    // Inundation when it was read and Precipitation Estimate by the time the
+    // click landed, so the wrong layer switched on and the card reported "the
+    // page responded", which was true and useless. The label is what the
+    // instruction was matched against, so the label is what has to still be
+    // there when the click lands. An id is stable; a position is not.
+    const wanted = norm(c.label || "");
+    const labelFits = (el) => {
+      if (!el) return false;
+      if (!wanted) return true;
+      const got = norm(rawLabelOf(el));
+      return !!got && (got === wanted || got.includes(wanted) || wanted.includes(got));
+    };
+    const resolve = () => {
+      const direct = deepQuery(sel);
+      if (labelFits(direct)) return direct;
+      const again = deepQueryAll("input, select, textarea, button, a, label, li, [role]")
+        .find((el) => norm(rawLabelOf(el)) === wanted && isVisible(el));
+      return again || direct;
+    };
+    // Said out loud rather than guessed at: if what we are about to act on is
+    // not what was named, that belongs on the card, not in the success line.
+    const named = (el) => ({
+      control: (rawLabelOf(el) || "").slice(0, 60) || sel,
+      wrongOne: wanted && !labelFits(el) ? (c.label || "") : undefined,
+    });
+
     const reveal = async () => {
       if (!c.revealedBy) return;
       const opener = deepQuery(c.revealedBy);
@@ -1664,11 +1693,11 @@
     if (kind === "select" || (c.options && c.options.length)) {
       return async ({ value }) => {
         await reveal();
-        const el = deepQuery(sel);
+        const el = resolve();
         const was = el ? el.value : null;
-        const chosen = setSelect(sel, value);
-        return { control: rawLabelOf(el).slice(0, 60) || sel, was, now: chosen,
-          itChanged: was !== chosen, then: submit(sel) };
+        const chosen = setSelect(el || sel, value);
+        return { ...named(el), was, now: chosen,
+          itChanged: was !== chosen, then: submit(el || sel) };
       };
     }
     if (type === "checkbox" || kind === "checkbox") {
@@ -1679,11 +1708,11 @@
         // answers yes - "Flood Inundation · the page responded" was reported
         // while precipitation estimate was what actually moved. Only the
         // named control's own state can tell those apart.
-        const el = deepQuery(sel);
+        const el = resolve();
         const was = el ? !!el.checked : null;
-        const now = setChecked(sel, on !== false);
+        const now = setChecked(el || sel, on !== false);
         return {
-          control: rawLabelOf(el).slice(0, 60) || sel,
+          ...named(el),
           was, now, itChanged: was !== null && was !== now,
           openedFirst: !!c.revealedBy,
         };
@@ -1692,14 +1721,34 @@
     if (["text", "search", "email", "url", "number", "tel", "textarea"].includes(type) || kind === "textarea") {
       return async ({ text, submit: go }) => {
         await reveal();
-        fill(sel, text);
-        return { filled: text, submitted: go === false ? null : submit(sel) };
+        const el = resolve();
+        fill(el || sel, text);
+        return { ...named(el), filled: text,
+          submitted: go === false ? null : submit(el || sel) };
       };
     }
     return async () => {
       await reveal();
-      const el = realClick(sel);
-      return { clicked: String(el.tagName || "").toLowerCase(), openedFirst: !!c.revealedBy };
+      // A layer row is clicked, not ticked, so this is the branch the NOAA
+      // toggles take - and it reported only which tag it hit. Where the row
+      // owns a checkbox, that checkbox's own before and after is the only
+      // thing that distinguishes "Flood Inundation went on" from "something
+      // went on while Flood Inundation was asked for".
+      const el = resolve();
+      const box = el && el.matches && (el.matches("input[type=checkbox]") ? el
+        : (el.querySelector && el.querySelector("input[type=checkbox]"))
+          || (el.closest && el.closest("label, li, [role=row]")
+              && el.closest("label, li, [role=row]").querySelector("input[type=checkbox]")));
+      const was = box ? !!box.checked : null;
+      const hit = realClick(el || sel);
+      const now = box ? !!box.checked : null;
+      return {
+        ...named(el),
+        was, now,
+        ...(was === null ? {} : { itChanged: was !== now }),
+        clicked: String((hit && hit.tagName) || "").toLowerCase(),
+        openedFirst: !!c.revealedBy,
+      };
     };
   };
 

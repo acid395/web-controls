@@ -218,6 +218,46 @@ check("a graph button beats a box that would swallow the words",
   gb("select 30 day% normal"), "#n30");
 check("and the longer label beats the bare one", gb("go to 30 day% normal"), "#n30");
 
+section("the selector goes stale, the label does not");
+// "Select flood inundation" switched on Precipitation Estimate. Selectors
+// are captured while the page is read, and a control with no id gets a
+// positional one - "label:nth-of-type(2)". Opening the panel reflows the
+// list, so by the time the click lands that position belongs to a different
+// layer. The page did respond, and the card said so, which is exactly the
+// confidently wrong answer this whole thing exists to avoid.
+// No ids anywhere: that is the whole point. A control with an id gets a
+// stable selector and none of this can happen, which is why it took a live
+// site to find - the fixtures all had ids.
+const reflow = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <div id="L">
+    <label><input type="checkbox" name="swe"> Snow Water Equivalent</label>
+    <label><input type="checkbox" name="fi"> Flood Inundation</label>
+    <label><input type="checkbox" name="pe"> Precipitation Estimate</label>
+  </div></body></html>`, { url: "https://water.noaa.gov/" });
+const box = (n) => reflow && reflow.document.querySelector(`[name="${n}"]`);
+if (!reflow) skip("stale selectors", "jsdom not installed");
+else {
+  runAsync(async () => {
+    const tools = reflow.GENERIC.pageTools().tools;
+    const t = tools.find((x) => /flood.?inundation/i.test(x.name));
+    ensure("the layer becomes a tool of its own", !!t, tools.map((x) => x.name).slice(0, 12));
+    if (t) {
+      // The list grows a row before the click lands - what opening a panel
+      // does on a real page.
+      const row = reflow.document.createElement("label");
+      row.innerHTML = '<input type="checkbox" name="new"> New Layer';
+      reflow.document.getElementById("L").prepend(row);
+
+      const r = await reflow.GENERIC.pageToolCall(t.name, { on: true });
+      check("the layer named is the layer that moved", box("fi").checked, true);
+      check("and the one now sitting at its old position is not",
+        `${box("swe").checked} ${box("pe").checked}`, "false false");
+      ensure("the card names the control it actually reached",
+        /flood inundation/i.test(String((r && r.control) || "")), r);
+    }
+  });
+}
+
 section("did the thing you named change");
 // "Select flood inundation" reported "Flood Inundation - the page responded"
 // while precipitation estimate was what actually switched on. Verification

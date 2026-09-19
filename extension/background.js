@@ -5526,6 +5526,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // that moved.
                   subtitle: (() => {
                     const r = ran.result || {};
+                    if (r.wrongOne) {
+                      return `asked for "${r.wrongOne}" but the page gave "${r.control}" - not acted on as named`;
+                    }
                     if (typeof r.itChanged === "boolean") {
                       return r.itChanged
                         ? `${r.control}: ${r.was} \u2192 ${r.now}`
@@ -5872,6 +5875,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // what matters is whether *this* control moved.
                 (() => {
                   const r = (result && result.result) || {};
+                  if (r.wrongOne) {
+                    return `asked for "${r.wrongOne}" but the page gave "${r.control}" - not acted on as named`;
+                  }
                   if (typeof r.itChanged === "boolean") {
                     return r.itChanged
                       ? `${r.control}: ${r.was} \u2192 ${r.now}`
