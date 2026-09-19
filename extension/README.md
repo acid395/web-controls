@@ -1380,6 +1380,25 @@ The derived tools are cached per page for a few seconds and thrown away the
 moment an action changes anything, because stale tools are worse than slow
 ones. On a 300-control page: 3033ms the first time, 19ms the second.
 
+### Doing and telling are different questions
+
+"Click on wildcat creek new london" came back with a USGS gauge record - the
+right creek, and not remotely what was asked. A lookup answers; it does not
+act, so it cannot satisfy an instruction.
+
+The mirror was true as well: asking for that creek's discharge picked the
+*link* named Wildcat Creek, which clicks away from the page without reporting
+a number.
+
+Derived tools are named verb-first precisely so this is legible. `click`,
+`choose`, `toggle` and `type` act; `read`, `list` and `compute` report. An
+instruction is offered the actions and no lookups; a question is offered the
+readers and the lookups and no actions.
+
+Acting is still how a question sometimes gets answered - that is what
+following the site does, acting and then reading. It is just not an answer on
+its own.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

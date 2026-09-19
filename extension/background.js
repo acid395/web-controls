@@ -4152,12 +4152,32 @@ async function cachedPageTools(tabId, url) {
   return tools;
 }
 
-async function unifiedTools(routeGlobal, instruction) {
+async function unifiedTools(routeGlobal, instruction, { acting = false } = {}) {
   const fromPage = await agentTools(routeGlobal, instruction, { max: 40 });
-  const data = DATA_TOOLS.map((d) => ({
+  // An instruction to do something cannot be satisfied by looking something
+  // up. "Click on wildcat creek new london" was answered with a USGS gauge
+  // record - the right creek, and not remotely what was asked. A lookup
+  // answers; it does not act, so it is not a candidate when the sentence is
+  // an instruction.
+  const data = acting ? [] : DATA_TOOLS.map((d) => ({
     name: d.name, description: d.description, parameters: d.parameters, kind: "data",
   }));
-  return [...fromPage.all.map((t) => ({ ...t, kind: t.kind || "page" })), ...data];
+
+  // And the mirror of it. A question cannot be answered by pressing
+  // something: "wildcat creek new london discharge" picked the link named
+  // Wildcat Creek, which clicks away from the page without reporting a
+  // number. Derived tools are named verb-first precisely so this is legible
+  // - click, choose, toggle and type act; read, list and compute report.
+  //
+  // Acting is still how a question sometimes gets answered, but that is the
+  // job of following the site, which acts and then reads. It is not an
+  // answer on its own.
+  const acts = /^(click|choose|toggle|type|search)[A-Z]/;
+  const fromThisPage = fromPage.all
+    .map((t) => ({ ...t, kind: t.kind || "page" }))
+    .filter((t) => acting || !acts.test(t.name));
+
+  return [...fromThisPage, ...data];
 }
 
 // A pick worth acting on: clearly ahead, and ahead by enough. A near-tie
@@ -5193,7 +5213,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // catches what it cannot decide, and nothing that worked stops
         // working while this earns its place.
         if (!forceModel) {
-          const one = confidentPick(await unifiedTools(route.global, wanted), wanted);
+          const one = confidentPick(
+            await unifiedTools(route.global, wanted, { acting: commandLike }), wanted);
           if (one) {
             const ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
             const inner = ran.result && ran.result.display;

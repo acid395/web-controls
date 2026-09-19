@@ -183,6 +183,46 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("doing and telling are different questions");
+// "Click on wildcat creek new london" was answered with a USGS gauge record -
+// the right creek, and not remotely what was asked. A lookup answers; it does
+// not act, so it cannot satisfy an instruction. The mirror held too: asking
+// for the discharge picked the link named Wildcat Creek, which clicks away
+// from the page without reporting a number.
+//
+// Derived tools are named verb-first exactly so this is legible: click,
+// choose, toggle and type act; read, list and compute report.
+const bothWays = loadPage(`<!doctype html><html><body>
+  <a href="/x">Wildcat Creek</a>
+  <table><tr><th>Site</th><th>Discharge, cfs</th></tr>
+    <tr><td>WILDCAT CREEK</td><td>5.2</td></tr></table></body></html>`,
+  { url: "https://water.noaa.gov/" });
+if (!bothWays) skip("doing vs telling", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: bothWays });
+  runAsync(async () => {
+    const asInstruction = await bg.unifiedTools("NOAA", "click on wildcat creek", { acting: true });
+    check("an instruction is offered no lookups",
+      asInstruction.filter((t) => t.kind === "data").length, 0);
+    ensure("but is offered the page's actions",
+      asInstruction.some((t) => /^click/.test(t.name)), asInstruction.map((t) => t.name).slice(0, 6));
+
+    const asQuestion = await bg.unifiedTools("NOAA", "wildcat creek discharge", { acting: false });
+    ensure("a question is offered lookups",
+      asQuestion.some((t) => t.kind === "data"), asQuestion.length);
+    check("and no actions at all",
+      asQuestion.filter((t) => /^(click|choose|toggle|type|search)[A-Z]/.test(t.name)).length, 0);
+    ensure("keeping the ones that report",
+      asQuestion.some((t) => t.name === "readThisPage"), asQuestion.map((t) => t.name).slice(0, 6));
+
+    // End to end: the instruction acts, the question reads.
+    const acted = await bg.__ask({ type: "smartAsk", instruction: "click on wildcat creek new london" });
+    check("the instruction acts", acted.plannedBy, "one-list");
+    ensure("on the page's own control",
+      /click/i.test(((acted.display || {}).title) || ""), (acted.display || {}).title);
+  });
+}
+
 section("a heavy page is only walked once");
 // Deriving tools walks every control, and a real portal has hundreds - CDEC
 // has 667. Doing it on every ask, and again when the older cascade wants an
