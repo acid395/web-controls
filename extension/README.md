@@ -1434,6 +1434,26 @@ button. A menu of guesses that would change the page is not an answer to a
 question. If the page cannot answer, it says so, and the failure card already
 lists what is here and what was understood.
 
+## A key upgrades; it is never required
+
+The extension has to work the moment it is installed, on any machine, with no
+account and no setup. That is not a nice-to-have: it is the difference between
+something a colleague can try and something they have to be walked through.
+
+So nothing keyless depends on a key, and there is a test asserting that a
+keyless install makes no request to anybody's model, ever.
+
+But the bugs that survive everything keyless are *interpretation* problems -
+"full" means the Percent Full column, a California site means California's
+Smith River, eight dated rows are not eight reservoirs - and a capable model
+is good at exactly those. When a key is present it is now consulted
+automatically, once everything keyless has genuinely failed. It had been
+reachable only from Debug tools, so in practice it never ran: the one model
+here able to judge was sitting behind a button nobody presses.
+
+Keyless stays the default and the baseline. A key makes the long tail better,
+and the failure card mentions it exists without ever depending on it.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

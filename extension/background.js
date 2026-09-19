@@ -5751,13 +5751,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        // A key is an upgrade, never a requirement. Nothing above this line
+        // needs one, and nothing ever will: the extension has to work the
+        // moment it is installed, on any machine, with no account and no
+        // setup. But once everything keyless has genuinely failed, a capable
+        // model is the difference between an answer and a shrug - and the
+        // bugs that reach this point are interpretation problems, which is
+        // exactly what such a model is good at.
+        //
+        // It was reachable only from Debug tools, so in practice it never
+        // ran: the one model in here able to judge was sitting behind a
+        // button nobody presses.
+        const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
+        if (geminiApiKey) {
+          const known = await agentTools(route.global, wanted, { max: 24 });
+          const context = known.page.length ? null : await buildContext(route.global);
+          const plan = await askGemini(wanted, known.all, context).catch((e) => ({ ok: false, error: String(e.message || e) }));
+          if (plan.ok && plan.toolCall) {
+            const result = await runVerified(route.global, plan.toolCall);
+            const inner = result.result && result.result.display;
+            respond({
+              ...result, plannedBy: "gemini", toolCall: plan.toolCall,
+              display: inner || {
+                title: friendlyToolName(plan.toolCall.name),
+                subtitle: "chosen by the model you supplied a key for",
+                stats: [],
+                rows: Object.entries(plan.toolCall.args || {})
+                  .filter(([k]) => k !== "selector")
+                  .map(([k, v]) => ({ name: k, value: String(v).slice(0, 40), meta: "" })),
+                source: "Gemini",
+              },
+            });
+            return;
+          }
+          if (plan.ok && plan.text) {
+            respond({ ok: true, plannedBy: "gemini", modelReply: plan.text,
+              display: { title: "The model's answer", subtitle: String(plan.text).slice(0, 140),
+                stats: [], rows: [], source: "Gemini" } });
+            return;
+          }
+        }
+
         if (!(await isLocalModelEnabled())) {
           // Everything cheap has genuinely been tried by this point: data
           // tools, the route's own keyword path, and a scored scan of every
           // control on the page. Report what was understood and what was
           // searched rather than a bare failure.
           const why = explainFailure(msg.instruction || "", route, inv, { modelOff: true });
-          why.hint = "name a measurement and a place (\"gage height in Wyoming\"), or use a control's own wording from the list above";
+          why.hint = "name a measurement and a place (\"gage height in Wyoming\"), or use a control's own wording from the list above"
+            + (geminiApiKey ? "" : " - a Gemini key in Debug tools would let a model try the ones it cannot work out, though nothing here needs one");
           respond(why);
           return;
         }

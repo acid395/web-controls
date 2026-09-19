@@ -183,6 +183,38 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a key upgrades, and is never required");
+// The extension has to work the moment it is installed, on any machine, with
+// no account and no setup. So nothing keyless may ever depend on a key - and
+// a key, when there is one, should actually be used rather than sitting
+// behind a Debug button nobody presses, which is where the only capable
+// model in here had been waiting.
+const plainPage2 = loadPage("<!doctype html><html><head><title>T</title></head><body><p>nothing</p></body></html>",
+  { url: "https://example.gov/" });
+if (!plainPage2) skip("keyless first", "jsdom not installed");
+else {
+  runAsync(async () => {
+    const keyless = loadBackground({ page: plainPage2 });
+    let reachedOut = false;
+    const pass = keyless.fetch;
+    keyless.fetch = (u, o) => { if (/generativelanguage/.test(String(u))) reachedOut = true; return pass(u, o); };
+    const r = await keyless.__ask({ type: "smartAsk", instruction: "fly me to the moon" });
+    check("no key, no request to anybody's model", reachedOut, false);
+    ensure("and it still answers for itself", r.ok === false && !!r.display, r);
+    ensure("mentioning the upgrade without demanding it", /Gemini key/.test(r.hint || ""), r.hint);
+
+    const keyed = loadBackground({ page: plainPage2 });
+    await keyed.chrome.storage.local.set({ geminiApiKey: "test-key" });
+    let consulted = false;
+    keyed.fetch = async (u) => {
+      if (/generativelanguage/.test(String(u))) { consulted = true; return { ok: false, status: 401, json: async () => ({}) }; }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    await keyed.__ask({ type: "smartAsk", instruction: "fly me to the moon" });
+    check("with a key, the model is consulted", consulted, true);
+  });
+}
+
 section("publishing without the service worker in the loop");
 // Publishing ran through tabs.onUpdated and a message round trip, so a site
 // became agent-usable only once the worker had woken, the event had fired
