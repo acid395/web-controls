@@ -1324,6 +1324,33 @@ The choice card was also laid out inline, label and hint on one baseline, so
 either being longer than a few words made them collide. Stacked now, and a
 hint that merely repeats the card's own subtitle is left off.
 
+## One list, one picker
+
+There were two systems in here, and only one of them was any good.
+
+A control request went through tools derived from the page: ranked, picked,
+run, verified. A data question went through something else entirely - a
+vocabulary of measurement words, a hand-written table reader, a link walker,
+then an agency API - and **never reached the derived tools at all**. They were
+built, counted, shown in the WebMCP card, and skipped.
+
+Every bug in the last stretch was in the second system. `acre-ft` read as
+feet, "storage" unknown, eight dates summed into a statewide total, nine
+rivers averaged into a number describing nothing. All of it hand-written
+vocabulary meeting a page that had not read the vocabulary. The derived layer
+was meanwhile quietly correct on four sites nobody had written a line for.
+
+So there is one list now: the page's own controls, the tools that read and
+calculate, the route's verified tools, and the agency lookups - ranked
+together and picked once. A question and an instruction stop being different
+kinds of thing, which is what lets a new site work without anybody deciding in
+advance what kind of site it is.
+
+It only acts on a clear winner. A near-tie means the question was ambiguous,
+and guessing at an ambiguous question is how confident wrong answers get made,
+so it stands aside and the older cascade catches what it cannot decide.
+Nothing that worked stops working while this earns its place.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

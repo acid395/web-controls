@@ -4059,6 +4059,64 @@ const ENV_VOCAB_CONTEXT = envVocabPreamble();
 // from its own options, and nothing to construct. The manifest's verified tools
 // join them, because those were checked against the real site. The generic
 // selector primitives are left out entirely.
+/* ---------------------------------------------------------------------------
+ * One list, one picker.
+ *
+ * There have been two systems in here. A control request goes through tools
+ * derived from the page: ranked, picked, run, verified. A data question went
+ * through something else entirely - a vocabulary of measurement words, a
+ * hand-written table reader, a link walker, then an agency API - and never
+ * reached the derived tools at all. They were built, counted, shown in the
+ * card, and skipped.
+ *
+ * Every bug this week was in the second system. "Acre-ft" read as feet,
+ * "storage" unknown, eight dates summed, nine rivers averaged: all of it
+ * hand-written vocabulary meeting a page that had not read the vocabulary.
+ * Meanwhile the derived layer was quietly right on four sites nobody had
+ * written a line for.
+ *
+ * So: one list. The page's own controls, the tools that read and calculate,
+ * the route's verified tools, and the agency lookups - ranked together and
+ * picked once. A question and an instruction stop being different kinds of
+ * thing, which is what makes a new site work without anybody deciding in
+ * advance which kind of site it is.
+ *
+ * This runs ahead of the older cascade and stands aside unless it has a
+ * clear winner, so nothing that already worked stops working while the
+ * mechanism earns its place.
+ */
+async function unifiedTools(routeGlobal, instruction) {
+  const fromPage = await agentTools(routeGlobal, instruction, { max: 40 });
+  const data = DATA_TOOLS.map((d) => ({
+    name: d.name, description: d.description, parameters: d.parameters, kind: "data",
+  }));
+  return [...fromPage.all.map((t) => ({ ...t, kind: t.kind || "page" })), ...data];
+}
+
+// A pick worth acting on: clearly ahead, and ahead by enough. A near-tie
+// means the question was ambiguous, and guessing at an ambiguous question is
+// how confident wrong answers get made.
+function confidentPick(tools, instruction) {
+  const words = meaningfulWords(instruction);
+  if (!words.length) return null;
+  const asksForMaths = !!aggregateWanted(instruction);
+  const asksToRead = /\b(read|say|says|what.s on|contents?|summar\w+)\b/i.test(instruction);
+  const scored = tools
+    .map((t) => {
+      let score = scoreManifestTool(t, words, instruction);
+      if (asksForMaths && t.name === "pageCompute") score += 12;
+      if (asksToRead && t.name === "readThisPage") score += 10;
+      return { t, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  const [best, next] = scored;
+  if (!best || best.score < 6) return null;
+  if (next && best.score - next.score < 2) return null;
+  const args = argsForTool(best.t, instruction, words);
+  if (args === null) return null;
+  return { tool: best.t, args, score: best.score, runnerUp: next ? next.t.name : null };
+}
+
 async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
   // !d.run was meant to drop the data lookups, which answer from an agency
   // rather than the page. It also dropped pageCompute, which orchestrates
@@ -5058,6 +5116,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               },
             });
             return;
+          }
+        }
+
+        // One list, one picker - ahead of everything hand-written. It stands
+        // aside unless it has a clear winner, so the older cascade still
+        // catches what it cannot decide, and nothing that worked stops
+        // working while this earns its place.
+        if (!forceModel) {
+          const one = confidentPick(await unifiedTools(route.global, wanted), wanted);
+          if (one) {
+            const ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
+            const inner = ran.result && ran.result.display;
+            if (ran.ok !== false) {
+              respond({
+                ...ran, plannedBy: "one-list", toolCall: { name: one.tool.name, args: one.args },
+                runnerUp: one.runnerUp,
+                display: inner || {
+                  title: friendlyToolName(one.tool.name),
+                  subtitle: String(one.tool.description || "").split(/[.\u2013-]/)[0].slice(0, 80),
+                  stats: [],
+                  rows: Object.entries(one.args || {})
+                    .filter(([k]) => k !== "selector")
+                    .map(([k, v]) => ({ name: k, value: String(v).slice(0, 40), meta: "" })),
+                  source: one.tool.kind === "data" ? "public agency data" : "this page",
+                },
+              });
+              return;
+            }
           }
         }
 

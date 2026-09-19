@@ -183,6 +183,45 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("one list, one picker");
+// There were two systems. A control request went through tools derived from
+// the page; a data question went through hand-written vocabulary, a table
+// reader, a link walker and an agency API, and never reached the derived
+// tools at all - they were built, counted, shown in the card, and skipped.
+// Every bug this week was in the second system.
+const oneListPage = loadPage(`<!doctype html><html><head><title>Statewide</title></head><body>
+  <a href="/about">About</a>
+  <label for="topic">Topic</label><select id="topic"><option>Storage</option><option>Inflow</option></select>
+  <table><tr><th>Date</th><th>Reservoir Storage (acre-ft)</th></tr>
+    <tr><td>Today</td><td>26,810,632</td></tr><tr><td>Yesterday</td><td>26,839,775</td></tr>
+    <tr><td>1 week ago</td><td>27,081,104</td></tr></table></body></html>`,
+  { url: "https://example-water.gov/" });
+if (!oneListPage) skip("one list", "jsdom not installed");
+else {
+  const united = loadBackground({ page: oneListPage });
+  runAsync(async () => {
+    const all = await united.unifiedTools("GENERIC", "average reservoir storage");
+    ensure("the page's tools and the agency's are in one list",
+      all.some((t) => t.kind === "data") && all.some((t) => t.kind === "page"), all.length);
+    ensure("including the one that calculates",
+      all.some((t) => t.name === "pageCompute"), all.map((t) => t.name).slice(0, 8));
+
+    const pick = united.confidentPick(all, "average reservoir storage");
+    check("a calculation is picked from it", pick && pick.tool.name, "pageCompute");
+    check("with arguments filled", pick && pick.args.fn, "mean");
+
+    // A near-tie is an ambiguous question, and guessing at one is how
+    // confident wrong answers get made. It stands aside instead.
+    const vague = united.confidentPick(all, "data");
+    check("an ambiguous question gets no pick", vague, null);
+
+    // End to end, the question is answered by the unified path.
+    const r = await united.__ask({ type: "smartAsk", instruction: "average reservoir storage" });
+    check("and answers through it", r.plannedBy, "one-list");
+    ensure("with the page's own number", /26|27/.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
+  });
+}
+
 section("a site from another domain entirely");
 // The point of deriving tools from a page is that nothing may be known about
 // the page. So the guard is a site with no manifest, no hydrology, and no
