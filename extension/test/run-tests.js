@@ -239,6 +239,63 @@ else {
   });
 }
 
+section("the standard surface, provided");
+// Chrome ships no modelContext, so registerTool had nowhere to go and every
+// derived tool stayed private to this extension. Providing the documented
+// shape costs a registry, a list and a call - and makes the tools reachable
+// by anything else on the page, not just by us.
+const mcpPage = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <label><input type="checkbox" name="fi"> Flood Inundation</label>
+  <button id="go">Refresh</button></body></html>`, { url: "https://water.noaa.gov/" });
+if (!mcpPage) skip("modelContext polyfill", "jsdom not installed");
+else {
+  check("the page had none to begin with", typeof mcpPage.document.modelContext, "undefined");
+  const pub = mcpPage.GENERIC.mcpPublishControls({ max: 40 });
+  ensure("publishing now lands somewhere", pub.registered > 0, pub);
+  check("and says it provided the surface itself", pub.polyfilled, true);
+  check("through the current name, not the deprecated one", pub.via, "document.modelContext");
+
+  const api = mcpPage.document.modelContext;
+  ensure("the documented shape is there",
+    !!(api && typeof api.registerTool === "function" && typeof api.getTools === "function"
+       && typeof api.callTool === "function"), Object.keys(api || {}));
+  ensure("everything registered is listed", api.getTools().length >= pub.registered,
+    `${api.getTools().length} listed vs ${pub.registered} added`);
+  // Republishing must not duplicate: the same page is read many times over,
+  // and forty tools becoming eighty would be its own kind of wrong.
+  const before = api.getTools().length;
+  const again = mcpPage.GENERIC.mcpPublishControls({ max: 40 });
+  check("republishing adds nothing the second time", again.registered, 0);
+  check("and the list does not grow", api.getTools().length, before);
+
+  // The point of it: something that is not this extension can drive the page.
+  runAsync(async () => {
+    const tool = api.getTools().find((t) => /flood.?inundation/i.test(t.name));
+    ensure("a layer is offered as a tool", !!tool, api.getTools().map((t) => t.name).slice(0, 8));
+    if (tool) {
+      await api.callTool(tool.name, { on: true });
+      check("and calling it through the standard API works",
+        mcpPage.document.querySelector('[name="fi"]').checked, true);
+    }
+    await api.callTool("readThisPage", {}).then(
+      (r) => ensure("reading works through it too", !!r, r),
+      (e) => ensure("reading works through it too", false, String(e.message)));
+  });
+
+  // Publishing rebuilds the callable set, and asking it for 40 tools deleted
+  // the other 210 - "click archive" stopped existing the moment publishing
+  // began to succeed. Registration is capped; the page's own abilities are not.
+  const many = loadPage(`<!doctype html><html><body>${
+    Array.from({ length: 60 }, (_, i) => `<a href="/n${i}">Item ${i}</a>`).join("")
+  }<a href="/last">Archive</a></body></html>`, { url: "https://water.noaa.gov/" });
+  if (many) {
+    many.GENERIC.mcpPublishControls({ max: 40 });
+    ensure("publishing does not shrink what the page can do",
+      many.GENERIC.pageTools().tools.some((t) => /Archive/i.test(t.name)),
+      many.GENERIC.pageTools().tools.length);
+  }
+}
+
 section("a link cannot be enabled");
 // Straight off the live page. "Flood Inundation Mapping" exists twice on
 // water.noaa.gov: as a navbar link and as the map layer itself. The link

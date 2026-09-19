@@ -1497,6 +1497,58 @@
     declaredBy: origin,
   });
 
+  // Chrome ships no modelContext, so registerTool had nowhere to go and every
+  // tool this page derived stayed private to the extension. The standard
+  // shape costs almost nothing to provide: a registry, a way to list it and a
+  // way to call it. Installing it means the tools become available through
+  // the documented surface rather than through a bridge only this extension
+  // knows about - so anything else running on the page can drive the site
+  // too, and this extension stops being a special case.
+  //
+  // A polyfill, not native support, and it never displaces a real one: if the
+  // browser or the site already provides modelContext, this leaves it alone.
+  function mcpInstall() {
+    if (mcpApi()) return { installed: false, why: "the page already has one", api: mcpApiName() };
+    if (typeof document === "undefined") return { installed: false, why: "no document" };
+    const context = {
+      // Written to the same registry the extension already keeps, so the two
+      // views can never disagree about what this page offers.
+      registerTool(def) {
+        if (!def || !def.name) throw new Error("registerTool needs a name");
+        const at = MCP_REGISTRY.findIndex((t) => t.name === def.name);
+        if (at >= 0) MCP_REGISTRY[at] = def; else MCP_REGISTRY.push(def);
+        try {
+          window.dispatchEvent(new CustomEvent("modelcontexttoolregistered",
+            { detail: { name: def.name } }));
+        } catch (e) { /* CustomEvent unavailable in odd embeddings */ }
+        return { name: def.name };
+      },
+      unregisterTool(name) {
+        const at = MCP_REGISTRY.findIndex((t) => t.name === name);
+        if (at >= 0) MCP_REGISTRY.splice(at, 1);
+        return at >= 0;
+      },
+      // Both spellings: the drafts disagree and a consumer may try either.
+      getTools: () => MCP_REGISTRY.map((t) => normaliseTool(t, t.declaredBy || "extension")),
+      listTools: () => MCP_REGISTRY.map((t) => normaliseTool(t, t.declaredBy || "extension")),
+      async callTool(name, args) {
+        const tool = MCP_REGISTRY.find((t) => t.name === name);
+        if (!tool) throw new Error(`no tool named "${name}" on this page`);
+        const run = tool.execute || tool.run || tool.callback;
+        if (typeof run !== "function") throw new Error(`"${name}" has no implementation`);
+        return run(args || {});
+      },
+    };
+    try {
+      Object.defineProperty(document, "modelContext", {
+        value: context, writable: false, configurable: true, enumerable: false,
+      });
+    } catch (e) {
+      try { document.modelContext = context; } catch (e2) { return { installed: false, why: String(e2) }; }
+    }
+    return { installed: true, api: "document.modelContext", polyfill: true };
+  }
+
   function mcpInfo() {
     const api = mcpApi();
     if (!api) {
@@ -1947,6 +1999,10 @@
   }
 
   function mcpPublishControls({ max = 40 } = {}) {
+    // Provide the surface if nothing else does. Without this, every derived
+    // tool stayed private to the extension on every browser that ships no
+    // modelContext - which is all of them but Edge.
+    const installed = mcpInstall();
     const api = mcpApi();
     if (!api || typeof api.registerTool !== "function") {
       return { registered: 0, note: `this browser has no ${mcpApiName()}.registerTool` };
@@ -1965,12 +2021,24 @@
     };
 
     // Same descriptors the model is offered, so the two can never drift.
-    const built = pageToolDescriptors({ max: Math.min(max, 60) });
-    for (const d of built.tools) {
+    // Built at full size, not at the publishing cap: pageToolDescriptors
+    // clears and rebuilds the callable set, so asking it for 40 tools here
+    // deleted the other 210 - "click archive" stopped existing the moment
+    // publishing began to succeed. What gets registered is capped; what the
+    // page can do is not.
+    const built = pageToolDescriptors();
+    for (const d of built.tools.slice(0, max)) {
       const impl = PAGE_TOOLS.get(d.name);
       add({ name: d.name, description: d.description, inputSchema: d.inputSchema, execute: impl.execute });
     }
-    return { registered: names.length, names, fromControls: built.fromControls, note: "" };
+    return {
+      registered: names.length, names, fromControls: built.fromControls,
+      via: mcpApiName(),
+      polyfilled: !!(installed && installed.installed),
+      note: installed && installed.installed
+        ? "this browser ships no modelContext, so the standard surface was provided"
+        : "",
+    };
   }
 
   function readPage() {
@@ -2033,6 +2101,7 @@
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries,
     disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
+    mcpInstall,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
   };
