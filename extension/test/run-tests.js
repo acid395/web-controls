@@ -183,6 +183,29 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a verb is not a subject");
+// "Click dew point" reached "Terms of Use" four times running. Nothing in
+// the instruction matched that label - the score came entirely from verbs.
+// "use" was in the verb-synonym family, so Terms of Use scored twice against
+// any sentence containing "click": once for click, once for use, landing
+// exactly on the threshold.
+const termsTool = { name: "clickTermsOfUse", description: "Terms of Use - a on this page",
+  parameters: { type: "object", properties: {} } };
+const dewTool = { name: "clickDewPointHumidity", description: "Dew Point/Humidity - a on this page",
+  parameters: { type: "object", properties: {} } };
+const picks = (q) => (sb.confidentPick([termsTool, dewTool], q) || { tool: { name: null } }).tool.name;
+check("the instruction reaches what it named", picks("click dew point"), "clickDewPointHumidity");
+check("and not the nearest verb-shaped label", picks("click terms of use"), "clickTermsOfUse");
+// "use" and "make" are verbs and also ordinary words in ordinary labels.
+check("use is no longer a verb synonym", (sb.verbFamily("use") || []).includes("click"), false);
+check("while click still is", sb.verbFamily("click").includes("select"), true);
+
+// A closed-up compound and a spaced label are the same thing to a person.
+check("dewpoint finds Dew Point", sb.wordMatchesText("dewpoint", "dew point/humidity"), "exact");
+check("gageheight finds Gage height", sb.wordMatchesText("gageheight", "gage height"), "exact");
+check("but short words are not closed up", sb.wordMatchesText("use", "u se"), false);
+check("so the compound rule reaches it too", picks("select dewpoint"), "clickDewPointHumidity");
+
 section("a short word is not a match");
 // "Go to mayaguez tide gauge" on water.noaa.gov offered two controls: a
 // USAGov footer link and a webmaster email address. Neither has anything to
@@ -1465,7 +1488,13 @@ else {
       // A command reaches the page and acts on it.
       const cmd = await ask("select 30 day precipitation");
       ensure("a command is planned and run", cmd.ok === true, cmd.error || cmd);
-      ensure("against a real control", /Applied|done/i.test((cmd.display || {}).title || ""), cmd.display);
+      // Not tied to one path's wording: what matters is that a control on
+      // the page was reached, whichever rung got there. This asserted
+      // "Applied", the page-match phrasing, and broke the day the unified
+      // picker started choosing the dropdown directly - a better outcome
+      // failing a test written around the old one.
+      ensure("against a real control",
+        /Applied|done|choose|click|select/i.test((cmd.display || {}).title || ""), cmd.display);
       const caps = await ask("what can I do here");
       ensure("capabilities answer", caps.ok === true, caps.error || caps);
       ensure("and count the page's controls", caps.pageControls > 0, caps.pageControls);

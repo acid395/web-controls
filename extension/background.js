@@ -2549,6 +2549,14 @@ function wordMatchesText(word, text) {
   const boundary = word.length <= 3 ? "\\b" : "";
   if (new RegExp(`\\b${escaped}${boundary}`).test(text)) return "exact";
 
+  // People close up compounds that a page spaces out, and the reverse.
+  // "Dewpoint" and "Dew Point/Humidity" are the same thing, and matching
+  // token against token never sees it. Long words only: closing up the
+  // spaces makes short ones match almost anything.
+  if (word.length >= 5 && String(text).replace(/[^a-z0-9]+/g, "").includes(word.replace(/[^a-z0-9]+/g, ""))) {
+    return "exact";
+  }
+
   // A multi-word value ("30 days", "year to date") never matches a single
   // token, so it needs a sliding window across the text instead.
   if (/\s/.test(word)) {
@@ -3592,7 +3600,11 @@ function toolVocabulary(def) {
 // different requests, and collapsing every verb into one would make them
 // score alike.
 const VERB_FAMILIES = [
-  ["select", "choose", "pick", "click", "tap", "press", "set", "switch", "change", "use", "make"],
+  // "use" and "make" are out: they are verbs, but they are also ordinary
+  // words in ordinary labels. With them in, a link called "Terms of Use"
+  // scored against any instruction containing "click" - twice, once for
+  // "click" and once for "use" - and reached the threshold on verbs alone.
+  ["select", "choose", "pick", "click", "tap", "press", "set", "switch", "change"],
   ["toggle", "turn", "enable", "disable", "check", "uncheck", "tick"],
   ["open", "expand", "show", "display", "reveal"],
   ["close", "collapse", "hide", "dismiss"],
@@ -4268,6 +4280,17 @@ function confidentPick(tools, instruction) {
   const [best, next] = scored;
   if (!best || best.score < 6) return null;
   if (next && best.score - next.score < 2) return null;
+
+  // Something other than the verb has to match. A tool whose score comes
+  // entirely from words like click, set or choose has matched the shape of
+  // the sentence and none of its content - which is how "click dew point"
+  // reached "Terms of Use" four times in a row.
+  const subject = words.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w));
+  const vocab = toolVocabulary(best.t);
+  const onSubject = subject.some((w) =>
+    wordMatchesText(w, vocab.fromName) || wordMatchesText(w, vocab.description)
+    || vocab.enums.some((e) => wordMatchesText(w, String(e).toLowerCase())));
+  if (subject.length && !onSubject) return null;
   const args = argsForTool(best.t, instruction, words);
   if (args === null) return null;
   return { tool: best.t, args, score: best.score, runnerUp: next ? next.t.name : null };
