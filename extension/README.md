@@ -1351,6 +1351,23 @@ and guessing at an ambiguous question is how confident wrong answers get made,
 so it stands aside and the older cascade catches what it cannot decide.
 Nothing that worked stops working while this earns its place.
 
+### The site says which state it is about
+
+"Smith river discharge" asked on `cdec.water.ca.gov` returned nine rivers from
+New Hampshire to Alaska. Every reading correct, and the one obviously meant -
+California's - buried among eight that were not. The site had said which state
+it was about in its own hostname, and nothing read it.
+
+A state suffix (`ca.gov`, `state.mn.us`, `dnr.wi.gov`) or a state name in the
+domain (`waterdatafortexas.org`) now narrows a question that named no state of
+its own. A federal site suggests nothing, because guessing there would be
+worse than not guessing.
+
+Narrowing only, never widening; and the card says *"narrowed to CA, from this
+site (ca.gov)"*, because a hint that quietly answers about the wrong place is
+worse than no hint at all. If the narrowed question finds nothing, the hint was
+wrong and it asks again without it.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

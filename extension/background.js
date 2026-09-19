@@ -4085,6 +4085,32 @@ const ENV_VOCAB_CONTEXT = envVocabPreamble();
  * clear winner, so nothing that already worked stops working while the
  * mechanism earns its place.
  */
+// Which state a site belongs to, from its own address.
+//
+// "Smith river discharge" asked on cdec.water.ca.gov came back with nine
+// rivers from New Hampshire to Alaska. Every reading correct, and the one
+// that was obviously meant - California's - buried among eight that were
+// not. The site had said which state it was about in its own hostname and
+// nothing read it.
+//
+// Only ever used to narrow, only when no state was named, and always said
+// out loud: a hint that quietly answers about the wrong place is worse than
+// no hint at all.
+function stateFromSite(url, title) {
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase(); } catch (e) { return null; }
+
+  // ca.gov, state.mn.us, dnr.wi.gov
+  const suffix = host.match(/\.([a-z]{2})\.(gov|us)$/);
+  if (suffix && STATE_BBOX[suffix[1]]) return { code: suffix[1], from: `${suffix[1]}.${suffix[2]}` };
+
+  // waterdatafortexas.org, michigan.gov
+  const hay = `${host} ${String(title || "").toLowerCase()}`;
+  const named = findStateInText(hay.replace(/[^a-z ]+/g, " "));
+  if (named && named.code) return { code: named.code, from: named.name || named.code };
+  return null;
+}
+
 async function unifiedTools(routeGlobal, instruction) {
   const fromPage = await agentTools(routeGlobal, instruction, { max: 40 });
   const data = DATA_TOOLS.map((d) => ({
@@ -5262,8 +5288,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         if (dataCall && !commandLike) {
-          const result = await executeToolCall(route.global, dataCall);
-          respond({ ...result, plannedBy: "fast-path", toolCall: dataCall });
+          // A site that says which state it is about should be believed,
+          // when the question did not say. Narrowing only, and said out
+          // loud, because a hint that quietly answers about the wrong place
+          // is worse than no hint.
+          let usedHint = null;
+          const call = { ...dataCall, args: { ...dataCall.args } };
+          if (!call.args.state) {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+            const hint = tab && tab.url ? stateFromSite(tab.url, tab.title) : null;
+            const def = findToolDef(route.global, call.name);
+            const takesState = !!((def && def.parameters && def.parameters.properties) || {}).state;
+            if (hint && takesState) {
+              call.args.state = hint.code;
+              usedHint = hint;
+            }
+          }
+          let result = await executeToolCall(route.global, call);
+          // If the hint found nothing, it was the wrong guess - ask again
+          // without it rather than report an empty answer.
+          if (usedHint && result.result && result.result.found === 0) {
+            result = await executeToolCall(route.global, dataCall);
+            usedHint = null;
+          }
+          if (usedHint && result.result && result.result.display) {
+            result.result.display.note = `narrowed to ${usedHint.code.toUpperCase()}, from this site (${usedHint.from})`;
+          }
+          respond({ ...result, plannedBy: "fast-path", toolCall: usedHint ? call : dataCall,
+            narrowedBy: usedHint || undefined });
           return;
         }
 

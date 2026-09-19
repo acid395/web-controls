@@ -183,6 +183,34 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("the site says which state it is about");
+// "Smith river discharge" asked on cdec.water.ca.gov returned nine rivers
+// from New Hampshire to Alaska, with the one obviously meant buried among
+// eight that were not. The site had said which state it was about in its own
+// hostname, and nothing read it.
+check("a state suffix is read", (sb.stateFromSite("https://cdec.water.ca.gov/", "CDEC") || {}).code, "ca");
+check("so is one in the name", (sb.stateFromSite("https://www.waterdatafortexas.org/", "Water Data For Texas") || {}).code, "tx");
+check("and a state agency's own domain", (sb.stateFromSite("https://dnr.wi.gov/", "Wisconsin DNR") || {}).code, "wi");
+// A federal site belongs to no state, and guessing one would be worse than
+// not guessing.
+check("a federal site suggests nothing", sb.stateFromSite("https://www.census.gov/", "Census"), null);
+check("nor does USGS", sb.stateFromSite("https://waterdata.usgs.gov/", "USGS"), null);
+
+const sited = loadPage("<!doctype html><html><head><title>CDEC</title></head><body><p>portal</p></body></html>",
+  { url: "https://cdec.water.ca.gov/" });
+if (!sited) skip("narrowing by site", "jsdom not installed");
+else {
+  const onCa = loadBackground({ page: sited });
+  runAsync(async () => {
+    const r = await onCa.__ask({ type: "smartAsk", instruction: "smith river discharge" });
+    const d = (r.result && r.result.display) || r.display || {};
+    ensure("the question is narrowed to that state", (r.narrowedBy || {}).code === "ca", r.narrowedBy);
+    ensure("and says so, rather than narrowing quietly",
+      /narrowed to CA/.test(d.note || ""), d.note);
+    ensure("leaving one river, not nine", /California/.test(d.subtitle || ""), d.subtitle);
+  });
+}
+
 section("one list, one picker");
 // There were two systems. A control request went through tools derived from
 // the page; a data question went through hand-written vocabulary, a table
