@@ -26,16 +26,53 @@
   /* ---------- Layer 1: generic primitives ---------- */
 
   // querySelectorAll that also searches inside open shadow roots
+  // A same-origin iframe is part of the page in every sense that matters:
+  // government dashboards embed their map, their table and their filters
+  // that way constantly, and none of it was reachable. Cross-origin frames
+  // are a different document the browser will not open, and are skipped.
+  const sameOriginDoc = (frame) => {
+    try {
+      const doc = frame.contentDocument;
+      return doc && doc.documentElement ? doc : null;
+    } catch (e) { return null; }   // cross-origin: not ours to read
+  };
+
   const deepQueryAll = (sel, root = document) => {
     const out = [];
     const visit = (node) => {
       node.querySelectorAll(sel).forEach((el) => out.push(el));
       node.querySelectorAll("*").forEach((el) => el.shadowRoot && visit(el.shadowRoot));
+      node.querySelectorAll("iframe, frame").forEach((f) => {
+        const doc = sameOriginDoc(f);
+        if (doc) visit(doc);
+      });
     };
     visit(root);
     return out;
   };
-  const deepQuery = (sel, root) => deepQueryAll(sel, root)[0] || null;
+
+  // A selector inside a frame cannot be queried from the top document, so it
+  // is written as "<frame> >>> <inner>" and resolved by hopping in. The same
+  // string therefore identifies a control wherever it lives.
+  const FRAME_SEP = " >>> ";
+  const deepQuery = (sel, root) => {
+    if (typeof sel === "string" && sel.includes(FRAME_SEP)) {
+      const [frameSel, ...rest] = sel.split(FRAME_SEP);
+      const frame = deepQueryAll(frameSel, root)[0];
+      const doc = frame && sameOriginDoc(frame);
+      return doc ? deepQuery(rest.join(FRAME_SEP), doc) : null;
+    }
+    return deepQueryAll(sel, root)[0] || null;
+  };
+
+  // Where an element lives, as a selector prefix.
+  const framePrefixOf = (el) => {
+    const doc = el.ownerDocument;
+    if (!doc || doc === document) return "";
+    const frame = doc.defaultView && doc.defaultView.frameElement;
+    if (!frame) return "";
+    return cssPath(frame) + FRAME_SEP;
+  };
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -217,11 +254,19 @@
   //
   // USGS state pages are built this way, so this was every one of them.
   function* walk(root) {
-    const tw = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    // The root's own document, not the top one: walking into a frame hands
+    // this a node from another document, and a cross-document TreeWalker
+    // yields nothing at all.
+    const doc = root.ownerDocument || document;
+    const tw = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     let n = tw.currentNode;
     while (n) {
       if (n.nodeType === 1) yield n;
       if (n.shadowRoot) yield* walk(n.shadowRoot);
+      if (n.tagName === "IFRAME" || n.tagName === "FRAME") {
+        const doc = sameOriginDoc(n);
+        if (doc) yield* walk(doc.documentElement);
+      }
       n = tw.nextNode();
     }
   }
@@ -394,8 +439,11 @@
         kind: role || tag, tag, type: el.type || "", label: lab.slice(0, 80),
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
         checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked : undefined,
-        selector: cssPath(el),
+        selector: framePrefixOf(el) + cssPath(el),
         confidence: weak ? "low" : "high",
+        // Offered as usable, a disabled control is a lie: acting on it does
+        // nothing and the card reports success. Recorded, not offered.
+        disabled: el.disabled ? true : undefined,
         // Hidden behind something that can be opened. Carried through so a
         // caller can open it rather than report the control missing.
         hidden: shown ? undefined : true,
@@ -1658,7 +1706,10 @@
     // means what it is showing.
     const inv = inventory({ includeHidden: true });
     const usable = (inv.controls || [])
-      .filter((c) => c.label && c.selector && c.confidence !== "low")
+      // Disabled is not a tool. Offering one means an agent calls it, the
+      // click lands on nothing, and the result reports success - the exact
+      // shape of wrong answer this project keeps removing.
+      .filter((c) => c.label && c.selector && c.confidence !== "low" && !c.disabled)
       .sort((a, b) => (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0))
       .slice(0, max);
     for (const c of usable) {

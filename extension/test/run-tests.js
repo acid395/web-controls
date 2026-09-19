@@ -183,6 +183,56 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("every place a control can hide");
+// Auditing the rest of the closed-panel class: a page was built with a
+// control in each shape one can hide in, and the inventory asked for all of
+// them. Two were missed and one was worse than missed.
+const hideouts = loadPage(`<!doctype html><html><body>
+  <button id="plain">Plain button</button>
+  <button aria-controls="p1" aria-expanded="false">Open panel</button>
+  <div id="p1" style="display:none"><button>Behind a panel</button></div>
+  <details><summary>Open details</summary><button>Inside details</button></details>
+  <dialog id="d1"><button>Inside a dialog</button></dialog>
+  <div id="host"></div>
+  <button disabled>Disabled button</button>
+  <template><button>Inside a template</button></template>
+  <iframe id="frame"></iframe>
+  <script>document.getElementById("host").attachShadow({mode:"open"})
+    .innerHTML = "<button>Inside shadow DOM</button>";<\/script>
+  </body></html>`, { url: "https://example.gov/" });
+if (!hideouts) skip("hiding places", "jsdom not installed");
+else {
+  hideouts.document.getElementById("frame").contentDocument.body.innerHTML =
+    '<button id="inner">Inside a frame</button>';
+  hideouts.__giveFramesLayout();
+  const seenLabels = new Set(hideouts.GENERIC.inventory({ includeHidden: true }).controls.map((c) => c.label));
+
+  for (const reachable of ["Plain button", "Behind a panel", "Inside details",
+    "Inside a dialog", "Inside shadow DOM", "Inside a frame"]) {
+    ensure(`"${reachable}" is reachable`, seenLabels.has(reachable), [...seenLabels]);
+  }
+  // A <template> is inert markup, not a control on the page.
+  check("a template's contents are not controls", seenLabels.has("Inside a template"), false);
+
+  // A same-origin frame is part of the page - gov dashboards embed their
+  // map, table and filters that way constantly, and none of it was reachable.
+  // The selector says where it lives, and resolves back through the frame.
+  const inFrame = hideouts.GENERIC.inventory({ includeHidden: true })
+    .controls.find((c) => c.label === "Inside a frame");
+  ensure("a frame control's selector names its frame", /#frame >>> /.test(inFrame.selector), inFrame.selector);
+  ensure("and resolves back to the element",
+    (hideouts.GENERIC.readControl(inFrame.selector) || {}).found === true, inFrame.selector);
+
+  // Disabled was worse than missed: it was offered. Acting on one does
+  // nothing and the card reports success.
+  const disabled = hideouts.GENERIC.inventory({ includeHidden: true })
+    .controls.find((c) => c.label === "Disabled button");
+  check("a disabled control is recorded as disabled", disabled.disabled, true);
+  const offered = hideouts.GENERIC.pageTools().tools.map((t) => t.name);
+  check("and is not offered as a tool", offered.some((n) => /Disabled/i.test(n)), false);
+  ensure("while the frame's control is", offered.some((n) => /Frame/i.test(n)), offered);
+}
+
 section("a control behind a closed panel");
 // On water.noaa.gov "enable the flood layer" did nothing while "enable
 // precipitation estimate" worked - not because the manifest understands the

@@ -170,6 +170,21 @@ function loadPage(html, { url = "https://waterdata.usgs.gov/state/Idaho/" } = {}
   };
   w.HTMLFormElement.prototype.submit = noNavigate;
   w.HTMLFormElement.prototype.requestSubmit = noNavigate;
+  // Each frame document has its own Element prototype, so the layout stub
+  // above does not reach it and everything inside a frame measures zero -
+  // invisible, and therefore never inventoried. Tests that add a frame call
+  // this after populating it.
+  w.__giveFramesLayout = () => {
+    for (const f of w.document.querySelectorAll("iframe, frame")) {
+      try {
+        const fw = f.contentWindow;
+        if (fw && fw.Element) {
+          fw.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 });
+        }
+      } catch (e) { /* cross-origin in a browser; not reachable here either */ }
+    }
+  };
+
   const script = w.document.createElement("script");
   script.textContent = fs.readFileSync(path.join(EXT, "page", "generic-bundle.js"), "utf8");
   const quiet = w.console.log;
