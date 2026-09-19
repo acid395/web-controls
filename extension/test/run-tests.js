@@ -224,6 +224,36 @@ else {
       /75/.test(await ask("average humidity")), await ask("average humidity"));
     ensure("as is a maximum", /66.8/.test(await ask("max temperature")), await ask("max temperature"));
     ensure("and a minimum", /54/.test(await ask("lowest dewpoint this week")), await ask("lowest dewpoint this week"));
+    // A span and a place say when and where; neither names the thing being
+    // measured, and carrying them into the subject made the failure read
+    // "nothing gave temperature week fremont as numbers" - a phrase nobody
+    // was looking for.
+    ensure("a span and a place do not become the subject",
+      /63/.test(await ask("average temperature this week in fremont")),
+      await ask("average temperature this week in fremont"));
+  });
+}
+
+// When it cannot answer, which failure it was. "Nothing gave that as
+// numbers" is equally true whether the page downloaded nothing, downloaded
+// something else, or was never reloaded after the site was enabled - and
+// only the last is the person's to fix.
+const feedStates = [
+  ["never ran", null, /reload the page/],
+  ["nothing downloaded", [], /downloaded nothing/],
+  ["no matching field", [{ url: "https://x/api/wind.json", method: "GET", status: 200,
+    contentType: "application/json", bytes: 9, truncated: false,
+    body: JSON.stringify({ obs: [{ windSpeed: 3 }, { windSpeed: 5 }, { windSpeed: 7 }, { windSpeed: 9 }] }) }],
+    /has windSpeed/],
+];
+for (const [what, feeds, expected] of feedStates) {
+  const pg = loadPage("<!doctype html><html><body><canvas></canvas></body></html>", { url: "https://weather.example.gov/" });
+  if (!pg) { skip("feed failure states", "jsdom not installed"); break; }
+  if (feeds !== null) pg.__wcFeedCapture = { installedAt: Date.now(), feeds };
+  const bg2 = loadBackground({ page: pg });
+  runAsync(async () => {
+    const r = await bg2.__ask({ type: "smartAsk", instruction: "average temperature this week" });
+    ensure(`"${what}" says so`, expected.test(String(r.error || "")), r.error);
   });
 }
 

@@ -3269,7 +3269,16 @@ const STAT_WORDS = { mean: "average", sum: "total", max: "highest", min: "lowest
 async function pageComputeRun({ fn, of, source = "auto" }) {
   if (!STATS[fn]) throw new Error(`no such calculation: ${fn}`);
   const agg = { fn, word: STAT_WORDS[fn] || fn };
-  const subject = String(of || "").trim();
+  // "This week" says when, and a place says where; neither names the thing
+  // being measured. Carrying them into the subject made the failure read
+  // "nothing gave temperature week fremont as numbers", which describes a
+  // phrase nobody was looking for.
+  // argsForTool hands over already-tokenised words, so "this week" arrives
+  // as a bare "week" that SPAN_CUE cannot see. Strip the span words
+  // themselves, and the place, since neither names the thing measured.
+  const SPAN_WORD = /^(this|next|last|past|week|month|year|today|tonight|tomorrow|day|days|weekly|monthly)$/i;
+  const subject = String(of || "").split(/\s+/)
+    .filter((w) => w && !SPAN_WORD.test(w)).join(" ").trim();
   const wants = pageValueWants(subject);
   const word = subject.toLowerCase();
   // An unknown subject still has to find its row; the page's own wording is
@@ -3313,7 +3322,18 @@ async function pageComputeRun({ fn, of, source = "auto" }) {
         return { ...r, source: "page data", display: d };
       }
     }
-    tried.push("page data");
+    // Which failure it was, not just that there was one. "Nothing gave that
+    // as numbers" is true whether the page downloaded nothing, downloaded
+    // something with no matching field, or was never reloaded after the
+    // site was enabled - and only the last is the person's to fix.
+    if (!series.length) {
+      const installed = feeds.ok && feeds.result && feeds.result.installed;
+      tried.push(installed
+        ? "page data (this page has downloaded nothing since it loaded)"
+        : "page data (capture was not running - reload the page and ask again)");
+    } else {
+      tried.push(`page data (has ${series.map((sr) => sr.name.split(".").pop()).slice(0, 6).join(", ")})`);
+    }
   }
 
   if (source === "auto" || source === "chart") {
