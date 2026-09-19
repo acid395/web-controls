@@ -2845,6 +2845,20 @@ function planGenericTool(instruction, inventory) {
     }
     return null;
   }
+  // A plan that leaves the distinguishing word behind is not a plan.
+  // "Click snow depth" matched a nav link called National Snow Analysis on
+  // the word "snow", reported "nothing on this page matched: depth", and
+  // clicked it anyway - so the one word that said which thing was meant was
+  // printed as a caveat and then ignored.
+  //
+  // If a word that is neither a verb nor filler goes unaccounted for, the
+  // control named is not on this page, and saying so beats pressing the
+  // nearest thing that shares a word with it.
+  const missedSubject = remaining.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
+  const coveredSubject = matched.reduce((n, m) => n + (m.covered || [])
+    .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w)).length, 0);
+  if (missedSubject.length && missedSubject.length >= coveredSubject) return null;
+
   return { calls, matched, unmatchedWords: remaining, phrase };
 }
 
@@ -4342,12 +4356,39 @@ function confidentPick(tools, instruction) {
   // reached "Terms of Use" four times in a row.
   const subject = words.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w));
   const vocab = toolVocabulary(best.t);
-  const onSubject = subject.some((w) =>
-    wordMatchesText(w, vocab.fromName) || wordMatchesText(w, vocab.description)
-    || vocab.enums.some((e) => wordMatchesText(w, String(e).toLowerCase())));
-  if (subject.length && !onSubject) return null;
   const args = argsForTool(best.t, instruction, words);
   if (args === null) return null;
+
+  const hits = subject.filter((w) =>
+    wordMatchesText(w, vocab.fromName) || wordMatchesText(w, vocab.description)
+    || vocab.enums.some((e) => wordMatchesText(w, String(e).toLowerCase())));
+  if (subject.length && !hits.length) return null;
+
+  // And nothing important may be dropped. "Click snow depth" matched a nav
+  // link called National Snow Analysis on "snow" while "depth" - the word
+  // that says which thing was meant - went unaccounted for. Half a subject
+  // matched is a different control, not this one.
+  // A word carried into an argument is not dropped: pageCompute's name says
+  // nothing about reservoirs, and "average reservoir storage" is answered by
+  // handing it "reservoir storage" as the thing to calculate over. Only a
+  // word that reaches neither the tool nor its arguments has been lost.
+  const inArgs = JSON.stringify(args || {}).toLowerCase();
+  const dropped = subject.filter((w) => !hits.includes(w) && !wordMatchesText(w, inArgs));
+
+  // Two ways a match can be good enough, and a plain ratio is neither.
+  //
+  // "Click on wildcat creek new london" leaves "new london" unaccounted for
+  // and is still exactly right: the tool is called Wildcat Creek and every
+  // word of it was named. "Click snow depth" also leaves one word of two,
+  // but the tool is National Snow Analysis and one word in three matched -
+  // a different control that happens to share a word.
+  //
+  // So: most of what was asked for, or most of what the tool is called.
+  const nameWords = vocab.fromName.split(/\s+/).filter((w) => w.length > 2 && !verbFamily(w));
+  const nameCovered = nameWords.filter((w) => subject.some((q) => wordMatchesText(q, w))).length;
+  const mostOfTheAsk = hits.length > dropped.length;
+  const mostOfTheName = nameWords.length > 0 && nameCovered >= Math.ceil(nameWords.length * 0.6);
+  if (dropped.length && !mostOfTheAsk && !mostOfTheName) return null;
   return { tool: best.t, args, score: best.score, runnerUp: next ? next.t.name : null };
 }
 
@@ -5477,8 +5518,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               return;
             }
             // "high:tuesday" carries the day, which decides the column.
-            const askedDay = dataCall && dataCall.args && typeof dataCall.args.when === "string" && dataCall.args.when.includes(":")
-              ? dataCall.args.when.split(":")[1] : null;
+            // The day was only read off the data call, and a question about
+            // the table in front of you names no place, so there is no data
+            // call and the day was thrown away. "Max temp on saturday" then
+            // fell back to today's column and answered for Friday - the
+            // right row, the wrong day, stated with complete confidence.
+            const askedDay = (dataCall && dataCall.args && typeof dataCall.args.when === "string"
+              && dataCall.args.when.includes(":")
+              ? dataCall.args.when.split(":")[1]
+              : null) || findDayInText(wanted) || null;
             const hits = findOnPage(read.result, { wants, place: askedPlace, day: askedDay });
             if (hits) {
               respond({

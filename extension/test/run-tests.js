@@ -183,6 +183,34 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("the day was only read off the data call");
+// "Max temp on saturday" answered with Friday's column. findDayInText knew
+// perfectly well it said saturday - but the day was only taken from the data
+// call's "when", and a question about the table in front of you names no
+// place, so there is no data call and the day was thrown away. It then fell
+// back to today. The right row, the wrong day, stated with total confidence.
+const weekGrid2 = loadPage(`<!doctype html><html><head><title>IDSS Forecast Points</title></head><body>
+  <table><tr><th>Weekly Summary</th><th>Fri Sep 18</th><th>Sat Sep 19</th><th>Sun Sep 20</th></tr>
+  <tr><td>Max Temp, \u00b0F</td><td>84</td><td>88</td><td>79</td></tr>
+  <tr><td>Min Temp, \u00b0F</td><td>60</td><td>63</td><td>58</td></tr></table></body></html>`,
+  { url: "https://www.weather.gov/forecastpoints" });
+if (!weekGrid2) skip("named days", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: weekGrid2 });
+  runAsync(async () => {
+    const got = async (q) => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: q });
+      const row = ((r.display || {}).rows || [])[0] || {};
+      return `${row.value} (${row.meta})`;
+    };
+    check("a named day picks its own column", await got("max temp on saturday"), "88 (Sat Sep 19)");
+    check("a different day, a different column", await got("max temp on sunday"), "79 (Sun Sep 20)");
+    check("and a different row too", await got("min temp friday"), "60 (Fri Sep 18)");
+    // With no day named, today is still the sensible reading.
+    ensure("no day named still answers", /\d/.test(await got("max temp")), await got("max temp"));
+  });
+}
+
 section("a banner is not the only thing on the page");
 // "Click national hydrologic discussion" clicked the site banner - a logo
 // link whose label is a sentence of branding. The control actually named was
