@@ -5424,6 +5424,57 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        // What this page offers for a given instruction, and why one control
+        // won. Every failure so far has been diagnosed from the wording of a
+        // card - which says what was decided and nothing about the page it
+        // was decided on - so each fix was aimed at a guess. This prints the
+        // evidence instead: the words, the candidates with their scores, and
+        // what the runner would actually do.
+        const explainMatch = wanted.match(/^\s*(?:explain|match|why did|what matches)\s+(.+)$/i);
+        if (explainMatch) {
+          const q = explainMatch[1].trim();
+          const words = meaningfulWords(q);
+          const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]);
+          if (!inv.ok) {
+            respond({ ok: false, error: `could not read this page's controls: ${inv.error || "no reason given"}` });
+            return;
+          }
+          const controls = (inv.result && inv.result.controls) || [];
+          const phrase = words.join(" ");
+          const ranked = controls
+            .map((c) => ({ c, score: scoreControl(c, words, phrase) }))
+            .filter((x) => x.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 10);
+          const generic = planGenericTool(q, inv.result || { controls });
+          const manifest = planManifestTool(q, route.global);
+          respond({
+            ok: true,
+            display: {
+              title: `what "${q}" matches here`,
+              subtitle: [
+                `words: ${words.join(", ") || "(none)"}`,
+                `${controls.length} controls on the page, ${ranked.length} scored above zero`,
+              ].join(" \u00b7 "),
+              stats: [
+                { label: "would run", value: generic && generic.calls
+                  ? generic.calls.map((x) => x.name).join(" + ") : "nothing" },
+                { label: "hand-written tool", value: manifest ? manifest.name : "none" },
+              ],
+              rows: ranked.length ? ranked.map(({ c, score }) => ({
+                name: `${c.label || "(no label)"}`,
+                value: String(score),
+                meta: `${c.kind || "?"}${c.type ? ":" + c.type : ""} ${c.selector || ""}`.slice(0, 70),
+                tone: "ok",
+              })) : [{ name: "nothing on this page scored above zero", value: "", meta: "", tone: "warn" }],
+              note: generic && generic.unmatchedWords && generic.unmatchedWords.length
+                ? `unaccounted for: ${generic.unmatchedWords.join(", ")}` : "",
+              source: route.global,
+            },
+          });
+          return;
+        }
+
         // Asking about it directly. Without this, the only way to observe
         // WebMCP on the site you are actually on was to read the service
         // worker's console - so testing it meant opening a page written to
@@ -5530,8 +5581,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       return `asked for "${r.wrongOne}" but the page gave "${r.control}" - not acted on as named`;
                     }
                     if (typeof r.itChanged === "boolean") {
-                      return r.itChanged
-                        ? `${r.control}: ${r.was} \u2192 ${r.now}`
+                      if (r.itChanged) return `${r.control}: ${r.was} \u2192 ${r.now}`;
+                      // A click that landed and changed nothing is not the
+                      // same as a box already in the state you asked for.
+                      // Saying "nothing to change" to someone who asked to
+                      // turn it on reports the failure as a success.
+                      return r.how === "click"
+                        ? `${r.control}: clicked, but it is still ${r.now} - the click did not take`
                         : `${r.control} was already ${r.now} - nothing to change`;
                     }
                     return [
@@ -5879,8 +5935,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     return `asked for "${r.wrongOne}" but the page gave "${r.control}" - not acted on as named`;
                   }
                   if (typeof r.itChanged === "boolean") {
-                    return r.itChanged
-                      ? `${r.control}: ${r.was} \u2192 ${r.now}`
+                    if (r.itChanged) return `${r.control}: ${r.was} \u2192 ${r.now}`;
+                    return r.how === "click"
+                      ? `${r.control}: clicked, but it is still ${r.now} - the click did not take`
                       : `${r.control} was already ${r.now} - nothing to change`;
                   }
                   return note ? note.text

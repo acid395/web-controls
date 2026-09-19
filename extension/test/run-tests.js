@@ -218,6 +218,33 @@ check("a graph button beats a box that would swallow the words",
   gb("select 30 day% normal"), "#n30");
 check("and the longer label beats the bare one", gb("go to 30 day% normal"), "#n30");
 
+section("show me the evidence");
+// Every failure on water.noaa.gov was diagnosed from the wording of a card,
+// which says what was decided and nothing about the page it was decided on -
+// so each fix was aimed at a guess. "Explain <instruction>" prints the page's
+// own candidates and their scores instead.
+const explainPage = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <div><label><input type="checkbox" name="fi"> Flood Inundation</label>
+  <label><input type="checkbox" name="sd"> Snow Depth</label>
+  <a href="/x">National Water Model</a></div></body></html>`,
+  { url: "https://water.noaa.gov/" });
+if (!explainPage) skip("explain", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: explainPage });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "explain select snow depth" });
+    ensure("it answers at all", !!(r && r.display), r);
+    const d = (r && r.display) || {};
+    ensure("it names the instruction", /snow depth/i.test(d.title || ""), d.title);
+    ensure("it lists the page's own candidates",
+      (d.rows || []).some((x) => /snow depth/i.test(x.name)), d.rows);
+    ensure("it says what would run",
+      (d.stats || []).some((x) => /would run/i.test(x.label) && x.value && x.value !== "nothing"),
+      d.stats);
+    ensure("and shows the words it matched on", /snow.*depth/i.test(d.subtitle || ""), d.subtitle);
+  });
+}
+
 section("the selector goes stale, the label does not");
 // "Select flood inundation" switched on Precipitation Estimate. Selectors
 // are captured while the page is read, and a control with no id gets a

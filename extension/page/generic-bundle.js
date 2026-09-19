@@ -1744,7 +1744,7 @@
       const now = box ? !!box.checked : null;
       return {
         ...named(el),
-        was, now,
+        was, now, how: "click",
         ...(was === null ? {} : { itChanged: was !== now }),
         clicked: String((hit && hit.tagName) || "").toLowerCase(),
         openedFirst: !!c.revealedBy,
