@@ -2483,7 +2483,13 @@ function meaningfulWords(text) {
   return (text || "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+    // A lone digit is a word. Dropping anything shorter than two characters
+    // turned "7-day anomaly" into "day anomaly", which matched a Current Data
+    // Layer box and typed the rest into it - while the 7-day button sat right
+    // there. On a river page the number is the whole distinction: 1-day,
+    // 3-day and 7-day are different questions, and 30-day survived only by
+    // having two digits.
+    .filter((w) => (w.length > 1 || /^[0-9]$/.test(w)) && !STOP_WORDS.has(w));
 }
 
 // How well one control's label answers the instruction. Whole-phrase hits
@@ -4401,6 +4407,21 @@ async function unifiedTools(routeGlobal, instruction, { acting = false } = {}) {
 // A pick worth acting on: clearly ahead, and ahead by enough. A near-tie
 // means the question was ambiguous, and guessing at an ambiguous question is
 // how confident wrong answers get made.
+// How much of what was asked a tool accounts for *by its own name*. Words
+// poured into a free-text argument do not count. A tool with a label or query
+// parameter can absorb any word at all and still look like a match, which is
+// how "enable flood inundation" chose a hand-written tool called toggle flood
+// category: it covers "flood" by name and took "inundation" as a label, so
+// the wrong layer switched on while the card said done. Measured on the name
+// alone, not the description - a paragraph mentioning a word is not the same
+// as a control called after it.
+function namedCoverage(nameish, words) {
+  const text = String(nameish || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  if (!text) return 0;
+  return words.filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w)
+    && wordMatchesText(w, text)).length;
+}
+
 function confidentPick(tools, instruction) {
   const words = meaningfulWords(instruction);
   if (!words.length) return null;
@@ -5759,7 +5780,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // and FCP usable at all without the model - 46 tools that previously
         // only it could reach. A hand-written manifest beats GENERIC's
         // selector guessing below, having been checked against the real site.
-        const manifestCall = forceModel ? null : planManifestTool(wanted, route.global);
+        let manifestCall = forceModel ? null : planManifestTool(wanted, route.global);
+        let cameFromPage = false;
+        if (manifestCall) {
+          // A hand-written tool is preferred above for having been checked
+          // against the real site - but only while it is actually the thing
+          // being asked for. When the page's own control names more of the
+          // request than the manifest tool does, the page wins. This has to
+          // be settled before either one runs: running the loser is precisely
+          // what switched on the wrong layer and then reported success.
+          const askWords = meaningfulWords(wanted);
+          const pageOwn = confidentPick(
+            await unifiedTools(route.global, wanted, { acting: true }), wanted);
+          if (pageOwn && pageOwn.tool.name !== manifestCall.name
+              && namedCoverage(`${pageOwn.tool.name} ${pageOwn.tool.label || ""}`, askWords)
+                 > namedCoverage(manifestCall.name, askWords)) {
+            manifestCall = { name: pageOwn.tool.name, args: pageOwn.args };
+            cameFromPage = true;
+          }
+        }
         if (manifestCall) {
           // An action that cannot simply be undone is worth a question first.
           // Verification makes most things reversible; a download that has
@@ -5814,7 +5853,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // question than the one asked.
           const ignored = manifestCall.unmatchedWords;
           respond({
-            ...result, plannedBy: "manifest", toolCall: manifestCall,
+            ...result, plannedBy: cameFromPage ? "page" : "manifest", toolCall: manifestCall,
             display: {
               title: friendlyToolName(usedInstead || manifestCall.name),
               // A substitution has to be stated, but never at the cost of
@@ -5827,9 +5866,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // Never "done" as a fallback. That was the most confident
                 // wording available standing in for the least information -
                 // no verification at all reads exactly like a success.
-                note ? note.text
-                  : result.verified ? "ran, but nothing on the page changed"
-                    : "ran - could not check whether the page changed",
+                // The control's own before/after wherever the runner
+                // reports it. "Ran - could not check whether the page
+                // changed" was the honest answer to the wrong question:
+                // what matters is whether *this* control moved.
+                (() => {
+                  const r = (result && result.result) || {};
+                  if (typeof r.itChanged === "boolean") {
+                    return r.itChanged
+                      ? `${r.control}: ${r.was} \u2192 ${r.now}`
+                      : `${r.control} was already ${r.now} - nothing to change`;
+                  }
+                  return note ? note.text
+                    : result.verified ? "ran, but nothing on the page changed"
+                      : "ran - could not check whether the page changed";
+                })(),
                 ignored ? `ignored: ${ignored.join(", ")}` : null,
               ].filter(Boolean).join(" · "),
               stats: [],

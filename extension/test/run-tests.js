@@ -192,6 +192,32 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("the number is the whole distinction");
+// "Select 7-day anomaly" filled a box labelled Current Data Layer with "day
+// anomaly" and submitted it, while the 7-day button sat right there. Words
+// shorter than two characters were dropped, so the 7 never reached the
+// matcher - and 1-day, 3-day and 7-day are different questions. 30-day had
+// been surviving only by having two digits, which is why this went unseen.
+const graphButtons = { url: "https://water.noaa.gov/", controls: [
+  { kind: "button", label: "7-day anomaly", selector: "#d7", confidence: "high" },
+  { kind: "button", label: "1-day anomaly", selector: "#d1", confidence: "high" },
+  { kind: "button", label: "30 day % normal", selector: "#n30", confidence: "high" },
+  { kind: "button", label: "Normal", selector: "#nm", confidence: "high" },
+  { kind: "input", type: "search", label: "Current Data Layer", selector: "#cdl", confidence: "high" },
+] };
+const gb = (q) => {
+  const r = sb.planGenericTool(q, graphButtons);
+  return r && r.calls ? r.calls.map((c) => c.args.selector).join(",") : null;
+};
+check("a lone digit survives into the subject",
+  sb.meaningfulWords("select 7-day anomaly"), ["7", "day", "anomaly"]);
+check("7-day is not 1-day", gb("select 7-day anomaly"), "#d7");
+// A text box can absorb any words at all, so it looks like a match for
+// everything. A button that is actually called this outranks it.
+check("a graph button beats a box that would swallow the words",
+  gb("select 30 day% normal"), "#n30");
+check("and the longer label beats the bare one", gb("go to 30 day% normal"), "#n30");
+
 section("did the thing you named change");
 // "Select flood inundation" reported "Flood Inundation - the page responded"
 // while precipitation estimate was what actually switched on. Verification
@@ -210,6 +236,15 @@ else {
       /Flood Inundation: false \u2192 true/.test((first.display || {}).subtitle || ""),
       (first.display || {}).subtitle);
     check("and it is the one that moved", twoBoxes.document.getElementById("fi").checked, true);
+    // Not rescued after the fact: the hand-written noaaToggleFloodCategory
+    // covers "flood" by name and takes "inundation" as a free-text label, so
+    // it can absorb the word that says which layer was meant. It used to run
+    // first and only lose if it happened to change nothing. Running it is
+    // what switched on the wrong layer, so the page's own control - which
+    // names both words - has to win before either one runs.
+    // Whichever picker gets there, it must not be the hand-written one.
+    ensure("the page's own control was preferred outright",
+      first.plannedBy !== "manifest", first.plannedBy);
     check("not the other one", twoBoxes.document.getElementById("pe").checked, false);
 
     // Asked again, it says nothing needed doing rather than claiming success.
