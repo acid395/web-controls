@@ -1669,7 +1669,7 @@ const WATERBODY_GENERICS = new Set([
 // table of place names that would be wrong at the edges and endless to
 // maintain. Returns the gauges and, when a measurement is named, their
 // current readings - so no state is needed at all.
-async function usgsFindGauges({ place, parameter }) {
+async function usgsFindGauges({ place, parameter, state }) {
   const tokens = (place || "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
@@ -1733,8 +1733,16 @@ async function usgsFindGauges({ place, parameter }) {
   // is almost certainly the waterbody itself, while a later mention is
   // usually a landmark it happens to pass ("GORE CREEK ABOVE BIGHORN PARK").
   const leading = wholeWord.filter((g) => new RegExp(`^\\s*${tokens[0]}\\b`, "i").test(g.name));
-  const gauges = leading.length ? leading : wholeWord;
+  let gauges = leading.length ? leading : wholeWord;
 
+  // Naming a state has to actually narrow, or the advice to name one is a
+  // dead end - the same shape as telling someone to ask for an average that
+  // then does not work.
+  const wantState = state ? resolveStateCode(state) : null;
+  if (wantState) {
+    const inState = gauges.filter((g) => resolveStateCode(g.state || "") === wantState);
+    if (inState.length) gauges = inState;
+  }
   const states = [...new Set(gauges.map((g) => g.state).filter(Boolean))];
   if (!gauges.length) {
     // Every source here is a US federal agency. A place outside that coverage
@@ -1794,12 +1802,23 @@ async function usgsFindGauges({ place, parameter }) {
   const values = readings.map((r) => r.value);
   const unit = (readings[0] && readings[0].unit) || "";
 
+  // Gauges spread across several states are not one river. "Smith River"
+  // matches nine, from New Hampshire to Alaska, and a median across them -
+  // 132 ft3/s - describes nothing that exists. The same fault as averaging
+  // gage heights from different datums, arriving by a different route: the
+  // numbers are comparable in unit and meaningless in aggregate.
+  const oneRiver = states.length <= 1;
+  const summarisable = canAggregate && oneRiver;
+
   return {
     place, parameter: known.canonical, parameterCode: known.code,
     found: gauges.length, states,
     reporting: readings.length,
-    range: values.length && canAggregate
+    range: values.length && summarisable
       ? { min: Math.min(...values), median: median(values), max: Math.max(...values) } : null,
+    notComparable: !oneRiver && values.length
+      ? `these gauges are in ${states.length} different states, so they are different rivers that share a name - a low, median or high across them would describe nothing`
+      : undefined,
     readings: readings.slice(0, 10),
     source: "USGS monitoring locations + Water Services, no API key required",
     display: {
@@ -1809,13 +1828,16 @@ async function usgsFindGauges({ place, parameter }) {
       subtitle: readings.length
         ? `${readings.length} of ${gauges.length} gauges reporting · ${states.join(", ")}`
         : `${gauges.length} gauge${gauges.length === 1 ? "" : "s"} found in ${states.join(", ")}, but none report ${known.canonical}`,
-      stats: values.length && canAggregate ? [
+      stats: values.length && summarisable ? [
         { label: "low", value: `${readable(Math.min(...values))} ${unit}` },
         { label: "median", value: `${readable(median(values))} ${unit}` },
         { label: "high", value: `${readable(Math.max(...values))} ${unit}` },
       ] : [],
-      caveat: canAggregate ? undefined
-        : "gage height is measured from each gauge's own datum, so readings are not comparable between gauges",
+      caveat: !canAggregate
+        ? "gage height is measured from each gauge's own datum, so readings are not comparable between gauges"
+        : !oneRiver && values.length
+          ? `${states.length} different rivers share this name, so no low, median or high is shown - name a state to get one`
+          : undefined,
       rows: (readings.length ? readings.slice(0, 8) : gauges.slice(0, 8)).map((r) => ({
         name: r.name,
         value: r.value != null ? `${r.value} ${r.unit}` : (r.state || ""),
@@ -2381,6 +2403,7 @@ const DATA_TOOLS = [
       properties: {
         place: { type: "string", description: "river, creek, lake or landmark name, e.g. Bighorn River" },
         parameter: { type: "string", description: "optional measurement: discharge, gage height, water temperature, ..." },
+        state: { type: "string", description: "optional state, to pick between rivers that share a name - e.g. CA" },
       },
       required: ["place"],
     },

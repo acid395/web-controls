@@ -1271,6 +1271,21 @@ over a time series.
 **And the unit was wrong.** `ft` lives inside `acre-ft`, so 26.8 million
 acre-feet came back as feet. Longest unit first.
 
+### Nine rivers called Smith River
+
+"Smith river discharge" returned nine gauges from New Hampshire to Alaska and
+summarised them: low 3.36, median 132, high 227 ft3/s. Every reading correct,
+every one from a different river, and the median describes nothing that exists.
+
+The same fault as averaging gage heights across datums, reached by a different
+route - these readings are comparable in *unit* and meaningless in *aggregate*.
+Gauges spanning more than one state are not one river, so no low, median or
+high is shown for them.
+
+The caveat tells you to name a state, so naming one had to work: it did not,
+because the tool took no state at all. It does now, and the summary comes back
+once the answer is one river.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

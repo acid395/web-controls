@@ -1962,6 +1962,21 @@ if (process.argv.includes("--live")) {
       ensure("and the gauges really are that river",
         (nf.result.gauges || []).every((g) => /NORTH FORK ELKHORN/i.test(g.name)), (nf.result.gauges || []).map((g) => g.name));
 
+      // Nine rivers called Smith River, from New Hampshire to Alaska. A
+      // median across them - 132 ft3/s - describes nothing that exists: the
+      // same fault as averaging gage heights from different datums, reached
+      // by a different route, since these readings are comparable in unit
+      // and meaningless in aggregate.
+      const smith = await run("waterFindGauges", { place: "smith river", parameter: "discharge" });
+      ensure("one name, many rivers", (smith.result.states || []).length > 1, smith.result.states);
+      check("so no summary is offered", smith.result.range, null);
+      ensure("and it says why", /share a name|different rivers/.test(smith.result.display.caveat || ""),
+        smith.result.display.caveat);
+      // The advice it gives has to work, or it is a dead end.
+      const smithCA = await run("waterFindGauges", { place: "smith river", parameter: "discharge", state: "CA" });
+      check("naming a state narrows to one", (smithCA.result.states || []).length, 1);
+      ensure("and the summary comes back", !!smithCA.result.range, smithCA.result.range);
+
       const bighorn = await run("waterFindGauges", { place: "bighorn river", parameter: "discharge" });
       ensure("bighorn river is found without a state", bighorn.result.found > 0, bighorn.result.found);
 
