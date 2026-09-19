@@ -6057,6 +6057,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
+        // Nothing on the page matched. Before saying so, open the things
+        // that look like they open something and look again.
+        //
+        // A panel built with {#if open} does not exist until it is pressed -
+        // Svelte, React and the rest remove it from the document - so its
+        // contents were never in any inventory, at any visibility. That is
+        // why "enable snow water equivalent" matched five nav links on the
+        // word "water": the control it named had not been rendered yet.
+        // A hand-written noaaOpenLayers existed for exactly this, and this is
+        // the general form of it.
+        if (!commandLike || forceModel) { /* only for instructions */ } else {
+          const found = await invokeOnActiveTab("disclosures", [{}]).catch(() => ({ ok: false }));
+          const candidates = (found.ok && found.result && found.result.disclosures) || [];
+          for (const d of candidates.slice(0, 3)) {
+            const opened = await invokeOnActiveTab("openDisclosure", [d.selector]).catch(() => null);
+            if (!opened || !opened.ok || !opened.result.appeared) continue;
+
+            const fresh = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
+            if (!fresh.ok) continue;
+            forgetPageTools();
+            const retry = planGenericTool(wanted, fresh.result);
+            if (!retry || !retry.calls) continue;
+
+            const steps = [];
+            for (const call of retry.calls) {
+              const out = await runVerified(route.global, call);
+              steps.push({ call, ok: out.ok !== false, changed: out.verified ? out.verified.changed : undefined });
+              if (out.ok === false) break;
+            }
+            const failed = steps.find((st) => !st.ok);
+            respond({
+              ok: !failed, plannedBy: "opened-then-acted", openedFirst: opened.result.opened, steps,
+              display: {
+                title: retry.matched.map((m) => m.label).join(" + ").slice(0, 60) || "Done",
+                subtitle: `opened "${opened.result.opened}" first - ${opened.result.appeared} more controls appeared`,
+                stats: [],
+                rows: retry.matched.slice(0, steps.length).map((m, i) => ({
+                  name: m.label || m.selector, value: steps[i] && steps[i].ok
+                    ? (steps[i].changed === false ? "no change" : "done") : "failed",
+                  meta: (m.covered || []).join(" "),
+                  tone: steps[i] && steps[i].ok ? (steps[i].changed === false ? "warn" : "ok") : "alert",
+                })),
+                source: "this page",
+              },
+            });
+            return;
+          }
+        }
+
         if (!(await isLocalModelEnabled())) {
           // Everything cheap has genuinely been tried by this point: data
           // tools, the route's own keyword path, and a scored scan of every

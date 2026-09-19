@@ -183,6 +183,47 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("open it, then look again");
+// "Enable snow water equivalent" on water.noaa.gov matched five nav links on
+// the word "water". The control it named had not been rendered: that panel
+// is built with {#if open}, so Svelte removes it from the document entirely
+// and no inventory at any visibility could ever find it. A hand-written
+// noaaOpenLayers existed for exactly this reason, and nothing generic had
+// the one step it had.
+const conditional = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <button id="layers">Layers</button>
+  <a href="/a">National Water Model</a>
+  <script>
+    document.getElementById("layers").addEventListener("click", () => {
+      if (document.getElementById("L")) return;
+      const d = document.createElement("div"); d.id = "L";
+      d.innerHTML = "<label for=swe>Snow Water Equivalent</label><input id=swe type=checkbox>" +
+                    "<label for=fi>Flood Inundation</label><input id=fi type=checkbox>";
+      document.body.appendChild(d);
+    });
+  <\/script></body></html>`, { url: "https://water.noaa.gov/" });
+if (!conditional) skip("conditional panels", "jsdom not installed");
+else {
+  // Not hidden - absent. This is the case visibility handling cannot reach.
+  check("the control does not exist yet",
+    conditional.GENERIC.inventory({ includeHidden: true })
+      .controls.some((c) => /snow water/i.test(c.label)), false);
+  const openers = conditional.GENERIC.disclosures().disclosures;
+  ensure("but something looks like it opens", openers.some((d) => /layers/i.test(d.label)), openers);
+
+  const bg = loadBackground({ page: conditional });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "enable snow water equivalent" });
+    check("it is opened and then acted on", r.plannedBy, "opened-then-acted");
+    check("the right control is reached",
+      conditional.document.getElementById("swe").checked, true);
+    check("and the other one is left alone",
+      conditional.document.getElementById("fi").checked, false);
+    ensure("the card says what it opened",
+      /opened "Layers" first/.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
+  });
+}
+
 section("one instruction, one thing");
 // "Click flood depth gauge" switched on two unrelated map layers: Flood
 // Inundation Mapping matched "flood", Snow Depth matched "depth", every word

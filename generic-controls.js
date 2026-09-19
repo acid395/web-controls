@@ -1693,6 +1693,56 @@
   // clicked like anything else. A feature that exists only inside the map
   // library's own instance has no element, so it is opened through the
   // library: its popup, or failing that the map panned to it.
+  // Things that look like they open something.
+  //
+  // A closed panel whose contents are display:none can be read where it
+  // stands. A panel built with {#if open} does not exist at all - Svelte,
+  // React and the rest remove it from the document - and no amount of
+  // visibility handling finds what was never rendered. water.noaa.gov is
+  // built this way: its layer checkboxes are absent until the Layers button
+  // is pressed, which is why a hand-written noaaOpenLayers existed and why
+  // nothing generic ever reached them.
+  //
+  // The only way in is to press the thing and look again.
+  function disclosures({ limit = 6 } = {}) {
+    const out = [];
+    const seen = new Set();
+    const NAMES = /\b(layer|layers|menu|filter|filters|options|settings|more|panel|legend|tools|expand|show)\b/i;
+
+    for (const el of deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"]')) {
+      if (seen.has(el) || !isVisible(el)) continue;
+      const label = rawLabelOf(el);
+      const expanded = el.getAttribute && el.getAttribute("aria-expanded");
+      const says = expanded === "false" || (el.getAttribute && el.getAttribute("aria-haspopup"))
+        || tagOf(el) === "summary";
+      if (!says && !(label && NAMES.test(label))) continue;
+      seen.add(el);
+      out.push({
+        label: (label || tagOf(el)).slice(0, 60),
+        selector: cssPath(el),
+        // A stated one is worth trying before a guess from its wording.
+        stated: !!says,
+      });
+      if (out.length >= limit) break;
+    }
+    return { count: out.length, disclosures: out.sort((a, b) => (b.stated ? 1 : 0) - (a.stated ? 1 : 0)) };
+  }
+
+  // Press it, wait, and say what appeared.
+  async function openDisclosure(selector) {
+    const el = deepQuery(selector);
+    if (!el) throw new Error(`no such control: ${selector}`);
+    const before = inventory({ includeHidden: true }).controlCount;
+    realClick(el);
+    await settle({ quietMs: 150, timeoutMs: 2000 });
+    const after = inventory({ includeHidden: true });
+    return {
+      opened: rawLabelOf(el).slice(0, 60) || selector,
+      controlsBefore: before, controlsAfter: after.controlCount,
+      appeared: after.controlCount - before,
+    };
+  }
+
   function mapFeatureOpen(index) {
     const found = mapFeatures({ limit: 200 });
     const feature = (found.features || [])[index];
@@ -1876,6 +1926,7 @@
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries,
+    disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
