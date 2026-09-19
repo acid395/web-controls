@@ -1678,6 +1678,12 @@
     // not what was named, that belongs on the card, not in the success line.
     const named = (el) => ({
       control: (rawLabelOf(el) || "").slice(0, 60) || sel,
+      // Where it actually landed. A caller that has just pressed a panel
+      // open needs to exclude the door when it looks again, and the label
+      // cannot do that job: on this site the accordion titled "Flood
+      // Inundation" reveals a layer checkbox of exactly the same name, so
+      // dropping by label deletes the answer along with the door.
+      at: (el && cssPath(el)) || sel,
       wrongOne: wanted && !labelFits(el) ? (c.label || "") : undefined,
     });
 

@@ -267,7 +267,7 @@ const accordion = loadPage(`<!doctype html><html><head><title>NWPS</title></head
   <ul class="uk-accordion">
     <li><button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
       <div class="uk-accordion-content" style="display:none">
-        <label><input type="checkbox" name="fim"> Flood Inundation Mapping</label></div></li>
+        <label><input type="checkbox" name="fim"> Flood Inundation</label></div></li>
     <li><button id="uk-accordion-10" class="uk-accordion-title">National Snow Analysis</button>
       <div class="uk-accordion-content" style="display:none">
         <label><input type="checkbox" name="sd"> Snow Depth</label></div></li>
@@ -292,6 +292,9 @@ else {
   const cb = (n) => accordion.document.querySelector(`[name="${n}"]`);
   runAsync(async () => {
     await bg.__ask({ type: "smartAsk", instruction: "select flood inundation" });
+    // The panel and the layer inside it have the same name, as they do on
+    // the live site. Excluding the pressed header by label therefore deleted
+    // the answer along with the door; it has to go by selector.
     check("pressing the header is not the end of the job", cb("fim").checked, true);
     check("and the other panel is left alone", cb("sd").checked, false);
 

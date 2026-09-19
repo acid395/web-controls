@@ -5596,11 +5596,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // against call - and re-planning with the header still
                 // present simply picks the header again, since its label is
                 // the phrase that was typed. The label is the handle we have.
-                const opened = String(rr.control || "").trim().toLowerCase();
+                const openedAt = rr.at || "";
+                const openedLabel = String(rr.control || "").trim().toLowerCase();
                 const within = {
                   ...fresh.result,
                   controls: ((fresh.result && fresh.result.controls) || [])
-                    .filter((c) => String(c.label || "").trim().toLowerCase() !== opened),
+                    // By selector where we have one. Excluding by label
+                    // deleted the very control being looked for, because the
+                    // panel and the layer inside it share a name.
+                    .filter((c) => (openedAt
+                      ? c.selector !== openedAt
+                      : String(c.label || "").trim().toLowerCase() !== openedLabel)),
                 };
                 const inside = planGenericTool(wanted, within);
                 const next = inside && inside.calls && inside.calls[0];
