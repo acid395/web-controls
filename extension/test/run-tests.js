@@ -218,6 +218,43 @@ check("a graph button beats a box that would swallow the words",
   gb("select 30 day% normal"), "#n30");
 check("and the longer label beats the bare one", gb("go to 30 day% normal"), "#n30");
 
+section("a link cannot be enabled");
+// Straight off the live page. "Flood Inundation Mapping" exists twice on
+// water.noaa.gov: as a navbar link and as the map layer itself. The link
+// kept winning - they score identically on the words, and nothing preferred
+// the one you can actually switch on - so "enable flood inundation" left the
+// page instead of turning anything on, and "enable snow water equivalent"
+// came back offering five nav links.
+const linkVsLayer = { url: "https://water.noaa.gov/", controls: [
+  { kind: "link", label: "Flood Inundation Mapping", selector: "a.nav1", confidence: "high" },
+  { kind: "link", label: "Flood Inundation Mapping (FIM)", selector: "a.nav2", confidence: "high" },
+  { kind: "input", type: "checkbox", label: "Flood Inundation Mapping", selector: "#fim", confidence: "high" },
+  { kind: "link", label: "National Snow Analysis", selector: "a.nav3", confidence: "high" },
+  { kind: "input", type: "radio", label: "Snow Depth", selector: "#sd", confidence: "high" },
+] };
+const pick = (q) => {
+  const r = sb.planGenericTool(q, linkVsLayer);
+  return r && r.calls ? `${r.calls[0].name} ${r.calls[0].args.selector}` : null;
+};
+check("the layer wins over the link that shares its name",
+  pick("enable flood inundation mapping"), "pageCheck #fim");
+// A radio is set, not clicked at - through its own tool, by group and value
+// rather than by selector.
+check("a radio layer is reached, not the link above it",
+  (() => { const r = sb.planGenericTool("select snow depth", linkVsLayer);
+    return r && r.calls ? `${r.calls[0].name} ${r.calls[0].args.value}` : null; })(),
+  "pagePickRadio Snow Depth");
+// The preference is a tie-breaker among things that matched, not a gift to
+// every form control on the page: a dropdown matching no word at all must
+// not outrank a button the instruction actually named.
+const bareSelect = { url: "https://x/", controls: [
+  { kind: "button", label: "Thunderstorms", selector: "#ts", confidence: "high" },
+  { kind: "select", label: "Basemap", selector: "#b", confidence: "high",
+    options: [{ value: "sat", text: "Satellite" }] },
+] };
+check("an unrelated dropdown does not win on kind alone",
+  (sb.planGenericTool("thunderstorms", bareSelect).calls[0].args.selector), "#ts");
+
 section("the panel is named after the thing inside it");
 // From the live page. water.noaa.gov puts each layer group behind a UIkit
 // accordion whose title is the domain term itself: "Flood Inundation",

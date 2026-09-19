@@ -1700,7 +1700,7 @@
           itChanged: was !== chosen, then: submit(el || sel) };
       };
     }
-    if (type === "checkbox" || kind === "checkbox") {
+    if (type === "checkbox" || kind === "checkbox" || type === "radio") {
       return async ({ on }) => {
         await reveal();
         // The control itself, before and after. Verification asks whether

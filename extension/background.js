@@ -2519,6 +2519,22 @@ function scoreControl(control, words, phrase) {
   }
   // A low-confidence row is a cursor:pointer guess, not a known control.
   if (control.confidence === "low") score -= 1.5;
+
+  // A thing you can switch on beats a thing you can only navigate to, when
+  // both are called the same. water.noaa.gov has "Flood Inundation Mapping"
+  // as a navbar link and as a map layer, and the link kept winning - so
+  // "enable flood inundation" left the page instead of turning anything on,
+  // and "enable snow water equivalent" offered five nav links. The layer is
+  // what was meant: a link cannot be enabled.
+  // Only among controls that matched something: a free gift to every select
+  // on the page let a Basemap dropdown that matched no word at all outrank a
+  // button the instruction actually named.
+  const kind = String(control.kind || "").toLowerCase();
+  const type = String(control.type || "").toLowerCase();
+  if (score > 0 && (type === "checkbox" || type === "radio" || kind === "checkbox"
+      || kind === "select" || (control.options && control.options.length))) {
+    score += 3;
+  }
   return score;
 }
 
