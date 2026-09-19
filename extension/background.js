@@ -2807,8 +2807,33 @@ function planGenericTool(instruction, inventory) {
 
     const covered = wordsCoveredBy(best.control, remaining);
     if (!covered.length) break;
+
+    // One instruction should not toggle two of the same thing. "Click flood
+    // depth gauge" matched Flood Inundation Mapping on "flood" and Snow
+    // Depth on "depth", covered every word between them, and switched on two
+    // unrelated layers. The legitimate multi-control case is different in
+    // kind as well as in count - "weekly average temperature" sets a period,
+    // a statistic and a variable, three different sorts of control - so a
+    // second control of a kind already used is a sign the instruction named
+    // one thing and it has been read as two.
+    // Which kind repeats is the whole distinction. Setting three dropdowns
+    // is one configuration - "weekly average temperature" picks a period, a
+    // statistic and a variable, and each match is on an option inside its
+    // own select. Ticking two checkboxes, or following two links, is two
+    // separate actions, and one instruction rarely means two.
+    const ONE_AT_A_TIME = new Set(["checkbox", "radio", "a", "link", "button"]);
+    // The kind of an <input type=checkbox> is "input"; what distinguishes it
+    // is the type. Checking only kind meant every checkbox looked like every
+    // other input and the rule never fired on the case it was written for.
+    const kindOf = (c) => String(c.type || c.kind || "").toLowerCase();
+    const kind = kindOf(best.control);
+    const sameKindAlready = matched.some((m) => m.kindKey === kind);
+    const listsSeveral = /\band\b|,|\bthen\b/i.test(instruction);
+    if (ONE_AT_A_TIME.has(kind) && sameKindAlready && !listsSeveral) break;
+
     calls.push(call);
-    matched.push({ label: best.control.label, selector: best.control.selector, covered });
+    matched.push({ label: best.control.label, selector: best.control.selector, covered,
+      kind: best.control.kind, kindKey: kindOf(best.control) });
     if (follow) {
       calls.push(follow);
       matched.push({ label: `submit ${best.control.label || "search"}`, selector: best.control.selector, covered: [] });
@@ -2866,17 +2891,34 @@ function planGenericTool(instruction, inventory) {
 // names the three closest things on the page is far more useful than one
 // that lists the first twelve in DOM order - it tells you whether your
 // wording was close, or whether the control simply isn't there.
-function nearMissControls(instruction, inventory, limit = 5) {
+function nearMissControls(instruction, inventory, limit = 8) {
   const controls = (inventory && inventory.controls) || [];
   const words = meaningfulWords(instruction);
   if (!words.length || !controls.length) return [];
   const phrase = words.join(" ");
-  return controls
+
+  // Scored first, then anything merely sharing a word. A failure that lists
+  // what is actually on the page is the difference between "it doesn't work"
+  // and knowing why: on a page reporting 71 controls, six were shown and all
+  // six came from the alert banner, so nobody could tell whether the control
+  // being asked for existed at all.
+  const scored = controls
     .map((c) => ({ control: c, score: scoreControl(c, words, phrase) }))
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score);
+
+  const shared = controls.filter((c) => {
+    if (scored.some((x) => x.control === c)) return false;
+    const label = String(c.label || "").toLowerCase();
+    return words.some((w) => w.length > 2 && !verbFamily(w) && wordMatchesText(w, label));
+  }).map((c) => ({ control: c, score: 0 }));
+
+  return [...scored, ...shared]
     .slice(0, limit)
-    .map((x) => ({ label: x.control.label, selector: x.control.selector, kind: x.control.kind }));
+    .map((x) => ({
+      label: x.control.label, selector: x.control.selector, kind: x.control.kind,
+      hidden: x.control.hidden || undefined,
+    }));
 }
 
 // Everything this extension could do on the page currently open. Built from
@@ -2957,7 +2999,9 @@ function explainFailure(instruction, route, inv, { modelOff }) {
         : "nothing in that matched a place, a measurement, or a control on this page",
       stats: [],
       rows,
-      note: missing.length ? missing[0] : (near.length ? "closest things on this page" : undefined),
+      note: near.length
+        ? `${controls.length} controls on this page; these share a word with what you asked`
+        : (missing.length ? missing[0] : undefined),
       source: pageReadable ? `${controls.length} controls scanned` : "page not readable",
       checked,
     },
@@ -5831,7 +5875,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // and the fix that was supposed to append the reason had nothing to
         // append. On a page whose controls the badge had just counted, that
         // message reads as nonsense with no way to act on it.
-        const inv = await invokeOnActiveTab("inventory", [])
+        // Hidden included: a control behind a closed panel is usable now, so
+        // it should be plannable and, failing that, at least mentionable.
+        // The failure card could not name what was in the Layers panel
+        // because the inventory it was given had never looked inside it.
+        const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
           .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
         if (inv.ok) {
           const guess = forceModel ? null : planGenericTool(wanted, inv.result);

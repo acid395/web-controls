@@ -183,6 +183,49 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("one instruction, one thing");
+// "Click flood depth gauge" switched on two unrelated map layers: Flood
+// Inundation Mapping matched "flood", Snow Depth matched "depth", every word
+// was covered between them, and both were ticked. One thing read as two.
+//
+// Which kind repeats is the distinction. Setting three dropdowns is a single
+// configuration - "weekly average temperature" picks a period, a statistic
+// and a variable, each matched on an option inside its own select. Ticking
+// two checkboxes is two separate actions, and one instruction rarely means
+// two of those.
+const twoLayers = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <button aria-controls="L" aria-expanded="false">Layers</button>
+  <div id="L" style="display:none">
+    <label for="fi">Flood Inundation Mapping</label><input id="fi" type="checkbox">
+    <label for="sd">Snow Depth</label><input id="sd" type="checkbox">
+  </div></body></html>`, { url: "https://water.noaa.gov/" });
+const threeSelects = loadPage(`<!doctype html><html><body>
+  <label for="p">Period</label><select id="p"><option>Weekly</option><option>Daily</option></select>
+  <label for="s">Statistic</label><select id="s"><option>Average</option><option>Max</option></select>
+  <label for="v">Variable</label><select id="v"><option>Temperature</option><option>Flow</option></select>
+  </body></html>`, { url: "https://example.gov/" });
+if (!twoLayers || !threeSelects) skip("one thing at a time", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: twoLayers });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: "click flood depth gauge" });
+    check("neither layer is toggled by a phrase naming neither",
+      `${twoLayers.document.getElementById("fi").checked} ${twoLayers.document.getElementById("sd").checked}`,
+      "false false");
+    await bg.__ask({ type: "smartAsk", instruction: "enable snow depth" });
+    check("while the one actually named is",
+      twoLayers.document.getElementById("sd").checked, true);
+    check("and the other is left alone",
+      twoLayers.document.getElementById("fi").checked, false);
+  });
+  // Several dropdowns remain one configuration.
+  const sb2 = loadBackground({ page: threeSelects });
+  const plan = sb2.planGenericTool("weekly average temperature",
+    threeSelects.GENERIC.inventory({ includeHidden: true }));
+  ensure("three dropdowns are still set together",
+    plan && [...new Set(plan.calls.map((c) => c.args.selector))].length === 3, plan && plan.calls);
+}
+
 section("the day was only read off the data call");
 // "Max temp on saturday" answered with Friday's column. findDayInText knew
 // perfectly well it said saturday - but the day was only taken from the data
