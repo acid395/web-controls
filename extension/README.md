@@ -1413,10 +1413,13 @@ It is deliberately not built from the extracted place, which is unreliable on
 a sentence this vocabulary cannot parse - "how full is lake conroe" yields
 "full lake", swallowing the very word that names the column.
 
-And a question never presses anything, even when it cannot be answered. The
-control that looks related is *offered*, and only when it shares more than a
-stray word: "fly me to the moon" matched a link by one word and proposed
-clicking it.
+And a question never presses anything, nor offers to. Offering looked like a
+reasonable middle ground and was not: "how full is lake conroe" produced a menu
+of two controls - a link called *Lake Evaporation/Rainfall* and a row called
+*Conroe* - and pressing either did nothing at all, because a table row is not a
+button. A menu of guesses that would change the page is not an answer to a
+question. If the page cannot answer, it says so, and the failure card already
+lists what is here and what was understood.
 
 ## Diagnosing an install
 

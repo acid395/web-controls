@@ -5597,37 +5597,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (inv.ok) {
           const guess = forceModel ? null : planGenericTool(wanted, inv.result);
 
-          // A question must not press anything. "How full is lake conroe"
-          // matched two controls by their words - a link called Lake
-          // Evaporation/Rainfall and a row called Conroe - clicked the first,
-          // failed on the second, and left someone on a page they never asked
-          // for. Nothing in the sentence said to go anywhere.
+          // A question must not press anything, and must not offer to
+          // either. "How full is lake conroe" produced a menu of two
+          // controls - a link called Lake Evaporation/Rainfall and a row
+          // called Conroe - both of which did nothing when pressed, because
+          // a table row is not a button.
           //
-          // The match is still worth having: a control whose label answers
-          // the question is a good suggestion. So it is offered, and acting
-          // is the person's decision, not a side effect of asking.
-          // Offering is cheap but not free: "fly me to the moon" matched a
-          // link by one stray word and proposed clicking it. A suggestion
-          // worth making shares more than that.
-          const overlap = guess && guess.matched
-            ? guess.matched.reduce((n, m) => n + ((m.covered || []).length), 0) : 0;
-          if (guess && guess.calls && !commandLike && overlap >= 2) {
-            respond({
-              ok: false, needsChoice: true,
-              error: "Nothing here answers that directly, but this page has controls that look related.",
-              candidates: guess.matched,
-              display: {
-                title: "Nothing answered that",
-                subtitle: `${guess.matched.length} control${guess.matched.length === 1 ? "" : "s"} on this page look related - using one will change the page`,
-                stats: [], rows: [],
-                choices: guess.calls.slice(0, 4).map((call, i) => ({
-                  label: (guess.matched[i] && guess.matched[i].label) || friendlyToolName(call.name),
-                  hint: friendlyToolName(call.name),
-                  call,
-                })),
-                source: "this page",
-              },
-            });
+          // A menu of guesses that change the page is not an answer to a
+          // question. If the page cannot answer, say so; the failure card
+          // already lists what is here and what was understood, which is
+          // more use than two things to try at random.
+          if (guess && guess.calls && !commandLike) {
+            const why = explainFailure(wanted, route, inv, { modelOff: true });
+            why.hint = "this page has controls with related names, but pressing one would change the page rather than answer - name the control if that is what you want";
+            respond(why);
             return;
           }
 

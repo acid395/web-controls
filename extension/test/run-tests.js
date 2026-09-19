@@ -227,6 +227,15 @@ else {
     const junk = await bg.__ask({ type: "smartAsk", instruction: "fly me to the moon" });
     ensure("nonsense is still explained, not offered",
       !(junk.display && junk.display.choices && junk.display.choices.length), junk.display);
+
+    // Nor does a question that cannot be answered get a menu of controls
+    // that would change the page. Both options offered for "how full is
+    // lake conroe" did nothing when pressed - a table row is not a button -
+    // and a menu of guesses is not an answer to a question.
+    const unanswerable = await bg.__ask({ type: "smartAsk", instruction: "how deep is lake conroe" });
+    ensure("an unanswerable question gets no menu either",
+      !(unanswerable.display && unanswerable.display.choices && unanswerable.display.choices.length),
+      unanswerable.display);
   });
 }
 
