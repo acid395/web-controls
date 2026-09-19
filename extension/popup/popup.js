@@ -162,6 +162,7 @@ function buildCard(display, raw) {
 // One place that decides how any response gets shown: a formatted card when
 // the tool supplied a display block, plain JSON otherwise.
 function logResult(res) {
+  clearStatus();
   if (chrome.runtime.lastError) {
     log("runtime error: " + chrome.runtime.lastError.message);
     return;
@@ -508,35 +509,34 @@ on("showContext", "click", () => {
   });
 });
 
-on("call", "click", () => {
-  const fn = document.getElementById("fn").value.trim();
-  const argsText = document.getElementById("args").value.trim() || "[]";
-  let args;
-  try {
-    args = JSON.parse(argsText);
-  } catch (e) {
-    log("bad arguments JSON: " + e.message);
-    return;
-  }
-
-  // Which manifest (USGS vs GENERIC) actually runs is decided by
-  // background.js's ROUTES, based on the active tab's URL, not known here.
-  // The response's calledOn field says which one it was.
-  logEcho(`-> ${fn}(${JSON.stringify(args)})`);
-  chrome.runtime.sendMessage({ type: "invoke", fn, args }, (res) => {
-    logResult(res);
-  });
-});
-
 // offscreen.js reports model-download progress via a plain broadcast
 // (no target field), so it reaches whichever popup happens to be open.
 // Progress during the first, multi-gigabyte download is easy to mistake
 // for a hang without this - closing the popup loses these, since a popup
 // is torn down when it loses focus, but the download itself keeps going
 // in the offscreen document regardless.
+// One status line, replaced in place. These used to append a new <pre> per
+// message, which stacked "model is thinking..." on top of the running entry
+// and left the two overlapping mid-sentence. Progress during a multi-gigabyte
+// download arrives many times a second, so appending was never right.
+function setStatus(text) {
+  let node = document.getElementById("modelStatus");
+  if (!node) {
+    node = el("div", "running", "");
+    node.id = "modelStatus";
+    const box = logEl();
+    box.insertBefore(node, box.firstChild);
+  }
+  node.textContent = text;
+}
+function clearStatus() {
+  const node = document.getElementById("modelStatus");
+  if (node) node.remove();
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "llmProgress") log("model loading: " + msg.text);
-  if (msg.type === "llmGenerating") log("model is thinking...");
+  if (msg.type === "llmProgress") setStatus("model loading - " + msg.text);
+  if (msg.type === "llmGenerating") setStatus("model is thinking...");
 });
 
 // Reflects and sets the opt-in. Off means background.js never downloads the

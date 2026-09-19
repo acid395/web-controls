@@ -257,34 +257,20 @@
         <h2>Look inside</h2>
         <div class="hint">What this page looks like from in here.</div>
         <button id="showContext">Show the model's context</button>
-        <label for="toolName">run one tool by name</label>
-        <input id="toolName" value="pageRead">
-        <label for="toolArgs">arguments (JSON object)</label>
-        <input id="toolArgs" value='{}'>
-        <button id="runToolCall">Run tool call</button>
+        <input id="toolName" value="pageRead" placeholder="tool name">
+        <input id="toolArgs" value='{}' placeholder='arguments, e.g. {"state":"alaska"}'>
+        <button id="runToolCall">Run one tool</button>
       </div>
 
       <div class="tool-group">
-        <h2>Call a page function directly</h2>
-        <div class="hint">Bypasses every planner - straight to the manifest.</div>
-        <label for="fn">function</label>
-        <input id="fn" value="inventory">
-        <label for="args">arguments (JSON array)</label>
-        <input id="args" value="[]">
-        <button id="call">Call</button>
-      </div>
-
-      <div class="tool-group">
-        <h2>Gemini (needs your own key)</h2>
+        <h2>Gemini</h2>
         <div class="hint">
           A second model path with no download, kept out of Ask because it
-          needs a key. Free one at
-          <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.
+          needs your own key.
+          <a href="https://aistudio.google.com/apikey" target="_blank">Get one free</a>.
         </div>
-        <label for="geminiKey">API key</label>
         <input id="geminiKey" type="password" placeholder="paste your Gemini API key">
         <button id="saveKey">Save key</button>
-        <label for="geminiInstruction">instruction</label>
         <input id="geminiInstruction" value="set the parameter to gage height">
         <button id="geminiAsk">Ask Gemini</button>
       </div>
