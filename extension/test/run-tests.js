@@ -1086,6 +1086,21 @@ else {
       check("highest maps to max",
         live.argsForTool(computeDef, "highest storage", live.meaningfulWords("highest storage")).fn, "max");
 
+      // What the model is shown first matters: a small model picking from a
+      // numbered list pulls hard toward entry one. Scoring the readers as
+      // infinitely relevant put readThisPage at number 1 for every question,
+      // so "average reservoir storage" was offered a page dump first and the
+      // calculating tool sixth.
+      const order = (q) => live.agentTools("GENERIC", q, { max: 12 }).then((k) => k.all.map((t) => t.name));
+      const forMaths = await order("average max temp");
+      check("a calculation puts the calculating tool first", forMaths[0], "pageCompute");
+      ensure("and the readers are kept, at the end",
+        forMaths.indexOf("readThisPage") >= forMaths.length - 3, forMaths);
+      // A command is unaffected by that prior.
+      const forCommand = await order("click current conditions");
+      ensure("a command still ranks its own control first",
+        /^click/i.test(forCommand[0]), forCommand.slice(0, 3));
+
       ensure("the routing prompt stays under ~400 tokens",
         catalogue.length < 1600, `${Math.round(catalogue.length / 4)} tokens`);
       ensure("and no page context is bolted on when tools describe the page",

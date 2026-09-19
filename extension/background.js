@@ -4036,15 +4036,38 @@ async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
   // keep the readers - a model that can act but cannot see the result is the
   // same blind agent in a different costume.
   const words = meaningfulWords(instruction);
+  // The readers must be reachable, but scoring them as infinitely relevant
+  // put readThisPage at number 1 for every question - and a small model
+  // asked to pick from a numbered list has a strong pull toward the first
+  // entry. "Average reservoir storage" was offered readThisPage first and
+  // pageCompute sixth. Kept, but at the end, where being present costs
+  // nothing and being first costs the answer.
   const always = new Set(["readThisPage", "listPageControls", "listPageDataRequests"]);
+  const scored = combined.filter((t) => !always.has(t.name));
+  const readers = combined.filter((t) => always.has(t.name));
+  // A question asking for a calculation is asking for the tool that
+  // calculates, whatever nouns it also contains. Without this, "average
+  // reservoir storage" put clickReservoirs first on a reservoir page -
+  // a strong word match and entirely the wrong kind of thing.
+  const asksForMaths = !!aggregateWanted(instruction);
   const ranked = words.length
-    ? combined
-        .map((t) => ({ t, score: always.has(t.name) ? Infinity : scoreManifestTool(t, words, instruction) }))
+    ? scored
+        .map((t) => ({
+          t,
+          score: scoreManifestTool(t, words, instruction) + (asksForMaths && t.name === "pageCompute" ? 12 : 0),
+        }))
         .sort((a, b) => b.score - a.score)
         .map((x) => x.t)
-    : combined;
+    : scored;
 
-  return { verified, page: pageTools, all: ranked.slice(0, max), considered: combined.length };
+  // Leave room for the readers rather than letting the ranked list crowd
+  // them out entirely.
+  const keep = Math.max(1, max - readers.length);
+  return {
+    verified, page: pageTools,
+    all: [...ranked.slice(0, keep), ...readers],
+    considered: combined.length,
+  };
 }
 
 async function buildContext(routeGlobal) {
@@ -5183,11 +5206,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           instruction: wanted, tools: shortlist,
         });
 
+        // What the deterministic path would have chosen, for comparison. The
+        // shortlist is already ranked by it, so its answer is entry one -
+        // free to report, and the only way to tell a model that helped from
+        // one that just cost three seconds.
+        const scorerPick = known.all[0] ? known.all[0].name : null;
+
         let plan = null;
         if (picked && picked.ok && picked.index !== null && known.all[picked.index]) {
           const def = known.all[picked.index];
           const args = argsForTool(def, wanted, meaningfulWords(wanted)) || {};
-          plan = { ok: true, toolCall: { name: def.name, args }, pickedIn: picked.ms };
+          plan = { ok: true, toolCall: { name: def.name, args }, pickedIn: picked.ms,
+            agreed: def.name === scorerPick, scorerPick };
         } else if (picked && picked.ok) {
           // The model said none of them fit, which is an answer.
           plan = { ok: true, toolCall: null, text: "none of this page's tools fit that" };
@@ -5219,8 +5249,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
         const result = await executeToolCall(route.global, plan.toolCall);
+        // The model's choice, what the scorer would have chosen, and how long
+        // the difference cost. Without this "the model is wrong" cannot be
+        // told from "the model is slow".
+        const chose = plan.toolCall ? plan.toolCall.name : "(none)";
+        const note = plan.scorerPick === undefined ? undefined
+          : plan.agreed
+            ? `model and scorer both chose ${chose}${plan.pickedIn ? ` · ${plan.pickedIn}ms` : ""}`
+            : `model chose ${chose}; without it, ${plan.scorerPick}${plan.pickedIn ? ` · ${plan.pickedIn}ms` : ""}`;
+        const display = result.result && result.result.display
+          ? { ...result.result.display, caveat: note || result.result.display.caveat }
+          : result.display;
         respond({ ...result, plannedBy: plan.pickedIn ? "webllm-pick" : "webllm-json",
-          toolCall: plan.toolCall, modelMs: plan.pickedIn });
+          toolCall: plan.toolCall, modelMs: plan.pickedIn,
+          modelChose: chose, scorerWouldChoose: plan.scorerPick, agreed: plan.agreed,
+          display });
       } catch (err) {
         respond({ ok: false, error: String((err && err.message) || err) });
       } finally {
