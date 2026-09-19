@@ -183,6 +183,30 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("the verb matched, and nothing else did");
+// "Click on st johns river" on NOAA planned noaaSetGaugeProduct with
+// product: "st johns river" - a river poured into an argument that takes
+// obsFcst, HEFS or LRO. The word that made it win was the verb; the words
+// that mattered were left over entirely, and it reported "done".
+//
+// Two faults. The argument's allowed values lived in its description rather
+// than an enum, so nothing stopped a river going in.
+const productArg = sb.toolsFor("NOAA").find((d) => d.name === "noaaSetGaugeProduct").parameters.properties.product;
+ensure("the values a tool accepts are enforced, not just described",
+  Array.isArray(productArg.enum) && productArg.enum.length === 3, productArg);
+// And a bare-threshold match now has to be about the tool: if most of what
+// was said goes unaccounted for, the verb matched and nothing else did.
+for (const q of ["click on st johns river", "click on lake tahoe"]) {
+  check(`"${q}" plans nothing`, sb.planManifestTool(q, "NOAA"), null);
+}
+// One leftover word is not a subject - these still plan.
+const stillWorks = (q, route) => (sb.planManifestTool(q, route) || {}).name;
+check("download csv still plans", stillWorks("download csv", "SITE"), "siteDownloadData");
+check("and a real product value does too",
+  stillWorks("set the gauge product to HEFS", "NOAA"), "noaaSetGaugeProduct");
+check("and an enumerated basemap", stillWorks("set the basemap to satellite", "NOAA"), "noaaSetBasemap");
+check("and a state", stillWorks("select alaska", "USGS"), "usgsSelectState");
+
 section("the site says which state it is about");
 // "Smith river discharge" asked on cdec.water.ca.gov returned nine rivers
 // from New Hampshire to Alaska, with the one obviously meant buried among

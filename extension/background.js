@@ -764,7 +764,7 @@ const TOOL_DEFS = {
     {
       name: "noaaSetGaugeProduct", fn: "setGaugeProduct", argOrder: ["product"],
       description: "Select which river gauge product is shown: observations+forecast, the ensemble forecast (HEFS), or the long-range outlook (LRO).",
-      parameters: { type: "object", properties: { product: { type: "string", description: "obsFcst, HEFS, or LRO" } }, required: ["product"] },
+      parameters: { type: "object", properties: { product: { type: "string", enum: ["obsFcst", "HEFS", "LRO"], description: "obsFcst, HEFS, or LRO" } }, required: ["product"] },
     },
     {
       name: "noaaSetGaugeMode", fn: "setGaugeMode", argOrder: ["mode"],
@@ -3776,6 +3776,21 @@ function planManifestTool(instruction, routeGlobal) {
     .map((def) => ({ def, score: scoreManifestTool(def, words, instruction) }))
     .filter((x) => x.score >= 4)          // a single description word is not enough
     .sort((a, b) => b.score - a.score);
+  // "Click on st johns river" scored noaaSetGaugeProduct a bare 4 and ran it
+  // with product: "st johns river" - a river name poured into an argument
+  // that takes obsFcst, HEFS or LRO. The words that made it win were the
+  // verb; the words that mattered were left over entirely.
+  //
+  // So a bare pass needs the instruction to be mostly about this tool. If
+  // most of what was said goes unaccounted for, the match was the verb and
+  // nothing else, and acting on it invents an answer.
+  if (scored.length && scored[0].score < 7) {
+    const leftOver = wordsLeftOver(scored[0].def, argsForTool(scored[0].def, instruction, words) || {}, words);
+    // A majority, and more than one word. "Download csv" leaves "csv" over
+    // and is plainly about downloading; "click on st johns river" leaves
+    // the whole subject over and is about nothing this tool does.
+    if (leftOver.length >= 2 && leftOver.length > words.length / 2) return null;
+  }
   if (!scored.length) {
     // "show me Texas" names no tool, but on a map page the intent is plain
     // and the same redirect applies.
