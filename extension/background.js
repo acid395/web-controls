@@ -3988,7 +3988,14 @@ const ENV_VOCAB_CONTEXT = envVocabPreamble();
 // join them, because those were checked against the real site. The generic
 // selector primitives are left out entirely.
 async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
-  const verified = (TOOL_DEFS[routeGlobal] || []).filter((d) => !d.run && !needsRealSelector(d));
+  // !d.run was meant to drop the data lookups, which answer from an agency
+  // rather than the page. It also dropped pageCompute, which orchestrates
+  // page reads to do arithmetic - so the model was asked for "average
+  // reservoir storage" with no tool capable of an average anywhere in its
+  // list, and had nothing to pick but a wrong answer.
+  const dataNames = new Set(DATA_TOOLS.map((d) => d.name));
+  const verified = (TOOL_DEFS[routeGlobal] || [])
+    .filter((d) => !dataNames.has(d.name) && !needsRealSelector(d));
   const fromPage = await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }));
   const pageTools = (fromPage.ok && fromPage.result && fromPage.result.tools) || [];
   const combined = [

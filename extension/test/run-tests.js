@@ -1052,6 +1052,19 @@ else {
         const gist = String(t.description || "").split(/[.\u2013-]/)[0].trim().slice(0, 60);
         return `${t.name}(${props.join(", ")})${gist ? " - " + gist : ""}`;
       }).join("\n");
+      // The model can only pick from what it is shown. !d.run was meant to
+      // drop the agency lookups and also dropped pageCompute, so "average
+      // reservoir storage" reached a model with no averaging tool in its
+      // list and nothing to pick but a wrong answer.
+      ensure("the model can reach the one tool that calculates",
+        routing.all.some((t) => t.name === "pageCompute"), routing.all.map((t) => t.name));
+      ensure("and the agency lookups stay out of the routing list",
+        !routing.all.some((t) => /^water|^weather/.test(t.name)), routing.all.map((t) => t.name));
+      // Naming it has to work, not just seeing it.
+      const computed = await live.executeToolCall("GENERIC", { name: "pageCompute", args: { fn: "mean", of: "max temp" } })
+        .catch((e) => ({ ok: false, error: e.message }));
+      ensure("and running it by name works", computed.ok !== false, computed.error || computed);
+
       ensure("the routing prompt stays under ~400 tokens",
         catalogue.length < 1600, `${Math.round(catalogue.length / 4)} tokens`);
       ensure("and no page context is bolted on when tools describe the page",
