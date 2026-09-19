@@ -2589,7 +2589,13 @@ function wordsCoveredBy(control, words) {
   const optionText = (control.options || [])
     .map((o) => String(o.text || o.value || "").toLowerCase()).join(" ");
   const hay = `${label} ${optionText}`;
-  return words.filter((w) => wordMatchesText(w, hay));
+  const hit = words.filter((w) => wordMatchesText(w, hay));
+  // A control matched only by the instruction's verb has not been matched.
+  // "Enable snow depth" clicked a control literally labelled "Enabled" -
+  // covered by the word "enable" and nothing else - alongside a nav link
+  // called National Snow Analysis, and left "depth" unaccounted for.
+  const subject = hit.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w));
+  return subject.length ? hit : [];
 }
 
 // Picks the option inside a <select> that the instruction named.
@@ -5377,7 +5383,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 runnerUp: one.runnerUp,
                 display: inner || {
                   title: friendlyToolName(one.tool.name),
-                  subtitle: String(one.tool.description || "").split(/[.\u2013-]/)[0].slice(0, 80),
+                  // Every path that acts has to say whether the page moved.
+                  // This one reported the tool's own description and stopped,
+                  // so "click flood inundation" read as a success whether the
+                  // checkbox ticked or not.
+                  subtitle: [
+                    String(one.tool.description || "").split(/[.\u2013-]/)[0].slice(0, 60),
+                    ran.verified
+                      ? (ran.verified.changed ? "the page responded" : "but nothing on the page changed")
+                      : "could not check whether the page changed",
+                  ].filter(Boolean).join(" · "),
                   stats: [],
                   rows: Object.entries(one.args || {})
                     .filter(([k]) => k !== "selector")
@@ -5646,7 +5661,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           //
           // So: if the chosen tool moved nothing, try what the page itself
           // offers before claiming anything.
-          if (result.verified && result.verified.changed === false) {
+          // Not only when it is known to have changed nothing: an action
+          // that could not be checked is equally unproven, and "ran - could
+          // not check whether the page changed" is not a result worth
+          // stopping on when the page offers another way.
+          if (!result.verified || result.verified.changed === false) {
             const second = confidentPick(
               await unifiedTools(route.global, wanted, { acting: true }), wanted);
             if (second && second.tool.name !== manifestCall.name) {

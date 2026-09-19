@@ -183,6 +183,56 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a banner is not the only thing on the page");
+// "Click national hydrologic discussion" clicked the site banner - a logo
+// link whose label is a sentence of branding. The control actually named was
+// not outranked; it was never in the list. Descriptors were capped at 40 in
+// DOM order, and a federal site's header carries more links than that, so
+// everything below the fold was cut before anything scored it.
+const headerHeavy = loadPage(`<!doctype html><html><body>${
+  Array.from({ length: 45 }, (_, i) => `<a href="/n${i}">National item ${i}</a>`).join("")
+}<a href="/nhd">National Hydrologic Discussion</a><a href="/arch">Archive</a></body></html>`,
+  { url: "https://water.noaa.gov/" });
+if (!headerHeavy) skip("header-heavy pages", "jsdom not installed");
+else {
+  const names = headerHeavy.GENERIC.pageTools().tools.map((t) => t.name);
+  ensure("a control past the header is still derived",
+    names.some((n) => /HydrologicDiscussion/i.test(n)), names.length);
+
+  const bg = loadBackground({ page: headerHeavy });
+  runAsync(async () => {
+    const title = async (q) => ((await bg.__ask({ type: "smartAsk", instruction: q })).display || {}).title || "";
+    check("and reached by name", await title("click national hydrologic discussion"),
+      "click national hydrologic discussion");
+    check("as is another past it", await title("click archive"), "click archive");
+    // The model's list stays short: agentTools ranks before it trims, which
+    // is the cap that was supposed to be doing this work all along.
+    const k = await bg.agentTools("GENERIC", "click national hydrologic discussion");
+    ensure("while the model's own list stays short", k.all.length <= 24, k.all.length);
+    ensure("chosen from all of them", k.considered > 40, k.considered);
+  });
+}
+
+// A bare "#" is not the page responding. Clicking <a href="#"> - how half
+// the web writes a button that does nothing on its own - counted as a
+// change, so every dead link reported success.
+const linkKinds = loadPage(`<!doctype html><html><body>
+  <label for="fl">Flood inundation</label><input id="fl" type="checkbox">
+  <a href="#" id="dead">Dead layer</a>
+  <a href="#@=-83,43,5" id="view">Zoom to view</a></body></html>`, { url: "https://water.noaa.gov/" });
+if (!linkKinds) skip("fragment changes", "jsdom not installed");
+else {
+  const bg2 = loadBackground({ page: linkKinds });
+  runAsync(async () => {
+    const said = async (q) => ((await bg2.__ask({ type: "smartAsk", instruction: q })).display || {}).subtitle || "";
+    ensure("a real control responds", /page responded/.test(await said("click flood inundation")), await said("click flood inundation"));
+    ensure("a dead link says nothing changed",
+      /nothing on the page changed/.test(await said("click dead layer")), await said("click dead layer"));
+    ensure("but a fragment carrying a view still counts",
+      /page responded/.test(await said("click zoom to view")), await said("click zoom to view"));
+  });
+}
+
 section("done is not a thing to say when nothing happened");
 // "Enable flood inundation" ran noaaToggleFloodCategory and reported "done".
 // The checkbox was untouched. Two faults: the hand-written tool was preferred

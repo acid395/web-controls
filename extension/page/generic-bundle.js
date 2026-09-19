@@ -1272,10 +1272,21 @@
     const stripHash = (u) => String(u || "").split("#")[0];
     const hashOnly = before.url !== after.url && stripHash(before.url) === stripHash(after.url);
 
+    // An empty fragment is not a view. Clicking <a href="#"> - which is how
+    // half the web writes a button that does nothing on its own - appends a
+    // bare "#" and nothing else, and counting that as a change made every
+    // dead link report that the page responded. A map writing its centre
+    // and zoom into the fragment still counts; "#" alone does not.
+    // Written wrong the first time: it compared whether each url had a
+    // fragment, which is true of both before and after, so the test never
+    // fired. What matters is only whether the fragment it landed on is
+    // empty - "#" carries no view, and a map writing "#@=-83,43,5" does.
+    const cosmeticHash = hashOnly && !String(after.url).split("#")[1];
+
     return {
-      changed: changes.length > 0 || before.url !== after.url,
+      changed: changes.length > 0 || (before.url !== after.url && !cosmeticHash),
       navigated: before.url !== after.url && !hashOnly ? { from: before.url, to: after.url } : undefined,
-      viewChanged: hashOnly || undefined,
+      viewChanged: (hashOnly && !cosmeticHash) || undefined,
       changes: changes.slice(0, 20),
       changeCount: changes.length,
     };
@@ -1717,7 +1728,13 @@
   // actually is rather than a precondition.
   const PAGE_TOOLS = new Map();
 
-  function pageToolDescriptors({ max = 40 } = {}) {
+  // The cap used to be 40, applied in DOM order - so on a federal site whose
+  // header carries fifty branding links, every real control was cut before
+  // anything looked at it, and "click national hydrologic discussion" found
+  // only the banner. Descriptors are cheap objects; the caps that matter are
+  // the model's list, which agentTools ranks before trimming, and
+  // registration, which stays small on purpose.
+  function pageToolDescriptors({ max = 250 } = {}) {
     PAGE_TOOLS.clear();
     const out = [];
     const add = (name, description, inputSchema, execute) => {
@@ -1793,7 +1810,7 @@
     };
 
     // Same descriptors the model is offered, so the two can never drift.
-    const built = pageToolDescriptors({ max });
+    const built = pageToolDescriptors({ max: Math.min(max, 60) });
     for (const d of built.tools) {
       const impl = PAGE_TOOLS.get(d.name);
       add({ name: d.name, description: d.description, inputSchema: d.inputSchema, execute: impl.execute });
