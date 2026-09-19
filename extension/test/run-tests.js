@@ -183,6 +183,36 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a heavy page is only walked once");
+// Deriving tools walks every control, and a real portal has hundreds - CDEC
+// has 667. Doing it on every ask, and again when the older cascade wants an
+// inventory, made one question walk the page three times. On a heavy page
+// that is the difference between an answer and a timeout, and measuring it
+// was itself what timed out.
+const heavy = loadPage(`<!doctype html><html><body>${
+  Array.from({ length: 300 }, (_, i) => `<a href="/p${i}">Link ${i}</a>`).join("")
+}<table><tr><th>Site</th><th>Discharge, cfs</th></tr><tr><td>A</td><td>100</td></tr></table></body></html>`,
+  { url: "https://heavy.example.gov/" });
+if (!heavy) skip("heavy pages", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: heavy });
+  let derived = 0;
+  const pass = bg.chrome.tabs.sendMessage;
+  bg.chrome.tabs.sendMessage = async (id, m) => { if (m && m.fn === "pageTools") derived++; return pass(id, m); };
+  runAsync(async () => {
+    await bg.unifiedTools("GENERIC", "average discharge");
+    const firstPass = derived;
+    await bg.unifiedTools("GENERIC", "average discharge");
+    check("the page is walked once, not twice", derived, firstPass);
+    ensure("and once is once, not three times", firstPass === 1, firstPass);
+    // Stale tools are worse than slow ones: anything that moves the page
+    // throws the cache away.
+    bg.forgetPageTools();
+    await bg.unifiedTools("GENERIC", "average discharge");
+    ensure("a change forces a fresh walk", derived === firstPass + 1, derived);
+  });
+}
+
 section("the verb matched, and nothing else did");
 // "Click on st johns river" on NOAA planned noaaSetGaugeProduct with
 // product: "st johns river" - a river poured into an argument that takes

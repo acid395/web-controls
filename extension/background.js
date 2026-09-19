@@ -3857,6 +3857,7 @@ async function runVerified(routeGlobal, toolCall) {
   const diff = await invokeOnActiveTab("signatureDiff", [before.result, after.result]).catch(() => ({ ok: false }));
   if (!diff.ok) return result;
 
+  if (diff.result.changed) forgetPageTools();
   return {
     ...result,
     verified: {
@@ -4126,6 +4127,31 @@ function stateFromSite(url, title) {
   return null;
 }
 
+// Deriving tools means walking every control on the page, and a real portal
+// has hundreds - CDEC has 667. Doing that on every ask, and then again when
+// the older cascade asks for an inventory of its own, made a single question
+// walk the page three times. On a heavy page that is the difference between
+// an answer and a timeout.
+//
+// Cached per page for a few seconds, and thrown away the moment an action
+// changes anything, because stale tools are worse than slow ones.
+const TOOLS_CACHE = new Map();
+const TOOLS_TTL_MS = 8000;
+
+function forgetPageTools(tabId) {
+  if (tabId === undefined) TOOLS_CACHE.clear();
+  else TOOLS_CACHE.delete(tabId);
+}
+
+async function cachedPageTools(tabId, url) {
+  const hit = TOOLS_CACHE.get(tabId);
+  if (hit && hit.url === url && Date.now() - hit.at < TOOLS_TTL_MS) return hit.tools;
+  const got = await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }));
+  const tools = (got.ok && got.result && got.result.tools) || [];
+  TOOLS_CACHE.set(tabId, { url, at: Date.now(), tools });
+  return tools;
+}
+
 async function unifiedTools(routeGlobal, instruction) {
   const fromPage = await agentTools(routeGlobal, instruction, { max: 40 });
   const data = DATA_TOOLS.map((d) => ({
@@ -4167,8 +4193,10 @@ async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
   const dataNames = new Set(DATA_TOOLS.map((d) => d.name));
   const verified = (TOOL_DEFS[routeGlobal] || [])
     .filter((d) => !dataNames.has(d.name) && !needsRealSelector(d));
-  const fromPage = await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }));
-  const pageTools = (fromPage.ok && fromPage.result && fromPage.result.tools) || [];
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+  const pageTools = tab && tab.id
+    ? await cachedPageTools(tab.id, tab.url)
+    : (((await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }))).result) || {}).tools || [];
   const combined = [
     ...verified.map((d) => ({ name: d.name, description: d.description, parameters: d.parameters })),
     ...pageTools.map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema })),

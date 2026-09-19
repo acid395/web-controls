@@ -1368,6 +1368,18 @@ site (ca.gov)"*, because a hint that quietly answers about the wrong place is
 worse than no hint at all. If the narrowed question finds nothing, the hint was
 wrong and it asks again without it.
 
+### A heavy page is only walked once
+
+Deriving tools means walking every control on the page, and a real portal has
+hundreds - CDEC has 667. The unified picker ran that on every ask, and the
+older cascade then asked for an inventory of its own, so a single question
+walked the page three times. On a heavy page that is the difference between an
+answer and a timeout: trying to *measure* it was what timed out.
+
+The derived tools are cached per page for a few seconds and thrown away the
+moment an action changes anything, because stale tools are worse than slow
+ones. On a 300-control page: 3033ms the first time, 19ms the second.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,
