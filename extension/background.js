@@ -4347,6 +4347,95 @@ async function runDiagnostics() {
   };
 }
 
+/* ---------------------------------------------------------------------------
+ * Following the site to the answer.
+ *
+ * Everything above is one step: pick a tool, run it, report. But a site is
+ * not one step. "Smith river discharge" on a California water portal is
+ * there - behind a River Forecast link, then a river, then its table - and a
+ * single-step planner cannot reach it. It read the front page, found no
+ * discharge, and answered from a national API instead: correct data about
+ * nine rivers in nine states, when the site in front of it had the one that
+ * was meant.
+ *
+ * So: look, move, look again. Reading a linked page rather than clicking it
+ * matters - readUrl fetches same-origin HTML without navigating, so nothing
+ * the person was looking at is disturbed, several candidates can be tried,
+ * and a wrong guess costs nothing but a fetch.
+ *
+ * Bounded hard. Depth and breadth are small, every page is visited once, and
+ * a link only gets followed if its own words overlap the question - an
+ * unbounded crawl of a government site is not a feature.
+ */
+function scoreLink(label, words) {
+  const text = String(label || "").toLowerCase();
+  if (!text) return 0;
+  let score = 0;
+  for (const w of words) {
+    if (w.length < 3) continue;
+    const hit = wordMatchesText(w, text);
+    if (hit === "exact") score += 3;
+    else if (hit) score += 2;
+  }
+  // A page listing many of something is a likely route to one of them.
+  if (/\b(list|index|all|stations?|gauges?|rivers?|reservoirs?|sites?|data|reports?|forecasts?)\b/.test(text)) score += 1;
+  return score;
+}
+
+async function followToAnswer(instruction, { wants, agg, place, maxPages = 6, maxDepth = 2 }) {
+  const words = meaningfulWords(instruction);
+  if (!words.length) return null;
+
+  const answerFrom = (pageData) => {
+    if (agg) {
+      const subject = words.filter((w) => !AGGREGATE_WORDS.has(w));
+      const match = subject.length ? (label) => subject.every((w) => wordMatchesText(w, label)) : null;
+      const computed = aggregateOnPage(pageData, { wants, place, agg, match });
+      if (computed) return { kind: "calculated", computed };
+    }
+    if (wants.length) {
+      const hits = findOnPage(pageData, { wants, place, day: null });
+      if (hits) return { kind: "read", hits };
+    }
+    return null;
+  };
+
+  const seen = new Set();
+  const trail = [];
+  let fetches = 0;
+
+  const walk = async (links, depth) => {
+    if (depth > maxDepth) return null;
+    const ranked = links
+      .map((l) => ({ l, score: scoreLink(l.label, words) }))
+      .filter((x) => x.score >= 3 && !seen.has(x.l.url))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, depth === 1 ? 4 : 2);
+
+    for (const { l } of ranked) {
+      if (fetches >= maxPages) return null;
+      seen.add(l.url);
+      fetches++;
+      const got = await invokeOnActiveTab("readUrl", [l.url]).catch(() => ({ ok: false }));
+      if (!got.ok) { trail.push({ label: l.label, url: l.url, ok: false }); continue; }
+      const answer = answerFrom(got.result);
+      trail.push({ label: l.label, url: l.url, ok: true, answered: !!answer });
+      if (answer) return { ...answer, from: l, trail: [...trail] };
+
+      const deeper = (got.result.links || []).length
+        ? got.result.links
+        : ((await invokeOnActiveTab("pageLinks", [{}]).catch(() => ({ ok: false }))).result || {}).links || [];
+      const below = await walk(deeper, depth + 1);
+      if (below) return below;
+    }
+    return null;
+  };
+
+  const here = await invokeOnActiveTab("pageLinks", [{}]).catch(() => ({ ok: false }));
+  if (!here.ok) return null;
+  return walk(here.result.links || [], 1);
+}
+
 async function buildCapabilities() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url) throw new Error("no active tab");
@@ -4855,10 +4944,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // entirely, and ended up clicking two navigation links - a question
         // answered by navigating away from the answer.
         const wantsAgg = commandLike || forceModel ? null : aggregateWanted(wanted);
+        // Needed by the page read and again by the walk that follows links,
+        // so it lives above both rather than inside the first.
+        const askedPlace = dataCall && dataCall.args
+          ? (dataCall.args.place || dataCall.args.nameContains || null)
+          : (extractPlaceHint(wanted, {}) || null);
         if (wants.length || wantsAgg) {
-          const askedPlace = dataCall && dataCall.args
-            ? (dataCall.args.place || dataCall.args.nameContains || null)
-            : (extractPlaceHint(wanted, {}) || null);
+
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
             // A calculation comes first: picking one cell out of a row that
@@ -4926,6 +5018,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
           return;
         }
+        // The site gets a turn before a national API does. Driving the page
+        // in front of you is the point of this extension; answering from an
+        // agency is the bonus. "Smith river discharge" on a California water
+        // portal was answered with nine rivers in nine states, when the site
+        // being looked at had the one that was meant, two links away.
+        if ((wants.length || wantsAgg) && !commandLike) {
+          const followed = await followToAnswer(wanted, {
+            wants, agg: wantsAgg, place: askedPlace,
+          }).catch(() => null);
+          if (followed) {
+            const where = `${followed.from.label}`.slice(0, 60);
+            const display = followed.kind === "calculated"
+              ? computedDisplay(followed.computed, where)
+              : {
+                  title: where || "Found on this site",
+                  subtitle: `${followed.hits.length} value${followed.hits.length === 1 ? "" : "s"} · followed ${followed.trail.length} link${followed.trail.length === 1 ? "" : "s"} from this page`,
+                  stats: [],
+                  rows: followed.hits.slice(0, 8).map((h) => ({
+                    name: String(h.label).slice(0, 44),
+                    value: String(h.value).slice(0, 20), meta: "",
+                  })),
+                  source: "followed from this site",
+                };
+            display.caveat = `read from ${followed.from.url}`;
+            respond({
+              ok: true, plannedBy: "followed-the-site",
+              followed: followed.trail, readFrom: followed.from.url, display,
+            });
+            return;
+          }
+        }
+
         if (dataCall && !commandLike) {
           const result = await executeToolCall(route.global, dataCall);
           respond({ ...result, plannedBy: "fast-path", toolCall: dataCall });

@@ -42,6 +42,56 @@ const sb = loadBackground();
 const plan = (text, route = { global: "GENERIC" }) => sb.planDataTool(text, route);
 const toolOf = (text, route) => { const p = plan(text, route); return (p && p.name) || undefined; };
 
+section("following the site to the answer");
+// A single step cannot reach what a site keeps two links away. "Smith river
+// discharge" on a California water portal was answered from a national API -
+// nine rivers in nine states, correct and useless - while the site in front
+// of it had the one that was meant, behind a River Forecast link.
+const portalFront = `<!doctype html><html><head><title>Portal</title></head><body>
+  <a href="/about.html">About</a><a href="/contact.html">Contact</a>
+  <a href="/privacy.html">Privacy policy</a>
+  <a href="/rivforecasts.html">River Forecast</a></body></html>`;
+const portalInner = `<!doctype html><html><head><title>North Coast rivers</title></head><body>
+  <h1>North Coast River System</h1>
+  <table><tr><th>Station</th><th>Discharge, cfs</th></tr>
+    <tr><td>SMITH RIVER NR CRESCENT CITY</td><td>227</td></tr>
+    <tr><td>EEL RIVER AT SCOTIA</td><td>512</td></tr></table></body></html>`;
+const portal = loadPage(portalFront, { url: "https://portal.example.gov/" });
+if (!portal) skip("following links", "jsdom not installed");
+else {
+  const fetched = [];
+  const wire = (bg) => {
+    const real = bg.chrome.tabs.sendMessage;
+    bg.chrome.tabs.sendMessage = async (id, m) => {
+      if (m && m.type === "call" && m.fn === "readUrl") {
+        fetched.push(m.args[0]);
+        if (/rivforecasts/.test(m.args[0])) {
+          return { ok: true, result: loadPage(portalInner, { url: m.args[0] }).GENERIC.readPage() };
+        }
+        return { ok: false, error: "404" };
+      }
+      return real(id, m);
+    };
+    return bg;
+  };
+  const site = wire(loadBackground({ page: portal }));
+  runAsync(async () => {
+    const quiet = console.log;
+    console.log = () => {};
+    const r = await site.__ask({ type: "smartAsk", instruction: "smith river discharge" });
+    console.log = quiet;
+    check("the site answers before a national API does", r.plannedBy, "followed-the-site");
+    ensure("with the value that was actually on it",
+      ((r.display || {}).rows || []).some((x) => /227/.test(x.value)), (r.display || {}).rows);
+    ensure("and says where it read it", /rivforecasts/.test(r.readFrom || ""), r.readFrom);
+    // It must not wander: a link has to share words with the question.
+    ensure("it does not follow unrelated links",
+      !fetched.some((u) => /privacy|contact|about/.test(u)), fetched);
+    // And it must stay bounded.
+    ensure("and follows only a few", fetched.length <= 6, fetched.length);
+  });
+}
+
 section("a site from another domain entirely");
 // The point of deriving tools from a page is that nothing may be known about
 // the page. So the guard is a site with no manifest, no hydrology, and no

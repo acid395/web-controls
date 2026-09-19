@@ -1286,6 +1286,28 @@ The caveat tells you to name a state, so naming one had to work: it did not,
 because the tool took no state at all. It does now, and the summary comes back
 once the answer is one river.
 
+## Following the site to the answer
+
+Everything else here is one step: pick a tool, run it, report. A site is not
+one step. "Smith river discharge" on a California water portal was answered
+from a national API - nine rivers in nine states, every reading correct and
+none of them the one meant - while the site being looked at had it two links
+away, behind *River Forecast*.
+
+That was not the API being preferred. The page was read first and had no
+tables at all; one step was simply all there was.
+
+So the site now gets a turn before any agency does: read the page, and if it
+cannot answer, score its links against the question, fetch the best few, and
+try again. Links are **fetched, not clicked** - `readUrl` pulls same-origin
+HTML without navigating, so nothing the person is looking at moves, several
+candidates can be tried, and a wrong guess costs one request.
+
+Bounded deliberately: at most six pages, two levels deep, each visited once,
+and a link is only followed when its own words overlap the question. An
+unbounded crawl of a government site is not a feature. The card names the page
+it read and the links it followed to get there.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,
