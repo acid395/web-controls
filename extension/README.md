@@ -1177,6 +1177,33 @@ and `max_tokens` is 96 - a routing decision is one small JSON object.
 A test asserts the prompt stays under about 400 tokens, so this cannot creep
 back the way it accumulated in the first place.
 
+### The model picks a number
+
+Asking a model to emit `{"tool":"pageCompute","args":{"fn":"mean","of":"..."}}`
+spends around thirty decode tokens on a decision that carries about four bits,
+and decode is most of the wait. It was also the part that could go wrong: a
+generated argument can be a value the page does not offer.
+
+So the model is handed a numbered list and asked for **the number**. One token
+instead of thirty. The arguments are then filled by `argsForTool`, the same
+code that fills them on every other path, which knows the page's enums and
+cannot invent a value outside them.
+
+```
+Pick the one tool that best answers the request.
+ 1. readThisPage - Read what this page currently shows
+ ...
+ 6. pageCompute - Calculate a statistic over numbers this page shows
+Request: average reservoir storage
+Reply with the number only. If none fit, reply 0.
+```
+
+Two things had to give for the arguments to fill themselves. An enum value is
+a machine's word - nobody types `mean` - so human words map onto it: average,
+total, highest, lowest, spread. And the word naming the calculation is not
+part of the thing calculated, so `of` is "reservoir storage" rather than
+"average reservoir storage", which matched no column at all.
+
 ### How much of this needs a model
 
 Measured, not assumed. A fixture of twelve instruction shapes against pages

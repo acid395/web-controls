@@ -3016,6 +3016,17 @@ function cellUnit(cell) {
 // count only alongside a span - "max temp this week" - where a single cell
 // cannot be what was meant.
 // The words that name the calculation rather than the thing calculated.
+// What people say for values a schema spells its own way.
+const ENUM_SYNONYMS = {
+  mean: ["average", "avg"],
+  sum: ["total", "combined", "altogether"],
+  max: ["highest", "maximum", "peak", "hottest", "warmest", "largest", "biggest"],
+  min: ["lowest", "minimum", "coldest", "coolest", "smallest"],
+  median: ["middle"],
+  count: ["how many", "number of"],
+  range: ["spread", "difference", "swing"],
+};
+
 const AGGREGATE_WORDS = new Set(["average", "avg", "mean", "total", "sum", "combined",
   "altogether", "median", "count", "spread", "highest", "hottest", "warmest", "max",
   "maximum", "peak", "lowest", "coldest", "coolest", "min", "minimum", "how", "many", "of"]);
@@ -3203,7 +3214,11 @@ async function pageComputeRun({ fn, of, source = "auto" }) {
   const word = subject.toLowerCase();
   // An unknown subject still has to find its row; the page's own wording is
   // the only guide left.
-  const match = wants.length ? null : (label) => word.length > 2 && label.includes(word);
+  // Per word, and fuzzily: the phrase as typed rarely appears verbatim in a
+  // column header, and "resevoir" should still find Reservoir Storage.
+  const subjectWords = meaningfulWords(word).filter((w) => !AGGREGATE_WORDS.has(w));
+  const match = wants.length ? null
+    : (label) => subjectWords.length > 0 && subjectWords.every((w) => wordMatchesText(w, label));
   const tried = [];
 
   if (source === "auto" || source === "table") {
@@ -3561,8 +3576,16 @@ function argsForTool(def, instruction, words) {
       // Exact across all values first: a correctly spelled option must never
       // lose to a near-miss on a different one.
       const exact = spec.enum.find((v) => wordMatchesText(String(v).toLowerCase(), text) === "exact");
-      const hit = exact !== undefined ? exact
+      let hit = exact !== undefined ? exact
         : spec.enum.find((v) => wordMatchesText(String(v).toLowerCase(), text));
+      // An enum value is a machine's word for it, and people use their own:
+      // nobody types "mean". Without this, pageCompute could be picked by
+      // the model and then not filled, because "average" appears nowhere in
+      // mean|sum|max|min|median|count|range.
+      if (hit === undefined) {
+        hit = spec.enum.find((v) => (ENUM_SYNONYMS[String(v).toLowerCase()] || [])
+          .some((word) => wordMatchesText(word, text)));
+      }
       if (hit !== undefined) args[key] = hit;
       continue;
     }
@@ -3586,7 +3609,11 @@ function argsForTool(def, instruction, words) {
     const nameWords = new Set(toolVocabulary(def).fromName.split(/\s+/));
     const standIns = new Set();
     for (const w of nameWords) for (const v of (verbFamily(w) || [])) standIns.add(v);
-    const leftover = words.filter((w) => !nameWords.has(w) && !standIns.has(w));
+    // The word naming the calculation is not part of the thing calculated:
+    // "average reservoir storage" fills fn=mean, and of should be "reservoir
+    // storage", not the whole phrase - which matched no column at all.
+    const leftover = words.filter((w) => !nameWords.has(w) && !standIns.has(w)
+      && !(args.fn !== undefined && AGGREGATE_WORDS.has(w)));
     if (!leftover.length) continue;
     const value = leftover.join(" ");
     // Some free strings are only free in type. A url is a url and a hex
@@ -5141,13 +5168,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const known = await agentTools(route.global, wanted, { max: 12 });
         // Kept only where there are no page tools to describe it.
         const context = known.page.length ? null : await buildContext(route.global);
-        // llmPlanJson, not llmPlan: the native tools API is restricted to
-        // 7-8B models, which measured as unusable on ordinary hardware.
-        // Prompting for JSON works with a 3B model instead.
-        const plan = await chrome.runtime.sendMessage({
-          target: "offscreen", type: "llmPlanJson",
-          instruction: wanted, tools: known.all, context,
+        // The model picks; it does not write. Asking it to generate a tool
+        // name and every argument spends around thirty decode tokens on a
+        // decision worth about four bits, and decode is most of the wait.
+        // A numbered list costs one token, and the arguments are then filled
+        // by argsForTool - the same code that fills them on every other path,
+        // which cannot invent a value the page does not offer.
+        const shortlist = known.all.map((t) => ({
+          name: t.name,
+          gist: String(t.description || "").split(/[.\u2013-]/)[0].trim().slice(0, 60),
+        }));
+        const picked = await chrome.runtime.sendMessage({
+          target: "offscreen", type: "llmPick",
+          instruction: wanted, tools: shortlist,
         });
+
+        let plan = null;
+        if (picked && picked.ok && picked.index !== null && known.all[picked.index]) {
+          const def = known.all[picked.index];
+          const args = argsForTool(def, wanted, meaningfulWords(wanted)) || {};
+          plan = { ok: true, toolCall: { name: def.name, args }, pickedIn: picked.ms };
+        } else if (picked && picked.ok) {
+          // The model said none of them fit, which is an answer.
+          plan = { ok: true, toolCall: null, text: "none of this page's tools fit that" };
+        } else {
+          // Picking failed outright - fall back to the older path, which can
+          // still answer where a bare number could not.
+          plan = await chrome.runtime.sendMessage({
+            target: "offscreen", type: "llmPlanJson",
+            instruction: wanted, tools: known.all, context,
+          });
+        }
         if (!plan.ok) { respond(plan); return; }
         if (!plan.toolCall) {
           respond({ ok: true, modelReply: plan.text, calledOn: route.global });
@@ -5168,7 +5219,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
         const result = await executeToolCall(route.global, plan.toolCall);
-        respond({ ...result, plannedBy: "webllm-json", toolCall: plan.toolCall });
+        respond({ ...result, plannedBy: plan.pickedIn ? "webllm-pick" : "webllm-json",
+          toolCall: plan.toolCall, modelMs: plan.pickedIn });
       } catch (err) {
         respond({ ok: false, error: String((err && err.message) || err) });
       } finally {

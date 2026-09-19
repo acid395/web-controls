@@ -1065,6 +1065,27 @@ else {
         .catch((e) => ({ ok: false, error: e.message }));
       ensure("and running it by name works", computed.ok !== false, computed.error || computed);
 
+      // The model picks a number; the arguments are filled here. Asking it to
+      // write the tool name and every argument spent around thirty decode
+      // tokens on a decision carrying about four bits, and decode is most of
+      // the wait.
+      const computeDef = routing.all.find((t) => t.name === "pageCompute");
+      if (computeDef) {
+        const filled = live.argsForTool(computeDef, "average reservoir storage",
+          live.meaningfulWords("average reservoir storage"));
+        // An enum value is a machine's word for it; nobody types "mean".
+        check("a human word maps to the schema's enum", filled.fn, "mean");
+        // And the word naming the calculation is not part of what is calculated.
+        check("the aggregate word stays out of the subject", filled.of, "reservoir storage");
+        const misspelt = live.argsForTool(computeDef, "average resevoir storage",
+          live.meaningfulWords("average resevoir storage"));
+        check("a typo survives into the subject", misspelt.of, "resevoir storage");
+      }
+      check("total maps to sum",
+        live.argsForTool(computeDef, "total storage", live.meaningfulWords("total storage")).fn, "sum");
+      check("highest maps to max",
+        live.argsForTool(computeDef, "highest storage", live.meaningfulWords("highest storage")).fn, "max");
+
       ensure("the routing prompt stays under ~400 tokens",
         catalogue.length < 1600, `${Math.round(catalogue.length / 4)} tokens`);
       ensure("and no page context is bolted on when tools describe the page",

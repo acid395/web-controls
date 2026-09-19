@@ -109,6 +109,60 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return; // synchronous, no need to keep the channel open
   }
 
+  // Picking, not writing. The JSON path asks the model to generate a tool
+  // name and every argument, and decode is most of the time that takes -
+  // roughly thirty tokens for a decision carrying about four bits of
+  // information. A numbered list and "reply with the number" is one token.
+  // The arguments are then filled by the same deterministic code that fills
+  // them everywhere else, which is both faster and unable to invent a value
+  // the page does not offer.
+  if (msg.type === "llmPick") {
+    (async () => {
+      try {
+        if (!("gpu" in navigator)) {
+          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
+        }
+        const engine = await getEngine((report) => {
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+        });
+        const numbered = (msg.tools || [])
+          .map((t, i) => `${i + 1}. ${t.name}${t.gist ? " - " + t.gist : ""}`).join("\n");
+        const prompt = [
+          "Pick the one tool that best answers the request.",
+          "",
+          numbered,
+          "",
+          `Request: ${msg.instruction}`,
+          "",
+          "Reply with the number only. If none fit, reply 0.",
+        ].join("\n");
+
+        chrome.runtime.sendMessage({ type: "llmGenerating" });
+        const started = Date.now();
+        const reply = await Promise.race([
+          engine.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: 4,   // a number, and nothing else
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("the model took too long to pick")), 60000)),
+        ]);
+        const text = ((reply.choices[0] || {}).message || {}).content || "";
+        const n = parseInt(String(text).match(/\d+/), 10);
+        sendResponse({
+          ok: true,
+          index: Number.isFinite(n) && n > 0 ? n - 1 : null,
+          ms: Date.now() - started,
+          raw: String(text).slice(0, 40),
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
   // Tool-calling by prompting rather than by API. Works on any model, which
   // is the point: the native path forces an 8B download that most machines
   // cannot run usefully.
