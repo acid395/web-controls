@@ -1,0 +1,34 @@
+web-controls - install
+
+1. chrome://extensions
+2. Turn on "Developer mode" (top right)
+3. "Load unpacked"
+4. Select THIS folder
+
+Requires Chrome 114 or newer; Chrome refuses below that and says so.
+
+Chrome will ask to read data on waterdata.usgs.gov, water.noaa.gov and
+weather.gov - the sites with hand-written, verified controls. Accept, or
+commands on those sites will not work.
+
+Toolbar icon, or Cmd+Shift+Space (Ctrl+Shift+Space on Windows). It opens as
+a side panel and stays open while you use the page.
+
+ON ANY OTHER SITE
+The header shows "any site - N controls". If it says "not enabled here",
+click "Enable on this site"; Chrome requires a real click to grant a site
+that is not listed above.
+
+TRY
+  "click 30 day precipitation"      picks it out of the page's dropdown
+  "set the basemap to satellite"    drives the map
+  "average temperature this week"   calculates from the page's table
+  "gage height in wyoming"          answers from USGS, no key needed
+  "what can I do here"              lists this page's real controls
+
+No account, no API key. The local AI model is OFF by default and is not
+needed for any of the above.
+
+IF SOMETHING LOOKS WRONG
+chrome://extensions -> web-controls -> click "service worker". Every ask and
+its result is logged there.

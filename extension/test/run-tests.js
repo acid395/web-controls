@@ -1290,6 +1290,17 @@ check("a minimum Chrome version is declared", mfv.minimum_chrome_version, "114")
 // move when the extension does.
 ensure("the extension declares a version past 0.5.0",
   mfv.version !== "0.5.0" && /^\d+\.\d+/.test(mfv.version), mfv.version);
+// The version is how anyone testing knows what they have. It sat at 0.16.0
+// through eight commits because the edits meant to bump it failed silently
+// and nothing checked - so every report of "you are on v0.20" was wrong.
+// The packaged zip and the manifest must agree.
+const packagedNames = require("fs").existsSync(require("path").join(__dirname, "..", "..", "dist"))
+  ? require("fs").readdirSync(require("path").join(__dirname, "..", "..", "dist")).filter((f) => f.endsWith(".zip"))
+  : [];
+if (packagedNames.length) {
+  ensure("the packaged zip carries the manifest's version",
+    packagedNames.some((f) => f.includes(mfv.version)), { packagedNames, version: mfv.version });
+}
 const panelHtml = require("fs").readFileSync(
   require("path").join(__dirname, "..", "popup", "popup.html"), "utf8");
 ensure("and the panel shows it", /id="buildTag"/.test(panelHtml), "no build tag in the panel");
