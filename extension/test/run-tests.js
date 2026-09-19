@@ -183,6 +183,53 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("the page names its own columns");
+// "How full is lake conroe" clicked two links and left someone on a page
+// they never asked for. The answer was a column away - Percent Full, row
+// Conroe, 71 - and PAGE_VALUE_TERMS has never heard of "full", so nothing
+// tried to read it.
+//
+// A page names its own columns. Matching the question's words against those
+// headers needs no vocabulary, which is exactly what a site nobody has seen
+// requires. One word finds the column, a different one finds the row.
+const ownWords = { title: "Statewide", headings: [], text: "texas", pairs: [], readouts: [], labelledNumbers: [],
+  tables: [{ columns: ["Reservoir", "Percent Full", "Water Level (ft)"], rows: [
+    ["Conroe", "71", "198.2"], ["Travis", "43", "640.1"]] }] };
+const byWords = (q, place) => {
+  const hit = sb.findByOwnWords(ownWords, q, place || null);
+  return hit ? `${hit[0].value} (${hit[0].label})` : null;
+};
+check("a word this vocabulary never had still reads",
+  byWords("how full is lake conroe"), "71 (Conroe \u00b7 Percent Full)");
+check("another row, same column", byWords("how full is travis"), "43 (Travis \u00b7 Percent Full)");
+check("another column, same row", byWords("water level of conroe"), "198.2 (Conroe \u00b7 Water Level (ft))");
+// One word cannot be both the column and the row.
+check("a column with nothing to identify a row is not an answer", byWords("percent full"), null);
+// And a word the page does not use finds nothing, rather than something.
+check("an unrelated question finds nothing", byWords("how fast is conroe"), null);
+
+// A question must not press anything, even when it cannot be answered: the
+// match is offered instead, and only when it shares more than a stray word.
+const conroePage = loadPage(`<!doctype html><html><head><title>Reservoirs</title></head><body>
+  <a href="/evap">Lake Evaporation/Rainfall</a>
+  <table><tr><th>Reservoir</th><th>Percent Full</th></tr>
+  <tr><td>Conroe</td><td>71</td></tr></table></body></html>`,
+  { url: "https://www.waterdatafortexas.org/" });
+if (!conroePage) skip("offering instead of clicking", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: conroePage });
+  runAsync(async () => {
+    const answered = await bg.__ask({ type: "smartAsk", instruction: "how full is lake conroe" });
+    check("the question is answered, not clicked", answered.plannedBy, "from-page");
+    ensure("with the page's own number",
+      ((answered.display || {}).rows || []).some((r) => r.value === "71"), (answered.display || {}).rows);
+    // Nonsense gets an explanation, not a proposal to click something.
+    const junk = await bg.__ask({ type: "smartAsk", instruction: "fly me to the moon" });
+    ensure("nonsense is still explained, not offered",
+      !(junk.display && junk.display.choices && junk.display.choices.length), junk.display);
+  });
+}
+
 section("doing and telling are different questions");
 // "Click on wildcat creek new london" was answered with a USGS gauge record -
 // the right creek, and not remotely what was asked. A lookup answers; it does

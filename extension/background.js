@@ -3450,6 +3450,53 @@ function findMeasurementRows(pageData, { wants, place, day }) {
   return null;
 }
 
+// When the vocabulary has never met the word.
+//
+// "How full is lake conroe" found nothing: PAGE_VALUE_TERMS knows
+// temperature and discharge and gage height, and does not know "full". The
+// answer was a column away - Percent Full, row Conroe, 71 - and the question
+// instead went hunting for something to click.
+//
+// A page names its own columns. Matching the question's words against those
+// headers needs no vocabulary at all, which is the whole point: a site this
+// has never seen uses words nobody has added to a list yet.
+function findByOwnWords(pageData, instruction, place) {
+  const words = meaningfulWords(instruction)
+    .filter((w) => w.length > 2 && !PLACE_FILLER.has(w));
+  if (words.length < 2) return null;
+  const placeWords = String(place || "").toLowerCase().split(/\s+/).filter(Boolean);
+
+  // Deliberately not built from the extracted place, which is unreliable on
+  // a sentence this vocabulary does not understand - "how full is lake
+  // conroe" yields "full lake", swallowing the very word that names the
+  // column. Instead: one word finds the column, a different one finds the
+  // row. Whichever words those turn out to be.
+  for (const table of pageData.tables || []) {
+    const columns = table.columns || [];
+    for (let col = 1; col < columns.length; col++) {
+      const header = String(columns[col] || "").toLowerCase();
+      if (!header) continue;
+      const namesColumn = words.filter((w) => wordMatchesText(w, header));
+      if (!namesColumn.length) continue;
+      const rest = words.filter((w) => !namesColumn.includes(w));
+      if (!rest.length) continue;
+
+      for (const row of table.rows || []) {
+        const label = String(row[0] || "");
+        if (!label) continue;
+        const lower = label.toLowerCase();
+        if (!rest.some((w) => wordMatchesText(w, lower))) continue;
+        // A place named in the question must not be contradicted by the row.
+        if (placeWords.length && !placeWords.some((w) => w.length > 2 && wordMatchesText(w, lower))
+          && !rest.some((w) => wordMatchesText(w, lower))) continue;
+        if (cellNumber(row[col]) === null) continue;
+        return [{ label: `${label} \u00b7 ${columns[col]}`, value: String(row[col]), fromTable: true }];
+      }
+    }
+  }
+  return null;
+}
+
 function findOnPage(pageData, { wants, place, day }) {
   // Tables first: they can answer about a place the page is not itself about.
   const inTable = findInTables(pageData, { wants, place, day });
@@ -5250,6 +5297,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const askedPlace = dataCall && dataCall.args
           ? (dataCall.args.place || dataCall.args.nameContains || null)
           : (extractPlaceHint(wanted, {}) || null);
+
+        // The vocabulary draws a blank far more often than the page does.
+        // Before giving up on reading, match the question's own words
+        // against the page's own column names - no vocabulary required,
+        // which is what a site nobody has seen needs.
+        if (!commandLike && !forceModel && !pageValueWants(wanted).length) {
+          const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+          const hits = read.ok ? findByOwnWords(read.result, wanted, askedPlace) : null;
+          if (hits) {
+            respond({
+              ok: true, plannedBy: "from-page", readFrom: read.result.url, values: hits,
+              display: {
+                title: (read.result.title || "This page").slice(0, 70),
+                subtitle: `read from the page you're on · matched this page's own wording`,
+                stats: [],
+                rows: hits.map((h) => ({
+                  name: String(h.label).split(" · ")[0].slice(0, 40),
+                  value: String(h.value).slice(0, 20),
+                  meta: String(h.label).split(" · ").slice(1).join(" · "),
+                })),
+                source: "this page",
+              },
+            });
+            return;
+          }
+        }
+
         if (wants.length || wantsAgg) {
 
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
@@ -5522,6 +5596,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
         if (inv.ok) {
           const guess = forceModel ? null : planGenericTool(wanted, inv.result);
+
+          // A question must not press anything. "How full is lake conroe"
+          // matched two controls by their words - a link called Lake
+          // Evaporation/Rainfall and a row called Conroe - clicked the first,
+          // failed on the second, and left someone on a page they never asked
+          // for. Nothing in the sentence said to go anywhere.
+          //
+          // The match is still worth having: a control whose label answers
+          // the question is a good suggestion. So it is offered, and acting
+          // is the person's decision, not a side effect of asking.
+          // Offering is cheap but not free: "fly me to the moon" matched a
+          // link by one stray word and proposed clicking it. A suggestion
+          // worth making shares more than that.
+          const overlap = guess && guess.matched
+            ? guess.matched.reduce((n, m) => n + ((m.covered || []).length), 0) : 0;
+          if (guess && guess.calls && !commandLike && overlap >= 2) {
+            respond({
+              ok: false, needsChoice: true,
+              error: "Nothing here answers that directly, but this page has controls that look related.",
+              candidates: guess.matched,
+              display: {
+                title: "Nothing answered that",
+                subtitle: `${guess.matched.length} control${guess.matched.length === 1 ? "" : "s"} on this page look related - using one will change the page`,
+                stats: [], rows: [],
+                choices: guess.calls.slice(0, 4).map((call, i) => ({
+                  label: (guess.matched[i] && guess.matched[i].label) || friendlyToolName(call.name),
+                  hint: friendlyToolName(call.name),
+                  call,
+                })),
+                source: "this page",
+              },
+            });
+            return;
+          }
+
           if (guess && guess.calls) {
             // Run them in order and stop at the first failure - a later step
             // usually depends on an earlier one having opened or switched

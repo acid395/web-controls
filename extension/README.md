@@ -1399,6 +1399,25 @@ Acting is still how a question sometimes gets answered - that is what
 following the site does, acting and then reading. It is just not an answer on
 its own.
 
+### The page names its own columns
+
+"How full is lake conroe" clicked two links and left someone on a page they
+never asked for. The answer was one column away - *Percent Full*, row *Conroe*,
+71 - and `PAGE_VALUE_TERMS` has never heard of the word "full", so nothing
+tried to read it.
+
+A page names its own columns. Matching the question's words against those
+headers needs no vocabulary at all, which is exactly what a site nobody has
+seen requires: **one word finds the column, a different one finds the row.**
+It is deliberately not built from the extracted place, which is unreliable on
+a sentence this vocabulary cannot parse - "how full is lake conroe" yields
+"full lake", swallowing the very word that names the column.
+
+And a question never presses anything, even when it cannot be answered. The
+control that looks related is *offered*, and only when it shares more than a
+stray word: "fly me to the moon" matched a link by one word and proposed
+clicking it.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,
