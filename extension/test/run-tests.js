@@ -14,6 +14,10 @@
 // Declared up here, not beside report(): the nested call sites below run
 // first, and a `let` declared after them is in the temporal dead zone.
 let reported = false;
+// Declared with the other counters, not beside runAsync at the foot of the
+// file: a section that runs early would otherwise hit the temporal dead zone
+// and take the rest of the suite down with it.
+let pendingAsync = 0;
 
 const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
 
@@ -37,6 +41,51 @@ function section(name) { console.log(`\n${name}`); }
 const sb = loadBackground();
 const plan = (text, route = { global: "GENERIC" }) => sb.planDataTool(text, route);
 const toolOf = (text, route) => { const p = plan(text, route); return (p && p.name) || undefined; };
+
+section("a site from another domain entirely");
+// The point of deriving tools from a page is that nothing may be known about
+// the page. So the guard is a site with no manifest, no hydrology, and no
+// vocabulary this project has ever met - shaped like census.gov, which is
+// where these three faults were actually found.
+const foreignSite = loadPage(`<!doctype html><html><head><title>Statistics portal</title></head><body>
+  <nav><a href="/">Home</a><a href="/partners">Partners</a><a href="/educators">Educators</a>
+       <a href="/search">Search data, events and resources</a></nav>
+  <label for="q">Search</label><input id="q" type="search">
+  <a href="/tools">Data tools and maps</a>
+  <label for="topic">Topic</label>
+  <select id="topic"><option>Age and sex</option><option>Housing</option><option>Income</option></select>
+  <table><tr><th>Year</th><th>Median household income</th></tr>
+    <tr><td>2024</td><td>80,610</td></tr><tr><td>2023</td><td>77,540</td></tr>
+    <tr><td>2022</td><td>74,580</td></tr></table>
+  </body></html>`, { url: "https://example-statistics.gov/" });
+if (!foreignSite) skip("another domain", "jsdom not installed");
+else {
+  const far = loadBackground({ page: foreignSite });
+  const derived = foreignSite.GENERIC.pageTools().tools;
+  ensure("tools are derived with nothing known about the site", derived.length > 5, derived.length);
+  ensure("named from the page's own words",
+    derived.some((t) => /income|topic|search/i.test(t.name)), derived.map((t) => t.name));
+
+  const top = async (q) => (await far.agentTools("GENERIC", q, { max: 12 })).all[0].name;
+  runAsync(async () => {
+  // "Search for X" wants the box that takes text, not the link called Search.
+  // On census.gov this picked clickSearchDataEventsResourcesAnd.
+  ensure("a search reaches the box, not a link named Search",
+    /^(search|type)/i.test(await top("search for income")), await top("search for income"));
+  // Pinning the readers first made readThisPage the answer to everything;
+  // burying them last meant a read request picked a random link instead.
+  check("a read request reaches the reader", await top("what does this page say"), "readThisPage");
+  // And a calculation reaches the calculator, in a domain with no water in it.
+  check("a calculation reaches the calculator", await top("average median household income"), "pageCompute");
+
+  // End to end, with no site-specific code anywhere in the path.
+  const call = await far.executeToolCall("GENERIC",
+    { name: "pageCompute", args: { fn: "mean", of: "median household income" } })
+    .catch((e) => ({ ok: false, error: e.message }));
+  ensure("and the calculation runs on a page nobody wrote code for",
+    call.ok !== false && !!call.result, call.error || call);
+  });
+}
 
 section("place and measurement parsing");
 check('"gage height in Alaska"', plan("gage height in Alaska").args, { state: "ak", parameter: "gageHeight" });
@@ -1961,7 +2010,6 @@ if (process.argv.includes("--live")) {
 // 0, which reads as "all fine" to a person and to CI alike.
 // The suite is otherwise synchronous; these few need to await. Tracked so the
 // summary cannot print before they have finished.
-let pendingAsync = 0;
 function runAsync(fn) {
   pendingAsync++;
   fn().catch((err) => {

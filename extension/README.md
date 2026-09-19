@@ -1204,6 +1204,28 @@ total, highest, lowest, spread. And the word naming the calculation is not
 part of the thing calculated, so `of` is "reservoir storage" rather than
 "average reservoir storage", which matched no column at all.
 
+### A site from another domain entirely
+
+The point of deriving tools from a page is that nothing may be known about the
+page - so the guard is a site with no manifest, no hydrology, and no vocabulary
+this project has ever met. Shaped like census.gov, which is where three faults
+were actually found by running the chain against it.
+
+**"Search for population" picked a link called Search** rather than the search
+box, because the link's label matched the word. A request to search now prefers
+a tool that takes text.
+
+**"What does this page say" picked a random link.** That one was mine, from an
+hour earlier: pinning the readers to the top of the list had made `readThisPage`
+the answer to every question, so I moved them to the end - where a read request
+could no longer reach them either. They rank on merit now, and are appended
+only if they did not make the cut, so they are reachable without being
+privileged.
+
+**A calculation put `clickReservoirs` first** on a reservoir page - a strong
+word match and entirely the wrong kind of thing. A question asking for a
+calculation now ranks the calculating tool first, whatever nouns it contains.
+
 ### How much of this needs a model
 
 Measured, not assumed. A fixture of twelve instruction shapes against pages

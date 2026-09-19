@@ -4042,30 +4042,42 @@ async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
   // entry. "Average reservoir storage" was offered readThisPage first and
   // pageCompute sixth. Kept, but at the end, where being present costs
   // nothing and being first costs the answer.
+  // Scored like everything else. Pinning them first made readThisPage the
+  // answer to every question; burying them last meant "what does this page
+  // say" could not reach them either and picked a random link. They compete
+  // on merit, and are appended afterwards only if they did not make the cut,
+  // so they stay reachable without being privileged.
   const always = new Set(["readThisPage", "listPageControls", "listPageDataRequests"]);
-  const scored = combined.filter((t) => !always.has(t.name));
-  const readers = combined.filter((t) => always.has(t.name));
   // A question asking for a calculation is asking for the tool that
   // calculates, whatever nouns it also contains. Without this, "average
   // reservoir storage" put clickReservoirs first on a reservoir page -
   // a strong word match and entirely the wrong kind of thing.
   const asksForMaths = !!aggregateWanted(instruction);
+  // A request to look at the page is a request for the tool that reads it,
+  // however the page's own links happen to be worded.
+  const asksToRead = /\b(read|say|says|show(ing)?|what.s on|contents?|summar\w+)\b/i.test(instruction);
+  const bonus = (t) => {
+    if (asksForMaths && t.name === "pageCompute") return 12;
+    if (asksToRead && t.name === "readThisPage") return 10;
+    // "Search for X" wants the box that takes text, not a link named Search.
+    if (/\b(search|find|look ?up)\b/i.test(instruction)
+      && ((t.parameters || {}).properties || {}).text) return 8;
+    return 0;
+  };
   const ranked = words.length
-    ? scored
-        .map((t) => ({
-          t,
-          score: scoreManifestTool(t, words, instruction) + (asksForMaths && t.name === "pageCompute" ? 12 : 0),
-        }))
+    ? combined
+        .map((t) => ({ t, score: scoreManifestTool(t, words, instruction) + bonus(t) }))
         .sort((a, b) => b.score - a.score)
         .map((x) => x.t)
-    : scored;
+    : combined;
 
-  // Leave room for the readers rather than letting the ranked list crowd
-  // them out entirely.
-  const keep = Math.max(1, max - readers.length);
+  // Reachable even when they did not rank: a model that can act but cannot
+  // read the result is working blind.
+  const head = ranked.slice(0, max);
+  const missing = combined.filter((t) => always.has(t.name) && !head.includes(t));
   return {
     verified, page: pageTools,
-    all: [...ranked.slice(0, keep), ...readers],
+    all: [...head.slice(0, Math.max(1, max - missing.length)), ...missing],
     considered: combined.length,
   };
 }
