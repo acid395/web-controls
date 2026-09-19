@@ -4733,6 +4733,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const changed = (result.verified && result.verified.changed)
           || (follow && follow.verified && follow.verified.changed);
         const what = friendlyToolName(call.name);
+
+        // An action that navigates can land somewhere worse than where it
+        // started. Submitting CDEC's search produced "Not Found" - the page
+        // someone was reading, replaced by a 404 they did not ask for. The
+        // least this can do is notice and offer the way back.
+        let landedBadly = null;
+        if (follow) {
+          const now = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+          if (now.ok) {
+            const headline = `${now.result.title || ""} ${(now.result.headings || [])[0] || ""}`.toLowerCase();
+            if (/\b(not found|404|page can.?t be found|error)\b/.test(headline)) {
+              landedBadly = (now.result.title || "an error page").slice(0, 60);
+            }
+          }
+        }
+        if (landedBadly) {
+          finish({
+            ok: false, toolCall: msg.toolCall, landedOn: landedBadly,
+            error: `That left the page on "${landedBadly}".`,
+            display: {
+              title: "That went somewhere wrong",
+              subtitle: `submitting it landed on "${landedBadly}" - this site's search is driven by its own script, not by the form`,
+              stats: [], rows: [],
+              choices: [{ label: "Go back", hint: "return to the page you were on",
+                call: { name: "pageBack", args: {} } }],
+              source: "this page",
+            },
+          });
+          return;
+        }
         finish({
           ...result, plannedBy: "hand-written", toolCall: msg.toolCall, follow: follow || undefined,
           display: {

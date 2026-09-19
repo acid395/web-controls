@@ -13,6 +13,22 @@
  */
 // Declared up here, not beside report(): the nested call sites below run
 // first, and a `let` declared after them is in the temporal dead zone.
+// jsdom refuses to navigate and throws asynchronously when something tries.
+// That killed the process mid-run, so the suite printed forty-four results
+// and no summary - a pass and a crash looked identical from outside.
+process.on("unhandledRejection", (err) => {
+  const text = String((err && err.message) || err);
+  if (/Not implemented: navigation/.test(text)) return; // a jsdom limit, not a fault
+  failed++;
+  failures.push({ label: "unhandled rejection", actual: text, expected: "no unhandled rejection" });
+});
+process.on("uncaughtException", (err) => {
+  const text = String((err && err.message) || err);
+  if (/Not implemented: navigation/.test(text)) return;
+  failed++;
+  failures.push({ label: "uncaught exception", actual: text, expected: "no uncaught exception" });
+});
+
 let reported = false;
 // Declared with the other counters, not beside runAsync at the foot of the
 // file: a section that runs early would otherwise hit the temporal dead zone
@@ -150,6 +166,21 @@ else {
     check("titled with what was chosen", r.display.title, 'Search this site for "smith river"');
     ensure("the selector stays out of the card",
       !JSON.stringify(r.display.rows).includes("selector"), r.display.rows);
+    // A form posting to an API endpoint is driven by the page's own script.
+    // Submitting CDEC's answered 404 and left the person on an error page
+    // they never asked for, so it is not offered at all.
+    const apiForm = loadPage(`<!doctype html><html><body><form method="post" action="/api/sitecore/Search/Search">
+      <label for="s">Search this site:</label><input id="s" name="q" type="text"></form></body></html>`,
+      { url: "https://portal.example.gov/" });
+    if (apiForm) {
+      check("a form posting to an API is not navigable",
+        apiForm.GENERIC.searchTargets().targets[0].navigable, false);
+      const plain = loadPage(`<!doctype html><html><body><form method="post" action="/search">
+        <label for="s">Search</label><input id="s" name="q" type="text"></form></body></html>`,
+        { url: "https://portal.example.gov/" });
+      check("an ordinary POST search still is",
+        plain.GENERIC.searchTargets().targets[0].navigable, true);
+    }
   });
 }
 

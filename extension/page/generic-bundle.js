@@ -930,11 +930,18 @@
       try { action = new URL(form.getAttribute("action") || location.href, location.href); }
       catch (e) { continue; }
       if (action.origin !== location.origin) continue;
+      // A form whose action is an API endpoint is driven by the page's own
+      // script, not by the browser navigating to it. CDEC's site search
+      // posts to /api/sitecore/Search/Search, which answers XHR and returns
+      // 404 to a form submission - so submitting it took the person off
+      // their page and onto an error. Worth knowing before offering to.
+      const navigable = !/\/api\/|\/ajax\/|\.json($|\?)|\/rest\//i.test(action.pathname + action.search);
       out.push({
         label: (rawLabelOf(field) || form.getAttribute("aria-label") || "search").slice(0, 60),
         field: field.name,
         url: action.href,
         method,
+        navigable,
         // Whatever else the form carries - a portal's search often needs
         // half a dozen hidden fields to return anything at all.
         extra: [...form.elements]
