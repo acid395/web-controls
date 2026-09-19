@@ -2542,7 +2542,12 @@ function controlTypoBudget(word) {
 function wordMatchesText(word, text) {
   if (!word || !text) return false;
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`\\b${escaped}`).test(text)) return "exact";
+  // A short word matching by prefix is noise. "Go to mayaguez tide gauge"
+  // offered a USAGov footer link and a webmaster address, because "go"
+  // prefix-matched "Government" and "gov" - the only word of four that
+  // matched anything, and the one word that carried no meaning.
+  const boundary = word.length <= 3 ? "\\b" : "";
+  if (new RegExp(`\\b${escaped}${boundary}`).test(text)) return "exact";
 
   // A multi-word value ("30 days", "year to date") never matches a single
   // token, so it needs a sliding window across the text instead.

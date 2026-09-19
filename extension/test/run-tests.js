@@ -183,6 +183,41 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a short word is not a match");
+// "Go to mayaguez tide gauge" on water.noaa.gov offered two controls: a
+// USAGov footer link and a webmaster email address. Neither has anything to
+// do with a tide gauge. Of four words, exactly one matched anything - "go",
+// by prefix, against "Government" and "gov" - and it was the one word
+// carrying no meaning at all.
+check("go does not match Government", sb.wordMatchesText("go", "official guide to government information"), false);
+check("nor an address ending in gov", sb.wordMatchesText("go", "nwps.webmaster@noaa.gov"), false);
+check("but it still matches a Go button", sb.wordMatchesText("go", "go"), "exact");
+// Longer words keep matching by prefix, which is how abbreviations work.
+check("temp still finds temperature", sb.wordMatchesText("temp", "temperature"), "exact");
+check("max still finds Max Temp", sb.wordMatchesText("max", "max temp, \u00b0f"), "exact");
+check("gauge still finds gauges", sb.wordMatchesText("gauge", "stream gauges"), "exact");
+
+const noaaShape = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <nav><button>Layers</button><button>Legend</button></nav>
+  <footer><a href="https://usa.gov">Official Guide to Government Information and Services | USAGov</a>
+  <a href="mailto:nwps.webmaster@noaa.gov">nwps.webmaster@noaa.gov</a></footer></body></html>`,
+  { url: "https://water.noaa.gov/" });
+if (!noaaShape) skip("noaa footer", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: noaaShape });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "go to mayaguez tide gauge" });
+    ensure("a tide gauge that is not on the page offers no footer links",
+      !(r.display && r.display.choices && r.display.choices.length), r.display);
+    // And a real instruction on the same page still reaches a tool. It
+    // cannot run here - noaaOpenLayers belongs to the NOAA manifest, which
+    // is not loaded in a bare jsdom page - but it must be planned.
+    const ok = await bg.__ask({ type: "smartAsk", instruction: "open layers" });
+    ensure("while a control that is there is still planned",
+      !!(ok.toolCall || ok.plannedCall || ok.plannedBy === "manifest"), ok);
+  });
+}
+
 section("a key upgrades, and is never required");
 // The extension has to work the moment it is installed, on any machine, with
 // no account and no setup. So nothing keyless may ever depend on a key - and
