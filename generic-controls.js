@@ -461,6 +461,82 @@
     };
   }
 
+  /* ==========================================================================
+   * capturedSeries() - the numbers behind a chart, from the page's own data.
+   *
+   * A chart is a picture of a series the page already downloaded. Reading
+   * the picture is guesswork; reading the request behind it is not. Asked
+   * for the humidity on a page plotting humidity, this extension answered
+   * from a weather station eleven miles away, because readPage() sees
+   * tables and labelled text and a canvas is neither.
+   *
+   * So: walk the captured JSON, find arrays of numbers, and name them by
+   * where they were found. A field called humidity inside an array of
+   * readings is a humidity series whatever the site calls its endpoint,
+   * which is the only way this works on a site nobody has looked at.
+   * ========================================================================== */
+  const NUMERIC_KEY = /^(value|val|v|y|reading|amount|measurement|data)$/i;
+
+  function capturedSeries({ limit = 24 } = {}) {
+    const store = window.__wcFeedCapture;
+    if (!store) return { installed: false, series: [], note: "feed capture is not installed on this page" };
+
+    const series = [];
+    const add = (name, values, sample) => {
+      const nums = values.filter((n) => typeof n === "number" && Number.isFinite(n));
+      if (nums.length < 3 || series.length >= limit) return;
+      series.push({
+        name: String(name).slice(0, 60),
+        count: nums.length,
+        first: nums[0], last: nums[nums.length - 1],
+        min: Math.min(...nums), max: Math.max(...nums),
+        mean: Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(3)),
+        values: nums.slice(0, 500),
+        sample: sample === undefined ? undefined : String(sample).slice(0, 40),
+      });
+    };
+
+    const walk = (node, path, depth) => {
+      if (!node || depth > 6 || series.length >= limit) return;
+      if (Array.isArray(node)) {
+        if (node.length >= 3 && node.every((x) => typeof x === "number")) {
+          add(path || "values", node);
+          return;
+        }
+        // An array of readings: every numeric field in it is its own series.
+        const objects = node.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+        if (objects.length >= 3) {
+          const keys = new Set();
+          for (const o of objects.slice(0, 50)) for (const k of Object.keys(o)) keys.add(k);
+          for (const k of keys) {
+            const vals = objects.map((o) => (o[k] && typeof o[k] === "object" ? o[k].value : o[k]));
+            const named = NUMERIC_KEY.test(k) && path ? path : (path ? `${path}.${k}` : k);
+            add(named, vals, objects[0] && objects[0][k]);
+          }
+          return;
+        }
+        for (let i = 0; i < Math.min(node.length, 8); i++) walk(node[i], path, depth + 1);
+        return;
+      }
+      if (typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+          walk(v, path ? `${path}.${k}` : k, depth + 1);
+        }
+      }
+    };
+
+    for (const f of store.feeds) {
+      if (!f.body || f.truncated || !/json/i.test(f.contentType || "")) continue;
+      let parsed;
+      try { parsed = JSON.parse(f.body); } catch (e) { continue; }
+      const from = (() => { try { return new URL(f.url).pathname.split("/").filter(Boolean).pop() || "feed"; }
+        catch (e) { return "feed"; } })();
+      walk(parsed, "", 0);
+      for (const sr of series) if (!sr.from) sr.from = from;
+    }
+    return { installed: true, count: series.length, series };
+  }
+
   // One captured response in full, by URL substring - for actually reading
   // the series behind a chart rather than just listing what was fetched.
   function capturedFeed(match) {
@@ -1603,7 +1679,7 @@
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
-    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls,
+    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),

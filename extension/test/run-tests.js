@@ -183,6 +183,50 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("the numbers behind a chart");
+// Asked for the humidity on a page plotting humidity, this answered from a
+// weather station eleven miles away - 88% against the page's own 81% -
+// because readPage sees tables and labelled text, and a canvas is neither.
+// The numbers were already in the browser: the page had fetched them.
+const charted = loadPage("<!doctype html><html><head><title>Fremont</title></head><body><canvas></canvas></body></html>",
+  { url: "https://weather.example.gov/" });
+if (!charted) skip("chart data", "jsdom not installed");
+else {
+  charted.__wcFeedCapture = { installedAt: Date.now(), feeds: [{
+    url: "https://weather.example.gov/api/obs.json", method: "GET", status: 200,
+    contentType: "application/json", bytes: 400, truncated: false,
+    body: JSON.stringify({ observations: [
+      { temperature: 60.1, relativeHumidity: 81, dewpoint: 54 },
+      { temperature: 62.0, relativeHumidity: 78, dewpoint: 55 },
+      { temperature: 64.3, relativeHumidity: 72, dewpoint: 55 },
+      { temperature: 66.8, relativeHumidity: 69, dewpoint: 56 }] }),
+  }] };
+
+  // A field called humidity inside an array of readings is a humidity
+  // series, whatever the site calls its endpoint - which is the only way
+  // this works on a site nobody has looked at.
+  const found = charted.GENERIC.capturedSeries();
+  check("every numeric field becomes its own series", found.count, 3);
+  const hum = found.series.find((x) => /humidity/i.test(x.name));
+  check("named by where it was found", hum.name, "observations.relativeHumidity");
+  check("with the points it had", hum.count, 4);
+  check("and the numbers to summarise them", `${hum.min}-${hum.max} mean ${hum.mean}`, "69-81 mean 75");
+
+  const bg = loadBackground({ page: charted });
+  runAsync(async () => {
+    const ask = async (q) => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: q });
+      return `${r.plannedBy} | ${(r.display || {}).subtitle || r.error || ""}`;
+    };
+    ensure("a reading comes from the page, not an agency",
+      /page-data/.test(await ask("humidity right now")), await ask("humidity right now"));
+    ensure("and an average is taken over the series",
+      /75/.test(await ask("average humidity")), await ask("average humidity"));
+    ensure("as is a maximum", /66.8/.test(await ask("max temperature")), await ask("max temperature"));
+    ensure("and a minimum", /54/.test(await ask("lowest dewpoint this week")), await ask("lowest dewpoint this week"));
+  });
+}
+
 section("a verb is not a subject");
 // "Click dew point" reached "Terms of Use" four times running. Nothing in
 // the instruction matched that label - the score came entirely from verbs.

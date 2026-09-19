@@ -3290,6 +3290,32 @@ async function pageComputeRun({ fn, of, source = "auto" }) {
     tried.push("table");
   }
 
+  // The page's own downloads come before its pictures. A chart is a drawing
+  // of a series the site already fetched; the fetch is exact and the drawing
+  // is sampled, so reading the request beats hovering over the canvas every
+  // time - and on a page whose numbers live only in a chart, it is the
+  // difference between an answer and "nothing gave that as numbers".
+  if (source === "auto" || source === "feed" || source === "chart") {
+    const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
+    const series = (feeds.ok && feeds.result && feeds.result.series) || [];
+    const subject = meaningfulWords(word).filter((w) => !AGGREGATE_WORDS.has(w) && w.length > 2);
+    const named = series.find((sr) => subject.some((w) => wordMatchesText(w, sr.name.toLowerCase())));
+    if (named && named.values.length) {
+      const got = computeOver(fn, named.values.map(String));
+      if (got) {
+        const r = {
+          subject: named.name.split(".").pop(), statistic: agg.word,
+          over: `${got.used} points`, value: formatStat(fn, got.value, named.values.map(String)), unit: "",
+          points: named.values.slice(0, 12).map((v, i) => ({ name: `point ${i + 1}`, value: String(v) })),
+        };
+        const d = computedDisplay(r, named.from || "this page");
+        d.caveat = `from the page's own request to ${named.from || "this site"}, not a reading of the chart`;
+        return { ...r, source: "page data", display: d };
+      }
+    }
+    tried.push("page data");
+  }
+
   if (source === "auto" || source === "chart") {
     const hov = await invokeOnActiveTab("hoverSeries", [{}]).catch(() => ({ ok: false }));
     const pts = hov.ok && hov.result && hov.result.points;
@@ -5472,6 +5498,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               followed: followed.trail, readFrom: followed.from.url, display,
             });
             return;
+          }
+        }
+
+        // The page's own downloads, before anybody else's. A chart is a
+        // picture of a series the site already fetched; asked for humidity
+        // on a page plotting humidity, this answered from a station eleven
+        // miles away, because readPage sees tables and text and a canvas is
+        // neither. The numbers were already in the browser.
+        if (!commandLike && !forceModel && (wants.length || wantsAgg)) {
+          const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
+          const series = (feeds.ok && feeds.result && feeds.result.series) || [];
+          if (series.length) {
+            const subject = meaningfulWords(wanted).filter((w) => !AGGREGATE_WORDS.has(w) && w.length > 2);
+            const named = series.find((sr) => subject.some((w) => wordMatchesText(w, sr.name.toLowerCase())));
+            if (named) {
+              const stat = wantsAgg ? wantsAgg.fn : null;
+              const value = stat === "mean" ? named.mean : stat === "max" ? named.max
+                : stat === "min" ? named.min : stat === "sum" ? named.values.reduce((a, b) => a + b, 0)
+                : stat === "count" ? named.count : named.last;
+              respond({
+                ok: true, plannedBy: "page-data", series: named.name, from: named.from,
+                display: {
+                  title: `${wantsAgg ? wantsAgg.word + " " : ""}${named.name.split(".").pop()}`.trim(),
+                  subtitle: `${value} · ${wantsAgg ? `over ${named.count} points` : `latest of ${named.count} points`} the page itself downloaded`,
+                  stats: [
+                    { label: "latest", value: String(named.last) },
+                    { label: "low", value: String(named.min) },
+                    { label: "high", value: String(named.max) },
+                    { label: "mean", value: String(named.mean) },
+                  ],
+                  rows: [],
+                  caveat: `read from the page's own request to ${named.from || "this site"}, not from an agency`,
+                  source: "this page's data",
+                },
+              });
+              return;
+            }
           }
         }
 
