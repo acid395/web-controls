@@ -34,6 +34,7 @@ let reported = false;
 // file: a section that runs early would otherwise hit the temporal dead zone
 // and take the rest of the suite down with it.
 let pendingAsync = 0;
+let exiting = false;
 
 const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
 
@@ -92,10 +93,7 @@ else {
   };
   const site = wire(loadBackground({ page: portal }));
   runAsync(async () => {
-    const quiet = console.log;
-    console.log = () => {};
     const r = await site.__ask({ type: "smartAsk", instruction: "smith river discharge" });
-    console.log = quiet;
     check("the site answers before a national API does", r.plannedBy, "followed-the-site");
     ensure("with the value that was actually on it",
       ((r.display || {}).rows || []).some((x) => /227/.test(x.value)), (r.display || {}).rows);
@@ -153,13 +151,10 @@ if (!chosen) skip("choosing an option", "jsdom not installed");
 else {
   const chooser = loadBackground({ page: chosen });
   runAsync(async () => {
-    const quiet = console.log;
-    console.log = () => {};
     const r = await chooser.__ask({
       type: "runToolCall", label: 'Search this site for "smith river"',
       toolCall: { name: "pageFill", args: { selector: '[name="q"]', text: "smith river" }, thenSubmit: true },
     });
-    console.log = quiet;
     ensure("a chosen option submits as well as fills", !!r.follow, r);
     ensure("and renders a card, not a DOM node",
       !!(r.display && r.display.title && !/element|nodeName/i.test(JSON.stringify(r.display))), r.display);
@@ -1134,25 +1129,16 @@ if (!realPage) skip("end to end", "jsdom not installed");
 else {
   const live = loadBackground({ page: realPage });
   const ask = (q) => live.__ask({ type: "smartAsk", instruction: q });
-  const quietly = console.log;
   runAsync(async () => {
-    console.log = () => {};                    // the handler logs every ask
     try {
       // A command reaches the page and acts on it.
       const cmd = await ask("select 30 day precipitation");
-      console.log = quietly;
       ensure("a command is planned and run", cmd.ok === true, cmd.error || cmd);
       ensure("against a real control", /Applied|done/i.test((cmd.display || {}).title || ""), cmd.display);
-
-      console.log = () => {};
       const caps = await ask("what can I do here");
-      console.log = quietly;
       ensure("capabilities answer", caps.ok === true, caps.error || caps);
       ensure("and count the page's controls", caps.pageControls > 0, caps.pageControls);
-
-      console.log = () => {};
       const mcp = await ask("webmcp");
-      console.log = quietly;
       ensure("webmcp answers on any page", mcp.ok === true, mcp.error || mcp);
       // A browser without the API still derives tools, and saying only
       // "unavailable" hid the part that works on a site nobody wrote code
@@ -1161,9 +1147,7 @@ else {
       ensure("and reports tools derived without the API",
         (mcp.webmcp || {}).derived > 0 || /derived/.test((mcp.display || {}).subtitle || ""),
         mcp.webmcp || mcp.display);
-      console.log = () => {};
       const capsMcp = await ask("what can I do here");
-      console.log = quietly;
       const mcpRow = (capsMcp.display.rows || []).find((r) => r.name === "WebMCP");
       ensure("the capability card counts them too", mcpRow && /\d+ tools/.test(mcpRow.value), mcpRow);
       ensure("and does not just say unavailable", mcpRow && mcpRow.value !== "unavailable", mcpRow);
@@ -1175,17 +1159,13 @@ else {
       // moments earlier, which reads as nonsense with nothing to act on.
       const broken = loadBackground({ page: realPage });
       broken.chrome.tabs.sendMessage = async () => { throw new Error("timed out waiting for the page bundle to reply"); };
-      console.log = () => {};
       const unreadable = await broken.__ask({ type: "smartAsk", instruction: "go to contact" });
-      console.log = quietly;
       ensure("an unreadable page says why",
         (unreadable.checked || []).some((c) => /timed out/.test(c)), unreadable.checked);
 
       // The self-test has to survive whatever it is diagnosing, or it tells
       // you less than the problem did.
-      console.log = () => {};
       const diag = await ask("diagnose");
-      console.log = quietly;
       ensure("diagnose answers", !!(diag.display && diag.display.rows.length), diag);
       ensure("and names the build", diag.steps.some((x) => x.name === "extension version" && x.state === "ok"), diag.steps);
       ensure("a browser without WebMCP is not a failure",
@@ -1194,9 +1174,7 @@ else {
       // The same test, run where the page cannot be reached at all.
       const blind = loadBackground({ page: realPage });
       blind.chrome.tabs.sendMessage = async () => { throw new Error("timed out waiting for the page bundle to reply"); };
-      console.log = () => {};
       const broke = await blind.__ask({ type: "smartAsk", instruction: "diagnose" });
-      console.log = quietly;
       ensure("it still reports when the page is unreachable",
         broke.steps.some((x) => x.name === "page bundle reachable" && x.state === "failed"), broke.steps);
       ensure("and names the first failure in the headline",
@@ -1220,16 +1198,12 @@ else {
       // skipping every cheap path. Without it the model is only reached once
       // everything else has failed, so there is no way to find out whether it
       // would have got something right.
-      console.log = () => {};
       const forced = await ask("model: select 30 day precipitation");
-      console.log = quietly;
       ensure("model: is recognised as a request for the model",
         /model is switched off|still loading|webllm/i.test(
           `${(forced.display || {}).title || ""} ${forced.error || ""} ${forced.plannedBy || ""}`), forced);
       // The same question without the prefix is answered without it.
-      console.log = () => {};
       const unforced = await ask("select 30 day precipitation");
-      console.log = quietly;
       ensure("and the prefix is what makes the difference",
         unforced.ok === true && unforced.plannedBy !== "webllm", unforced);
 
@@ -1307,12 +1281,9 @@ else {
       if (withEnum) ensure("an enum is still spelled out", /\|/.test(catalogue) || /: /.test(catalogue), catalogue.slice(0, 120));
 
       // Nonsense must fail as an answer, not as a crash.
-      console.log = () => {};
       const junk = await ask("fly me to the moon");
-      console.log = quietly;
       ensure("nonsense is explained, not thrown", junk.ok === false && !!junk.display, junk);
     } finally {
-      console.log = quietly;
     }
   });
 }
@@ -1819,9 +1790,7 @@ else {
   const again = reinject.document.createElement("script");
   again.textContent = require("fs").readFileSync(
     require("path").join(__dirname, "..", "page", "generic-bundle.js"), "utf8");
-  const quiet = console.log; console.log = () => {};
   reinject.document.body.appendChild(again);
-  console.log = quiet;
   ensure("re-injection replaces it", reinject.__wcPageBridge !== first, "the old listener survived");
   ensure("and the manifest is replaced too", typeof reinject.GENERIC.click === "function", "GENERIC lost");
 }
@@ -2183,8 +2152,16 @@ function runAsync(fn) {
 function report() {
   if (reported) return;
   // The end-to-end checks are asynchronous; printing a summary before they
-  // finish would report a pass they had not earned.
-  if (pendingAsync > 0) { setTimeout(report, 25); return; }
+  // finish would report a pass they had not earned. But an exit handler
+  // cannot schedule work, so deferring from there printed nothing at all -
+  // the run just stopped, silently, and looked identical to a pass from the
+  // outside. Waiting is only allowed while the loop is still turning.
+  if (pendingAsync > 0 && !exiting) { setTimeout(report, 25); return; }
+  if (pendingAsync > 0) {
+    failed++;
+    failures.push({ label: `${pendingAsync} async section(s) never finished`,
+      actual: "the process exited first", expected: "all sections complete" });
+  }
   reported = true;
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
   if (skipped) {
@@ -2201,7 +2178,13 @@ function report() {
 // summary and process.exit() out from under tests still in flight - it cut
 // 287 down to 71. An exit hook fires once the event loop has drained, which
 // is the only point at which "did the summary ever run" can be answered.
+// Captured before any test can silence it. The async sections replace
+// console.log while they run, so a process that exited mid-section printed
+// its summary into a no-op - the run looked like it had simply stopped.
+const realLog = console.log;
+
 process.on("exit", () => {
+  exiting = true;
   if (reported) return;
   reported = true;
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);

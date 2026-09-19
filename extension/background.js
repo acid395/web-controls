@@ -59,6 +59,13 @@
 // rewritten to globalThis.ENV_VOCAB since a service worker has no `window`.
 importScripts("lib/env-vocab.js");
 
+// Every ask and its result is logged to the service worker console, which is
+// where anyone debugging an install is told to look. Tests silence it by
+// setting this, rather than by replacing console.log - doing that meant a
+// run which ended mid-section printed its summary into a no-op and looked
+// like it had simply stopped.
+const debugLog = (...args) => { if (!globalThis.__wcQuiet) console.log(...args); };
+
 const NAMED_MANIFESTS = [
   { test: /^https:\/\/waterdata\.usgs\.gov\/state\//, bundle: "page/usgs-bundle.js", global: "USGS" },
   { test: /^https:\/\/waterdata\.usgs\.gov\/monitoring-location\//, bundle: "page/site-bundle.js", global: "SITE" },
@@ -184,7 +191,7 @@ async function autoPublish(tabId, url) {
     const route = routeFor(url);
     await ensureInjected(tabId, route.bundle);
     const out = await publishTools(route.global, tabId);
-    if (out.registered) console.log(`[webmcp] published ${out.registered} tools on ${url}`);
+    if (out.registered) debugLog(`[webmcp] published ${out.registered} tools on ${url}`);
   } catch (e) { /* a page that cannot be injected is not an error worth raising */ }
 }
 
@@ -4479,17 +4486,15 @@ async function followToAnswer(instruction, { wants, agg, place, maxPages = 6, ma
     return null;
   }
 
-  // Only a POST search exists. Submitting it is a real action on the page in
-  // front of someone, so it is proposed, not performed.
-  return {
-    kind: "offer",
-    offer: {
-      label: `Search this site for "${subject}"`,
-      hint: `${found[0].label} submits by ${found[0].method}, so this will use the page itself`,
-      call: { name: "pageFill", args: { selector: `[name="${found[0].field}"]`, text: subject }, thenSubmit: true },
-    },
-    trail: [...trail],
-  };
+  // Only a POST search exists, which cannot be fetched. Submitting it would
+  // navigate - and this is a question about data, not an instruction to do
+  // anything. Someone asking what the discharge is has not asked to be taken
+  // somewhere, and offering to move their page instead of answering was the
+  // wrong trade even before it landed them on a 404.
+  //
+  // Driving a site's search is a fine thing to do when that is what was
+  // asked for. It is not a fine thing to do instead of answering.
+  return null;
 }
 
 async function buildCapabilities() {
@@ -4710,7 +4715,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Reached from a confirmation button as well as the debug field, so a
       // destructive tool called this way has already been agreed to.
       const finish = (res) => {
-        console.log("[runToolCall]", msg.toolCall, "->", res);
+        debugLog("[runToolCall]", msg.toolCall, "->", res);
         sendResponse(res);
       };
       try {
@@ -4739,7 +4744,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // someone was reading, replaced by a 404 they did not ask for. The
         // least this can do is notice and offer the way back.
         let landedBadly = null;
-        if (follow) {
+        // Only when the page actually went somewhere. Reading the page again
+        // after every submit costs a round trip for nothing in the common
+        // case, and asks a document that may have just been torn down.
+        const navigated = follow && follow.verified && follow.verified.navigated;
+        if (navigated) {
           const now = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (now.ok) {
             const headline = `${now.result.title || ""} ${(now.result.headings || [])[0] || ""}`.toLowerCase();
@@ -4862,7 +4871,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       recordAsk(askId, msg.instruction, { status: "running" });
 
       const respond = (res) => {
-        console.log(`[smartAsk] "${msg.instruction}" ->`, res);
+        debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
         recordAsk(askId, msg.instruction, {
           status: res.ok === false ? "error" : "done",
           plannedBy: res.plannedBy,
@@ -5143,21 +5152,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const followed = await followToAnswer(wanted, {
             wants, agg: wantsAgg, place: askedPlace,
           }).catch(() => null);
-          if (followed && followed.kind === "offer") {
-            respond({
-              ok: false, needsChoice: true,
-              error: "Nothing on this page answers that, but the site has a search.",
-              candidates: [followed.offer],
-              display: {
-                title: "Search this site?",
-                subtitle: followed.offer.hint,
-                stats: [], rows: [],
-                choices: [{ label: followed.offer.label, hint: followed.offer.hint, call: followed.offer.call }],
-                source: "this site",
-              },
-            });
-            return;
-          }
           if (followed) {
             const where = `${followed.from.label}`.slice(0, 60);
             const display = followed.kind === "calculated"

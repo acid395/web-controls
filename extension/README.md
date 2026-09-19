@@ -1308,6 +1308,22 @@ and a link is only followed when its own words overlap the question. An
 unbounded crawl of a government site is not a feature. The card names the page
 it read and the links it followed to get there.
 
+### A question is not an instruction to go somewhere
+
+Asking for the discharge and being offered "search this site", then landing on
+a 404, gets the trade backwards twice over. Someone asking what a number is
+has not asked to be taken anywhere.
+
+A GET search can be fetched silently and still is. A POST search cannot, and
+submitting one navigates - so for a data question it is no longer offered at
+all. The answer falls through to an agency that can reply without moving
+anything. Driving a site's search is a fine thing to do when that is what was
+asked for; it is not a fine thing to do instead of answering.
+
+The choice card was also laid out inline, label and hint on one baseline, so
+either being longer than a few words made them collide. Stacked now, and a
+hint that merely repeats the card's own subtitle is left off.
+
 ## Diagnosing an install
 
 Type **`diagnose`** into the panel. It runs the real calls the extension makes,

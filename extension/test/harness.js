@@ -21,6 +21,7 @@ function loadBackground({ onFetch, page } = {}) {
   let messageHandler = null;
   const sandbox = {
     console,
+    __wcQuiet: true,   // the product logs every ask; tests do not need it
     setTimeout, clearTimeout, setInterval, clearInterval, URL, Intl,
     navigator: { userAgent: "Mozilla/5.0 Chrome/141.0.0.0 Safari/537.36" },
     fetch: (url, opts) => {
@@ -123,13 +124,33 @@ function loadBackground({ onFetch, page } = {}) {
 // A real page always has a real URL, and code under test resolves relative
 // links against it; about:blank (jsdom's default) makes that throw.
 function loadPage(html, { url = "https://waterdata.usgs.gov/state/Idaho/" } = {}) {
-  let JSDOM;
-  try { ({ JSDOM } = require("jsdom")); } catch (e) { return null; }
-  const dom = new JSDOM(html, { pretendToBeVisual: true, runScripts: "dangerously", url });
+  let JSDOM, VirtualConsole;
+  try { ({ JSDOM, VirtualConsole } = require("jsdom")); } catch (e) { return null; }
+  // jsdom reports "Not implemented: navigation" as a jsdomError, raised
+  // asynchronously. Unhandled, it killed the run - sometimes after the
+  // summary and sometimes instead of it, so the same code reported 462
+  // passes on one run and eight on the next. Clicking a link and submitting
+  // a form are both meant to navigate; that a browser would and jsdom will
+  // not is a limit of the harness, not a result.
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on("jsdomError", (err) => {
+    if (!/Not implemented: navigation/.test(String(err && err.message))) throw err;
+  });
+  const dom = new JSDOM(html, { pretendToBeVisual: true, runScripts: "dangerously", url, virtualConsole });
   const w = dom.window;
   // jsdom lays nothing out, so every element measures zero and the bundle's
   // isVisible() would reject all of them.
   w.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 });
+  // jsdom cannot navigate and reports the attempt asynchronously, which was
+  // killing the whole run - sometimes after the summary, sometimes instead
+  // of it, so a crash and a pass looked the same from outside. Submitting
+  // fires the event the page would see and goes no further; anything under
+  // test that depends on a real navigation is a browser's job to prove.
+  const noNavigate = function () {
+    this.dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+  };
+  w.HTMLFormElement.prototype.submit = noNavigate;
+  w.HTMLFormElement.prototype.requestSubmit = noNavigate;
   const script = w.document.createElement("script");
   script.textContent = fs.readFileSync(path.join(EXT, "page", "generic-bundle.js"), "utf8");
   const quiet = w.console.log;
