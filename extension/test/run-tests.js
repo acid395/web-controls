@@ -183,6 +183,41 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("done is not a thing to say when nothing happened");
+// "Enable flood inundation" ran noaaToggleFloodCategory and reported "done".
+// The checkbox was untouched. Two faults: the hand-written tool was preferred
+// because it had been verified against the real site, and it changed nothing;
+// and when verification produced no result at all, the subtitle fell back to
+// the single most confident word available.
+const src = require("fs").readFileSync(
+  require("path").join(__dirname, "..", "background.js"), "utf8");
+ensure("no verification never reads as success",
+  !/note \? note\.text : "done"/.test(src), 'the subtitle still falls back to "done"');
+ensure("a tool that moved nothing says so",
+  /ran, but nothing on the page changed/.test(src), "no wording for a no-op");
+ensure("and not knowing says that instead",
+  /could not check whether the page changed/.test(src), "no wording for an unverifiable action");
+
+// And the page's own control is tried when the preferred tool does nothing.
+const floodPage = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <button id="open" aria-controls="layers" aria-expanded="false"
+    onclick="document.getElementById('layers').style.display='block'">Layers</button>
+  <div id="layers" style="display:none">
+    <label for="fl">Flood inundation</label><input id="fl" type="checkbox">
+  </div></body></html>`, { url: "https://water.noaa.gov/" });
+if (!floodPage) skip("flood layer", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: floodPage });
+  runAsync(async () => {
+    const box = floodPage.document.getElementById("fl");
+    check("the box starts off", box.checked, false);
+    await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+    check("and the instruction actually enables it", box.checked, true);
+    check("having opened the panel on the way",
+      floodPage.document.getElementById("layers").style.display, "block");
+  });
+}
+
 section("a point on a map is a thing you can click");
 // "Click on st johns river" and "go to mayaguez tide gauge" both failed on
 // water.noaa.gov. mapFeatures() could read the markers; nothing turned them

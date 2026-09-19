@@ -5634,7 +5634,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
             return;
           }
-          const result = await runVerified(route.global, manifestCall);
+          let result = await runVerified(route.global, manifestCall);
+          let usedInstead = null;
+
+          // A verified tool that changed nothing is not a success, and the
+          // page usually has another way. "Enable flood inundation" picked
+          // noaaToggleFloodCategory - a hand-written tool, preferred because
+          // it was verified against the real site - which ran, changed
+          // nothing, and reported done. The derived toggleFloodInundation
+          // would have worked, because it opens the Layers panel first.
+          //
+          // So: if the chosen tool moved nothing, try what the page itself
+          // offers before claiming anything.
+          if (result.verified && result.verified.changed === false) {
+            const second = confidentPick(
+              await unifiedTools(route.global, wanted, { acting: true }), wanted);
+            if (second && second.tool.name !== manifestCall.name) {
+              const retry = await runVerified(route.global, { name: second.tool.name, args: second.args });
+              if (retry.ok !== false && retry.verified && retry.verified.changed) {
+                result = retry;
+                usedInstead = second.tool.name;
+              }
+            }
+          }
+
           const note = describeVerification(result.verified, manifestCall);
           // Anything the tool could not account for is said out loud - a
           // dropped word is how an action ends up answering a different
@@ -5643,14 +5666,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           respond({
             ...result, plannedBy: "manifest", toolCall: manifestCall,
             display: {
-              title: friendlyToolName(manifestCall.name),
+              title: friendlyToolName(usedInstead || manifestCall.name),
               // A substitution has to be stated, but never at the cost of
               // the verification result - saying "went there by searching"
               // while hiding that nothing moved is worse than either alone.
               subtitle: [
-                manifestCall.movedTo ? `moved the map to ${manifestCall.movedTo}`
+                usedInstead ? `${friendlyToolName(manifestCall.name)} changed nothing, so this page's own control was used`
+                  : manifestCall.movedTo ? `moved the map to ${manifestCall.movedTo}`
                   : manifestCall.insteadOf ? `searched instead of ${manifestCall.insteadOf}` : null,
-                note ? note.text : "done",
+                // Never "done" as a fallback. That was the most confident
+                // wording available standing in for the least information -
+                // no verification at all reads exactly like a success.
+                note ? note.text
+                  : result.verified ? "ran, but nothing on the page changed"
+                    : "ran - could not check whether the page changed",
                 ignored ? `ignored: ${ignored.join(", ")}` : null,
               ].filter(Boolean).join(" · "),
               stats: [],
