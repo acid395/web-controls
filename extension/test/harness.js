@@ -93,13 +93,17 @@ function loadBackground({ onFetch, page } = {}) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // env-vocab announces itself on load; keep test output readable.
-  const quiet = console.log;
-  console.log = () => {};
+  // env-vocab announces itself on load; keep test output readable. Silenced
+  // inside the sandbox rather than by swapping the global console, which two
+  // overlapping loads turn into a permanent no-op: the second saves the
+  // first's stub as "the real one" and restores that. Asynchronous sections
+  // load in parallel, so the suite intermittently printed every result and
+  // no summary - the one line nobody can do without.
+  sandbox.console = Object.assign(Object.create(Object.getPrototypeOf(console)), console, { log: () => {} });
   try {
     vm.runInContext(fs.readFileSync(path.join(EXT, "background.js"), "utf8"), sandbox, { filename: "background.js" });
   } finally {
-    console.log = quiet;
+    sandbox.console = console;
   }
   sandbox.__requests = requests;
   // Send a message in exactly as Chrome would, and resolve with what the

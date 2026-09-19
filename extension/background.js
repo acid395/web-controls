@@ -2879,7 +2879,18 @@ function planGenericTool(instruction, inventory) {
   // If a word that is neither a verb nor filler goes unaccounted for, the
   // control named is not on this page, and saying so beats pressing the
   // nearest thing that shares a word with it.
-  const missedSubject = remaining.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
+  //
+  // Except for words that were typed. `search station "Big Sandy River"`
+  // covers "station" and leaves big/sandy/river over, which outnumber it and
+  // sank the whole plan - yet those three words are the query, sitting in the
+  // pageFill this very plan is about to run. A word that went into the box is
+  // accounted for; counting it as missed rejects exactly the searches that
+  // name their target, while "search for Boise" survived only by being short.
+  const typed = new Set(calls.flatMap((c) => c.name === "pageFill"
+    ? meaningfulWords(String((c.args && c.args.text) || "")) : []));
+  const missedSubject = remaining.filter((w) =>
+    !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2 && !typed.has(w)
+    && !looksLikeMisspelledVerb(w));
   const coveredSubject = matched.reduce((n, m) => n + (m.covered || [])
     .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w)).length, 0);
   if (missedSubject.length && missedSubject.length >= coveredSubject) return null;
@@ -3724,6 +3735,22 @@ const VERB_FAMILIES = [
 ];
 function verbFamily(word) {
   return VERB_FAMILIES.find((f) => f.includes(word)) || null;
+}
+
+// A verb the person misspelled. Typo tolerance covered every label on the
+// page but never the verb in front of it, so "selct thudnerstorms" matched
+// Thunderstorms perfectly and was then thrown away: "selct" matched no
+// control, counted as a missed subject, and one missed against one covered
+// trips the gate. The tolerance here is deliberately tighter than the one for
+// labels - distance 1, five letters up - because the loose budget would read
+// "peak" as a typo of "pick" and quietly discount a word that means a great
+// deal on a river page. A near-miss of a verb is only ever excused, never
+// treated as a match for anything.
+function looksLikeMisspelledVerb(word) {
+  if (!word || word.length < 5 || verbFamily(word)) return false;
+  return VERB_FAMILIES.some((family) =>
+    family.some((verb) => verb.length >= 5 && Math.abs(verb.length - word.length) <= 1
+      && editDistance(verb, word) === 1));
 }
 
 // A tool's name word against the instruction, with any verb standing in for
@@ -5472,12 +5499,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // This one reported the tool's own description and stopped,
                   // so "click flood inundation" read as a success whether the
                   // checkbox ticked or not.
-                  subtitle: [
-                    String(one.tool.description || "").split(/[.\u2013-]/)[0].slice(0, 60),
-                    ran.verified
-                      ? (ran.verified.changed ? "the page responded" : "but nothing on the page changed")
-                      : "could not check whether the page changed",
-                  ].filter(Boolean).join(" · "),
+                  // The control's own state where there is one. "The page
+                  // responded" was true while the wrong layer switched on;
+                  // only the named control can say whether it was the one
+                  // that moved.
+                  subtitle: (() => {
+                    const r = ran.result || {};
+                    if (typeof r.itChanged === "boolean") {
+                      return r.itChanged
+                        ? `${r.control}: ${r.was} \u2192 ${r.now}`
+                        : `${r.control} was already ${r.now} - nothing to change`;
+                    }
+                    return [
+                      String(one.tool.description || "").split(/[.\u2013-]/)[0].slice(0, 60),
+                      ran.verified
+                        ? (ran.verified.changed ? "the page responded" : "but nothing on the page changed")
+                        : "could not check whether the page changed",
+                    ].filter(Boolean).join(" \u00b7 ");
+                  })(),
                   stats: [],
                   rows: Object.entries(one.args || {})
                     .filter(([k]) => k !== "selector")

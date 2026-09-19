@@ -1662,10 +1662,32 @@
       await settle({ quietMs: 120, timeoutMs: 1500 });
     };
     if (kind === "select" || (c.options && c.options.length)) {
-      return async ({ value }) => { await reveal(); return { chosen: setSelect(sel, value), then: submit(sel) }; };
+      return async ({ value }) => {
+        await reveal();
+        const el = deepQuery(sel);
+        const was = el ? el.value : null;
+        const chosen = setSelect(sel, value);
+        return { control: rawLabelOf(el).slice(0, 60) || sel, was, now: chosen,
+          itChanged: was !== chosen, then: submit(sel) };
+      };
     }
     if (type === "checkbox" || kind === "checkbox") {
-      return async ({ on }) => { await reveal(); return { checked: setChecked(sel, on !== false), openedFirst: !!c.revealedBy }; };
+      return async ({ on }) => {
+        await reveal();
+        // The control itself, before and after. Verification asks whether
+        // the page changed, and a page where the wrong layer switched on
+        // answers yes - "Flood Inundation · the page responded" was reported
+        // while precipitation estimate was what actually moved. Only the
+        // named control's own state can tell those apart.
+        const el = deepQuery(sel);
+        const was = el ? !!el.checked : null;
+        const now = setChecked(sel, on !== false);
+        return {
+          control: rawLabelOf(el).slice(0, 60) || sel,
+          was, now, itChanged: was !== null && was !== now,
+          openedFirst: !!c.revealedBy,
+        };
+      };
     }
     if (["text", "search", "email", "url", "number", "tel", "textarea"].includes(type) || kind === "textarea") {
       return async ({ text, submit: go }) => {

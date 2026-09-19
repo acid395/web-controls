@@ -27,6 +27,9 @@ process.on("uncaughtException", (err) => {
   if (/Not implemented: navigation/.test(text)) return;
   failed++;
   failures.push({ label: "uncaught exception", actual: text, expected: "no uncaught exception" });
+  // Recorded silently once, which meant a throw that killed the run left no
+  // trace but a missing summary. The stack is the only thing that says where.
+  console.log(`\n  FAIL uncaught exception: ${text}\n${(err && err.stack) || ""}`);
 });
 
 let reported = false;
@@ -40,6 +43,12 @@ const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
 
 let passed = 0, failed = 0, skipped = 0;
 const failures = [];
+// Set on the file's last line. Anything less means the module body threw and
+// took every section below the throw with it - which is how 1,800 lines of
+// this suite sat unrun behind a summary that never printed. `report` is a
+// function declaration, so it is hoisted and safe to call from here.
+let bodyDone = false;
+installSummaryHooks();
 
 function check(label, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
@@ -182,6 +191,33 @@ else {
 check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
+
+section("did the thing you named change");
+// "Select flood inundation" reported "Flood Inundation - the page responded"
+// while precipitation estimate was what actually switched on. Verification
+// asks whether the page changed, and a page where the wrong layer moved
+// answers yes. Only the named control's own state can tell those apart.
+const twoBoxes = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <label for="fi">Flood Inundation</label><input id="fi" type="checkbox">
+  <label for="pe">Precipitation Estimate</label><input id="pe" type="checkbox">
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!twoBoxes) skip("per-control verification", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: twoBoxes });
+  runAsync(async () => {
+    const first = await bg.__ask({ type: "smartAsk", instruction: "select flood inundation" });
+    ensure("the card names the control and its own change",
+      /Flood Inundation: false \u2192 true/.test((first.display || {}).subtitle || ""),
+      (first.display || {}).subtitle);
+    check("and it is the one that moved", twoBoxes.document.getElementById("fi").checked, true);
+    check("not the other one", twoBoxes.document.getElementById("pe").checked, false);
+
+    // Asked again, it says nothing needed doing rather than claiming success.
+    const again = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+    ensure("a second ask says there was nothing to change",
+      /already true/.test((again.display || {}).subtitle || ""), (again.display || {}).subtitle);
+  });
+}
 
 section("open it, then look again");
 // "Enable snow water equivalent" on water.noaa.gov matched five nav links on
@@ -337,7 +373,11 @@ else {
   const bg2 = loadBackground({ page: linkKinds });
   runAsync(async () => {
     const said = async (q) => ((await bg2.__ask({ type: "smartAsk", instruction: q })).display || {}).subtitle || "";
-    ensure("a real control responds", /page responded/.test(await said("click flood inundation")), await said("click flood inundation"));
+    // A checkbox now reports its own state rather than the page's, which is
+    // strictly more than "the page responded" told anyone.
+    ensure("a real control reports its own change",
+      /Flood inundation: (false|true) \u2192 (true|false)|already/.test(await said("click flood inundation")),
+      await said("click flood inundation"));
     ensure("a dead link says nothing changed",
       /nothing on the page changed/.test(await said("click dead layer")), await said("click dead layer"));
     ensure("but a fragment carrying a view still counts",
@@ -1083,8 +1123,14 @@ check("a search box is filled and submitted",
     { name: "pageSubmit", args: { selector: "#q" } },
   ]);
 // A quoted string is the query verbatim, spaces and all.
+// A query is longer than the label that catches it, and every word of it
+// used to count as a subject this page did not have: three missed against
+// one covered threw the search away. "Search for Boise" survived only by
+// being two words long.
 check("quoted text is taken whole",
   act('search station "Big Sandy River"')[0].args.text, "Big Sandy River");
+check("a long query does not outvote the box it goes in",
+  act("search station Big Sandy River near Riddle")[0].name, "pageFill");
 // "look up 13206000" names no control - a site number shares no word with
 // "Search station" - but the intent is plain.
 check("a bare identifier still reaches the search box",
@@ -1207,6 +1253,22 @@ check("misspelled label", t("selct thudnerstorms"), 'pageClick {"selector":"#ts"
 check("matches the correct spelling too", t("select thunderstorms"), 'pageClick {"selector":"#ts"}');
 check("misspelled option", t("set basemp to satelite"), 'pageSelectOption {"selector":"#b","value":"sat"}');
 check("misspelled checkbox", t("turn on flod inundation layr"), 'pageCheck {"selector":"#f","on":true}');
+
+// The verb in front was the one word typo tolerance never covered. "selct"
+// matched no control, counted as a missed subject, and one missed against
+// one covered is enough to throw the whole plan away - so a perfectly
+// matched label lost to a misspelling beside it.
+// Five letters up, distance 1. Four-letter verbs ("clik", "tpa") stay
+// uncovered on purpose: at that length "peak" and "pick" are one edit apart,
+// and excusing the wrong one is worse than asking the person to retype.
+check("a misspelled verb does not sink a matched label",
+  t("chose thunderstorms"), 'pageClick {"selector":"#ts"}');
+// The excuse has to stay narrow. "peak" is one edit from "pick", and reading
+// it as a verb would discount a word that means a great deal on a river page.
+ensure("a real subject word near a verb is still a subject",
+  !sb.looksLikeMisspelledVerb("peak") && !sb.looksLikeMisspelledVerb("stage"),
+  ["peak", "stage"].map((w) => `${w}:${sb.looksLikeMisspelledVerb(w)}`));
+ensure("but a genuine verb typo is excused", sb.looksLikeMisspelledVerb("selct"), "selct");
 
 const mt = (q, route) => { const r = sb.planManifestTool(q, route); return r ? `${r.name} ${JSON.stringify(r.args)}` : null; };
 // Short words needed their own budget: "zoom" is four letters.
@@ -2929,6 +2991,11 @@ function report() {
       actual: "the process exited first", expected: "all sections complete" });
   }
   reported = true;
+  if (!bodyDone) {
+    failed++;
+    failures.push({ label: "the suite aborted partway", expected: "the whole file runs",
+      actual: "a throw in the module body skipped every section below it" });
+  }
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
   if (skipped) {
     console.log(`\n  ${skipped} section(s) skipped. For the full suite:` +
@@ -2949,14 +3016,32 @@ function report() {
 // its summary into a no-op - the run looked like it had simply stopped.
 const realLog = console.log;
 
-process.on("exit", () => {
-  exiting = true;
-  if (reported) return;
-  reported = true;
-  console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
-  if (skipped) {
-    console.log(`\n  ${skipped} section(s) skipped. For the full suite:` +
-      `\n    cd extension/test && npm install`);
-  }
-  process.exitCode = failed ? 1 : 0;
-});
+// beforeExit fires when the loop has drained and, unlike exit, may schedule
+// work - so a section still in flight gets its chance to finish. The exit
+// hook then remains the last resort. Without this the suite printed 202
+// results and no summary at all, which is the one output that must never go
+// missing: a run nobody can read the verdict of is a run nobody can trust.
+function installSummaryHooks() {
+  process.on("beforeExit", () => {
+    if (reported) return;
+    if (pendingAsync > 0) { setTimeout(() => {}, 30); return; }  // let them land, fire again
+    report();
+  });
+
+  process.on("exit", () => {
+    exiting = true;
+    if (reported) return;
+    reported = true;
+    console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
+    if (!bodyDone) {
+      console.log("\n  the suite aborted partway - sections below the throw never ran");
+    }
+    if (skipped) {
+      console.log(`\n  ${skipped} section(s) skipped. For the full suite:` +
+        `\n    cd extension/test && npm install`);
+    }
+    process.exitCode = failed || !bodyDone ? 1 : 0;
+  });
+}
+
+bodyDone = true;
