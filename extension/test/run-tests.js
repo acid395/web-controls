@@ -127,6 +127,32 @@ const rowFor = (place) => {
   const hit = sb.findOnPage(abbrevTable, { wants: ["discharge"], place, day: null });
   return hit ? hit[0].value : null;
 };
+// A choice is a call that has already been agreed to - and it was the one
+// path that dropped half of it. "Search this site" typed the query and never
+// submitted, then rendered {"element":"input"} as the answer.
+const chosen = loadPage(`<!doctype html><html><body><form method="post" action="/find">
+  <label for="s">Search this site:</label><input id="s" name="q" type="text"></form></body></html>`,
+  { url: "https://portal.example.gov/" });
+if (!chosen) skip("choosing an option", "jsdom not installed");
+else {
+  const chooser = loadBackground({ page: chosen });
+  runAsync(async () => {
+    const quiet = console.log;
+    console.log = () => {};
+    const r = await chooser.__ask({
+      type: "runToolCall", label: 'Search this site for "smith river"',
+      toolCall: { name: "pageFill", args: { selector: '[name="q"]', text: "smith river" }, thenSubmit: true },
+    });
+    console.log = quiet;
+    ensure("a chosen option submits as well as fills", !!r.follow, r);
+    ensure("and renders a card, not a DOM node",
+      !!(r.display && r.display.title && !/element|nodeName/i.test(JSON.stringify(r.display))), r.display);
+    check("titled with what was chosen", r.display.title, 'Search this site for "smith river"');
+    ensure("the selector stays out of the card",
+      !JSON.stringify(r.display.rows).includes("selector"), r.display.rows);
+  });
+}
+
 check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);

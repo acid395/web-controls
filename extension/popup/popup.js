@@ -95,7 +95,7 @@ function buildCard(display, raw) {
       if (choice.hint) button.appendChild(el("span", "choice-hint", choice.hint));
       button.addEventListener("click", () => {
         logEcho(`chose: ${choice.label}`);
-        chrome.runtime.sendMessage({ type: "runToolCall", toolCall: choice.call }, (res) => {
+        chrome.runtime.sendMessage({ type: "runToolCall", toolCall: choice.call, label: choice.label }, (res) => {
           logResult(res);
         });
       });

@@ -4717,8 +4717,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
-        const result = await executeToolCall(route.global, msg.toolCall);
-        finish({ ...result, plannedBy: "hand-written", toolCall: msg.toolCall });
+        const call = msg.toolCall || {};
+        // thenSubmit travelled with the call and was then ignored here, so
+        // choosing "search this site" typed the query and stopped. The one
+        // place a call arrives already agreed to is the one place that was
+        // dropping half of it.
+        const after = call.thenSubmit ? { name: "pageSubmit", args: { selector: call.args.selector } } : null;
+        const result = await runVerified(route.global, { name: call.name, args: call.args });
+        const follow = after && result.ok !== false
+          ? await runVerified(route.global, after).catch((e) => ({ ok: false, error: String(e.message || e) }))
+          : null;
+
+        // A raw postMessage payload is not an answer. Every other path
+        // renders a card; a chosen option rendered {"element":"input"}.
+        const changed = (result.verified && result.verified.changed)
+          || (follow && follow.verified && follow.verified.changed);
+        const what = friendlyToolName(call.name);
+        finish({
+          ...result, plannedBy: "hand-written", toolCall: msg.toolCall, follow: follow || undefined,
+          display: {
+            title: msg.label || what,
+            subtitle: follow
+              ? (follow.ok === false ? `${what}, but submitting failed: ${String(follow.error || "").slice(0, 60)}`
+                : changed ? "done - the page responded" : "done, but nothing on the page changed")
+              : changed ? "done - the page responded" : "done, but nothing on the page changed",
+            stats: [],
+            rows: Object.entries(call.args || {})
+              .filter(([k]) => k !== "selector")
+              .map(([k, v]) => ({ name: k, value: String(v).slice(0, 40), meta: "" })),
+            caveat: changed ? undefined : "if the page needed a moment, ask again",
+            source: "this page",
+          },
+        });
       } catch (err) {
         finish({ ok: false, error: String((err && err.message) || err), toolCall: msg.toolCall });
       }
