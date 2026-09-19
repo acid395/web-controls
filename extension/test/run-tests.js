@@ -183,6 +183,41 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a point on a map is a thing you can click");
+// "Click on st johns river" and "go to mayaguez tide gauge" both failed on
+// water.noaa.gov. mapFeatures() could read the markers; nothing turned them
+// into tools, so a real element sitting in the DOM had nowhere to be
+// reached from - the one kind of clickable thing this never offered.
+const mapPage = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <div class="leaflet-container">
+    <img class="leaflet-marker-icon" aria-label="St Johns River at Jacksonville" src="">
+    <img class="leaflet-marker-icon" aria-label="Mayaguez tide gauge" src="">
+  </div>
+  <table><tr><th>Site</th><th>Stage</th></tr><tr><td>A</td><td>3.1</td></tr></table>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!mapPage) skip("map points", "jsdom not installed");
+else {
+  const built = mapPage.GENERIC.pageTools();
+  check("each point becomes a tool", built.mapPoints, 2);
+  const names = built.tools.map((t) => t.name);
+  ensure("named after the point itself",
+    names.includes("openStJohnsRiverAtJacksonville"), names.filter((n) => /^open/.test(n)));
+  ensure("and the map is readable as a whole", names.includes("readMapPoints"), names);
+
+  const bg = loadBackground({ page: mapPage });
+  runAsync(async () => {
+    const title = async (q) => ((await bg.__ask({ type: "smartAsk", instruction: q })).display || {}).title || "";
+    check("clicking a point reaches that point",
+      await title("click on st johns river"), "open st johns river at jacksonville");
+    check("and so does going to one",
+      await title("go to mayaguez tide gauge"), "open mayaguez tide gauge");
+    // The read bonus has to follow the question, not always land on the
+    // page's text: reading the map is a read, and it is not that read.
+    check("reading the map reads the map", await title("read the map points"), "read map points");
+    check("while reading the page still reads the page", await title("read this page"), "read this page");
+  });
+}
+
 section("every place a control can hide");
 // Auditing the rest of the closed-panel class: a page was built with a
 // control in each shape one can hide in, and the inventory asked for all of

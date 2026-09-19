@@ -4319,7 +4319,10 @@ function confidentPick(tools, instruction) {
     .map((t) => {
       let score = scoreManifestTool(t, words, instruction);
       if (asksForMaths && t.name === "pageCompute") score += 12;
-      if (asksToRead && t.name === "readThisPage") score += 10;
+      if (asksToRead && /^(read|list)[A-Z]/.test(t.name)) {
+        const named = words.some((w) => w.length > 3 && wordMatchesText(w, t.name.toLowerCase()));
+        score += named ? 12 : (t.name === "readThisPage" ? 10 : 0);
+      }
       return { t, score };
     })
     .sort((a, b) => b.score - a.score);
@@ -4388,7 +4391,14 @@ async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
   const asksToRead = /\b(read|say|says|show(ing)?|what.s on|contents?|summar\w+)\b/i.test(instruction);
   const bonus = (t) => {
     if (asksForMaths && t.name === "pageCompute") return 12;
-    if (asksToRead && t.name === "readThisPage") return 10;
+    // The read bonus goes to whichever reader the question is actually
+    // about, not always readThisPage - "read the map points" is a read, and
+    // it is not a read of the page's text.
+    if (asksToRead && /^(read|list)[A-Z]/.test(t.name)) {
+      const named = meaningfulWords(instruction)
+        .some((w) => w.length > 3 && wordMatchesText(w, t.name.toLowerCase()));
+      return named ? 12 : (t.name === "readThisPage" ? 10 : 0);
+    }
     // "Search for X" wants the box that takes text, not a link named Search.
     if (/\b(search|find|look ?up)\b/i.test(instruction)
       && ((t.parameters || {}).properties || {}).text) return 8;

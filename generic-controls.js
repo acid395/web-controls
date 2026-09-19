@@ -1673,10 +1673,39 @@
   // Reading is half of what an agent needs, and it is the half nothing else
   // here publishes. Without these it can drive the page but never find out
   // what the page now says.
+  // A point on a map is a thing you can click, and it was the one kind this
+  // never offered. mapFeatures() could read them; nothing turned them into
+  // tools, so "click on st johns river" had nowhere to go even when the
+  // marker was a real element sitting in the DOM.
+  //
+  // Two cases. A DOM marker - Leaflet's usual output - has a selector and is
+  // clicked like anything else. A feature that exists only inside the map
+  // library's own instance has no element, so it is opened through the
+  // library: its popup, or failing that the map panned to it.
+  function mapFeatureOpen(index) {
+    const found = mapFeatures({ limit: 200 });
+    const feature = (found.features || [])[index];
+    if (!feature) throw new Error(`no map feature at ${index} (this map has ${(found.features || []).length})`);
+    if (feature.selector) {
+      const el = deepQuery(feature.selector);
+      if (el) { realClick(el); return { clicked: feature.label, via: "marker" }; }
+    }
+    // No element: ask the map itself.
+    const info = mapInfo();
+    const map = info.instance || (window.L && window.L.__wcMap) || null;
+    if (map && feature.lat != null && typeof map.setView === "function") {
+      map.setView([feature.lat, feature.lon], Math.max(map.getZoom ? map.getZoom() : 8, 10));
+      if (typeof map.openPopup === "function" && feature.popup) map.openPopup(feature.popup);
+      return { movedTo: feature.label || `${feature.lat}, ${feature.lon}`, via: "map instance" };
+    }
+    throw new Error(`"${feature.label || "that point"}" is drawn by the map, not placed in the page, and this map exposes no way to open it`);
+  }
+
   const READERS = [
     { name: "readThisPage", description: "Read what this page currently shows: its tables, labelled values, readouts and headings, as structured data.", run: () => readPage() },
     { name: "listPageControls", description: "List every control on this page with its label and kind - useful for deciding what to do next.", run: () => inventory() },
     { name: "listPageDataRequests", description: "List the data requests this page has made, which is where a chart's real numbers come from when the chart is a canvas.", run: () => capturedFeeds() },
+    { name: "readMapPoints", description: "Read the points on this page's map - their names, coordinates and data - whether they are real elements or drawn by the map library.", run: () => mapFeatures() },
   ];
 
   // The descriptors, built without touching navigator/document.modelContext.
@@ -1717,7 +1746,21 @@
         `${c.label} - ${c.kind || "control"} on this page`.slice(0, 160),
         schemaFor(c), runnerFor(c));
     }
-    return { tools: out, fromControls: usable.length, url: location.href };
+    // Each named point on the map, as its own tool. Same shape as a control:
+    // named after itself, no selector in the schema, runner knows how to
+    // reach it.
+    let points = [];
+    try { points = (mapFeatures({ limit: 40 }).features || []).filter((f) => f.label); }
+    catch (e) { points = []; }
+    points.slice(0, 20).forEach((f, i) => {
+      const index = (mapFeatures({ limit: 40 }).features || []).indexOf(f);
+      add(toolName(f.label, "open"),
+        `${String(f.label).slice(0, 80)} - a point on this page's map`,
+        { type: "object", properties: {} },
+        async () => mapFeatureOpen(index === -1 ? i : index));
+    });
+
+    return { tools: out, fromControls: usable.length, mapPoints: points.length, url: location.href };
   }
 
   // Run one by name. The selector never left this file, so a caller - model
