@@ -142,7 +142,24 @@ function loadPage(html, { url = "https://waterdata.usgs.gov/state/Idaho/" } = {}
   const w = dom.window;
   // jsdom lays nothing out, so every element measures zero and the bundle's
   // isVisible() would reject all of them.
-  w.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 });
+  // jsdom lays nothing out, so every element measures zero and isVisible()
+  // would reject all of them. A flat "everything is 100x20" stub goes too
+  // far the other way: in a browser a child of a display:none parent
+  // measures zero, which is exactly how a control behind a closed panel is
+  // detected. Walk the ancestors so hidden stays hidden.
+  const hiddenByAncestor = (el) => {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      const style = n.style || {};
+      if (style.display === "none" || style.visibility === "hidden") return true;
+      if (n.hasAttribute && n.hasAttribute("hidden")) return true;
+    }
+    return false;
+  };
+  w.Element.prototype.getBoundingClientRect = function () {
+    return hiddenByAncestor(this)
+      ? { width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }
+      : { width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 };
+  };
   // jsdom cannot navigate and reports the attempt asynchronously, which was
   // killing the whole run - sometimes after the summary, sometimes instead
   // of it, so a crash and a pass looked the same from outside. Submitting

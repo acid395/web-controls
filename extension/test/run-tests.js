@@ -183,6 +183,56 @@ check("an abbreviated river still matches", rowFor("smith river"), "227");
 check("a spelled-out one still does too", rowFor("eel river"), "512");
 check("and a river that is not there does not", rowFor("snake river"), null);
 
+section("a control behind a closed panel");
+// On water.noaa.gov "enable the flood layer" did nothing while "enable
+// precipitation estimate" worked - not because the manifest understands the
+// site, but because noaaToggleFloodCategory opens the Layers panel first and
+// the generic path did not. inventory() skips anything invisible, so a
+// checkbox inside a closed panel did not exist as far as this was concerned.
+//
+// That difference is worth generalising rather than writing per site.
+const panelled = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <button id="open" aria-controls="layers" aria-expanded="false"
+    onclick="document.getElementById('layers').style.display='block'">Layers</button>
+  <div id="layers" style="display:none">
+    <label for="fl">Flood inundation</label><input id="fl" type="checkbox">
+    <label for="pe">Precipitation estimate</label><input id="pe" type="checkbox">
+  </div>
+  <button id="legend">Legend</button></body></html>`, { url: "https://water.noaa.gov/" });
+if (!panelled) skip("closed panels", "jsdom not installed");
+else {
+  // Visible-only is what the page is showing; it must not change.
+  const shown = panelled.GENERIC.inventory();
+  check("a closed panel's contents are not 'on the page'",
+    shown.controls.filter((c) => /flood|precipitation/i.test(c.label)).length, 0);
+
+  // But they exist, and the way in is recorded with them.
+  const all = panelled.GENERIC.inventory({ includeHidden: true });
+  const flood = all.controls.find((c) => /flood/i.test(c.label));
+  ensure("asked for, they are found", !!flood, all.controls.map((c) => c.label));
+  check("marked as behind something", flood.hidden, true);
+  check("and named by what opens it", flood.revealedByLabel, "Layers");
+  // A control hidden with no way in is not usable and is left out.
+  ensure("a visible control carries no opener",
+    !all.controls.find((c) => /legend/i.test(c.label)).revealedBy, all.controls);
+
+  // The derived tool opens the panel itself.
+  const tools = panelled.GENERIC.pageTools().tools.map((t) => t.name);
+  ensure("both layers become tools",
+    tools.includes("toggleFloodInundation") && tools.includes("togglePrecipitationEstimate"), tools);
+
+  const bg = loadBackground({ page: panelled });
+  runAsync(async () => {
+    const box = panelled.document.getElementById("fl");
+    check("the box starts unticked", box.checked, false);
+    const r = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+    check("the instruction reaches it", box.checked, true);
+    check("through the page's own controls", r.plannedBy, "one-list");
+    check("and the panel was opened to get there",
+      panelled.document.getElementById("layers").style.display, "block");
+  });
+}
+
 section("the numbers behind a chart");
 // Asked for the humidity on a page plotting humidity, this answered from a
 // weather station eleven miles away - 88% against the page's own 81% -

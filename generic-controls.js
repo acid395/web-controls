@@ -317,7 +317,54 @@
   const ROLES = ["button", "link", "combobox", "listbox", "option", "tab", "checkbox",
     "radio", "switch", "menuitem", "menuitemcheckbox", "slider", "searchbox", "spinbutton"];
 
-  function inventory() {
+  // What has to be opened before a control can be used.
+  //
+  // inventory() skips anything invisible, so the checkboxes inside a closed
+  // Layers panel do not exist as far as this extension is concerned. "Enable
+  // the flood layer" then fails while a hand-written noaaToggleFloodCategory
+  // succeeds - not because the manifest knows the site better, but because
+  // it opens the panel first. That is the only difference, and it is worth
+  // generalising rather than writing per site.
+  //
+  // Returns the element that reveals a hidden control, found the ways pages
+  // actually express it: aria-controls pointing at the hidden container, a
+  // <summary> owning a closed <details>, or the nearest preceding control
+  // marked aria-expanded="false".
+  function disclosureFor(el) {
+    let hiddenAncestor = null;
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      if (!isVisible(n)) hiddenAncestor = n;
+    }
+    if (!hiddenAncestor) return null;
+
+    const id = hiddenAncestor.id;
+    if (id) {
+      const byAria = deepQuery(`[aria-controls="${CSS.escape(id)}"]`);
+      if (byAria && isVisible(byAria)) return byAria;
+    }
+    if (hiddenAncestor.tagName === "DETAILS" || hiddenAncestor.closest) {
+      const details = hiddenAncestor.tagName === "DETAILS" ? hiddenAncestor : hiddenAncestor.closest("details");
+      if (details && !details.open) {
+        const summary = details.querySelector("summary");
+        if (summary) return summary;
+      }
+    }
+    // The nearest thing above it that says it opens something.
+    let prev = hiddenAncestor.previousElementSibling;
+    while (prev) {
+      if (prev.getAttribute && prev.getAttribute("aria-expanded") === "false" && isVisible(prev)) return prev;
+      prev = prev.previousElementSibling;
+    }
+    const parent = hiddenAncestor.parentElement;
+    if (parent) {
+      const toggler = [...parent.querySelectorAll('[aria-expanded="false"], button, summary')]
+        .find((t) => isVisible(t) && !t.contains(el));
+      if (toggler) return toggler;
+    }
+    return null;
+  }
+
+  function inventory({ includeHidden = false } = {}) {
     const seen = new Set();
     const all = [];
     for (const el of walk(document.documentElement)) {
@@ -333,7 +380,13 @@
       const strong = TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || hasJsHandler(el);
       const weak = !strong && looksClickable(el);
       if (!(strong || weak)) continue;
-      if (seen.has(el) || !isVisible(el)) continue;
+      if (seen.has(el)) continue;
+      // A control behind a closed panel is still a control. Recorded with
+      // what would have to be opened first, so using it can open it.
+      const shown = isVisible(el);
+      if (!shown && !includeHidden) continue;
+      const opener = shown ? null : disclosureFor(el);
+      if (!shown && !opener) continue;   // hidden with no way in is not usable
       seen.add(el);
 
       const lab = rawLabelOf(el);
@@ -343,6 +396,11 @@
         checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked : undefined,
         selector: cssPath(el),
         confidence: weak ? "low" : "high",
+        // Hidden behind something that can be opened. Carried through so a
+        // caller can open it rather than report the control missing.
+        hidden: shown ? undefined : true,
+        revealedBy: opener ? cssPath(opener) : undefined,
+        revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
       };
       if (tag === "select") rec.options = [...el.options].map((o) => ({ value: o.value, text: o.text.trim() }));
       rec._sig = [rec.kind, rec.type, sigNorm(lab), rec.name].join("|");
@@ -1529,17 +1587,39 @@
     const kind = String(c.kind || "").toLowerCase();
     const type = String(c.type || "").toLowerCase();
     const sel = c.selector;
+
+    // A control behind a closed panel is reached by opening the panel. The
+    // hand-written NOAA tools always did this - noaaSetBasemap is documented
+    // as only working after noaaOpenLayers - and it is the entire reason
+    // "enable precipitation estimate" worked while "enable the flood layer"
+    // did not. Doing it here makes that true for any site.
+    const reveal = async () => {
+      if (!c.revealedBy) return;
+      const opener = deepQuery(c.revealedBy);
+      if (!opener) return;
+      const target = deepQuery(sel);
+      if (target && isVisible(target)) return;   // already open
+      realClick(opener);
+      await settle({ quietMs: 120, timeoutMs: 1500 });
+    };
     if (kind === "select" || (c.options && c.options.length)) {
-      return async ({ value }) => ({ chosen: setSelect(sel, value), then: submit(sel) });
+      return async ({ value }) => { await reveal(); return { chosen: setSelect(sel, value), then: submit(sel) }; };
     }
-    if (type === "checkbox" || kind === "checkbox") return async ({ on }) => ({ checked: setChecked(sel, on !== false) });
+    if (type === "checkbox" || kind === "checkbox") {
+      return async ({ on }) => { await reveal(); return { checked: setChecked(sel, on !== false), openedFirst: !!c.revealedBy }; };
+    }
     if (["text", "search", "email", "url", "number", "tel", "textarea"].includes(type) || kind === "textarea") {
       return async ({ text, submit: go }) => {
+        await reveal();
         fill(sel, text);
         return { filled: text, submitted: go === false ? null : submit(sel) };
       };
     }
-    return async () => { const el = realClick(sel); return { clicked: String(el.tagName || "").toLowerCase() }; };
+    return async () => {
+      await reveal();
+      const el = realClick(sel);
+      return { clicked: String(el.tagName || "").toLowerCase(), openedFirst: !!c.revealedBy };
+    };
   };
 
   // Reading is half of what an agent needs, and it is the half nothing else
@@ -1572,9 +1652,14 @@
     for (const r of READERS) {
       add(r.name, r.description, { type: "object", properties: {} }, async () => r.run());
     }
-    const inv = inventory();
+    // Hidden controls included: a checkbox behind a closed panel is a
+    // control an agent should be able to use, and its runner opens the
+    // panel first. Visible ones still come first, since a page usually
+    // means what it is showing.
+    const inv = inventory({ includeHidden: true });
     const usable = (inv.controls || [])
       .filter((c) => c.label && c.selector && c.confidence !== "low")
+      .sort((a, b) => (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0))
       .slice(0, max);
     for (const c of usable) {
       add(toolName(c.label, verbFor(c)),
