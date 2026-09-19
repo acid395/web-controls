@@ -5122,8 +5122,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // This wiring existed but only in the debug handler, so the path
         // anyone actually reaches was still offering the model
         // pageClick{selector} and a wall of CSS.
-        const known = await agentTools(route.global, wanted);
-        const context = await buildContext(route.global);
+        // Routing, not answering. The model's whole job is to name one tool,
+        // so the prompt should contain the tools and almost nothing else.
+        //
+        // It was being sent 3,136 tokens for that decision - 2,071 of them
+        // the old context block: an env-vocab synonym table and forty rows of
+        // inventory prose, both written when the model had to read CSS and
+        // build a selector. The tools describe the page now, so the context
+        // restates what the tool list already says, and prefill on a small
+        // model is where the time goes.
+        const known = await agentTools(route.global, wanted, { max: 12 });
+        // Kept only where there are no page tools to describe it.
+        const context = known.page.length ? null : await buildContext(route.global);
         // llmPlanJson, not llmPlan: the native tools API is restricted to
         // 7-8B models, which measured as unusable on ordinary hardware.
         // Prompting for JSON works with a 3B model instead.

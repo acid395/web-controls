@@ -1038,6 +1038,30 @@ else {
       ensure("and the prefix is what makes the difference",
         unforced.ok === true && unforced.plannedBy !== "webllm", unforced);
 
+      // The model's job is to name one tool, so the prompt should be the
+      // tools and almost nothing else. It was 3,136 tokens for that one
+      // decision - 2,071 of them an env-vocab table and forty rows of
+      // inventory prose, both written when the model still had to build a
+      // CSS selector. Prefill on a small model is where the time goes, and
+      // "the model is slow" was mostly this.
+      const routing = await live.agentTools("GENERIC", "select 30 day precipitation", { max: 12 });
+      const catalogue = routing.all.map((t) => {
+        const spec = (t.parameters && t.parameters.properties) || {};
+        const props = Object.entries(spec).map(([k, v]) =>
+          Array.isArray(v.enum) && v.enum.length <= 8 ? `${k}: ${v.enum.join("|")}` : k);
+        const gist = String(t.description || "").split(/[.\u2013-]/)[0].trim().slice(0, 60);
+        return `${t.name}(${props.join(", ")})${gist ? " - " + gist : ""}`;
+      }).join("\n");
+      ensure("the routing prompt stays under ~400 tokens",
+        catalogue.length < 1600, `${Math.round(catalogue.length / 4)} tokens`);
+      ensure("and no page context is bolted on when tools describe the page",
+        routing.page.length > 0, "no page tools, so context is still needed");
+      // Enums survive the trimming: they are what stops a model inventing a
+      // value the page does not offer.
+      const withEnum = routing.all.find((t) => Object.values((t.parameters || {}).properties || {})
+        .some((v) => Array.isArray(v.enum) && v.enum.length));
+      if (withEnum) ensure("an enum is still spelled out", /\|/.test(catalogue) || /: /.test(catalogue), catalogue.slice(0, 120));
+
       // Nonsense must fail as an answer, not as a crash.
       console.log = () => {};
       const junk = await ask("fly me to the moon");

@@ -125,8 +125,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Compact: every token of schema is prefill time on a small model,
         // and prefill is what made the 8B path unusable.
         const catalogue = (msg.tools || []).map((t) => {
-          const props = Object.keys((t.parameters && t.parameters.properties) || {});
-          return `${t.name}(${props.join(", ")}) - ${t.description}`;
+          const spec = (t.parameters && t.parameters.properties) || {};
+          // An enum is worth its tokens - it stops the model inventing a
+          // value the page does not offer. Prose is not: the first clause of
+          // a description carries the meaning and the rest is prefill.
+          const props = Object.entries(spec).map(([k, v]) =>
+            Array.isArray(v.enum) && v.enum.length <= 8 ? `${k}: ${v.enum.join("|")}` : k);
+          const gist = String(t.description || "").split(/[.\u2013-]/)[0].trim().slice(0, 60);
+          return `${t.name}(${props.join(", ")})${gist ? " - " + gist : ""}`;
         }).join("\n");
 
         const prompt = [
@@ -148,7 +154,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           engine.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             temperature: 0,      // picking a tool is not a creative task
-            max_tokens: 200,     // a tool call is short; unbounded generation was a real cost
+            max_tokens: 96,      // a routing decision is one small JSON object
           }),
           new Promise((_, reject) =>
             setTimeout(() => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)), INFERENCE_TIMEOUT_MS)),

@@ -1156,6 +1156,27 @@ That path was also still handing the model `pageClick{selector}` and a wall of
 CSS: the page-tool wiring had landed in the debug handler only, not in the
 path anyone actually reaches.
 
+### The model routes; it does not answer
+
+Its whole job is to name one tool. The tool produces the answer, and the
+answer should arrive as fast as it does without a model.
+
+It was being sent **3,136 tokens** to make that one decision. Roughly 2,071 of
+those were a context block - an env-vocab synonym table plus forty rows of
+inventory prose - written back when the model had to read CSS and construct a
+selector. The tools describe the page now, so the context restated what the
+tool list already said. Prefill on a small model is where the time goes, and
+"the model is slow" was mostly this.
+
+Routing now sends the tools and almost nothing else: twelve of them, one line
+each, descriptions cut to their first clause, and no context block at all when
+page tools exist. **217 tokens**, a fourteenfold cut. Enums are kept in full,
+because they are what stops a model inventing a value the page does not offer,
+and `max_tokens` is 96 - a routing decision is one small JSON object.
+
+A test asserts the prompt stays under about 400 tokens, so this cannot creep
+back the way it accumulated in the first place.
+
 ### How much of this needs a model
 
 Measured, not assumed. A fixture of twelve instruction shapes against pages
