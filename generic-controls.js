@@ -1775,28 +1775,56 @@
   // nothing generic ever reached them.
   //
   // The only way in is to press the thing and look again.
-  function disclosures({ limit = 6 } = {}) {
+  function disclosures({ limit = 6, match = "" } = {}) {
     const out = [];
     const seen = new Set();
     const NAMES = /\b(layer|layers|menu|filter|filters|options|settings|more|panel|legend|tools|expand|show)\b/i;
 
-    for (const el of deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"]')) {
+    // A panel named after its own subject. water.noaa.gov puts each layer
+    // group behind a UIkit accordion whose title is the domain term itself -
+    // "Flood Inundation", "National Snow Analysis" - so a list of generic
+    // words like "layers" or "menu" never matched one, and the header got
+    // clicked as though it were the layer. It is a door, not the room.
+    const wantWords = String(match || "").toLowerCase().split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2);
+    const relatedTo = (label) => {
+      const l = (label || "").toLowerCase();
+      return !!l && wantWords.some((w) => l.includes(w));
+    };
+    const isAccordion = (el) => {
+      try {
+        if (el.matches(".uk-accordion-title, [class*='accordion-title'], [id^='uk-accordion']")) return true;
+        const li = el.closest && el.closest("li, .uk-accordion > *, [class*='accordion']");
+        return !!(li && li.querySelector && li.querySelector("[class*='accordion-content']"));
+      } catch (e) { return false; }
+    };
+
+    for (const el of deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"],'
+      + ' .uk-accordion-title, [class*="accordion-title"], [id^="uk-accordion"], a[href="#"]')) {
       if (seen.has(el) || !isVisible(el)) continue;
       const label = rawLabelOf(el);
       const expanded = el.getAttribute && el.getAttribute("aria-expanded");
+      const accordion = isAccordion(el);
       const says = expanded === "false" || (el.getAttribute && el.getAttribute("aria-haspopup"))
-        || tagOf(el) === "summary";
-      if (!says && !(label && NAMES.test(label))) continue;
+        || tagOf(el) === "summary" || accordion;
+      const related = relatedTo(label);
+      if (!says && !related && !(label && NAMES.test(label))) continue;
       seen.add(el);
       out.push({
         label: (label || tagOf(el)).slice(0, 60),
         selector: cssPath(el),
         // A stated one is worth trying before a guess from its wording.
         stated: !!says,
+        // But one named after what was actually asked for beats both: on a
+        // page of forty panels, the three tried at random are never the one.
+        related,
       });
-      if (out.length >= limit) break;
     }
-    return { count: out.length, disclosures: out.sort((a, b) => (b.stated ? 1 : 0) - (a.stated ? 1 : 0)) };
+    const rank = (d) => (d.related ? 2 : 0) + (d.stated ? 1 : 0);
+    return {
+      count: out.length,
+      disclosures: out.sort((a, b) => rank(b) - rank(a)).slice(0, limit),
+    };
   }
 
   // Press it, wait, and say what appeared.

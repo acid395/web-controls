@@ -5559,7 +5559,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const one = confidentPick(
             await unifiedTools(route.global, wanted, { acting: commandLike }), wanted);
           if (one) {
-            const ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
+            let ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
+
+            // A click that landed and changed nothing is usually a door.
+            // water.noaa.gov names each accordion after its own subject -
+            // "Flood Inundation", "National Snow Analysis" - so the header
+            // outscores every real control and gets pressed as though it
+            // were the layer. Pressing it is not wrong, it is unfinished:
+            // the control is inside, and it does not exist until the panel
+            // is open. The retry below only ever ran when nothing matched at
+            // all, which is exactly the case this is not.
+            const rr = ran.result || {};
+            if (rr.how === "click" && rr.itChanged === false) {
+              const fresh = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+                .catch(() => ({ ok: false }));
+              if (fresh.ok) {
+                forgetPageTools();
+                // Without the door in the list. Derived tools keep their
+                // selector in a closure, so there is nothing to compare call
+                // against call - and re-planning with the header still
+                // present simply picks the header again, since its label is
+                // the phrase that was typed. The label is the handle we have.
+                const opened = String(rr.control || "").trim().toLowerCase();
+                const within = {
+                  ...fresh.result,
+                  controls: ((fresh.result && fresh.result.controls) || [])
+                    .filter((c) => String(c.label || "").trim().toLowerCase() !== opened),
+                };
+                const inside = planGenericTool(wanted, within);
+                const next = inside && inside.calls && inside.calls[0];
+                if (next) {
+                  const after = await runVerified(route.global, next);
+                  const r2 = after.result || {};
+                  if (after.ok !== false
+                      && (r2.itChanged === true || (after.verified && after.verified.changed))) {
+                    ran = { ...after, openedFirst: rr.control };
+                  }
+                }
+              }
+            }
             const inner = ran.result && ran.result.display;
             if (ran.ok !== false) {
               respond({
@@ -6221,7 +6259,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // A hand-written noaaOpenLayers existed for exactly this, and this is
         // the general form of it.
         if (!commandLike || forceModel) { /* only for instructions */ } else {
-          const found = await invokeOnActiveTab("disclosures", [{}]).catch(() => ({ ok: false }));
+          const found = await invokeOnActiveTab("disclosures", [{ match: wanted }])
+            .catch(() => ({ ok: false }));
           const candidates = (found.ok && found.result && found.result.disclosures) || [];
           for (const d of candidates.slice(0, 3)) {
             const opened = await invokeOnActiveTab("openDisclosure", [d.selector]).catch(() => null);

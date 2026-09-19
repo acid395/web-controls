@@ -218,6 +218,53 @@ check("a graph button beats a box that would swallow the words",
   gb("select 30 day% normal"), "#n30");
 check("and the longer label beats the bare one", gb("go to 30 day% normal"), "#n30");
 
+section("the panel is named after the thing inside it");
+// From the live page. water.noaa.gov puts each layer group behind a UIkit
+// accordion whose title is the domain term itself: "Flood Inundation",
+// "National Snow Analysis". So the header outscores every real control
+// (25.6 against nothing) and gets pressed as though it were the layer -
+// which opens the panel, changes no checkbox, and reported "the click did
+// not take". Snow Depth scored nothing at all, because it does not exist
+// until its accordion is open.
+const accordion = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-accordion">
+    <li><button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div class="uk-accordion-content" style="display:none">
+        <label><input type="checkbox" name="fim"> Flood Inundation Mapping</label></div></li>
+    <li><button id="uk-accordion-10" class="uk-accordion-title">National Snow Analysis</button>
+      <div class="uk-accordion-content" style="display:none">
+        <label><input type="checkbox" name="sd"> Snow Depth</label></div></li>
+  </ul>
+  <script>
+    document.querySelectorAll(".uk-accordion-title").forEach((b) => {
+      b.addEventListener("click", () => {
+        const c = b.parentNode.querySelector(".uk-accordion-content");
+        c.style.display = c.style.display === "none" ? "block" : "none";
+      });
+    });
+  <\/script></body></html>`, { url: "https://water.noaa.gov/" });
+if (!accordion) skip("accordions", "jsdom not installed");
+else {
+  const seen = accordion.GENERIC.disclosures({ match: "select snow depth" }).disclosures;
+  ensure("an accordion is a door, even named after a river term",
+    seen.some((d) => /snow analysis/i.test(d.label)), seen.map((d) => d.label));
+  ensure("and the one related to the question comes first",
+    /snow analysis/i.test((seen[0] || {}).label || ""), seen.map((d) => d.label));
+
+  const bg = loadBackground({ page: accordion });
+  const cb = (n) => accordion.document.querySelector(`[name="${n}"]`);
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: "select flood inundation" });
+    check("pressing the header is not the end of the job", cb("fim").checked, true);
+    check("and the other panel is left alone", cb("sd").checked, false);
+
+    const r = await bg.__ask({ type: "smartAsk", instruction: "select snow depth" });
+    check("a control that does not exist yet is still reached", cb("sd").checked, true);
+    ensure("and it is not reported as done with nothing to show",
+      !/nothing to change/i.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
+  });
+}
+
 section("show me the evidence");
 // Every failure on water.noaa.gov was diagnosed from the wording of a card,
 // which says what was decided and nothing about the page it was decided on -
