@@ -4156,6 +4156,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
 
   let remaining = subjectOf(meaningfulWords(instruction));
   let lastCount = -1;
+  let deadEnds = 0;
 
   for (let step = 0; step < maxSteps; step++) {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
@@ -4200,11 +4201,19 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
 
     // What the instruction still has not accounted for.
     const left = subjectOf(plan.unmatchedWords || []);
-    const progressed = moved || left.length < remaining.length || countNow !== lastCount;
     remaining = left;
     lastCount = countNow;
-    if (!remaining.length) break;      // said everything it set out to say
-    if (!progressed) break;            // going nowhere; stop rather than flail
+    if (moved) { if (!remaining.length) break; continue; }
+
+    // It acted and nothing moved. On these sites that usually means a nav
+    // link named after the thing rather than the thing - water.noaa.gov has
+    // "Flood Inundation Mapping" in its navbar and as a map layer. The link
+    // accounts for every word, so a loop that stops when the words run out
+    // stops on the wrong control having done nothing. The control is struck
+    // off and the next one tried instead. Strictly bounded: two dead ends,
+    // then stop, because pressing a page one control at a time in the hope
+    // of stumbling onto the right one is its own kind of wrong.
+    if (++deadEnds > 2) break;
   }
 
   const acted = steps.filter((st) => st.did !== "opened");
@@ -5720,6 +5729,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // is open. The retry below only ever ran when nothing matched at
             // all, which is exactly the case this is not.
             const rr = ran.result || {};
+            // Nothing moved. The general loop knows how to open its way in
+            // and try the next candidate; this path used to re-plan once and
+            // give up, which on a page whose navbar repeats its layer names
+            // means clicking the link and reporting that the page did not
+            // respond. Only adopted when the loop actually finishes the job.
+            const deadEnd = (rr.itChanged === false)
+              || !!(ran.verified && ran.verified.changed === false);
+            if (deadEnd && commandLike && !forceModel) {
+              const chased = await pursueGoal(route.global, wanted).catch(() => null);
+              if (chased && chased.done) {
+                const acted = chased.steps.filter((st) => st.did !== "opened");
+                const last = acted[acted.length - 1] || {};
+                respond({
+                  ok: true, plannedBy: "pursued", steps: chased.steps,
+                  display: {
+                    title: String(last.label || "Done").slice(0, 60),
+                    subtitle: [
+                      chased.opened.length
+                        ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                        : `${friendlyToolName(one.tool.name)} changed nothing, so it kept going`,
+                      typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                    ].filter(Boolean).join(" \u00b7 "),
+                    stats: [{ label: "steps", value: String(chased.steps.length) }],
+                    rows: chased.steps.map((st) => ({
+                      name: String(st.label || st.did).slice(0, 50),
+                      value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
+                      meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                    })),
+                    source: route.global,
+                  },
+                });
+                return;
+              }
+            }
             if (rr.how === "click" && rr.itChanged === false) {
               const fresh = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
                 .catch(() => ({ ok: false }));
@@ -6409,6 +6452,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             respond({ ok: true, plannedBy: "gemini", modelReply: plan.text,
               display: { title: "The model's answer", subtitle: String(plan.text).slice(0, 140),
                 stats: [], rows: [], source: "Gemini" } });
+            return;
+          }
+        }
+
+        // Nothing single-step matched. Before the one-door-then-act fallback
+        // below, try the general form: pursue the goal for as many steps as
+        // it takes. That block only ever opens one thing and then acts, which
+        // reaches two levels; water.noaa.gov puts its layers three down -
+        // press Layers, expand the accordion named after the layer, tick the
+        // box inside - and no amount of one-door retrying arrives there.
+        //
+        // Only where the loop actually finished the job. A partial run is
+        // left to the paths below rather than reported as progress, because
+        // "I pressed two things and got nowhere" is not an answer.
+        if (commandLike && !forceModel) {
+          const chased = await pursueGoal(route.global, wanted).catch(() => null);
+          if (chased && chased.done) {
+            const acted = chased.steps.filter((st) => st.did !== "opened");
+            const last = acted[acted.length - 1] || {};
+            respond({
+              ok: true, plannedBy: "pursued", steps: chased.steps,
+              display: {
+                title: String(last.label || "Done").slice(0, 60),
+                subtitle: [
+                  chased.opened.length
+                    ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                    : null,
+                  typeof last.was === "boolean" || typeof last.now === "boolean"
+                    ? `${last.label}: ${last.was} \u2192 ${last.now}`
+                    : "the page responded",
+                ].filter(Boolean).join(" \u00b7 "),
+                stats: [{ label: "steps", value: String(chased.steps.length) }],
+                rows: chased.steps.map((st) => ({
+                  name: String(st.label || st.did).slice(0, 50),
+                  value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
+                  meta: st.did,
+                  tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                })),
+                source: route.global,
+              },
+            });
             return;
           }
         }

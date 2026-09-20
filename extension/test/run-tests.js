@@ -427,6 +427,48 @@ else {
   });
 }
 
+section("the navbar says it too");
+// The live shape, and the reason the loop had to survive a dead end. NWPS
+// carries "Flood Inundation Mapping" in its navbar and again as a map layer
+// three levels down. The link accounts for every word in the instruction, so
+// it wins, gets clicked, navigates nowhere - and a loop that stops when the
+// words run out stops there, on the wrong control, having done nothing.
+const navbarToo = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <button id="layers">Layers</button><div id="panel"></div>
+  <a href="/a">National Water Model</a>
+  <a href="/b">Flood Inundation Mapping</a>
+  <script>
+    document.getElementById("layers").addEventListener("click", () => {
+      if (document.getElementById("acc")) return;
+      document.getElementById("panel").innerHTML =
+        '<button id="acc" class="uk-accordion-title">Flood Inundation</button>' +
+        '<div id="inner" class="uk-accordion-content" style="display:none"></div>';
+      document.getElementById("acc").addEventListener("click", () => {
+        const i = document.getElementById("inner");
+        i.style.display = "block";
+        if (!i.innerHTML) i.innerHTML =
+          '<label><input type="checkbox" name="fim"> Flood Inundation Mapping</label>' +
+          '<label><input type="checkbox" name="swe"> Snow Water Equivalent</label>';
+      });
+    });
+  <\/script></body></html>`, { url: "https://water.noaa.gov/" });
+if (!navbarToo) skip("navbar collisions", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: navbarToo });
+  const box = (n) => navbarToo.document.querySelector(`[name="${n}"]`);
+  runAsync(async () => {
+    // Through the ordinary ask, not the loop directly: the one-list path
+    // answers first on this page, and used to answer with the dead link.
+    const r = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation mapping" });
+    check("the layer is reached despite the link outranking it", box("fim").checked, true);
+    check("and its neighbour is untouched", box("swe").checked, false);
+    ensure("the dead link did not end it",
+      /opened "Layers"/.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
+    ensure("and the card shows every step it took",
+      ((r.display || {}).rows || []).length >= 3, (r.display || {}).rows);
+  });
+}
+
 section("a goal it cannot reach stops");
 // The loop must not press forty buttons in the name of a goal that is not
 // there. A step has to either account for a word or reveal something new.
@@ -713,13 +755,17 @@ else {
   const bg = loadBackground({ page: conditional });
   runAsync(async () => {
     const r = await bg.__ask({ type: "smartAsk", instruction: "enable snow water equivalent" });
-    check("it is opened and then acted on", r.plannedBy, "opened-then-acted");
+    // Either route is correct - the general loop now reaches this before the
+    // one-door fallback does. What must not change is that it opened
+    // something and then acted, rather than reporting the closed door.
+    ensure("it is opened and then acted on",
+      ["opened-then-acted", "pursued"].includes(r.plannedBy), r.plannedBy);
     check("the right control is reached",
       conditional.document.getElementById("swe").checked, true);
     check("and the other one is left alone",
       conditional.document.getElementById("fi").checked, false);
     ensure("the card says what it opened",
-      /opened "Layers" first/.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
+      /opened "Layers"/.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
   });
 }
 
