@@ -120,6 +120,11 @@ function loadBackground({ onFetch, page } = {}) {
       reject(err); // a synchronous throw here fails every ask in the product
     }
   });
+  // Reach the multi-step loop directly. It is not a message type - it is the
+  // engine several message types will lean on - so it is tested as a function
+  // rather than through the panel's wording.
+  sandbox.__pursue = (instruction, opts) =>
+    sandbox.pursueGoal("GENERIC", instruction, opts || {});
   return sandbox;
 }
 

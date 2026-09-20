@@ -385,6 +385,113 @@ else {
   });
 }
 
+section("as many steps as it takes");
+// Three steps, which is the ordinary case and the one no hardcoded pair
+// could reach: press Layers, expand the Flood Inundation accordion, tick the
+// box inside it. Each stage exists only once the one before it has run, so
+// no single inventory can ever see the target.
+const threeDeep = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <button id="layers">Layers</button>
+  <div id="panel"></div>
+  <script>
+    document.getElementById("layers").addEventListener("click", () => {
+      if (document.getElementById("acc")) return;
+      document.getElementById("panel").innerHTML =
+        '<button id="acc" class="uk-accordion-title">Flood Inundation</button>' +
+        '<div id="inner" class="uk-accordion-content" style="display:none"></div>';
+      document.getElementById("acc").addEventListener("click", () => {
+        const inner = document.getElementById("inner");
+        inner.style.display = "block";
+        if (!inner.innerHTML) inner.innerHTML =
+          '<label><input type="checkbox" name="fim"> Flood Inundation Mapping</label>' +
+          '<label><input type="checkbox" name="swe"> Snow Water Equivalent</label>';
+      });
+    });
+  <\/script></body></html>`, { url: "https://water.noaa.gov/" });
+if (!threeDeep) skip("three-step goals", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: threeDeep });
+  const box = (n) => threeDeep.document.querySelector(`[name="${n}"]`);
+  runAsync(async () => {
+    // Nothing of the sort is on the page to begin with.
+    check("the target does not exist at the outset",
+      threeDeep.GENERIC.inventory({ includeHidden: true })
+        .controls.some((c) => /inundation mapping/i.test(c.label)), false);
+
+    const out = await bg.__pursue("enable flood inundation mapping");
+    ensure("it takes more than one step", out.steps.length >= 2, out.steps);
+    ensure("and opens its way in", out.opened.length >= 1, out.opened);
+    check("the control three levels down is reached", box("fim").checked, true);
+    check("and its neighbour is left alone", box("swe").checked, false);
+    ensure("it reports the goal as met", out.done === true, out);
+  });
+}
+
+section("a goal it cannot reach stops");
+// The loop must not press forty buttons in the name of a goal that is not
+// there. A step has to either account for a word or reveal something new.
+const noSuchThing = loadPage(`<!doctype html><html><body>
+  <button>Alpha</button><button>Beta</button><button>Gamma</button>
+  <button>Delta</button><button>Epsilon</button>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!noSuchThing) skip("bounded goals", "jsdom not installed");
+else {
+  const bg2 = loadBackground({ page: noSuchThing });
+  runAsync(async () => {
+    const out = await bg2.__pursue("enable flood inundation");
+    ensure("it gives up rather than flailing", out.steps.length <= 2, out.steps);
+    check("and does not claim success", out.done, false);
+    ensure("and says what it could not account for",
+      (out.unaccounted || []).length > 0, out.unaccounted);
+  });
+}
+
+section("what five federal sites actually offer");
+// Measured, not assumed: 96 actions derived from live HTML of waterdata.usgs.gov,
+// water.noaa.gov, drought.gov, mywaterway.epa.gov and weather.gov, each turned
+// back into the instruction a person would type and checked for whether it
+// resolves to the control it came from. These are the classes that failed.
+
+// A button is never the search box, however it is labelled. Both search
+// fallbacks took the first control in document order whose label merely
+// contained "search" - on mywaterway.epa.gov that is a button called "Open
+// search drawer". It got a click, the query went nowhere, and the card
+// reported a search.
+const epaShape = { url: "https://mywaterway.epa.gov/", controls: [
+  { kind: "button", type: "button", label: "Open search drawer", selector: "#drawer", confidence: "high" },
+  { kind: "input", type: "search", label: "Search", selector: "#search-box", confidence: "high" },
+  { kind: "button", type: "submit", label: "Search", selector: "#go", confidence: "high" },
+  { kind: "input", type: "hidden", label: "typeofsearch", selector: "#h1", confidence: "high" },
+  { kind: "input", type: "hidden", label: "areasearchurl", selector: "#h2", confidence: "high" },
+] };
+const epaPlan = (q) => {
+  const r = sb.planGenericTool(q, epaShape);
+  return r && r.calls ? `${r.calls[0].name} ${r.calls[0].args.selector || ""}`.trim() : null;
+};
+check("the query goes in the box, not into a button",
+  epaPlan("search for smith river"), "pageFill #search-box");
+// A hidden input cannot be clicked, typed into or seen. Five of them tied
+// with the real search box here, one tie-break from being "the control".
+check("a hidden input is not a candidate at all",
+  sb.scoreControl({ kind: "input", type: "hidden", label: "typeofsearch" }, ["typeofsearch"], "typeofsearch"), 0);
+
+// Controls named after verbs were unreachable. CONTROL_VERB lists close,
+// open, search, download, reset and clear, and the rule that an instruction
+// must match more than its own verb then rejected every control actually
+// called one of those. "Click Close" matched nothing on three of five sites.
+const verbNamed = (label, q) => {
+  const r = sb.planGenericTool(q, { url: "https://x/",
+    controls: [{ kind: "button", label, selector: "#c", confidence: "high" }] });
+  return r && r.calls ? r.calls[0].name : null;
+};
+check("a button called Close can be closed", verbNamed("Close", "click Close"), "pageClick");
+check("and one called Download can be downloaded", verbNamed("Download", "click Download"), "pageClick");
+check("and one called Reset can be reset", verbNamed("Reset", "click Reset"), "pageClick");
+// The case the rule exists for still holds: "Enabled" is not reached by
+// "enable" when the real subject goes unmatched.
+check("but Enabled is still not what enable snow depth means",
+  verbNamed("Enabled", "enable snow depth"), null);
+
 section("a link cannot be enabled");
 // Straight off the live page. "Flood Inundation Mapping" exists twice on
 // water.noaa.gov: as a navbar link and as the map layer itself. The link

@@ -2495,9 +2495,13 @@ function meaningfulWords(text) {
 // How well one control's label answers the instruction. Whole-phrase hits
 // score far above scattered word hits, so "year to date" prefers a control
 // actually labelled "Year to date" over one merely containing "date".
-function scoreControl(control, words, phrase) {
+function scoreControl(control, words, phrase, opts = {}) {
   const label = (control.label || "").toLowerCase();
   if (!label) return 0;
+  // A hidden input cannot be clicked, typed into or seen. Five of them sat in
+  // the candidate list on mywaterway.epa.gov, tied with the real search box,
+  // and one tie-break away from being "the control you asked for".
+  if (String(control.type || "").toLowerCase() === "hidden") return 0;
   let score = 0;
   if (phrase && label.includes(phrase)) score += 10 + phrase.length / 10;
   for (const w of words) {
@@ -2534,6 +2538,18 @@ function scoreControl(control, words, phrase) {
   if (score > 0 && (type === "checkbox" || type === "radio" || kind === "checkbox"
       || kind === "select" || (control.options && control.options.length))) {
     score += 3;
+  }
+
+  // The same principle one step along: where the instruction carries text to
+  // put somewhere, a control that can hold text beats one that cannot. On
+  // mywaterway.epa.gov "search for smith river" tied the search box against a
+  // submit button and a drawer-opening button, all on the word "search", and
+  // the tie went to whichever came first in the document - so the query was
+  // never typed anywhere. A button cannot be typed into, exactly as a link
+  // cannot be enabled.
+  if (score > 0 && opts.wantsText) {
+    if (TEXT_INPUT_KINDS.has(type) || kind === "textarea") score += 4;
+    else if (kind === "button" || type === "submit" || type === "button") score -= 1;
   }
   return score;
 }
@@ -2617,7 +2633,19 @@ function wordsCoveredBy(control, words) {
   // covered by the word "enable" and nothing else - alongside a nav link
   // called National Snow Analysis, and left "depth" unaccounted for.
   const subject = hit.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w));
-  return subject.length ? hit : [];
+  if (subject.length) return hit;
+
+  // Unless the control is genuinely called that. "Close", "Search",
+  // "Download", "Reset" and "Clear" are ordinary button names as well as
+  // verbs, and the rule above made every one of them permanently
+  // unreachable - "click Close" matched nothing on three of five federal
+  // sites tested. A label that IS the word is the strongest signal there is,
+  // not the weakest. Still strict: the whole label has to be that word, so
+  // "Enabled" is not reached by "enable", which is the case the rule exists
+  // for.
+  const bare = label.replace(/[^a-z0-9]+/g, " ").trim();
+  if (bare && hit.some((w) => w === bare)) return hit;
+  return [];
 }
 
 // Picks the option inside a <select> that the instruction named.
@@ -2742,12 +2770,37 @@ function sameControlRepeated(candidates) {
 // words it accounts for, and keep going while the remaining words still
 // describe something. Each control must earn its place with words no earlier
 // control already claimed.
+// Does this instruction carry text that has to go somewhere? Quoted text
+// always does; otherwise a search cue with something after it. Used to decide
+// whether a control that can hold text should outrank one that cannot.
+function carriesText(instruction) {
+  const t = String(instruction || "");
+  if (/["'“‘][^"'”’]{2,60}["'”’]/.test(t)) return true;
+  return /\b(?:search(?:\s+for)?|look\s*up|find|type|enter|query)\b[:\s]+\S{2,}/i.test(t);
+}
+
+// The thing you can actually type into. Both search fallbacks took the first
+// control in document order whose label merely contained the word "search" -
+// which on mywaterway.epa.gov is a button called "Open search drawer". It got
+// a click, the query went nowhere, and the card reported a search. A button
+// is never the box, however it is labelled: a real text field first, and one
+// that also says "search" ahead of one that does not.
+function findSearchBox(controls) {
+  const typeOf = (c) => String(c.type || c.kind || "").toLowerCase();
+  const textual = (c) => TEXT_INPUT_KINDS.has(typeOf(c)) || typeOf(c) === "textarea";
+  return controls.find((c) => textual(c) && /\bsearch\b/i.test(c.label || ""))
+    || controls.find((c) => typeOf(c) === "search")
+    || controls.find(textual)
+    || null;
+}
+
 function planGenericTool(instruction, inventory) {
   const controls = (inventory && inventory.controls) || [];
   if (!controls.length) return null;
 
   const allWords = meaningfulWords(instruction);
   if (!allWords.length) return null;
+  const wantsText = carriesText(instruction);
   const phrase = allWords.join(" ");
 
   const calls = [];
@@ -2758,7 +2811,7 @@ function planGenericTool(instruction, inventory) {
   while (remaining.length) {
     const scored = controls
       .filter((c) => !used.has(c.selector))
-      .map((c) => ({ control: c, score: scoreControl(c, remaining, remaining.join(" ")) }))
+      .map((c) => ({ control: c, score: scoreControl(c, remaining, remaining.join(" "), { wantsText }) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score);
     if (!scored.length) break;
@@ -2786,10 +2839,7 @@ function planGenericTool(instruction, inventory) {
         // asking which was meant is the wrong answer when the instruction
         // plainly says to search and the page has somewhere to type.
         const searching = /\b(search|look\s*up|find|query|enter|type)\b/i.test(instruction);
-        const box = searching && controls.find((c) => {
-          const t = String(c.type || c.kind || "").toLowerCase();
-          return t === "search" || TEXT_INPUT_KINDS.has(t) || /\bsearch\b/i.test(c.label || "");
-        });
+        const box = searching && findSearchBox(controls);
         if (box) {
           const call = toolCallFor(box, allWords, instruction);
           if (call) {
@@ -2871,10 +2921,7 @@ function planGenericTool(instruction, inventory) {
   if (!calls.length) {
     const searching = /\b(search|look\s*up|find|query|enter|type)\b/i.test(instruction);
     if (searching) {
-      const box = controls.find((c) => {
-        const t = String(c.type || c.kind || "").toLowerCase();
-        return t === "search" || /\bsearch\b/i.test(c.label || "");
-      }) || controls.find((c) => TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()));
+      const box = findSearchBox(controls);
       if (box) {
         const call = toolCallFor(box, allWords, instruction);
         if (call) {
@@ -4082,6 +4129,93 @@ function planManifestTool(instruction, routeGlobal) {
  * result passes through untouched - knowing less about a successful action is
  * better than refusing to perform it.
  */
+// One goal, as many steps as it takes.
+//
+// Everything multi-step here was a hardcoded pair: open a panel then act, or
+// click and if that did nothing try once more. Neither reaches three. And
+// three is the ordinary case on these sites - "enable flood inundation" on
+// water.noaa.gov is press Layers, expand the Flood Inundation accordion,
+// tick the box inside it - so the depth of the hardcoding was the limit on
+// what could be asked for.
+//
+// The loop is the same judgement applied repeatedly: look at the page as it
+// is now, plan the best step toward the words not yet accounted for, run it,
+// look again. What makes it terminate is progress - a step must either
+// account for a word or reveal controls that were not there before. A step
+// that does neither ends it, which is what stops a page of forty buttons
+// being pressed one after another in the name of a goal it cannot reach.
+//
+// Opening something is progress even though it accounts for no words. That
+// is the whole reason panels exist, and the reason a pure word-coverage loop
+// would stop at the closed door.
+async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
+  const steps = [];
+  const actedOn = new Set();
+  const subjectOf = (words) => words.filter((w) =>
+    w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
+
+  let remaining = subjectOf(meaningfulWords(instruction));
+  let lastCount = -1;
+
+  for (let step = 0; step < maxSteps; step++) {
+    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+      .catch(() => ({ ok: false }));
+    if (!inv.ok) break;
+    const all = (inv.result && inv.result.controls) || [];
+    const controls = all.filter((c) => !actedOn.has(c.selector));
+    const countNow = all.length;
+
+    const plan = planGenericTool(instruction, { ...inv.result, controls });
+    const call = plan && plan.calls && plan.calls[0];
+
+    if (!call) {
+      // Nothing matches as the page stands. Something may open onto it - and
+      // the door worth trying is the one named after what was asked for, not
+      // whichever comes first.
+      const doors = await invokeOnActiveTab("disclosures", [{ match: instruction }])
+        .catch(() => ({ ok: false }));
+      const door = ((doors.ok && doors.result && doors.result.disclosures) || [])
+        .find((d) => !actedOn.has(d.selector));
+      if (!door) break;
+      actedOn.add(door.selector);
+      const opened = await invokeOnActiveTab("openDisclosure", [door.selector]).catch(() => null);
+      forgetPageTools();
+      steps.push({ did: "opened", label: door.label,
+        appeared: (opened && opened.ok && opened.result.appeared) || 0 });
+      if (!opened || !opened.ok || !opened.result.appeared) break;  // no progress
+      continue;
+    }
+
+    const target = (plan.matched && plan.matched[0]) || {};
+    if (target.selector) actedOn.add(target.selector);
+    const ran = await runVerified(routeGlobal, call);
+    forgetPageTools();
+    const r = (ran && ran.result) || {};
+    const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+    steps.push({
+      did: call.name, label: r.control || target.label || "", ok: ran.ok !== false,
+      changed: moved, was: r.was, now: r.now,
+    });
+    if (ran.ok === false) break;
+
+    // What the instruction still has not accounted for.
+    const left = subjectOf(plan.unmatchedWords || []);
+    const progressed = moved || left.length < remaining.length || countNow !== lastCount;
+    remaining = left;
+    lastCount = countNow;
+    if (!remaining.length) break;      // said everything it set out to say
+    if (!progressed) break;            // going nowhere; stop rather than flail
+  }
+
+  const acted = steps.filter((st) => st.did !== "opened");
+  return {
+    steps,
+    done: !remaining.length && acted.some((st) => st.changed),
+    unaccounted: remaining,
+    opened: steps.filter((st) => st.did === "opened").map((st) => st.label),
+  };
+}
+
 async function runVerified(routeGlobal, toolCall) {
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   const result = await executeToolCall(routeGlobal, toolCall);
