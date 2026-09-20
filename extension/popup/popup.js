@@ -329,6 +329,28 @@ on("enable", "click", () => {
   });
 });
 
+// One grant instead of one per site. Registration already covers every
+// origin that has been granted - registerFeedCapture reads them all and
+// registers a document_start capture and a document_end publish across the
+// lot - so the only thing standing between this and every page on the web
+// was the granting, done one site at a time from this button.
+//
+// Which mattered more than convenience: tools are published at document_end
+// on every granted origin, so a site nobody thought to enable was a site
+// where modelContext stayed empty. "Works on any website" was true of the
+// machinery and false of the installation.
+//
+// Same gesture rule as above: request first, synchronously, nothing awaited
+// before it, or Chrome does not count the click.
+on("enableAll", "click", () => {
+  const status = document.getElementById("enableStatus");
+  chrome.permissions.request({ origins: ["https://*/*", "http://*/*"] }, (granted) => {
+    status.textContent = granted
+      ? "enabled everywhere - every page now publishes its own tools. Reload any open tab to pick it up."
+      : "permission denied - you can still enable one site at a time";
+  });
+});
+
 /* ---------------------------------------------------------------------------
  * The header badge and the example chips.
  *
