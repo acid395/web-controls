@@ -268,6 +268,14 @@ else {
   check("republishing adds nothing the second time", again.registered, 0);
   check("and the list does not grow", api.getTools().length, before);
 
+  // Chrome's own implementation names invocation executeTool and takes its
+  // arguments as a JSON string, not an object. We probed callTool, invokeTool
+  // and invoke, and passed an object - so against the real API this threw
+  // "no way to call" on a page that was in fact fully capable. A consumer
+  // written for real Chrome has to work against the polyfill unchanged.
+  ensure("the name Chrome actually uses is offered",
+    typeof api.executeTool === "function", Object.keys(api || {}));
+
   // The point of it: something that is not this extension can drive the page.
   runAsync(async () => {
     const tool = api.getTools().find((t) => /flood.?inundation/i.test(t.name));
@@ -276,6 +284,10 @@ else {
       await api.callTool(tool.name, { on: true });
       check("and calling it through the standard API works",
         mcpPage.document.querySelector('[name="fi"]').checked, true);
+      // The real spelling, with the real argument shape.
+      await api.executeTool(tool.name, JSON.stringify({ on: false }));
+      check("executeTool with JSON-string arguments works too",
+        mcpPage.document.querySelector('[name="fi"]').checked, false);
     }
     await api.callTool("readThisPage", {}).then(
       (r) => ensure("reading works through it too", !!r, r),

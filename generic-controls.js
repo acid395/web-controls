@@ -1531,12 +1531,20 @@
       // Both spellings: the drafts disagree and a consumer may try either.
       getTools: () => MCP_REGISTRY.map((t) => normaliseTool(t, t.declaredBy || "extension")),
       listTools: () => MCP_REGISTRY.map((t) => normaliseTool(t, t.declaredBy || "extension")),
+      // Chrome's implementation names this executeTool and takes arguments as
+      // a JSON string. A consumer written against the real thing has to work
+      // here unchanged, or the polyfill is a trap rather than a stand-in - so
+      // both names are offered and both argument shapes accepted.
+      async executeTool(name, args) {
+        return context.callTool(name, typeof args === "string"
+          ? (args ? JSON.parse(args) : {}) : (args || {}));
+      },
       async callTool(name, args) {
         const tool = MCP_REGISTRY.find((t) => t.name === name);
         if (!tool) throw new Error(`no tool named "${name}" on this page`);
         const run = tool.execute || tool.run || tool.callback;
         if (typeof run !== "function") throw new Error(`"${name}" has no implementation`);
-        return run(args || {});
+        return run(typeof args === "string" ? (args ? JSON.parse(args) : {}) : (args || {}));
       },
     };
     try {
@@ -1553,7 +1561,7 @@
     const api = mcpApi();
     if (!api) {
       return { available: false, tools: 0,
-        note: "this browser has no modelContext API - needs Edge 147+, or Chrome with the WebMCP origin trial" };
+        note: "this browser has no modelContext API - needs Edge 147+, or Chrome 146+ with chrome://flags/#enable-webmcp-testing" };
     }
     const found = mcpTools();
     return {
@@ -1604,12 +1612,22 @@
     if (mine && typeof mine.execute === "function") {
       return { ranVia: "local registry", result: await mine.execute(args || {}) };
     }
+    // executeTool first, and with a JSON string: that is what Chrome's own
+    // implementation takes behind chrome://flags/#enable-webmcp-testing. We
+    // probed only callTool/invokeTool/invoke and passed an object, so against
+    // the real API this threw "no way to call" on a page that was in fact
+    // fully capable - a failure that could only ever show up on the one
+    // browser configuration nobody here had tried.
+    if (typeof api.executeTool === "function") {
+      const out = await api.executeTool(name, JSON.stringify(args || {}));
+      return { ranVia: `${mcpApiName()}.executeTool`, result: out };
+    }
     for (const key of ["callTool", "invokeTool", "invoke"]) {
       if (typeof api[key] === "function") {
         return { ranVia: `${mcpApiName()}.${key}`, result: await api[key](name, args || {}) };
       }
     }
-    throw new Error(`navigator.modelContext offers no way to call "${name}" from page script`);
+    throw new Error(`${mcpApiName()} offers no way to call "${name}" from page script`);
   }
 
   // The other direction: hand this page's verified controls to any agent that
