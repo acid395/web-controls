@@ -2024,11 +2024,42 @@
 
   // Run one by name. The selector never left this file, so a caller - model
   // or agent - names the thing it wants and nothing else.
+  // A real implementation may hand back the MCP content envelope rather than
+  // whatever the tool returned. The runners report a control's own before and
+  // after, and verification depends on those fields surviving the trip.
+  const unwrapMcp = (out) => {
+    if (!out || typeof out !== "object" || !Array.isArray(out.content)) return out;
+    const text = out.content.map((c) => c && c.text).filter(Boolean).join("\n");
+    if (!text) return out;
+    try { return JSON.parse(text); } catch (e) { return { text }; }
+  };
+
   async function pageToolCall(name, args) {
     if (!PAGE_TOOLS.size) pageToolDescriptors();
     const tool = PAGE_TOOLS.get(name);
     if (!tool) {
       throw new Error(`no tool named "${name}" on this page (have: ${[...PAGE_TOOLS.keys()].slice(0, 8).join(", ")}...)`);
+    }
+
+    // Drive the page through the documented interface rather than around it.
+    // The tools were published to modelContext and then never used: every
+    // action went down a private path, so the protocol was a claim we made
+    // rather than one we relied on, and a fault in the published tools would
+    // have surfaced in somebody else's agent instead of in our own testing.
+    // Going through it means our own driving is the proof that anyone else's
+    // works.
+    //
+    // Never at the cost of the action itself. If the API is missing, has not
+    // been given this tool, or throws, the direct call still happens - a
+    // protocol that cannot be relied on is not a reason to fail a click.
+    const api = mcpApi();
+    if (api && typeof api.executeTool === "function"
+        && MCP_REGISTRY.some((t) => t.name === name)) {
+      try {
+        const out = unwrapMcp(await api.executeTool(name, JSON.stringify(args || {})));
+        if (out && typeof out === "object") return { ...out, ranVia: `${mcpApiName()}.executeTool` };
+        return out;
+      } catch (e) { /* fall through to the direct call */ }
     }
     return tool.execute(args || {});
   }

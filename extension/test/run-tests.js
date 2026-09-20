@@ -427,6 +427,62 @@ else {
   });
 }
 
+section("driven through the protocol, not around it");
+// The tools were published to modelContext and then never used: every action
+// went down a private path. The protocol was a claim rather than something
+// relied on, so a fault in the published tools would have surfaced in
+// somebody else's agent and never in our own testing. Our own driving going
+// through it is the only proof that anyone else's can.
+const throughMcp = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <label><input type="checkbox" name="fi"> Flood Inundation</label>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!throughMcp) skip("execution via modelContext", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: throughMcp });
+  runAsync(async () => {
+    throughMcp.GENERIC.mcpPublishControls({ max: 60 });
+    const tool = (throughMcp.GENERIC.pageTools().tools)
+      .find((t) => /flood.?inundation/i.test(t.name));
+    ensure("the layer is a published tool", !!tool, tool);
+    if (tool) {
+      const out = await throughMcp.GENERIC.pageToolCall(tool.name, { on: true });
+      ensure("it ran through modelContext, not the private path",
+        /modelContext\.executeTool/.test((out || {}).ranVia || ""), out);
+      check("and the control actually moved",
+        throughMcp.document.querySelector('[name="fi"]').checked, true);
+      // Verification depends on these surviving the round trip - a real
+      // implementation may wrap the return in the MCP content envelope.
+      ensure("the control's own before and after survive the trip",
+        out && typeof out.itChanged === "boolean" && /flood/i.test(out.control || ""), out);
+    }
+
+    // And the whole way up: an ordinary ask must still work, and still be
+    // verified, now that every action goes through the protocol.
+    const r = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+    ensure("an ordinary ask still reports the control's own change",
+      /Flood Inundation: false \u2192 true|already true/.test((r.display || {}).subtitle || ""),
+      (r.display || {}).subtitle);
+  });
+
+  // A protocol that cannot be relied on is not a reason to fail a click.
+  const brokenApi = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="fi"> Flood Inundation</label></body></html>`,
+    { url: "https://water.noaa.gov/" });
+  if (brokenApi) {
+    runAsync(async () => {
+      brokenApi.GENERIC.mcpPublishControls({ max: 60 });
+      const api = brokenApi.document.modelContext;
+      api.executeTool = async () => { throw new Error("the browser said no"); };
+      const tool = brokenApi.GENERIC.pageTools().tools.find((t) => /flood.?inundation/i.test(t.name));
+      if (tool) {
+        await brokenApi.GENERIC.pageToolCall(tool.name, { on: true });
+        check("a broken API falls back rather than failing the action",
+          brokenApi.document.querySelector('[name="fi"]').checked, true);
+      }
+    });
+  }
+}
+
 section("the navbar says it too");
 // The live shape, and the reason the loop had to survive a dead end. NWPS
 // carries "Flood Inundation Mapping" in its navbar and again as a map layer
