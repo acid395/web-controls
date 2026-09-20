@@ -1490,10 +1490,21 @@
 
   // A tool's shape differs slightly between the drafts, so it is normalised
   // to one thing before anyone upstream has to reason about it.
+  // Chrome hands inputSchema back as a JSON string, not an object - confirmed
+  // live, where `typeof inputSchema` came back "string". Everything upstream
+  // reads schema.properties to decide what arguments a tool takes, and on a
+  // string that is undefined: a site's own tools would have looked like they
+  // took no arguments at all, and been called with none.
+  const parseSchema = (raw) => {
+    if (!raw) return null;
+    if (typeof raw !== "string") return raw;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  };
   const normaliseTool = (t, origin) => ({
     name: String(t.name || ""),
     description: String(t.description || ""),
-    inputSchema: t.inputSchema || t.parameters || { type: "object", properties: {} },
+    inputSchema: parseSchema(t.inputSchema) || parseSchema(t.parameters)
+      || { type: "object", properties: {} },
     declaredBy: origin,
   });
 
@@ -1557,13 +1568,13 @@
     return { installed: true, api: "document.modelContext", polyfill: true };
   }
 
-  function mcpInfo() {
+  async function mcpInfo() {
     const api = mcpApi();
     if (!api) {
       return { available: false, tools: 0,
         note: "this browser has no modelContext API - needs Edge 147+, or Chrome 146+ with chrome://flags/#enable-webmcp-testing" };
     }
-    const found = mcpTools();
+    const found = await mcpTools();
     return {
       available: true,
       canRegister: typeof api.registerTool === "function",
@@ -1575,14 +1586,20 @@
     };
   }
 
-  function mcpTools() {
+  // Async because the real one is. Chrome's getTools() returns a promise, and
+  // this checked Array.isArray on it the instant it was called - never true
+  // of a promise - so every read fell through to the local registry. With the
+  // flag on and a genuine API present, "read from local registry" was what
+  // came back, and "declared by this site: 0" was an artifact of never having
+  // looked rather than a fact about the site.
+  async function mcpTools() {
     const api = mcpApi();
     if (!api) return { available: false, readFrom: null, tools: [] };
 
     // Whatever this draft exposes, in decreasing order of officialness.
     for (const [key, how] of [["getTools", "call"], ["listTools", "call"], ["tools", "value"]]) {
       try {
-        const got = how === "call" ? (typeof api[key] === "function" ? api[key]() : null) : api[key];
+        const got = how === "call" ? (typeof api[key] === "function" ? await api[key]() : null) : await api[key];
         if (Array.isArray(got) && got.length) {
           // Provenance matters downstream. Tools this extension registered
           // come back from the browser's own list looking exactly like the

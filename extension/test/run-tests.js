@@ -333,6 +333,12 @@ const realApi = loadPage(`<!doctype html><html><head><title>NWPS</title></head><
       inputSchema: { type: "object", properties: {} },
       execute: async () => ({ pong: true }),
     });
+    // Exactly what Chrome hands back: the schema as a JSON string.
+    document.modelContext.registerTool({
+      name: "stringSchema", description: "schema arrives as text",
+      inputSchema: JSON.stringify({ type: "object", properties: { gauge: { type: "string" } } }),
+      execute: async () => ({ ok: true }),
+    });
   <\/script></body></html>`, { url: "https://water.noaa.gov/" });
 if (!realApi) skip("a real modelContext", "jsdom not installed");
 else {
@@ -347,18 +353,32 @@ else {
     realApi.document.modelContext.getTools().map((t) => t.name).slice(0, 8));
 
   // The distinction that decides which source wins.
-  const listed = realApi.GENERIC.mcpTools();
-  const theirs = listed.tools.filter((t) => t.declaredBy === "page");
-  const mine = listed.tools.filter((t) => t.declaredBy === "extension");
-  ensure("the page's own tool is credited to the page",
-    theirs.some((t) => t.name === "ping"), theirs.map((t) => t.name));
-  ensure("and ours are still marked ours", mine.length > 0, mine.length);
-  ensure("read through the real API, not our registry",
-    /document\.modelContext/.test(listed.readFrom || ""), listed.readFrom);
-
   runAsync(async () => {
+    const listed = await realApi.GENERIC.mcpTools();
+    const theirs = listed.tools.filter((t) => t.declaredBy === "page");
+    const mine = listed.tools.filter((t) => t.declaredBy === "extension");
+    ensure("the page's own tool is credited to the page",
+      theirs.some((t) => t.name === "ping"), theirs.map((t) => t.name));
+    ensure("and ours are still marked ours", mine.length > 0, mine.length);
+    ensure("read through the real API, not our registry",
+      /document\.modelContext/.test(listed.readFrom || ""), listed.readFrom);
+  });
+
+  let listedTools = null;
+  runAsync(async () => {
+    listedTools = (await realApi.GENERIC.mcpTools()).tools;
     const out = await realApi.GENERIC.mcpCall("ping", {});
-    ensure("the page's own tool is callable through it",
+    // Chrome returns inputSchema as a JSON string. Upstream reads
+  // schema.properties to decide what arguments a tool takes, so left as a
+  // string a site's own tools look like they take none - and get called
+  // with none.
+  ensure("a string schema is parsed, not passed through",
+    (() => { const t = (listedTools || []).find((x) => x.name === "stringSchema");
+      return !!(t && t.inputSchema && t.inputSchema.properties
+        && t.inputSchema.properties.gauge); })(),
+    JSON.stringify((listedTools || []).find((x) => x.name === "stringSchema")));
+
+  ensure("the page's own tool is callable through it",
       out && out.result && out.result.pong === true, out);
     ensure("and it went through executeTool, not our own registry",
       /executeTool/.test((out || {}).ranVia || ""), (out || {}).ranVia);
@@ -2793,9 +2813,11 @@ else {
   // The API moved from navigator to document. navigator still works but warns
   // on every access, which filled the extension's error list with noise on
   // any page this touches repeatedly.
-  const bare = mcpPage.GENERIC.mcpInfo();
-  check("an unsupporting browser is reported plainly", bare.available, false);
-  ensure("and says what it would need", /modelContext/.test(bare.note), bare.note);
+  runAsync(async () => {
+    const bare = await mcpPage.GENERIC.mcpInfo();
+    check("an unsupporting browser is reported plainly", bare.available, false);
+    ensure("and says what it would need", /modelContext/.test(bare.note), bare.note);
+  });
 
   // Now a browser that has it.
   const registered = [];
@@ -2816,18 +2838,20 @@ else {
 
   // Registered tools are readable and runnable even where the API exposes
   // no way to enumerate or invoke from page script.
-  const listed = mcpPage.GENERIC.mcpTools();
+  runAsync(async () => {
+    const listed = await mcpPage.GENERIC.mcpTools();
+    check("what was registered can be read back", listed.tools.map((t) => t.name), ["pageClick"]);
+    check("and it says where it read them", listed.readFrom, "local registry");
 
-  check("what was registered can be read back", listed.tools.map((t) => t.name), ["pageClick"]);
-  check("and it says where it read them", listed.readFrom, "local registry");
+    // Provenance decides the cascade. Tools this extension publishes come back
+    // from the browser's own list looking exactly like the page's, and
+    // preferring those over reading the page would route our own functions
+    // through a longer pipe to reach themselves.
+    check("a published tool is marked as ours", listed.tools[0].declaredBy, "extension");
+    check("and is not counted as page-declared",
+      listed.tools.filter((t) => t.declaredBy === "page").length, 0);
+  });
 
-  // Provenance decides the cascade. Tools this extension publishes come back
-  // from the browser's own list looking exactly like the page's, and
-  // preferring those over reading the page would route our own functions
-  // through a longer pipe to reach themselves.
-  check("a published tool is marked as ours", listed.tools[0].declaredBy, "extension");
-  check("and is not counted as page-declared",
-    listed.tools.filter((t) => t.declaredBy === "page").length, 0);
 }
 
 // Same again, but where the browser exposes its own enumeration - the case
@@ -2846,10 +2870,12 @@ else {
     { name: "pageClick", fn: "click", argOrder: ["selector"], description: "Click something",
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } },
   ]);
-  const all = mixedPage.GENERIC.mcpTools();
-  check("both are visible", all.tools.length, 2);
-  check("the site's is the page's", all.tools.find((t) => t.name === "siteOwnTool").declaredBy, "page");
-  check("ours is still ours", all.tools.find((t) => t.name === "pageClick").declaredBy, "extension");
+  runAsync(async () => {
+    const all = await mixedPage.GENERIC.mcpTools();
+    check("both are visible", all.tools.length, 2);
+    check("the site's is the page's", all.tools.find((t) => t.name === "siteOwnTool").declaredBy, "page");
+    check("ours is still ours", all.tools.find((t) => t.name === "pageClick").declaredBy, "extension");
+  });
 }
 
 // Publishing the extension's own primitives gives an agent half a toolbox it
@@ -2917,14 +2943,17 @@ else {
   });
   docMcp.GENERIC.mcpRegister([{ name: "pageClick", fn: "click", argOrder: ["selector"], description: "Click",
     parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } }]);
-  const got = docMcp.GENERIC.mcpTools();
-  check("document.modelContext is used", got.readFrom, "document.modelContext.getTools");
-  check("and its tools are found", got.tools.length, 1);
-  // Preferred over the deprecated one when both exist.
-  Object.defineProperty(docMcp.navigator, "modelContext", {
-    configurable: true, value: { registerTool() {}, getTools: () => [{ name: "fromNavigator" }] },
+  runAsync(async () => {
+    const got = await docMcp.GENERIC.mcpTools();
+    check("document.modelContext is used", got.readFrom, "document.modelContext.getTools");
+    check("and its tools are found", got.tools.length, 1);
+    // Preferred over the deprecated one when both exist.
+    Object.defineProperty(docMcp.navigator, "modelContext", {
+      configurable: true, value: { registerTool() {}, getTools: () => [{ name: "fromNavigator" }] },
+    });
+    check("document wins over navigator",
+      (await docMcp.GENERIC.mcpTools()).readFrom, "document.modelContext.getTools");
   });
-  check("document wins over navigator", docMcp.GENERIC.mcpTools().readFrom, "document.modelContext.getTools");
 }
 
 // The older spelling still has to work, for a browser that only has that one.
@@ -2937,8 +2966,10 @@ else {
   });
   navMcp.GENERIC.mcpRegister([{ name: "pageClick", fn: "click", argOrder: ["selector"], description: "Click",
     parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } }]);
-  check("navigator alone still works",
-    navMcp.GENERIC.mcpTools().readFrom, "navigator.modelContext.getTools");
+  runAsync(async () => {
+    check("navigator alone still works",
+      (await navMcp.GENERIC.mcpTools()).readFrom, "navigator.modelContext.getTools");
+  });
 }
 
 // Reloading the extension must actually take effect on tabs that are already
