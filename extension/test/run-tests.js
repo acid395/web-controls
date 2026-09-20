@@ -308,6 +308,63 @@ else {
   }
 }
 
+section("standing aside for the real thing");
+// Chrome 146+ ships WebMCP behind chrome://flags/#enable-webmcp-testing, and
+// with it on, document.modelContext is genuinely there. Everything about the
+// polyfill then hinges on a branch that had no test at all: it must not
+// install over a real implementation, must register into it rather than
+// beside it, and must keep the page's own tools distinguishable from ours -
+// because a site's declarations are worth more than our inferences, and that
+// preference is the whole reason the distinction exists.
+const realApi = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <label><input type="checkbox" name="fi"> Flood Inundation</label>
+  <script>
+    const reg = [];
+    document.modelContext = {
+      registerTool: (d) => { reg.push(d); return { name: d.name }; },
+      getTools: () => reg.slice(),
+      executeTool: async (name, json) => {
+        const t = reg.find((x) => x.name === name);
+        return t.execute(json ? JSON.parse(json) : {});
+      },
+    };
+    document.modelContext.registerTool({
+      name: "ping", description: "the page's own tool",
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ pong: true }),
+    });
+  <\/script></body></html>`, { url: "https://water.noaa.gov/" });
+if (!realApi) skip("a real modelContext", "jsdom not installed");
+else {
+  const got = realApi.GENERIC.mcpInstall();
+  check("the polyfill does not install over a real one", got.installed, false);
+  ensure("and says why", /already has one/.test(got.why || ""), got);
+
+  const pub = realApi.GENERIC.mcpPublishControls({ max: 40 });
+  check("publishing reports it did not polyfill", !!pub.polyfilled, false);
+  ensure("and registers into the page's own API",
+    realApi.document.modelContext.getTools().some((t) => /flood.?inundation/i.test(t.name)),
+    realApi.document.modelContext.getTools().map((t) => t.name).slice(0, 8));
+
+  // The distinction that decides which source wins.
+  const listed = realApi.GENERIC.mcpTools();
+  const theirs = listed.tools.filter((t) => t.declaredBy === "page");
+  const mine = listed.tools.filter((t) => t.declaredBy === "extension");
+  ensure("the page's own tool is credited to the page",
+    theirs.some((t) => t.name === "ping"), theirs.map((t) => t.name));
+  ensure("and ours are still marked ours", mine.length > 0, mine.length);
+  ensure("read through the real API, not our registry",
+    /document\.modelContext/.test(listed.readFrom || ""), listed.readFrom);
+
+  runAsync(async () => {
+    const out = await realApi.GENERIC.mcpCall("ping", {});
+    ensure("the page's own tool is callable through it",
+      out && out.result && out.result.pong === true, out);
+    ensure("and it went through executeTool, not our own registry",
+      /executeTool/.test((out || {}).ranVia || ""), (out || {}).ranVia);
+  });
+}
+
 section("a link cannot be enabled");
 // Straight off the live page. "Flood Inundation Mapping" exists twice on
 // water.noaa.gov: as a navbar link and as the map layer itself. The link
