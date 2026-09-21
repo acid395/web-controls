@@ -76,8 +76,13 @@
   }
   .chip:hover { border-color: var(--accent); color: var(--accent); }
 
-  .enable-row { margin-top: 10px; display: none; }
-  .enable-row.show { display: block; }
+  /* Always shown. This row was hidden until the capabilities check reported
+     a problem, which is the one moment the check itself is least likely to
+     answer - so the only control that fixes an un-enabled site was invisible
+     exactly when it was needed, and three rounds of "I don't see Enable
+     everywhere" were the result. A row of buttons nobody needs costs a
+     little space; a dead end costs the whole panel. */
+  .enable-row { margin-top: 10px; display: block; }
   button.secondary {
     width: 100%; padding: 7px; cursor: pointer;
     border: 1px solid var(--line); border-radius: 7px;
