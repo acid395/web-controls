@@ -2636,6 +2636,41 @@ function controlTypoBudget(word) {
   return word.length >= 9 ? 2 : 1;
 }
 
+// Which concepts a word belongs to, from the domain vocabulary. Built once,
+// lazily, because ENV_VOCAB loads alongside this file.
+let SYNONYM_INDEX = null;
+let SYNONYM_PHRASES = null;
+function synonymGroupsFor(word) {
+  if (!SYNONYM_INDEX) {
+    SYNONYM_INDEX = new Map();
+    const add = (token, group) => {
+      const t = String(token || "").toLowerCase().trim();
+      // Single letters and two-letter codes belong to too much to be useful.
+      if (t.length < 3) return;
+      if (!SYNONYM_INDEX.has(t)) SYNONYM_INDEX.set(t, new Set());
+      SYNONYM_INDEX.get(t).add(group);
+    };
+    try {
+      const v = (typeof ENV_VOCAB !== "undefined" && ENV_VOCAB) || {};
+      SYNONYM_PHRASES = new Map();
+      for (const [group, words] of Object.entries(v.parameters || {})) {
+        for (const phrase of words || []) {
+          const t = String(phrase).toLowerCase().trim();
+          // Single words go in the index. A multi-word synonym is kept whole
+          // and looked for in the text as a phrase - splitting it would make
+          // "water" alone stand for water temperature, which it does not.
+          if (!/\s/.test(t)) add(t, group);
+          else {
+            if (!SYNONYM_PHRASES.has(group)) SYNONYM_PHRASES.set(group, []);
+            SYNONYM_PHRASES.get(group).push(t);
+          }
+        }
+      }
+    } catch (e) { /* no vocabulary loaded; matching carries on without it */ }
+  }
+  return SYNONYM_INDEX.get(String(word || "").toLowerCase()) || new Set();
+}
+
 function wordMatchesText(rawWord, rawText) {
   const word = foldAccents(rawWord).toLowerCase();
   const text = foldAccents(rawText).toLowerCase();
@@ -2678,6 +2713,28 @@ function wordMatchesText(rawWord, rawText) {
       if (allowed && editDistance(window, word) <= allowed) return "fuzzy";
     }
     return false;
+  }
+
+  // The domain's own words for the same thing. ENV_VOCAB has held these
+  // since the beginning - discharge is streamflow is flow is cfs, gage height
+  // is stage - and nothing matching a control ever consulted it, so a page
+  // saying "Discharge" was unreachable to anyone who said "flow". Ranked as
+  // a fuzzy hit, never as an exact one, so a page that uses the word you
+  // typed always wins over one that uses a synonym of it.
+  const groups = synonymGroupsFor(word);
+  if (groups.size) {
+    for (const token of String(text).split(/[^a-z0-9]+/)) {
+      if (!token || token === word) continue;
+      for (const g of synonymGroupsFor(token)) if (groups.has(g)) return "fuzzy";
+    }
+    // And the multi-word names of the same concept: "stage" is gage height,
+    // "swe" is snow water equivalent, "conductivity" is specific conductance.
+    const flat = String(text).replace(/[^a-z0-9]+/g, " ").trim();
+    for (const g of groups) {
+      for (const phrase of (SYNONYM_PHRASES && SYNONYM_PHRASES.get(g)) || []) {
+        if (flat.includes(phrase)) return "fuzzy";
+      }
+    }
   }
 
   for (const token of String(text).split(/[^a-z0-9]+/)) {

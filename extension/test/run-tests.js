@@ -682,6 +682,26 @@ else {
   });
 }
 
+section("the domain's own words for the same thing");
+// ENV_VOCAB has held these since the beginning - discharge is streamflow is
+// flow is cfs, gage height is stage - and nothing that matched a control
+// ever consulted it. A page saying "Discharge" was unreachable to anyone who
+// said "flow", which is most people.
+check("a single-word synonym reaches the label", sb.wordMatchesText("flow", "Discharge"), "fuzzy");
+check("and so does an abbreviation", sb.wordMatchesText("swe", "Snow Water Equivalent"), "fuzzy");
+// Multi-word names of the same concept, looked for whole: splitting them
+// would make "water" alone stand for water temperature, which it does not.
+check("a multi-word name is matched whole", sb.wordMatchesText("stage", "Gage height"), "fuzzy");
+check("but an unrelated label is still unrelated", sb.wordMatchesText("flow", "Snow Depth"), false);
+// Ranked below a literal match, so a page using the word you typed always
+// wins over one using a synonym of it.
+const literalVsSynonym = { url: "https://waterdata.usgs.gov/", controls: [
+  { kind: "a", label: "Discharge", selector: "#disch", confidence: "high" },
+  { kind: "a", label: "Flow duration", selector: "#flow", confidence: "high" },
+] };
+check("the literal word beats the synonym",
+  sb.planGenericTool("click flow", literalVsSynonym).calls[0].args.selector, "#flow");
+
 section("an empty panel is not a failed search");
 // Measured on water.noaa.gov through Chrome itself: the Flood Inundation
 // accordion opens - aria-expanded goes true, the li gains uk-open, the panel
