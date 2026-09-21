@@ -5572,16 +5572,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       recordAsk(askId, msg.instruction, { status: "running" });
 
+      // Every answer carries a card. "Enable snow depth" came back as the
+      // bare word "done" and nothing else - no title, no rows, no reason -
+      // which is the least useful thing this can say and indistinguishable
+      // from a success. Several paths answer without building a display, and
+      // rather than find each one, none of them are allowed to.
+      const cardFor = (res) => {
+        const inner = res.display || (res.result && res.result.display);
+        if (inner) return inner;
+        const r = res.result || {};
+        let title = "Done";
+        try {
+          title = res.error ? "That did not work"
+            : friendlyToolName((res.toolCall && res.toolCall.name) || res.plannedBy || "Done");
+        } catch (e) { /* a card is not worth a crash */ }
+        return {
+          title: String(title).slice(0, 60),
+          subtitle: res.error ? String(res.error).slice(0, 140)
+            : res.modelReply ? String(res.modelReply).slice(0, 140)
+            : typeof r.itChanged === "boolean"
+              ? `${r.control}: ${r.was} \u2192 ${r.now}`
+              : "it ran, but nothing here says what changed",
+          stats: [], rows: [],
+          note: res.plannedBy ? `answered by ${res.plannedBy}` : "",
+          // Some paths answer before the route has been worked out, and a
+          // card is not worth a crash.
+          source: (() => { try { return (route && route.global) || "this page"; }
+            catch (e) { return "this page"; } })(),
+        };
+      };
       const respond = (res) => {
+        const display = cardFor(res);
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
         recordAsk(askId, msg.instruction, {
           status: res.ok === false ? "error" : "done",
           plannedBy: res.plannedBy,
-          display: res.display || (res.result && res.result.display),
+          display,
           error: res.error,
           hint: res.hint,
         });
-        sendResponse(res);
+        sendResponse({ ...res, display });
       };
       const stopKeepAlive = keepAlive();
       try {

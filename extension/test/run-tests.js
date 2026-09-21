@@ -591,6 +591,64 @@ else {
     inv.controls.length);
 }
 
+section("every answer carries a card");
+// "Enable snow depth" came back as the bare word "done" and nothing else -
+// no title, no rows, no reason - which is the least useful thing this can
+// say and reads exactly like a success. Several paths answered without
+// building a display; rather than find each one, none of them may.
+const bareAnswer = loadPage("<!doctype html><html><body><p>nothing to act on</p></body></html>",
+  { url: "https://water.noaa.gov/" });
+if (!bareAnswer) skip("card guarantee", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: bareAnswer });
+  runAsync(async () => {
+    for (const q of ["enable snow depth", "enable flood inundation", "click something that is not here"]) {
+      const r = await bg.__ask({ type: "smartAsk", instruction: q });
+      const d = (r || {}).display;
+      ensure(`"${q}" answers with a card`, !!(d && d.title), r);
+      ensure(`"${q}" says something beyond the title`,
+        !!(d && (d.subtitle || (d.rows || []).length || d.note)), d);
+      ensure(`"${q}" never answers with the bare word done`,
+        !(d && /^done$/i.test(String(d.title || "").trim()) && !d.subtitle), d);
+    }
+  });
+}
+
+section("a layer behind a panel named after it");
+// The other half of the live report. "Snow Depth" is not in the document at
+// all - it lives inside the National Snow Analysis accordion - and the only
+// things matching "snow" are two controls of that name, one of them a navbar
+// link that would leave the page instead of opening anything.
+const snowPage = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-navbar-nav"><li><a href="/nsa">National Snow Analysis</a></li></ul>
+  <ul class="uk-accordion">
+    <li><button id="uk-accordion-10" class="uk-accordion-title">National Snow Analysis</button>
+      <div id="snow" class="uk-accordion-content" style="display:none"></div></li></ul>
+  <script>
+    document.getElementById("uk-accordion-10").addEventListener("click", () => {
+      const c = document.getElementById("snow");
+      c.style.display = "block";
+      if (!c.innerHTML) c.innerHTML =
+        '<label><input type="checkbox" name="sd"> Snow Depth</label>' +
+        '<label><input type="checkbox" name="swe"> Snow Water Equivalent</label>';
+    });
+  <\/script></body></html>`;
+for (const [q, want, other] of [["enable snow depth", "sd", "swe"],
+                                ["enable snow water equivalent", "swe", "sd"]]) {
+  const page = loadPage(snowPage, { url: "https://water.noaa.gov/" });
+  if (!page) { skip(`snow: ${q}`, "jsdom not installed"); continue; }
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: q });
+    check(`"${q}" reaches the layer inside the panel`,
+      !!(page.document.querySelector(`[name="${want}"]`) || {}).checked, true);
+    check(`"${q}" leaves its neighbour alone`,
+      !!(page.document.querySelector(`[name="${other}"]`) || {}).checked, false);
+    // The navbar copy of the panel's name would have left the page.
+    check(`"${q}" does not navigate away`, page.location.pathname, "/");
+  });
+}
+
 section("a tie is not an empty page");
 // Live on water.noaa.gov the loop's first move was to go door-hunting, and
 // the card said "revealed 0 / never accounted for: flood, inundation" - on a
