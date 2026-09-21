@@ -5735,9 +5735,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Reset - a step from the middle of the sentence, chosen alone.
           // Falling through to "do part of it" is worse than the length.
           if (parts.length > 1 && parts.length <= 8) {
-            const plans = parts.map((part) => ({
-              part,
-              call: planManifestTool(part, route.global) || (route.global === "USGS" ? planTool(part) : null),
+            // "Search fremont, ca, usa and click on it" split correctly and
+            // then failed on the second half, because "click on it" is three
+            // stop words and names nothing at all. A step with nothing of its
+            // own to name is about the thing the step before it named - that
+            // is what "it" is for, and carrying the subject forward is the
+            // whole of what a person means by it.
+            let carried = "";
+            const resolved = parts.map((part) => {
+              const own = meaningfulWords(part)
+                .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
+              if (own.length) { carried = own.join(" "); return part; }
+              return carried ? `${part} ${carried}` : part;
+            });
+            const plans = resolved.map((text, i) => ({
+              part: parts[i],
+              text,
+              call: planManifestTool(text, route.global) || (route.global === "USGS" ? planTool(text) : null),
             }));
             // Every part used to need a hand-written tool before any of them
             // ran, so "click the monitoring location and then click 30 day"
@@ -5750,7 +5764,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // same machinery a single instruction gets, multi-step and all.
             if (plans.length > 1) {
               const steps = [];
-              for (const { part, call } of plans) {
+              for (const { part, text, call } of plans) {
                 let result;
                 // The page's own controls first, as everywhere else. This
                 // path asked the manifest first, so "search station for smith
@@ -5759,7 +5773,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // right answer, a fill of the search box, all along. The main
                 // route has preferred the page since the one-list picker
                 // landed; the sequence never did.
-                const own = await pursueGoal(route.global, part).catch(() => null);
+                const own = await pursueGoal(route.global, text).catch(() => null);
                 const ownActed = ((own && own.steps) || [])
                   .filter((st) => st.did !== "opened" && st.ok);
                 // Confirmed, or merely done-but-unverifiable: either way the
@@ -5796,7 +5810,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // Only finding nothing to press is a failure.
                   result = chased && chased.done ? { ok: true, verified: { changed: true } }
                     : ran.length ? { ok: true, unconfirmed: true }
-                    : { ok: false, error: `nothing on this page matched "${part}"` };
+                    : { ok: false, error: `nothing on this page matched "${text}"` };
                 }
                 const changed = result.verified ? result.verified.changed : undefined;
                 steps.push({ part, ok: result.ok !== false, changed,

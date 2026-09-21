@@ -682,6 +682,39 @@ else {
   });
 }
 
+section("it means the thing you just named");
+// "Search fremont, ca, usa and click on it" split correctly and then failed
+// on the second half: "click on it" is three stop words and names nothing at
+// all. A step with nothing of its own to name is about the thing the step
+// before it named - that is what "it" is for.
+const refPage = `<!doctype html><html><body>
+  <input id="q" type="search" placeholder="Search location">
+  <ul><li><a href="/fremont-ca" id="fr">Fremont, CA, USA</a></li>
+      <li><a href="/fremont-ne" id="ne">Fremont, NE, USA</a></li></ul>
+  <p id="log"></p>
+  <script>
+    document.getElementById("fr").addEventListener("click", () => {
+      document.getElementById("log").textContent = "ca"; });
+    document.getElementById("ne").addEventListener("click", () => {
+      document.getElementById("log").textContent = "ne"; });
+  <\/script></body></html>`;
+const refP = loadPage(refPage, { url: "https://water.noaa.gov/" });
+if (!refP) skip("pronoun steps", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: refP });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk",
+      instruction: "search fremont, ca, usa and click on it" });
+    const rows = (r.display || {}).rows || [];
+    check("both steps run", rows.length, 2);
+    ensure("neither is reported as matching nothing",
+      rows.every((x) => x.value !== "failed"), rows);
+    // And the right one of two near-identical names.
+    check("it means the place just searched for",
+      (refP.document.getElementById("log") || {}).textContent, "ca");
+  });
+}
+
 section("a door has to be a lead");
 // With the layer panel already open and nothing inside it matching, the loop
 // went on to press "Shortcuts" and then "Forecasts and Outlooks" - neither
