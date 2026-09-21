@@ -682,6 +682,31 @@ else {
   });
 }
 
+section("a door has to be a lead");
+// With the layer panel already open and nothing inside it matching, the loop
+// went on to press "Shortcuts" and then "Forecasts and Outlooks" - neither
+// having anything to do with flood inundation, both revealing nothing, both
+// real presses on somebody's page. A door that shares no word with the
+// instruction and is not named for holding controls is not a lead, it is
+// just the next thing in a list.
+const manyDoors = loadPage(`<!doctype html><html><body>
+  <button aria-expanded="false">Shortcuts</button>
+  <button aria-expanded="false">Forecasts and Outlooks</button>
+  <button aria-expanded="false">Data and APIs</button>
+  <button aria-expanded="false">Layers</button>
+  <button aria-expanded="false">Snow Analysis</button>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!manyDoors) skip("door relevance", "jsdom not installed");
+else {
+  const doors = manyDoors.GENERIC.disclosures({ match: "enable snow depth" }).disclosures;
+  const lead = doors.filter((d) => d.related || d.generic).map((d) => d.label);
+  ensure("the panel named after the subject is a lead",
+    lead.some((l) => /snow analysis/i.test(l)), lead);
+  ensure("so is one named for holding controls", lead.some((l) => /layers/i.test(l)), lead);
+  ensure("an unrelated heading is not",
+    !lead.some((l) => /shortcuts|forecasts and outlooks|data and apis/i.test(l)), lead);
+}
+
 section("pursuing a state never presses a link");
 // The live page sent someone to a different site. Water.noaa.gov repeats its
 // layer names in the navbar, so the loop - striking off each control that

@@ -4293,8 +4293,14 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       // whichever comes first.
       const doors = await invokeOnActiveTab("disclosures", [{ match: instruction }])
         .catch(() => ({ ok: false }));
+      // Only a door named after what was asked for. With the layer panel
+      // already open and nothing inside it matching, this went on to press
+      // "Shortcuts" and then "Forecasts and Outlooks" - neither of which has
+      // anything to do with flood inundation, both revealing nothing, both
+      // real presses on somebody's page. A door that shares no word with the
+      // instruction is not a lead; it is just the next thing in a list.
       const door = ((doors.ok && doors.result && doors.result.disclosures) || [])
-        .find((d) => !actedOn.has(d.selector));
+        .find((d) => (d.related || d.generic) && !actedOn.has(d.selector));
       if (!door) break;
       actedOn.add(door.selector);
       const opened = await invokeOnActiveTab("openDisclosure", [door.selector]).catch(() => null);
@@ -5805,7 +5811,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   title: `${steps.length} step${steps.length === 1 ? "" : "s"}`,
                   subtitle: failed
                     ? `stopped: ${String(failed.error || "the first step failed").slice(0, 80)}`
-                    : "done in order",
+                    : steps.some((st) => st.unconfirmed)
+                      // "Done in order" over two steps neither of which could
+                      // be checked is a claim the run cannot support: the
+                      // precipitation layer was reported done and was not on.
+                      ? `ran in order - ${steps.filter((st) => st.unconfirmed).length} of `
+                        + `${steps.length} could not be checked`
+                      : "done in order",
                   stats: [],
                   // A bare "failed" tells you nothing about what to do next.
                   // The page's own error usually says exactly what is wrong -

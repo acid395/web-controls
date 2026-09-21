@@ -2048,6 +2048,11 @@
         // But one named after what was actually asked for beats both: on a
         // page of forty panels, the three tried at random are never the one.
         related,
+        // Named for holding controls rather than for its own subject -
+        // "Layers", "Filters", "Options". Worth opening for anything,
+        // where "Shortcuts" or "Forecasts and Outlooks" is worth opening
+        // only if the instruction mentions it.
+        generic: !!(label && NAMES.test(label)),
       });
     }
     const rank = (d) => (d.related ? 2 : 0) + (d.stated ? 1 : 0);
