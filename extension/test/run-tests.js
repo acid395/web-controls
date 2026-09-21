@@ -591,6 +591,49 @@ else {
     inv.controls.length);
 }
 
+section("a tie is not an empty page");
+// Live on water.noaa.gov the loop's first move was to go door-hunting, and
+// the card said "revealed 0 / never accounted for: flood, inundation" - on a
+// page where the accordion named Flood Inundation scored 25.6. The plan had
+// come back ambiguous: "Flood Inundation" the accordion against "Flood
+// Inundation Mapping" the navbar link, a genuine tie by label. A tie carries
+// candidates but no calls, and that read in here as "nothing matches".
+//
+// Asking is the outer path's job. In here the method is to act and check:
+// try the best of them, and if it moves nothing, strike it off and take the
+// next.
+const tied = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-navbar-nav"><li><a href="/b">Flood Inundation Mapping</a></li></ul>
+  <ul class="uk-accordion">
+    <li><button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div id="fi" class="uk-accordion-content" style="display:none"></div></li></ul>
+  <script>
+    document.getElementById("uk-accordion-9").addEventListener("click", () => {
+      const c = document.getElementById("fi");
+      c.style.display = "block";
+      if (!c.innerHTML) c.innerHTML =
+        '<label><input type="checkbox" name="fim"> Flood Inundation Mapping</label>';
+    });
+  <\/script></body></html>`;
+const tiedPage = loadPage(tied, { url: "https://water.noaa.gov/" });
+if (!tiedPage) skip("ambiguous ties in the loop", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: tiedPage });
+  bg.planManifestTool = () => null;
+  runAsync(async () => {
+    const out = await bg.pursueGoal("NOAA", "enable flood inundation");
+    ensure("the tie is acted on rather than abandoned",
+      out.steps.some((st) => st.did !== "opened"), out.steps);
+    check("the layer behind the tie is reached",
+      !!(tiedPage.document.querySelector('[name="fim"]') || {}).checked, true);
+    // Opening the accordion changes the page and accounts for every word in
+    // the instruction, so the loop used to stop there and call it done.
+    check("and opening the panel alone is not called done", out.done, true);
+    ensure("with the checkbox, not the panel, as the proof",
+      out.steps.some((st) => st.proven && /page(Check|PickRadio)/.test(st.did)), out.steps);
+  });
+}
+
 section("without any code written for the site");
 // The thesis, tested directly. Strip every hand-written NOAA tool and the
 // page must still work - otherwise the success is borrowed from prebuilt

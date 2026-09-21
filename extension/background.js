@@ -4215,6 +4215,8 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
   let remaining = subjectOf(meaningfulWords(instruction));
   let lastCount = -1;
   let deadEnds = 0;
+  const stateCommand = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|off)|switch\s+(on|off))\b/i
+    .test(instruction);
 
   for (let step = 0; step < maxSteps; step++) {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
@@ -4225,7 +4227,22 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
     const countNow = all.length;
 
     const plan = planGenericTool(instruction, { ...inv.result, controls });
-    const call = plan && plan.calls && plan.calls[0];
+    // An ambiguous plan is not an empty one. Live on water.noaa.gov the loop
+    // went straight to door-hunting on its first move, because "Flood
+    // Inundation" the accordion and "Flood Inundation Mapping" the navbar
+    // link are a genuine tie by label - and a tie carries candidates but no
+    // calls, which read here as "nothing on this page matches".
+    //
+    // Asking is the outer path's job. In here the whole method is to act and
+    // check: try the best of them, and if it moves nothing the next pass
+    // strikes it off and takes the next. That settles a tie better than any
+    // amount of scoring, and it is the reason this loop exists.
+    let call = plan && plan.calls && plan.calls[0];
+    let ambiguousPick = null;
+    if (!call && plan && plan.ambiguous && plan.ambiguous.length) {
+      ambiguousPick = plan.ambiguous.find((c) => c.call && !actedOn.has(c.selector)) || null;
+      if (ambiguousPick) call = ambiguousPick.call;
+    }
 
     if (!call) {
       // Nothing matches as the page stands. Something may open onto it - and
@@ -4239,21 +4256,42 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
       actedOn.add(door.selector);
       const opened = await invokeOnActiveTab("openDisclosure", [door.selector]).catch(() => null);
       forgetPageTools();
-      steps.push({ did: "opened", label: door.label,
-        appeared: (opened && opened.ok && opened.result.appeared) || 0 });
-      if (!opened || !opened.ok || !opened.result.appeared) break;  // no progress
+      const appeared = (opened && opened.ok && opened.result.appeared) || 0;
+      steps.push({ did: "opened", label: door.label, appeared });
+      if (!opened || !opened.ok) break;
+      // A door that adds no controls has not necessarily failed. The panel
+      // may hold things already counted - every pass reads hidden controls
+      // too - or may render a moment later than the check. Live, the first
+      // door opened and reported nothing revealed, and the loop stopped
+      // there rather than looking again. Looking again is cheap; the budget
+      // and the acted-on set are what stop it going round forever.
+      if (!appeared && step >= maxSteps - 2) break;
       continue;
     }
 
-    const target = (plan.matched && plan.matched[0]) || {};
+    const target = (plan.matched && plan.matched[0]) || ambiguousPick || {};
     if (target.selector) actedOn.add(target.selector);
     const ran = await runVerified(routeGlobal, call);
     forgetPageTools();
     const r = (ran && ran.result) || {};
     const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+    // Proof, as distinct from motion. Asked to enable something, only that
+    // control's own before and after shows it happened - a click that opened
+    // a panel moved the page and proved nothing about the layer inside it.
+    // A pageCheck, a radio pick or a dropdown choice sets state by
+    // construction: if the page moved, something was switched. Only a bare
+    // click is ambiguous about what it accomplished, and only those need the
+    // control's own before and after to settle it. The derived tools report
+    // that state; these raw primitives do not, so the tool's own nature
+    // stands in for it.
+    const SETS_STATE = /^page(Check|PickRadio|SelectOption|Fill)$/.test(call.name);
+    const proven = r.itChanged === true ? true
+      : r.itChanged === false ? false
+      : SETS_STATE ? moved
+      : !stateCommand && moved;
     steps.push({
       did: call.name, label: r.control || target.label || "", ok: ran.ok !== false,
-      changed: moved, was: r.was, now: r.now,
+      changed: moved, proven, was: r.was, now: r.now,
     });
     if (ran.ok === false) break;
 
@@ -4261,7 +4299,15 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
     const left = subjectOf(plan.unmatchedWords || []);
     remaining = left;
     lastCount = countNow;
-    if (moved) { if (!remaining.length) break; continue; }
+
+    // Opening a panel changes the page and accounts for the words, because
+    // the panel is named after what is inside it - so the loop declared the
+    // job done having switched nothing on. The same mistake the outer path
+    // made, living separately in here. Asked to enable something, only that
+    // control's own before and after is proof; a click with no state of its
+    // own is progress, not completion.
+    if (proven) { if (!remaining.length) break; continue; }
+    if (moved) continue;   // it did something, just not the thing asked for
 
     // It acted and nothing moved. On these sites that usually means a nav
     // link named after the thing rather than the thing - water.noaa.gov has
@@ -4277,7 +4323,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
   const acted = steps.filter((st) => st.did !== "opened");
   return {
     steps,
-    done: !remaining.length && acted.some((st) => st.changed),
+    done: !remaining.length && acted.some((st) => st.proven),
     unaccounted: remaining,
     opened: steps.filter((st) => st.did === "opened").map((st) => st.label),
   };
