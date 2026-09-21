@@ -36,6 +36,53 @@ import { CreateMLCEngine } from "./vendor/web-llm.js";
 // at all. Ask uses the JSON path; llmPlan stays as a debug comparison.
 const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 
+/* @testable-start buildStepPrompt */
+// The page, what has happened, and one question: what next. Kept small on
+// purpose - every token here is prefill on a 3B model, and prefill is what
+// made the 8B path unusable. Controls are numbered because a number is one
+// token and a name is many, and because a small model gets numbers right.
+function buildStepPrompt({ goal, controls = [], history = [], observation, note }) {
+  const list = controls.map((c, i) => {
+    const kind = c.type || c.kind || "";
+    const opts = (c.options || []).length
+      ? ` [${c.options.map((o) => o.text || o.value).slice(0, 8).join("|")}]` : "";
+    const state = typeof c.checked === "boolean" ? (c.checked ? " (on)" : " (off)") : "";
+    return `${i}. ${String(c.label || "").slice(0, 46)} <${kind}>${state}${opts}`;
+  }).join("\n");
+
+  const done = history.length
+    ? history.map((h, i) => `${i + 1}. ${h.did}${h.outcome ? ` -> ${h.outcome}` : ""}`).join("\n")
+    : "nothing yet";
+
+  return [
+    "You are operating a web page to carry out a request. Reply with JSON only.",
+    "",
+    `Request: ${goal}`,
+    "",
+    "Controls on the page:",
+    list || "(none found)",
+    "",
+    "Steps already taken:",
+    done,
+    observation ? `\nWhat the page shows now:\n${String(observation).slice(0, 1200)}` : "",
+    note ? `\nNote: ${note}` : "",
+    "",
+    "Choose ONE next action:",
+    '  {"n": <control number>, "do": "click"}',
+    '  {"n": <control number>, "do": "check", "on": true}',
+    '  {"n": <control number>, "do": "select", "value": "<option text>"}',
+    '  {"n": <control number>, "do": "type", "value": "<text>"}',
+    '  {"do": "read"}                      to look at the page before deciding',
+    '  {"do": "finish", "answer": "<answer or summary>"}',
+    "",
+    "Pick the control whose label matches what was asked. Use read when you",
+    "need to see values before answering. Use finish when the request is",
+    "carried out, or when nothing on this page can carry it out.",
+    "Reply with one JSON object and nothing else.",
+  ].filter(Boolean).join("\n");
+}
+/* @testable-end buildStepPrompt */
+
 /* @testable-start firstJsonObject */
 // Small models do not reliably obey "JSON only" - they add a preamble, wrap
 // the object in ``` fences, or continue talking afterwards. Taking the first
@@ -166,6 +213,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Tool-calling by prompting rather than by API. Works on any model, which
   // is the point: the native path forces an 8B download that most machines
   // cannot run usefully.
+  /* llmStep - one decision, given the page as it is now and what has already
+   * been done. The loop itself lives in background.js, because deciding and
+   * acting are different jobs: this document can reason and cannot touch a
+   * page, and the service worker can touch a page and should not be where
+   * prompts are built.
+   *
+   * Controls are numbered and chosen by number. A 3B model asked to emit
+   * `toggleFloodInundationMapping` exactly will sometimes emit something
+   * close to it, and close is useless; asked for 14 it says 14. The number
+   * is also far cheaper than the name, and on a page with a hundred and sixty
+   * controls every token of the list is prefill.
+   */
+  if (msg.type === "llmStep") {
+    (async () => {
+      try {
+        if (!("gpu" in navigator)) {
+          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
+        }
+        const engine = await getEngine((report) => {
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+        });
+        const prompt = buildStepPrompt(msg);
+        chrome.runtime.sendMessage({ type: "llmGenerating" });
+        const INFERENCE_TIMEOUT_MS = 120000;
+        const reply = await Promise.race([
+          engine.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: 160,
+          }),
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),
+            INFERENCE_TIMEOUT_MS)),
+        ]);
+        const text = (reply.choices[0].message.content || "").trim();
+        const parsed = firstJsonObject(text);
+        if (!parsed) {
+          sendResponse({ ok: false, error: `model did not return usable JSON: ${text.slice(0, 200)}` });
+          return;
+        }
+        sendResponse({ ok: true, step: parsed, raw: text.slice(0, 300) });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "llmPlanJson") {
     (async () => {
       try {

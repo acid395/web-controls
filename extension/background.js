@@ -4443,6 +4443,156 @@ function planManifestTool(instruction, routeGlobal) {
 // Opening something is progress even though it accounts for no words. That
 // is the whole reason panels exist, and the reason a pure word-coverage loop
 // would stop at the closed door.
+/* The model drives. This is the loop the keyword scorer never was: look at
+ * the page, ask the model what to do next, do it, look again. The scorer
+ * decides in one shot from words alone and cannot revise; a loop can act,
+ * read what came back, and choose differently - which is the only way
+ * "compare the last two weeks and summarise the difference" is more than
+ * three separate instructions.
+ *
+ * Controls are passed numbered and chosen by number. Asking a 3B model to
+ * emit `toggleFloodInundationMapping` exactly gets something close to it,
+ * and close is useless.
+ *
+ * Nothing here consults scoreControl or planGenericTool. The point is that
+ * the decision is the model's; the scorer stays behind "baseline:" so the
+ * two can be compared on the same pages rather than quietly blended.
+ */
+const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "read", "finish"]);
+
+// Whether the model can answer, asked at most once every few seconds. Every
+// instruction now begins by asking, and that means creating the offscreen
+// document and a message round trip - a cost worth paying once rather than
+// on every keystroke-driven retry. Short-lived on purpose: a model that
+// finishes loading a moment later should be picked up without a reload.
+let modelStatusCache = { at: 0, value: null };
+async function modelStatus({ maxAgeMs = 4000 } = {}) {
+  if (modelStatusCache.value && Date.now() - modelStatusCache.at < maxAgeMs) {
+    return modelStatusCache.value;
+  }
+  const value = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" })
+    .catch(() => null);
+  // Only a definite answer is worth remembering. "Not loaded yet" changes.
+  if (value && value.ready) modelStatusCache = { at: Date.now(), value };
+  return value;
+}
+
+async function askModelForStep(payload) {
+  await ensureOffscreenDocument();
+  const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStep", ...payload });
+  if (!res) return { ok: false, error: "the model did not answer - it may still be loading" };
+  return res;
+}
+
+// What the page can be told to do, in the order the model will see it. Hidden
+// controls are included with what opens them, because a layer behind a panel
+// is still a layer; disabled ones are not, because offering them is a lie.
+function controlsForModel(inv, { max = 80 } = {}) {
+  return ((inv && inv.controls) || []).filter((c) => String(c.label || "").trim() && !c.disabled).slice(0, max);
+}
+
+async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
+  const history = [];
+  let observation = null;
+  let note = null;
+
+  for (let step = 0; step < maxSteps; step++) {
+    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
+    if (!inv.ok) return { ok: false, error: `could not read this page: ${inv.error || "no reason given"}`, history };
+    const controls = controlsForModel(inv.result);
+
+    const asked = await askModelForStep({
+      goal,
+      controls: controls.map((c) => ({
+        label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
+      })),
+      history, observation, note,
+    });
+    if (!asked.ok) return { ok: false, error: asked.error, history, modelUnavailable: true };
+
+    const s = asked.step || {};
+    const act = String(s.do || "").toLowerCase();
+    if (!AGENT_ACTIONS.has(act)) {
+      // A model that answers off-format gets told once, then the loop ends.
+      // Looping on a malformed reply burns a multi-second turn per attempt.
+      if (note) return { ok: false, error: `the model asked for "${s.do}", which is not an action here`, history };
+      note = `"${s.do}" is not one of the actions. Use click, check, select, type, read or finish.`;
+      continue;
+    }
+    note = null;
+
+    if (act === "finish") {
+      return { ok: true, answer: String(s.answer || "").slice(0, 600), history, steps: history.length };
+    }
+    if (act === "read") {
+      const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+      observation = read.ok ? summariseForModel(read.result) : "could not read the page";
+      history.push({ did: "read the page", outcome: read.ok ? "got its values" : "failed" });
+      continue;
+    }
+
+    const target = controls[Number(s.n)];
+    if (!target) {
+      if (note) return { ok: false, error: `the model chose control ${s.n}, which is not on the list`, history };
+      note = `There is no control ${s.n}. Choose a number between 0 and ${controls.length - 1}.`;
+      continue;
+    }
+
+    const call = actionToCall(act, target, s);
+    if (!call) {
+      history.push({ did: `${act} ${target.label}`, outcome: "that control cannot do that" });
+      continue;
+    }
+    const ran = await runVerified(routeGlobal, call);
+    const r = (ran && ran.result) || {};
+    const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+    history.push({
+      did: `${act} "${String(target.label).slice(0, 40)}"`,
+      outcome: ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
+        : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}`
+        : moved ? "the page changed" : "nothing visibly changed",
+      ok: ran.ok !== false, changed: moved, label: target.label,
+    });
+    // The page it acts on next is the page it just changed, so the reading is
+    // taken fresh rather than carried over.
+    observation = null;
+  }
+  return { ok: true, answer: null, history, steps: history.length, ranOut: true };
+}
+
+// One action, one tool call. The model says what it wants done; which tool
+// that is depends on the control, not on the wording of the request.
+function actionToCall(act, control, s) {
+  const sel = control.selector;
+  if (act === "click") return { name: "pageClick", args: { selector: sel } };
+  if (act === "check") return { name: "pageCheck", args: { selector: sel, on: s.on !== false } };
+  if (act === "type") return { name: "pageFill", args: { selector: sel, text: String(s.value ?? "") } };
+  if (act === "select") {
+    const options = control.options || [];
+    const want = String(s.value ?? "").toLowerCase();
+    const hit = options.find((o) => String(o.text || o.value || "").toLowerCase() === want)
+      || options.find((o) => String(o.text || o.value || "").toLowerCase().includes(want));
+    return { name: "pageSelectOption",
+      args: { selector: sel, value: hit ? (hit.value ?? hit.text) : String(s.value ?? "") } };
+  }
+  return null;
+}
+
+// The page, short enough to put in front of a small model. Values and table
+// rows, not prose: the model needs what the page says, not how it says it.
+function summariseForModel(read) {
+  if (!read) return "nothing readable";
+  const bits = [];
+  for (const p of (read.pairs || []).slice(0, 14)) bits.push(`${p.label}: ${p.value}`);
+  for (const n of (read.labelledNumbers || []).slice(0, 10)) bits.push(String(n.text).slice(0, 60));
+  for (const t of (read.tables || []).slice(0, 2)) {
+    bits.push(`table [${(t.columns || []).join(" | ")}]`);
+    for (const row of (t.rows || []).slice(0, 6)) bits.push(`  ${row.join(" | ")}`);
+  }
+  if (!bits.length && read.text) bits.push(String(read.text).slice(0, 400));
+  return bits.join("\n").slice(0, 1600);
+}
+
 async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] } = {}) {
   const steps = [];
   // Controls a caller has already tried. Without this the loop re-plans from
@@ -5839,7 +5989,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // only ever reached when everything else has failed, so there is no
         // way to see whether it would have got something right.
         const forceModel = /^\s*model:\s*/i.test(msg.instruction || "");
-        const wanted = String(msg.instruction || "").replace(/^\s*model:\s*/i, "");
+        // "baseline:" forces the keyword scorer, which is no longer the main
+        // path but is kept so the two can be measured on the same pages. The
+        // comparison is the point: a rule-based scorer that fires events and
+        // a model that operates a site are different claims, and only one of
+        // them generalises past phrasings somebody anticipated.
+        const forceBaseline = /^\s*baseline:\s*/i.test(msg.instruction || "");
+        const wanted = String(msg.instruction || "")
+          .replace(/^\s*model:\s*/i, "").replace(/^\s*baseline:\s*/i, "");
+
+        // The model plans, where it can. Everything below this - the scorer,
+        // the manifests, the data lookups - runs when the model is not
+        // available or could not finish, and under "baseline:" on request.
+        if (!forceBaseline) {
+          const status = await modelStatus();
+          if (status && status.ready) {
+            const agent = await runModelAgent(route.global, wanted).catch((e) => ({
+              ok: false, error: String((e && e.message) || e) }));
+            if (agent && agent.ok && (agent.answer || agent.history.some((h) => h.changed))) {
+              const acted = agent.history.filter((h) => h.did !== "read the page");
+              respond({
+                ok: true, plannedBy: "model", steps: agent.history, answer: agent.answer || undefined,
+                display: {
+                  title: agent.answer
+                    ? String(agent.answer).slice(0, 60)
+                    : String((acted[acted.length - 1] || {}).label || "Done").slice(0, 60),
+                  // Every turn counted, reads included: a turn is a turn of
+                  // the model, and hiding the reads makes a two-action run
+                  // read as one and understates what it cost.
+                  subtitle: [
+                    `${agent.history.length} step${agent.history.length === 1 ? "" : "s"}`
+                      + ` (${acted.length} on the page), decided by the local model`,
+                    agent.ranOut ? "stopped at the step limit" : null,
+                  ].filter(Boolean).join(" \u00b7 "),
+                  stats: [{ label: "steps", value: String(agent.history.length) }],
+                  rows: agent.history.map((h) => ({
+                    name: String(h.did).slice(0, 50), value: h.ok === false ? "failed" : (h.changed ? "changed" : ""),
+                    meta: String(h.outcome || "").slice(0, 60),
+                    tone: h.ok === false ? "alert" : h.changed ? "ok" : "warn",
+                  })),
+                  source: "local model",
+                },
+              });
+              return;
+            }
+            // A model that is present but got nowhere is not a reason to
+            // refuse: the scorer below is a worse planner and a better
+            // fallback, and saying nothing would be worse than either.
+          }
+        }
 
         const dataCall = forceModel ? null : planDataTool(wanted, route);
 

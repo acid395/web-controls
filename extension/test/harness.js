@@ -38,7 +38,18 @@ function loadBackground({ onFetch, page } = {}) {
         onInstalled: { addListener() {} },
         onMessage: { addListener(fn) { messageHandler = fn; } },
         getPlatformInfo(cb) { cb && cb({}); },
-        sendMessage() {},
+        // Messages to the offscreen document are the model talking. There is
+        // no WebGPU here and never will be, so a test scripts the decisions
+        // instead: set __model to a function of the outgoing message and the
+        // agent loop runs against it exactly as it would against WebLLM.
+        // Without one, nothing answers - which is also the real behaviour on
+        // a machine where the model has not loaded.
+        sendMessage(m, cb) {
+          const reply = (sandbox.__model && m && m.target === "offscreen")
+            ? sandbox.__model(m) : undefined;
+          if (typeof cb === "function") { cb(reply); return undefined; }
+          return Promise.resolve(reply);
+        },
         getURL: (p) => `chrome-extension://test/${p}`,
         getManifest: () => JSON.parse(fs.readFileSync(path.join(EXT, "manifest.json"), "utf8")),
         getContexts: async () => [],

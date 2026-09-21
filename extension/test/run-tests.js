@@ -699,6 +699,94 @@ else {
   });
 }
 
+section("the model drives");
+// The keyword scorer decides in one shot from words alone and cannot revise.
+// A loop can act, read what came back, and choose differently - which is the
+// only way "click Learn More, compare the last two weeks and summarise the
+// difference" is one request rather than three.
+//
+// There is no WebGPU here, so the model's decisions are scripted. What is
+// being tested is the loop: that it passes the page, carries out what comes
+// back, feeds the result forward, and stops when told.
+const dm = `<!doctype html><html><head><title>Drought Monitor</title></head><body>
+  <a id="lm" href="#lm">Learn More</a>
+  <div id="panel"></div>
+  <script>
+    document.getElementById("lm").addEventListener("click", () => {
+      document.getElementById("panel").innerHTML =
+        "<table><tr><th>Week</th><th>Area in drought</th></tr>" +
+        "<tr><td>Sep 16</td><td>41.2%</td></tr><tr><td>Sep 9</td><td>37.8%</td></tr></table>";
+    });
+  <\/script></body></html>`;
+const dmPage = loadPage(dm, { url: "https://www.drought.gov/" });
+if (!dmPage) skip("the model driving", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: dmPage });
+  let turn = 0;
+  const script = [
+    (c) => ({ ok: true, step: { n: c.findIndex((x) => /learn more/i.test(x.label)), do: "click" } }),
+    () => ({ ok: true, step: { do: "read" } }),
+    (c, obs) => ({ ok: true, step: { do: "finish",
+      answer: /41\.2/.test(obs || "") && /37\.8/.test(obs || "")
+        ? "Drought area rose from 37.8% to 41.2%" : "could not see both weeks" } }),
+  ];
+  bg.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") return script[Math.min(turn++, script.length - 1)](m.controls, m.observation);
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk",
+      instruction: "click Learn More, compare the last two weeks, and summarize the difference" });
+    check("the model is the planner", r.plannedBy, "model");
+    ensure("it acted, then read, then answered",
+      (r.steps || []).map((h) => h.did).join(" | ").includes("read the page"), r.steps);
+    // The answer had to come from what the page showed after the click - the
+    // table does not exist until Learn More is pressed.
+    ensure("and the answer came from what the click revealed",
+      /37\.8.*41\.2/.test((r.display || {}).title || ""), (r.display || {}).title);
+    ensure("with every turn counted, reads included",
+      /2 steps \(1 on the page\)/.test((r.display || {}).subtitle || ""), (r.display || {}).subtitle);
+  });
+}
+
+// A model that answers off-format is told once, then the loop stops. Looping
+// on a malformed reply costs a multi-second turn each time round.
+const offFormat = loadPage("<!doctype html><html><body><button>Go</button></body></html>",
+  { url: "https://example.gov/" });
+if (offFormat) {
+  const bg2 = loadBackground({ page: offFormat });
+  let asks = 0;
+  bg2.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") { asks++; return { ok: true, step: { do: "teleport" } }; }
+    return undefined;
+  };
+  runAsync(async () => {
+    await bg2.__ask({ type: "smartAsk", instruction: "click go" });
+    ensure("an off-format reply is corrected once, not forever", asks <= 2, asks);
+  });
+}
+
+// "baseline:" keeps the scorer reachable, so the two can be measured on the
+// same pages rather than quietly blended.
+const baselinePage = loadPage(`<!doctype html><html><body>
+  <label><input type="checkbox" name="fi"> Flood Inundation</label></body></html>`,
+  { url: "https://water.noaa.gov/" });
+if (baselinePage) {
+  const bg3 = loadBackground({ page: baselinePage });
+  let consulted = false;
+  bg3.__model = (m) => {
+    if (m.type === "llmStatus") { consulted = true; return { ready: true, hasGpu: true }; }
+    return undefined;
+  };
+  runAsync(async () => {
+    await bg3.__ask({ type: "smartAsk", instruction: "baseline: enable flood inundation" });
+    check("baseline does not consult the model at all", consulted, false);
+    check("and still works", !!(baselinePage.document.querySelector('[name="fi"]') || {}).checked, true);
+  });
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
@@ -2363,7 +2451,15 @@ else {
     configurable: true, value: { registerTool: (d) => shelf.push(d), getTools: () => shelf },
   });
   run();
-  ensure("with the API, the page publishes itself", shelf.length > 0, shelf.length);
+  // Parked: publishing works and is tested, but nothing consumes it - no site
+  // declares tools of its own and no agent on Chrome reads them - so it is
+  // off unless switched on. The switch is what is asserted now, because
+  // "publishes on every page load" would be asserting a path nobody walks.
+  check("with the API but the switch off, nothing is published", shelf.length, 0);
+  atLoad.__wcPublishWebMcp = true;
+  atLoad.__wcPublishedAtLoad = false;
+  run();
+  ensure("with the switch on, the page publishes itself", shelf.length > 0, shelf.length);
   const once = shelf.length;
   run();
   check("and does not publish twice", shelf.length, once);

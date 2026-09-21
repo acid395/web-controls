@@ -12,6 +12,16 @@
  * paid for nothing. Where the API is absent this script does nothing at all.
  */
 (() => {
+  // Parked, not deleted. Publishing derived tools to modelContext works and
+  // is tested, but nothing consumes it: no site declares tools of its own and
+  // no agent on Chrome reads them, so the whole path was a claim rather than
+  // a capability. It stays here, behind a switch, because the moment a
+  // consumer exists it is a few lines to turn back on - and because the
+  // measurements taken through it are worth keeping reproducible.
+  //
+  // Set __wcPublishWebMcp = true before load to enable it.
+  if (!window.__wcPublishWebMcp) return;
+
   const api = (typeof document !== "undefined" && document.modelContext)
     || (typeof navigator !== "undefined" && navigator.modelContext);
   if (!api || typeof api.registerTool !== "function") return;
