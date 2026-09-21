@@ -2152,6 +2152,101 @@
     };
   }
 
+  // The points on a map that has no points to click.
+  //
+  // USGS draws its national dashboard to a canvas, so mapFeatures() finds a
+  // toggle button and nothing else - there is no marker element for Salmon
+  // River because there is no element at all. But the map is drawn from a
+  // feed, and that feed is captured: CurrentConditions carries SiteName,
+  // SiteNumber, Latitude and Longitude for every gauge on the screen.
+  //
+  // So a named point is reachable even where clicking one is not. Nothing
+  // here knows anything about USGS: it looks for records carrying a name and
+  // a coordinate pair, whatever a given site happens to call those fields.
+  const NAME_KEYS = /^(sitename|name|label|title|station_?nm|monitoringlocationname|camname|placename|stationname|description)$/i;
+  const LAT_KEYS = /^(lat|latitude|y|dec_lat_va)$/i;
+  const LON_KEYS = /^(lon|lng|long|longitude|x|dec_long_va)$/i;
+  const ID_KEYS = /^(sitenumber|siteid|id|site_no|nwisid|gaugeid|code)$/i;
+
+  function capturedPoints({ limit = 4000 } = {}) {
+    const out = [];
+    const seen = new Set();
+    const consider = (o) => {
+      if (!o || typeof o !== "object" || Array.isArray(o)) return;
+      let name = null, lat = null, lon = null, ident = null;
+      for (const [k, v] of Object.entries(o)) {
+        if (v === null || typeof v === "object") continue;
+        if (name === null && NAME_KEYS.test(k) && String(v).trim().length > 2) name = String(v).trim();
+        else if (lat === null && LAT_KEYS.test(k) && isFinite(Number(v))) lat = Number(v);
+        else if (lon === null && LON_KEYS.test(k) && isFinite(Number(v))) lon = Number(v);
+        else if (ident === null && ID_KEYS.test(k)) ident = String(v);
+      }
+      if (!name || lat === null || lon === null) return;
+      if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+      const key = `${name}|${lat}|${lon}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ name: name.slice(0, 90), lat, lon, id: ident || undefined });
+    };
+    const walk = (node, depth) => {
+      if (out.length >= limit || depth > 6 || !node || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const x of node) walk(x, depth + 1); return; }
+      consider(node);
+      for (const v of Object.values(node)) if (v && typeof v === "object") walk(v, depth + 1);
+    };
+    // Bodies are kept to a size, so a big feed arrives cut off mid-object and
+    // will not parse - which is every feed worth reading here: the USGS
+    // dashboard's gauge list is far past the limit. Where the JSON is whole,
+    // walk it; where it is truncated, read the text, which does not care
+    // that the last record is missing its closing brace.
+    const fromText = (text) => {
+      const re = /"([A-Za-z_]*(?:name|title|label|nm)[A-Za-z_]*)"\s*:\s*"([^"\\]{3,90})"/gi;
+      let m;
+      while ((m = re.exec(text)) && out.length < limit) {
+        const name = m[2].trim();
+        if (!name || /^https?:/i.test(name)) continue;
+        const window = text.slice(Math.max(0, m.index - 400), m.index + 400);
+        const lat = window.match(/"(?:lat|latitude|dec_lat_va)"\s*:\s*"?(-?\d{1,3}\.\d+)"?/i);
+        const lon = window.match(/"(?:lon|lng|long|longitude|dec_long_va)"\s*:\s*"?(-?\d{1,3}\.\d+)"?/i);
+        if (!lat || !lon) continue;
+        const la = Number(lat[1]), lo = Number(lon[1]);
+        if (Math.abs(la) > 90 || Math.abs(lo) > 180) continue;
+        const key = `${name}|${la}|${lo}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const id = window.match(/"(?:siteNumber|site_no|siteId|nwisId|id)"\s*:\s*"?([A-Za-z0-9_-]{3,24})"?/i);
+        out.push({ name: name.slice(0, 90), lat: la, lon: lo, id: id ? id[1] : undefined });
+      }
+    };
+    for (const feed of (capturedFeeds({ includeBodies: true }).feeds || [])) {
+      const body = feed.body;
+      if (typeof body === "string") {
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch (e) { /* truncated */ }
+        if (parsed) walk(parsed, 0); else fromText(body);
+      } else if (body && typeof body === "object") walk(body, 0);
+      if (out.length >= limit) break;
+    }
+    return { count: out.length, points: out };
+  }
+
+  // The one whose name was asked for. Scored rather than matched exactly,
+  // because a gauge is written "SALMON RIVER AT WHITE BIRD ID" and nobody
+  // types that.
+  function findCapturedPoint(wanted) {
+    const words = norm(wanted).split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+    if (!words.length) return null;
+    let best = null, bestScore = 0;
+    for (const p of capturedPoints().points) {
+      const hay = norm(p.name);
+      let score = 0;
+      for (const w of words) if (hay.includes(w)) score += 1;
+      if (score === words.length) score += 2;          // every word named
+      if (score > bestScore) { best = p; bestScore = score; }
+    }
+    return bestScore >= words.length ? best : null;
+  }
+
   function mapFeatureOpen(index) {
     const found = mapFeatures({ limit: 200 });
     const feature = (found.features || [])[index];
@@ -2171,10 +2266,34 @@
     throw new Error(`"${feature.label || "that point"}" is drawn by the map, not placed in the page, and this map exposes no way to open it`);
   }
 
+  // Reach a point the map drew rather than placed. Pans the map where the
+  // page exposes an instance, and reports the point either way - a name, a
+  // coordinate and whatever the feed called its id is an answer even when
+  // nothing can be pressed, which on a canvas map is the usual case.
+  function openCapturedPoint(name) {
+    const point = findCapturedPoint(name);
+    if (!point) return { found: false, asked: name };
+    const info = mapInfo();
+    const map = info.instance || (window.L && window.L.__wcMap) || null;
+    let moved = false;
+    try {
+      if (map && typeof map.setView === "function") {
+        map.setView([point.lat, point.lon], Math.max(map.getZoom ? map.getZoom() : 8, 10));
+        moved = true;
+      } else if (map && typeof map.flyTo === "function") {
+        map.flyTo({ center: [point.lon, point.lat], zoom: 10 }); moved = true;
+      } else if (map && typeof map.setCenter === "function") {
+        map.setCenter([point.lon, point.lat]); moved = true;
+      }
+    } catch (e) { /* a map that will not move is still a point worth reporting */ }
+    return { found: true, ...point, movedMap: moved };
+  }
+
   const READERS = [
     { name: "readThisPage", description: "Read what this page currently shows: its tables, labelled values, readouts and headings, as structured data.", run: () => readPage() },
     { name: "listPageControls", description: "List every control on this page with its label and kind - useful for deciding what to do next.", run: () => inventory() },
     { name: "listPageDataRequests", description: "List the data requests this page has made, which is where a chart's real numbers come from when the chart is a canvas.", run: () => capturedFeeds() },
+    { name: "findMapPoint", description: "Find a named point on this page's map - a gauge, station or site - by name, using the data the map itself was drawn from. Works where the map is a canvas and its points cannot be clicked.", run: () => capturedPoints({ limit: 40 }) },
     { name: "readMapPoints", description: "Read the points on this page's map - their names, coordinates and data - whether they are real elements or drawn by the map library.", run: () => mapFeatures() },
   ];
 
@@ -2394,6 +2513,7 @@
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries,
     disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
+    capturedPoints, findCapturedPoint, openCapturedPoint,
     mcpInstall,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),

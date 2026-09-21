@@ -6138,6 +6138,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        // A named point on a map that has no points to click. USGS draws its
+        // national dashboard to a canvas, so there is no marker element for
+        // Salmon River - there is no element at all - and "click salmon river
+        // on the map" could only ever press something else. The map is drawn
+        // from a feed, and that feed is captured: name, coordinates and id
+        // for every gauge on the screen.
+        // Only where the map is named. A bare "where is X" is already
+        // answered by the agency lookup, and answering it from whatever this
+        // page happens to have fetched would be a worse answer dressed up as
+        // a more local one.
+        const onMap = wanted.match(/^\s*(?:click|open|show|find|go\s+to|select|zoom\s+to|point\s+at)?\s*(.{2,60}?)\s*(?:on|in)\s+(?:the|this)\s+map\s*$/i);
+        if (onMap) {
+          const point = await invokeOnActiveTab("openCapturedPoint", [onMap[1].trim()])
+            .catch(() => ({ ok: false }));
+          const p = point.ok && point.result;
+          if (p && p.found) {
+            respond({
+              ok: true, plannedBy: "map-point", point: p,
+              display: {
+                title: String(p.name).slice(0, 60),
+                subtitle: [
+                  p.movedMap ? "moved the map to it" : "this map is drawn to a canvas, so it cannot be pressed - here is the point",
+                  `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`,
+                ].join(" \u00b7 "),
+                stats: [{ label: "latitude", value: String(p.lat.toFixed(4)) },
+                  { label: "longitude", value: String(p.lon.toFixed(4) )},
+                  ...(p.id ? [{ label: "id", value: String(p.id) }] : [])],
+                rows: [], source: "this page's own map data",
+              },
+            });
+            return;
+          }
+        }
+
         const explainMatch = wanted.match(/^\s*(?:explain|match|why did|what matches)\s+(.+)$/i);
         if (explainMatch) {
           const q = explainMatch[1].trim();

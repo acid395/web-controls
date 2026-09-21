@@ -699,6 +699,52 @@ else {
   });
 }
 
+section("a point on a map with no points to click");
+// USGS draws its national dashboard to a canvas, so there is no marker
+// element for Salmon River - there is no element at all - and "click salmon
+// river on the map" could only ever press something else. But the map is
+// drawn from a feed, and that feed is captured: name, coordinates and id for
+// every gauge on the screen. Confirmed against the live dashboard, where the
+// bodies arrive truncated at a size cap and so have to be read as text
+// rather than parsed.
+const canvasMap = loadPage(`<!doctype html><html><head><title>Dashboard</title></head><body>
+  <canvas id="map" width="800" height="600"></canvas></body></html>`,
+  { url: "https://dashboard.waterdata.usgs.gov/app/nwd/en/" });
+if (!canvasMap) skip("map points", "jsdom not installed");
+else {
+  canvasMap.__wcFeedCapture = { feeds: [{
+    url: "https://dashboard.waterdata.usgs.gov/service/cwis/CurrentConditions",
+    method: "GET", status: 200, type: "json",
+    body: JSON.stringify({ value: [
+      { SiteNumber: "13317000", SiteName: "SALMON RIVER AT WHITE BIRD ID", Latitude: 45.7502, Longitude: -116.3236 },
+      { SiteNumber: "13069500", SiteName: "MALAD RIVER NEAR GOODING ID", Latitude: 42.8619, Longitude: -114.8483 }] }) }] };
+  check("the map's own points are found", canvasMap.GENERIC.capturedPoints().count, 2);
+  check("and one is found by the name a person would use",
+    (canvasMap.GENERIC.findCapturedPoint("salmon river") || {}).id, "13317000");
+  check("a name that is not there is not invented",
+    canvasMap.GENERIC.findCapturedPoint("fhqwhgads river"), null);
+  // Truncated JSON is the normal case: the bodies are kept to a size, so a
+  // big feed arrives cut off mid-object and will not parse.
+  const cut = loadPage("<!doctype html><html><body><canvas></canvas></body></html>",
+    { url: "https://dashboard.waterdata.usgs.gov/app/nwd/en/" });
+  if (cut) {
+    cut.__wcFeedCapture = { feeds: [{ url: "https://x/feed", body:
+      '{"value":[{"SiteNumber":"13317000","SiteName":"SALMON RIVER AT WHITE BIRD ID",'
+      + '"Latitude":45.7502,"Longitude":-116.3236},{"SiteNumber":"1306","SiteName":"MAL' }] };
+    check("a feed cut off mid-record still yields its whole records",
+      cut.GENERIC.capturedPoints().count, 1);
+  }
+  const bg = loadBackground({ page: canvasMap });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "click salmon river on the map" });
+    check("the instruction reaches the point", r.plannedBy, "map-point");
+    ensure("and the card names the gauge",
+      /salmon river/i.test((r.display || {}).title || ""), (r.display || {}).title);
+    ensure("with its coordinates",
+      ((r.display || {}).stats || []).some((x) => /latitude/i.test(x.label)), (r.display || {}).stats);
+  });
+}
+
 section("the page's own labels answer for it");
 // The data paths only knew measurements the vocabulary lists - stage,
 // discharge, temperature - so "what is the datum" and "what is the drainage
