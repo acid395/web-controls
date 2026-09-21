@@ -483,6 +483,51 @@ else {
   }
 }
 
+section("select and enable mean the same thing");
+// Rebuilt from the live explain dump: navbar duplicates of the layer name, an
+// already-open accordion of gauge-table checkboxes, and the closed
+// #uk-accordion-9 titled after the layer inside it.
+//
+// "Enable flood inundation" reached the layer and "select flood inundation"
+// did not, on the same page, in the same state. Opening a panel changes the
+// page, so "the page responded" was true while nothing had been switched on
+// - and enable only worked because the hand-written tool failed first and
+// let the loop run. The phrasing decided the outcome, which is the thing
+// this was reported as doing months ago.
+const nwps = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-navbar-nav layer-1">
+    <li><a href="/a">Flood Inundation Mapping (FIM)</a></li>
+    <li><a href="/b">Flood Inundation Mapping</a></li>
+  </ul>
+  <ul class="uk-accordion">
+    <li class="uk-open"><button id="uk-accordion-3" class="uk-accordion-title">Gauges</button>
+      <div class="uk-accordion-content"><table class="gauge-table">
+        <tr><td><label><input type="checkbox" name="major"> Major Flood</label></td></tr>
+      </table></div></li>
+    <li><button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div id="fi-content" class="uk-accordion-content" style="display:none"></div></li>
+  </ul>
+  <script>
+    document.getElementById("uk-accordion-9").addEventListener("click", () => {
+      const c = document.getElementById("fi-content");
+      c.style.display = "block";
+      if (!c.innerHTML) c.innerHTML =
+        '<label><input type="checkbox" name="fim"> Flood Inundation Mapping</label>';
+    });
+  <\/script></body></html>`;
+for (const phrasing of ["enable flood inundation", "select flood inundation"]) {
+  const page = loadPage(nwps, { url: "https://water.noaa.gov/" });
+  if (!page) { skip(`phrasing: ${phrasing}`, "jsdom not installed"); continue; }
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: phrasing });
+    check(`"${phrasing}" reaches the layer`,
+      !!(page.document.querySelector('[name="fim"]') || {}).checked, true);
+    check(`"${phrasing}" leaves the gauge table alone`,
+      !!(page.document.querySelector('[name="major"]') || {}).checked, false);
+  });
+}
+
 section("the search you can see");
 // "Search how to vote" on usa.gov typed into
 // #search-field-small-mobile-menu - the copy of the search box inside the

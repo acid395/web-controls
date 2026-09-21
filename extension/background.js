@@ -5771,8 +5771,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // give up, which on a page whose navbar repeats its layer names
             // means clicking the link and reporting that the page did not
             // respond. Only adopted when the loop actually finishes the job.
+            // Opening a panel changes the page, so "the page responded" was
+            // true and the goal was untouched: "select flood inundation"
+            // pressed the accordion named after the layer, the panel opened,
+            // and that counted as done while nothing was switched on.
+            // "Enable flood inundation" reached the layer on the same page,
+            // because the hand-written tool failed first and let the loop
+            // run - the phrasing decided whether it worked.
+            //
+            // Asked to switch something on, a click that reports no state of
+            // its own has not shown that anything was switched on. Only the
+            // named control's own before and after can say so, and where
+            // there is none the job is not yet proven done.
+            const stateCommand = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|off)|switch\s+(on|off))\b/i
+              .test(wanted);
             const deadEnd = (rr.itChanged === false)
-              || !!(ran.verified && ran.verified.changed === false);
+              || !!(ran.verified && ran.verified.changed === false)
+              || (stateCommand && typeof rr.itChanged !== "boolean");
             if (deadEnd && commandLike && !forceModel) {
               const chased = await pursueGoal(route.global, wanted).catch(() => null);
               if (chased && chased.done) {
