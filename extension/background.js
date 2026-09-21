@@ -2506,6 +2506,10 @@ function meaningfulWords(text) {
 // How well one control's label answers the instruction. Whole-phrase hits
 // score far above scattered word hits, so "year to date" prefers a control
 // actually labelled "Year to date" over one merely containing "date".
+// Naming an end state, not a one-off press: "enable the layer" is not done
+// until the layer is on, where "click the button" is done when it is pressed.
+const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|off)|switch\s+(on|off))\b/i;
+
 function scoreControl(control, words, phrase, opts = {}) {
   const label = foldAccents(control.label || "").toLowerCase();
   if (!label) return 0;
@@ -2528,6 +2532,16 @@ function scoreControl(control, words, phrase, opts = {}) {
   // Secretary of Energy". Whole-label matches are the strongest signal a
   // page offers and were the one thing not being recognised.
   if (phrase && meaningfulWords(control.label || "").join(" ") === phrase) score += 10;
+  // The same comparison with the verb taken off both sides. "Enable" is not
+  // in the stop list - "click" and "select" are - so the phrase stayed
+  // "enable flood inundation" and could never equal a label reading "Flood
+  // Inundation". The whole-label bonus, the strongest signal there is, was
+  // silently unavailable to every instruction beginning with a verb the stop
+  // list happened to miss: a gauge-table checkbox called "Major Flood"
+  // outscored the control named word for word, 5 to 4.
+  const subjectOnly = (ws) => ws.filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w)).join(" ");
+  const askedFor = subjectOnly(words);
+  if (askedFor && subjectOnly(meaningfulWords(control.label || "")) === askedFor) score += 10;
   // A dropdown's label is often a category ("Variable") while the thing the
   // user actually named is one of its options ("Precipitation"), so options
   // count too - scored below a label hit, since naming the option is a
@@ -4235,15 +4249,24 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   let remaining = subjectOf(meaningfulWords(instruction));
   let lastCount = -1;
   let deadEnds = 0;
-  const stateCommand = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|off)|switch\s+(on|off))\b/i
-    .test(instruction);
+  const stateCommand = STATE_COMMAND.test(instruction);
 
   for (let step = 0; step < maxSteps; step++) {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
       .catch(() => ({ ok: false }));
     if (!inv.ok) break;
     const all = (inv.result && inv.result.controls) || [];
-    const controls = all.filter((c) => !actedOn.has(c.selector));
+    // A link is never the answer to "enable". water.noaa.gov repeats its
+    // layer names in the navbar, so the loop - striking off each control that
+    // moved nothing and taking the next - worked its way through "Flood
+    // Inundation Mapping (FIM)" and "Flood Inundation Mapping" and left the
+    // site altogether. Pressing a link is not a step towards switching
+    // something on; it is the end of the page the instruction was about.
+    //
+    // Only plain links. A link carrying role="button" is a button as far as
+    // the page is concerned, and is recorded as one.
+    const controls = all.filter((c) => !actedOn.has(c.selector)
+      && !(stateCommand && c.tag === "a" && c.kind === "a"));
     const countNow = all.length;
 
     const plan = planGenericTool(instruction, { ...inv.result, controls });
@@ -5680,12 +5703,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         const commandLike = !forceModel && isCommand(wanted);
+        // An instruction that names an end state rather than a one-off press.
+        // Four separate paths need to know the difference - acting is proof
+        // for a click, but only a control's own before and after is proof
+        // that something was switched on - so it is settled once, here.
+        const stateCommand = STATE_COMMAND.test(wanted);
 
         // Real tasks are sequences - "switch to Alaska then show discharge".
         // Split only where both halves independently plan to something, so an
         // instruction that merely contains "and" is left alone.
         if (commandLike) {
-          const parts = String(msg.instruction).split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*/i)
+          // "And" joins steps as often as "then" does - "click forecasts and
+          // outlooks and click key messages" ran only the first half, because
+          // nothing here split on a bare "and". It cannot simply be added to
+          // the list: the first half of that same sentence is the name of a
+          // control, "Forecasts and Outlooks", and splitting inside it would
+          // destroy the instruction rather than sequence it. So a bare "and"
+          // separates steps only where a verb follows it, which is what makes
+          // the second half an instruction rather than the rest of a name.
+          const parts = String(msg.instruction)
+            .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read)\b)/i)
             .map((t) => t.trim()).filter(Boolean);
           // Eight, not four. A five-part instruction fell out of the sequence
           // and was handled as one command, which on the page tested pressed
@@ -6015,8 +6052,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // its own has not shown that anything was switched on. Only the
             // named control's own before and after can say so, and where
             // there is none the job is not yet proven done.
-            const stateCommand = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|off)|switch\s+(on|off))\b/i
-              .test(wanted);
             const deadEnd = (rr.itChanged === false)
               || !!(ran.verified && ran.verified.changed === false)
               || (stateCommand && typeof rr.itChanged !== "boolean");
@@ -6665,7 +6700,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const steps = [];
             for (const call of guess.calls) {
               const result = await runVerified(route.global, call);
+              const own = (result && result.result) || {};
               steps.push({
+                stateChanged: own.itChanged === true
+                  || /^page(Check|PickRadio|SelectOption|Fill)$/.test(call.name),
                 call, ok: result.ok !== false, result: result.result, error: result.error,
                 // A step that ran without changing anything is reported, not
                 // hidden: in a sequence it usually means a later step is
@@ -6675,6 +6713,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               if (result.ok === false) break;
             }
             const failed = steps.find((st) => !st.ok);
+
+            // The fourth path to need this, and the last. Asked to switch
+            // something on, a run that never saw a control's own state go
+            // from one thing to another has not shown it happened - and on
+            // this page that meant pressing the accordion named after the
+            // layer and reporting the job done. The loop finishes what a
+            // single pass started; only its proven result is taken.
+            const provedState = steps.some((st) => st.ok && st.stateChanged);
+            if (!failed && !provedState && stateCommand && commandLike && !forceModel) {
+              const chased = await pursueGoal(route.global, wanted,
+                { avoid: guess.matched.map((m) => m.selector) }).catch(() => null);
+              if (chased && chased.done) {
+                const acted = chased.steps.filter((st) => st.did !== "opened");
+                const last = acted[acted.length - 1] || {};
+                respond({
+                  ok: true, plannedBy: "pursued", steps: chased.steps,
+                  display: {
+                    title: String(last.label || "Done").slice(0, 60),
+                    subtitle: [
+                      chased.opened.length
+                        ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                        : "the first match switched nothing on, so it kept going",
+                      typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                    ].filter(Boolean).join(" \u00b7 "),
+                    stats: [{ label: "steps", value: String(chased.steps.length) }],
+                    rows: chased.steps.map((st) => ({
+                      name: String(st.label || st.did).slice(0, 50),
+                      value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
+                      meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                    })),
+                    source: route.global,
+                  },
+                });
+                return;
+              }
+            }
             respond({
               ok: !failed,
               plannedBy: "page-match",

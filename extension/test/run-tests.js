@@ -652,6 +652,81 @@ for (const [q, want, other] of [["enable snow depth", "sd", "swe"],
   });
 }
 
+section("and joins steps too, without breaking a name");
+// "Click forecasts and outlooks and click key messages" ran only the first
+// half, because nothing split on a bare "and". It cannot simply be added to
+// the list: the first half of that same sentence is the name of a control,
+// "Forecasts and Outlooks", and splitting inside it destroys the instruction
+// rather than sequencing it. A bare "and" separates steps only where a verb
+// follows it.
+const andPage = loadPage(`<!doctype html><html><body>
+  <button id="fo">Forecasts and Outlooks</button>
+  <button id="km">Key Messages</button>
+  <p id="log"></p>
+  <script>
+    for (const id of ["fo", "km"]) {
+      document.getElementById(id).addEventListener("click", () => {
+        document.getElementById("log").textContent += id + ";";
+      });
+    }
+  <\/script></body></html>`, { url: "https://water.noaa.gov/" });
+if (!andPage) skip("and as a separator", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: andPage });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk",
+      instruction: "click forecasts and outlooks and click key messages" });
+    check("both halves run", ((r.display || {}).rows || []).length, 2);
+    check("and in order, with the control's own name intact",
+      (andPage.document.getElementById("log") || {}).textContent, "fo;km;");
+  });
+}
+
+section("pursuing a state never presses a link");
+// The live page sent someone to a different site. Water.noaa.gov repeats its
+// layer names in the navbar, so the loop - striking off each control that
+// moved nothing and taking the next - worked through "Flood Inundation
+// Mapping (FIM)" and "Flood Inundation Mapping" and left the page. Pressing
+// a link is not a step towards switching something on; it is the end of the
+// page the instruction was about.
+const withNav = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-navbar-nav">
+    <li><a href="/a">Flood Inundation Mapping (FIM)</a></li>
+    <li><a href="/b">Flood Inundation Mapping</a></li></ul>
+  <ul class="uk-accordion">
+    <li class="uk-open"><button class="uk-accordion-title">Products</button>
+      <div class="uk-accordion-content">
+        <label><input type="radio" name="p" value="lrfo"> Long Range Flood Outlook</label></div></li>
+    <li><input type="checkbox" name="fi">
+      <button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div class="uk-accordion-content">Flood inundation mapping shows modelled
+        extents for selected communities.</div></li>
+  </ul></body></html>`;
+for (const phrasing of ["click flood inundation", "enable flood inundation", "select flood inundation"]) {
+  const page = loadPage(withNav, { url: "https://water.noaa.gov/" });
+  if (!page) { skip(`nav-heavy: ${phrasing}`, "jsdom not installed"); continue; }
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: phrasing });
+    check(`"${phrasing}" ticks the layer`,
+      !!(page.document.querySelector('[name="fi"]') || {}).checked, true);
+    check(`"${phrasing}" stays on the page`, page.location.pathname, "/");
+    check(`"${phrasing}" leaves the flood outlook alone`,
+      !!(page.document.querySelector('[value="lrfo"]') || {}).checked, false);
+  });
+}
+// A gauge-table checkbox called "Major Flood" outscored the control named
+// word for word, 5 to 4: "enable" is not in the stop list, so the phrase
+// stayed "enable flood inundation" and could never equal "Flood Inundation".
+// The whole-label bonus was silently unavailable to any instruction starting
+// with a verb the stop list happened to miss.
+const rivalBox = { url: "https://water.noaa.gov/", controls: [
+  { kind: "input", type: "checkbox", label: "Major Flood", selector: "#major", confidence: "high" },
+  { kind: "button", label: "Flood Inundation", selector: "#acc", confidence: "high" },
+] };
+check("the control named word for word outranks one merely sharing a word",
+  sb.planGenericTool("enable flood inundation", rivalBox).calls[0].args.selector, "#acc");
+
 section("how many steps, and which kinds");
 // The boundary, written down. Everything here was measured rather than
 // assumed, and the last two fail on purpose - a limit that is tested is a
