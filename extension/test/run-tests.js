@@ -682,6 +682,33 @@ else {
   });
 }
 
+section("six ways to one article is one choice");
+// nasa.gov carries the same headline six times - a carousel, a latest-news
+// list, a featured block - none nested inside another, all linking to one
+// article. As separate candidates they tie forever and the page reads as
+// ambiguous when there is no choice anybody could make. The target is taken
+// from the nearest enclosing link, so a paragraph inside a card carries the
+// card's destination.
+const sixWays = { url: "https://www.nasa.gov/", controls: [
+  { kind: "a", label: "2 min read NASA Awards SpaceX Three Crew Flights",
+    selector: "#card1", goesTo: "/awards", confidence: "high" },
+  { kind: "div", label: "NASA Awards SpaceX Three Crew Flights",
+    selector: "#card2 > div", goesTo: "/awards", confidence: "high" },
+  { kind: "p", label: "NASA Awards SpaceX Three Crew Flights",
+    selector: "#card3 > p", goesTo: "/awards", confidence: "high" },
+] };
+const sixPlan = sb.planGenericTool("click NASA Awards SpaceX Three Crew Flights", sixWays);
+ensure("it acts rather than asking which copy", !!(sixPlan && sixPlan.calls), sixPlan);
+ensure("and does not call it ambiguous", !(sixPlan || {}).ambiguous, (sixPlan || {}).ambiguous);
+// Two links going to different places remain a real question.
+const twoPlaces = { url: "https://www.nasa.gov/", controls: [
+  { kind: "a", label: "Artemis mission", selector: "#a", goesTo: "/artemis", confidence: "high" },
+  { kind: "a", label: "Artemis gallery", selector: "#b", goesTo: "/gallery", confidence: "high" },
+] };
+ensure("but two different destinations still are",
+  !!(sb.planGenericTool("click artemis", twoPlaces) || {}).ambiguous,
+  sb.planGenericTool("click artemis", twoPlaces));
+
 section("three rounds over a hundred actions");
 // Found by sweeping 108 derived actions across five federal sites three
 // times over, fixing between rounds. All three were real.

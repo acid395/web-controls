@@ -602,6 +602,19 @@
         // Hidden behind something that can be opened. Carried through so a
         // caller can open it rather than report the control missing.
         hidden: shown ? undefined : true,
+        // Where pressing this would take you. The same headline appears six
+        // times on nasa.gov - a carousel, a latest-news list, a featured
+        // block - none nested inside another, all leading to one article. As
+        // separate candidates they tie forever and the page looks ambiguous
+        // when there is no choice to make. Taken from the nearest enclosing
+        // link, so the paragraph inside a card carries the card's target.
+        goesTo: (() => {
+          try {
+            const a = el.matches("a[href]") ? el : (el.closest && el.closest("a[href]"));
+            const href = a && a.getAttribute("href");
+            return href && !/^#$|^javascript:/i.test(href) ? href : undefined;
+          } catch (e) { return undefined; }
+        })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
         expanded,
         revealedBy: opener ? cssPath(opener) : undefined,

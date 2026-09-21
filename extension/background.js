@@ -2939,6 +2939,21 @@ function planGenericTool(instruction, inventory) {
           { wantsText, wantsState: STATE_COMMAND.test(instruction) }) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score);
+    // Several ways to reach one page are one candidate. The same headline
+    // appears six times on nasa.gov - a carousel, a latest-news list, a
+    // featured block - all leading to the same article, and as separate
+    // candidates they tie forever and the page reads as ambiguous when there
+    // is no choice to make. The best-scoring way in is kept.
+    const byTarget = new Set();
+    const ranked = scored.filter((x) => {
+      const to = x.control.goesTo;
+      if (!to) return true;
+      if (byTarget.has(to)) return false;
+      byTarget.add(to);
+      return true;
+    });
+    scored.length = 0;
+    scored.push(...ranked);
     if (!scored.length) break;
 
     const best = scored[0];
@@ -2965,8 +2980,23 @@ function planGenericTool(instruction, inventory) {
     // question with no way to answer it.
     const oneLabel = tied.length > 1 && new Set(
       tied.map((x) => String(x.control.label || "").trim().toLowerCase()).filter(Boolean)).size === 1;
+    // Nor is a card and the paragraph inside it. nasa.gov and census.gov
+    // build article cards where the outer element carries "2 min read" plus
+    // the headline and the paragraph within carries the headline alone -
+    // different labels, so not caught above, and one is inside the other, so
+    // not a choice anybody could make. Pressing either does the same thing.
+    // Nor several ways to reach one page. All six of nasa.gov's copies of a
+    // headline lead to the same article, so which one is pressed cannot
+    // matter to anybody.
+    const sameTarget = tied.length > 1 && !!tied[0].control.goesTo
+      && tied.every((x) => x.control.goesTo === tied[0].control.goesTo);
+    const nested = tied.length > 1 && tied.every((x) => {
+      const a = String(x.control.selector || "");
+      const b = String(tied[0].control.selector || "");
+      return a === b || a.startsWith(`${b} `) || b.startsWith(`${a} `);
+    });
     const duplicates = tied.length > 1
-      && (sameControlRepeated(tied.map((x) => x.control)) || oneLabel);
+      && (sameControlRepeated(tied.map((x) => x.control)) || oneLabel || nested || sameTarget);
     const rivals = !duplicates && runnerUp && best.score - runnerUp.score < 2 && sameWords(best.control, runnerUp.control);
     if (rivals) {
       if (!calls.length) {

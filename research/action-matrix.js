@@ -72,7 +72,12 @@ for (const [name, file, url] of SITES) {
     const sameLabelHit = !!(resolvedControl
       && String(resolvedControl.label || "").trim().toLowerCase()
         === String(c.label || "").trim().toLowerCase());
-    const hit = sameLabelHit || !!(sel && sel === c.selector);
+    // Reaching a different control that leads to the same page is not a miss
+    // either: nasa.gov carries one headline six times over, in a carousel, a
+    // latest-news list and a featured block, all linking to one article.
+    const sameTargetHit = !!(resolvedControl && resolvedControl.goesTo
+      && resolvedControl.goesTo === c.goesTo);
+    const hit = sameLabelHit || sameTargetHit || !!(sel && sel === c.selector);
     // A radio has no selector in its args; match on value instead.
     const radioHit = !!(call && call.name === "pagePickRadio" && !call.args.selector
       && String(call.args.value||"").toLowerCase() === String(c.label||"").trim().toLowerCase());
