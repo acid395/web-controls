@@ -2696,7 +2696,7 @@ function wordMatchesText(rawWord, rawText) {
 // Used to let several controls divide one instruction between them.
 function wordsCoveredBy(control, words) {
   const label = foldAccents(control.label || "").toLowerCase();
-  const optionText = (control.options || [])
+  const optionText = [...(control.options || []), ...(control.childOptions || [])]
     .map((o) => foldAccents(o.text || o.value || "").toLowerCase()).join(" ");
   const hay = `${label} ${optionText}`;
   const hit = words.filter((w) => wordMatchesText(w, hay));
@@ -2799,6 +2799,14 @@ const TEXT_INPUT_KINDS = new Set(["text", "search", "email", "url", "tel", "numb
 function toolCallFor(control, words, instruction = "") {
   const kind = String(control.kind || "").toLowerCase();
   const type = String(control.type || "").toLowerCase();
+
+  // A custom segmented control: the option named is a child element, and
+  // pressing the container that holds all four does nothing at all.
+  if (control.childOptions && control.childOptions.length) {
+    const pick = matchOption({ options: control.childOptions }, words);
+    const chosen = pick && control.childOptions.find((o) => o.text === pick.text);
+    if (chosen) return { name: "pageClick", args: { selector: chosen.selector } };
+  }
 
   if (kind === "select" || (control.options && control.options.length)) {
     const option = matchOption(control, words);
@@ -3074,7 +3082,13 @@ function planGenericTool(instruction, inventory) {
 
     calls.push(call);
     matched.push({ label: best.control.label, selector: best.control.selector, covered,
-      kind: best.control.kind, kindKey: kindOf(best.control) });
+      kind: best.control.kind, kindKey: kindOf(best.control),
+      // Named by one of its own options rather than by its label. A dropdown
+      // is often labelled only by what it contains: water.noaa.gov's basemap
+      // select reads "Topographic Satellite Dark Light" and the word
+      // "basemap" appears nowhere on it.
+      viaOption: !!(best.control.options || best.control.childOptions)
+        && /^page(SelectOption|Click)$/.test(call.name) });
     if (follow) {
       calls.push(follow);
       matched.push({ label: `submit ${best.control.label || "search"}`, selector: best.control.selector, covered: [] });
@@ -3131,7 +3145,15 @@ function planGenericTool(instruction, inventory) {
     && !looksLikeMisspelledVerb(w));
   const coveredSubject = matched.reduce((n, m) => n + (m.covered || [])
     .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w)).length, 0);
-  if (missedSubject.length && missedSubject.length >= coveredSubject) return null;
+  // One spare word where an option was named exactly. "Set the basemap to
+  // satellite" covers "satellite" against that option and leaves "basemap"
+  // over - one against one, which the rule below rejects - yet naming an
+  // option word for word is far better evidence than sharing a word with a
+  // label. "Click snow depth" stays rejected: "snow" matched a nav link's
+  // label, not an option, so it gets no allowance.
+  const namedAnOption = matched.some((m) => m.viaOption);
+  if (missedSubject.length
+      && missedSubject.length >= coveredSubject + (namedAnOption ? 1 : 0)) return null;
 
   return { calls, matched, unmatchedWords: remaining, phrase };
 }

@@ -556,9 +556,17 @@
       // offer three times over. Walk order is outside-in, so the element
       // that owns the label has already been taken by the time its
       // decoration is reached.
+      // Never a real control. A <select> reads as all of its option texts run
+      // together, which is exactly what the div wrapping it reads as - so
+      // water.noaa.gov's basemap select was dropped into its own wrapper and
+      // "set the basemap to satellite" had nothing to set. Decoration can be
+      // folded into the thing it decorates; a control cannot.
+      const isRealControl = TAGS.includes(tag) || (role && ROLES.includes(role));
       let nestedDuplicate = false;
-      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
-        if (seen.has(a) && norm(rawLabelOf(a)) === norm(rawLabelOf(el))) { nestedDuplicate = true; break; }
+      if (!isRealControl) {
+        for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+          if (seen.has(a) && norm(rawLabelOf(a)) === norm(rawLabelOf(el))) { nestedDuplicate = true; break; }
+        }
       }
       if (nestedDuplicate) continue;
       // A control behind a closed panel is still a control. Recorded with
@@ -568,6 +576,17 @@
       const opener = shown ? null : disclosureFor(el);
       if (!shown && !opener) continue;   // hidden with no way in is not usable
       seen.add(el);
+
+      // And the other way round: a container whose whole text is one control
+      // inside it is that control's wrapper, not a second control.
+      if (!TAGS.includes(tag) && !(role && ROLES.includes(role))) {
+        let wrapsOne = false;
+        try {
+          const inner = el.querySelectorAll(TAGS.join(","));
+          if (inner.length === 1 && norm(rawLabelOf(inner[0])) === norm(rawLabelOf(el))) wrapsOne = true;
+        } catch (e) { /* exotic markup; keep the container */ }
+        if (wrapsOne) continue;
+      }
 
       const lab = rawLabelOf(el);
       // Does this thing open a panel, and is that panel already open? An
@@ -621,6 +640,27 @@
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
       };
       if (tag === "select") rec.options = [...el.options].map((o) => ({ value: o.value, text: o.text.trim() }));
+
+      // A custom segmented control. water.noaa.gov offers its basemaps as a
+      // div whose four children read Topographic, Satellite, Dark and Light,
+      // with the handler compiled onto them by Svelte where nothing here can
+      // see it - so the children were never controls and the container was
+      // one control labelled "Topographic Satellite Dark Light". Asking for
+      // the satellite basemap matched that label and had nowhere to go.
+      //
+      // Children that are short, distinct and childless are the options of
+      // the thing that holds them, whatever the markup calls it.
+      if (!rec.options && !TAGS.includes(tag) && el.children && el.children.length >= 2
+          && el.children.length <= 12) {
+        const kids = [...el.children].map((k) => ({
+          text: rawLabelOf(k).replace(/\s+/g, " ").trim(), el: k,
+        })).filter((k) => k.text && k.text.length <= 24 && k.el.children.length <= 1);
+        const distinct = new Set(kids.map((k) => k.text.toLowerCase()));
+        if (kids.length >= 2 && distinct.size === kids.length
+            && kids.map((k) => k.text).join(" ") === lab.replace(/\s+/g, " ").trim()) {
+          rec.childOptions = kids.map((k) => ({ text: k.text, selector: framePrefixOf(k.el) + cssPath(k.el) }));
+        }
+      }
       rec._sig = [rec.kind, rec.type, sigNorm(lab), rec.name].join("|");
       all.push(rec);
     }

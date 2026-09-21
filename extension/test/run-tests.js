@@ -682,6 +682,49 @@ else {
   });
 }
 
+section("what the live page actually said");
+// Driven against water.noaa.gov itself through Chrome's debugging protocol,
+// not a rebuild. 191 controls. Three things that only the real page could
+// have shown.
+
+// A select reads as all of its option texts run together, which is exactly
+// what the div wrapping it reads as - so the basemap select was folded into
+// its own wrapper by the duplicate rule and there was nothing left to set.
+// Decoration can be folded into what it decorates; a control cannot.
+const wrappedSelect = loadPage(`<!doctype html><html><body>
+  <div class="uk-flex"><select id="bm">
+    <option>Topographic</option><option>Satellite</option>
+    <option>Dark</option><option>Light</option></select></div>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (!wrappedSelect) skip("wrapped selects", "jsdom not installed");
+else {
+  const found = wrappedSelect.GENERIC.inventory({ includeHidden: true }).controls;
+  ensure("a select inside a div of the same text survives",
+    found.some((c) => c.kind === "select" && (c.options || []).length === 4),
+    found.map((c) => `${c.kind}:${(c.label || "").slice(0, 24)}`));
+  check("and the wrapper is not offered as a second control",
+    found.filter((c) => /topographic/i.test(c.label || "")).length, 1);
+}
+
+// The word naming the kind of control need not be on it. That select is
+// labelled only by what it contains - "basemap" appears nowhere - so
+// "satellite" covered one word and "basemap" was left over, one against one,
+// which the unaccounted-subject rule rejects. Naming an option word for word
+// is far better evidence than sharing a word with a label.
+const basemap = { url: "https://water.noaa.gov/", controls: [
+  { kind: "select", label: "Topographic Satellite Dark Light", selector: "#bm", confidence: "high",
+    options: [{ text: "Topographic" }, { text: "Satellite" }, { text: "Dark" }, { text: "Light" }] },
+] };
+check("an option named exactly carries one spare word",
+  sb.planGenericTool("set the basemap to satellite", basemap).calls[0].args.value, "Satellite");
+// And the case the rule exists for is untouched: "snow" matched a nav link's
+// label, not an option, so it gets no allowance.
+const navOnly = { url: "https://water.noaa.gov/", controls: [
+  { kind: "a", label: "National Snow Analysis", selector: "#nsa", confidence: "high" },
+] };
+ensure("but a label sharing one word still does not",
+  !sb.planGenericTool("click snow depth", navOnly), sb.planGenericTool("click snow depth", navOnly));
+
 section("six ways to one article is one choice");
 // nasa.gov carries the same headline six times - a carousel, a latest-news
 // list, a featured block - none nested inside another, all linking to one
