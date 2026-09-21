@@ -4206,9 +4206,12 @@ function planManifestTool(instruction, routeGlobal) {
 // Opening something is progress even though it accounts for no words. That
 // is the whole reason panels exist, and the reason a pure word-coverage loop
 // would stop at the closed door.
-async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
+async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] } = {}) {
   const steps = [];
-  const actedOn = new Set();
+  // Controls a caller has already tried. Without this the loop re-plans from
+  // scratch, picks the same best match, and presses it a second time - which
+  // on a toggle undoes the first press and on a link means two navigations.
+  const actedOn = new Set(avoid.filter(Boolean));
   const subjectOf = (words) => words.filter((w) =>
     w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
 
@@ -4315,6 +4318,15 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
     // own is progress, not completion.
     if (proven) { if (!remaining.length) break; continue; }
     if (moved) continue;   // it did something, just not the thing asked for
+
+    // Nothing moved - but striking the control off and pressing the next one
+    // is only right where there is evidence it did nothing. A control that
+    // reports its own state saying "still false" is evidence. A plain click
+    // whose effect this cannot see is not: on a page whose buttons change
+    // something unobservable, "click 30 day" pressed 30 day, could not tell
+    // that it had worked, and went on to press 7 day. Absence of evidence is
+    // not evidence, and the second press is the one that does harm.
+    if (r.itChanged !== false && !stateCommand) break;
 
     // It acted and nothing moved. On these sites that usually means a nav
     // link named after the thing rather than the thing - water.noaa.gov has
@@ -5663,16 +5675,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               part,
               call: planManifestTool(part, route.global) || (route.global === "USGS" ? planTool(part) : null),
             }));
-            if (plans.every((p) => p.call)) {
+            // Every part used to need a hand-written tool before any of them
+            // ran, so "click the monitoring location and then click 30 day"
+            // did the first half and stopped - not because the second half
+            // was impossible, but because nobody had written a manifest for
+            // this site. Sequencing worked only where per-site code existed,
+            // which is the one place it is least needed.
+            //
+            // A part with no manifest tool is pursued instead, which is the
+            // same machinery a single instruction gets, multi-step and all.
+            if (plans.length > 1) {
               const steps = [];
               for (const { part, call } of plans) {
-                // A manifest tool call and a planTool result have different
-                // shapes; both end up at the same executor.
-                const result = call.name
-                  ? await runVerified(route.global, call)
-                  : await invokeOnActiveTab(call.fn, call.args);
+                let result;
+                if (call) {
+                  // A manifest tool call and a planTool result have different
+                  // shapes; both end up at the same executor.
+                  result = call.name
+                    ? await runVerified(route.global, call)
+                    : await invokeOnActiveTab(call.fn, call.args);
+                } else {
+                  const chased = await pursueGoal(route.global, part).catch(() => null);
+                  const ran = ((chased && chased.steps) || [])
+                    .filter((st) => st.did !== "opened" && st.ok);
+                  // Three outcomes, not two. A step that ran and was
+                  // confirmed is done; one that ran and could not be
+                  // confirmed is not a failure - "click 30 day" pressed the
+                  // right button on a page whose response this cannot see,
+                  // and calling that failed is as wrong as calling it done.
+                  // Only finding nothing to press is a failure.
+                  result = chased && chased.done ? { ok: true, verified: { changed: true } }
+                    : ran.length ? { ok: true, unconfirmed: true }
+                    : { ok: false, error: `nothing on this page matched "${part}"` };
+                }
                 const changed = result.verified ? result.verified.changed : undefined;
-                steps.push({ part, ok: result.ok !== false, changed, error: result.error });
+                steps.push({ part, ok: result.ok !== false, changed,
+                  unconfirmed: !!result.unconfirmed, error: result.error });
                 if (result.ok === false) break;
               }
               const failed = steps.find((st) => !st.ok);
@@ -5690,10 +5728,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // a button not found, a panel not open.
                   rows: steps.map((st) => ({
                     name: st.part.slice(0, 44),
-                    value: !st.ok ? "failed" : st.changed === false ? "no change" : "done",
+                    value: !st.ok ? "failed"
+                      : st.unconfirmed ? "ran"
+                      : st.changed === false ? "no change" : "done",
                     meta: !st.ok ? String(st.error || "no reason given").slice(0, 70)
+                      : st.unconfirmed ? "could not check whether the page changed"
                       : st.changed === false ? "ran, but nothing on the page changed" : "",
-                    tone: !st.ok ? "alert" : st.changed === false ? "warn" : "ok",
+                    tone: !st.ok ? "alert" : (st.unconfirmed || st.changed === false) ? "warn" : "ok",
                   })),
                   source: route.global,
                 },
@@ -5932,8 +5973,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const deadEnd = (rr.itChanged === false)
               || !!(ran.verified && ran.verified.changed === false)
               || (stateCommand && typeof rr.itChanged !== "boolean");
-            if (deadEnd && commandLike && !forceModel) {
-              const chased = await pursueGoal(route.global, wanted).catch(() => null);
+            // Only where an end state was asked for. "Enable flood inundation"
+            // wants the layer on, so opening a panel and ticking what is
+            // inside is help. "Click 30 day" is one instruction about one
+            // control: if it did nothing, pressing whatever else the page
+            // offers is not help, it is a second action nobody asked for -
+            // and excluding the control just tried is exactly what makes the
+            // loop reach for the next one.
+            if (deadEnd && stateCommand && commandLike && !forceModel) {
+              const chased = await pursueGoal(route.global, wanted,
+                { avoid: [rr.at] }).catch(() => null);
               if (chased && chased.done) {
                 const acted = chased.steps.filter((st) => st.did !== "opened");
                 const last = acted[acted.length - 1] || {};

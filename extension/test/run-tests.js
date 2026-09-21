@@ -652,6 +652,65 @@ for (const [q, want, other] of [["enable snow depth", "sd", "swe"],
   });
 }
 
+section("and then means and then");
+// "Click bear river monitoring location page and then click 30 day" did the
+// first half and stopped. Sequencing existed, but it required every part to
+// plan to a hand-written tool before any of them ran - so it worked only on
+// sites somebody had written code for, which is the one place it is least
+// needed. A part with no manifest tool is pursued instead, which is the same
+// machinery a single instruction gets, multi-step and all.
+const twoPart = `<!doctype html><html><head><title>USGS</title></head><body>
+  <a href="#loc" id="loc">View Monitoring location page</a>
+  <div id="spans" style="display:none"></div>
+  <script>
+    document.getElementById("loc").addEventListener("click", () => {
+      const d = document.getElementById("spans");
+      d.style.display = "block";
+      if (!d.innerHTML) {
+        d.innerHTML = '<button id="d7">7 day</button><button id="d30">30 day</button><p id="out"></p>';
+        document.getElementById("d30").addEventListener("click", () => {
+          document.getElementById("out").textContent = "30 day selected"; });
+        document.getElementById("d7").addEventListener("click", () => {
+          document.getElementById("out").textContent = "7 day selected"; });
+      }
+    });
+  <\/script></body></html>`;
+const seqPage = loadPage(twoPart, { url: "https://waterdata.usgs.gov/monitoring-location/10126000/" });
+if (!seqPage) skip("two-part instructions", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: seqPage });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk",
+      instruction: "click view monitoring location page and then click 30 day" });
+    check("both halves are run", ((r.display || {}).rows || []).length, 2);
+    check("and the second half reaches the right button",
+      (seqPage.document.getElementById("out") || {}).textContent, "30 day selected");
+    ensure("neither half is reported as having failed",
+      ((r.display || {}).rows || []).every((x) => x.value !== "failed"), (r.display || {}).rows);
+  });
+}
+
+// Striking a control off and pressing the next one is only right where there
+// is evidence the first did nothing. A control reporting "still false" is
+// evidence; a plain click whose effect cannot be seen is not - and the
+// second press is the one that does harm.
+const twoButtons = loadPage(`<!doctype html><html><body>
+  <button id="d7">7 day</button><button id="d30">30 day</button>
+  </body></html>`, { url: "https://waterdata.usgs.gov/" });
+if (twoButtons) {
+  const bg2 = loadBackground({ page: twoButtons });
+  let pressed = [];
+  for (const id of ["d7", "d30"]) {
+    twoButtons.document.getElementById(id)
+      .addEventListener("click", () => pressed.push(id));
+  }
+  runAsync(async () => {
+    await bg2.__ask({ type: "smartAsk", instruction: "click 30 day" });
+    check("a click that changes nothing does not press the next thing",
+      pressed.join(","), "d30");
+  });
+}
+
 section("the bare checkbox beside the button that names it");
 // The live page, rebuilt from three rounds of cards. water.noaa.gov puts a
 // bare checkbox beside the button that names each layer, so the checkbox has
