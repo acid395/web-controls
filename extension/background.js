@@ -2565,6 +2565,20 @@ function scoreControl(control, words, phrase, opts = {}) {
   // work, so this must not outweigh a genuine name match.
   if (score > 0 && control.hidden) score -= control.revealedBy ? 0.5 : 2;
 
+  // A panel already open is not the thing to press. On water.noaa.gov the
+  // accordion titled "Flood Inundation" carries both words, where the layer
+  // checkbox inside it is labelled only "INUNDATION" - fourteen against five
+  // - so the title won every time and all it does is open and shut the
+  // panel. Closed, it is exactly what needs pressing, so this applies only
+  // once it is open, and only where an end state was asked for.
+  // Not a penalty - a disqualification. Ten points off was not enough for
+  // "select flood inundation", where "select" is a stop word so the phrase
+  // reduces to exactly the title's own wording and it scores higher still.
+  // An open panel's title is not something that can be switched on, at any
+  // score. Closed, it is exactly what needs pressing, so this applies only
+  // once it is open.
+  if (opts.wantsState && control.opensPanel && control.expanded === true) return 0;
+
   // A thing you can switch on beats a thing you can only navigate to, when
   // both are called the same. water.noaa.gov has "Flood Inundation Mapping"
   // as a navbar link and as a map layer, and the link kept winning - so
@@ -2886,7 +2900,9 @@ function planGenericTool(instruction, inventory) {
   while (remaining.length) {
     const scored = controls
       .filter((c) => !used.has(c.selector))
-      .map((c) => ({ control: c, score: scoreControl(c, remaining, remaining.join(" "), { wantsText }) }))
+      .map((c) => ({ control: c,
+        score: scoreControl(c, remaining, remaining.join(" "),
+          { wantsText, wantsState: STATE_COMMAND.test(instruction) }) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score);
     if (!scored.length) break;
@@ -5958,8 +5974,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 meta: `${c.kind || "?"}${c.type ? ":" + c.type : ""} ${c.selector || ""}`.slice(0, 70),
                 tone: "ok",
               })) : [{ name: "nothing on this page scored above zero", value: "", meta: "", tone: "warn" }],
-              note: generic && generic.unmatchedWords && generic.unmatchedWords.length
-                ? `unaccounted for: ${generic.unmatchedWords.join(", ")}` : "",
+              // Verbs are not missing subjects. "Unaccounted for: enable" says
+              // the instruction's own verb went unmatched, which is true of
+              // every instruction and tells nobody anything.
+              note: (() => {
+                const left = ((generic && generic.unmatchedWords) || [])
+                  .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w));
+                return left.length ? `unaccounted for: ${left.join(", ")}` : "";
+              })(),
               source: route.global,
             },
           });

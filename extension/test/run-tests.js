@@ -682,6 +682,45 @@ else {
   });
 }
 
+section("an open panel's title is not a switch");
+// From the live page with the panel finally open. The layer is a checkbox
+// labelled "INUNDATION"; the accordion above it is titled "Flood Inundation"
+// and so carries both words, scoring fourteen against the checkbox's five.
+// The title won every time, and all it does is open and shut the panel -
+// which is why eight rounds of cards said "clicked, but it is still false".
+//
+// Once the panel is open its title cannot be the thing to switch on, at any
+// score. Closed, it is exactly what needs pressing, so both states are
+// tested here.
+const nwpsOpen = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-accordion">
+    <li class="uk-open"><button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div class="uk-accordion-content">
+        <div class="options"><label><input type="checkbox" name="inund"> INUNDATION</label></div>
+        <div class="options"><label><input type="checkbox" name="cov"> INUNDATION COVERAGE</label></div>
+      </div></li>
+    <li class="uk-open"><button class="uk-accordion-title">Gauges</button>
+      <div class="uk-accordion-content"><table class="gauge-table">
+        <tr><td><label><input type="checkbox" name="major"> Major Flood</label></td></tr>
+      </table></div></li>
+  </ul></body></html>`;
+const nwpsShut = nwpsOpen.replace('<li class="uk-open"><button id="uk-accordion-9"',
+  '<li><button id="uk-accordion-9"');
+for (const [state, src] of [["open", nwpsOpen], ["closed", nwpsShut]]) {
+  for (const phrasing of ["enable flood inundation", "select flood inundation"]) {
+    const page = loadPage(src, { url: "https://water.noaa.gov/" });
+    if (!page) { skip(`${state}: ${phrasing}`, "jsdom not installed"); continue; }
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: phrasing });
+      const on = (n) => !!(page.document.querySelector(`[name="${n}"]`) || {}).checked;
+      check(`panel ${state}: "${phrasing}" ticks INUNDATION`, on("inund"), true);
+      check(`panel ${state}: "${phrasing}" leaves INUNDATION COVERAGE alone`, on("cov"), false);
+      check(`panel ${state}: "${phrasing}" leaves the gauge table alone`, on("major"), false);
+    });
+  }
+}
+
 section("it means the thing you just named");
 // "Search fremont, ca, usa and click on it" split correctly and then failed
 // on the second half: "click on it" is three stop words and names nothing at

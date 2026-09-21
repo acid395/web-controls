@@ -570,6 +570,26 @@
       seen.add(el);
 
       const lab = rawLabelOf(el);
+      // Does this thing open a panel, and is that panel already open? An
+      // accordion titled "Flood Inundation" matches the words better than the
+      // checkbox inside it ever will - it carries both of them, where the
+      // checkbox is labelled only "INUNDATION" - so it won every time and all
+      // it does is open and shut the panel. Once the panel is open, pressing
+      // the title again is the one thing certain not to help.
+      const expandedAttr = el.getAttribute && el.getAttribute("aria-expanded");
+      const looksLikeTitle = tag === "summary"
+        || /accordion-title/i.test(String(el.className || ""))
+        || /^uk-accordion-\d+$/.test(String(el.id || ""));
+      let expanded;
+      if (expandedAttr === "true") expanded = true;
+      else if (expandedAttr === "false") expanded = false;
+      else if (looksLikeTitle && el.closest) {
+        const holder = el.closest("li, details, .uk-accordion > *");
+        if (holder) {
+          expanded = !!(holder.open
+            || (holder.classList && holder.classList.contains("uk-open")));
+        }
+      }
       const rec = {
         kind: role || tag, tag, type: el.type || "", label: lab.slice(0, 80),
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
@@ -582,6 +602,8 @@
         // Hidden behind something that can be opened. Carried through so a
         // caller can open it rather than report the control missing.
         hidden: shown ? undefined : true,
+        opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        expanded,
         revealedBy: opener ? cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
       };
