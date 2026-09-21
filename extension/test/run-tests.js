@@ -682,6 +682,48 @@ else {
   });
 }
 
+section("an empty panel is not a failed search");
+// Measured on water.noaa.gov through Chrome itself: the Flood Inundation
+// accordion opens - aria-expanded goes true, the li gains uk-open, the panel
+// gets a height - and holds nothing at all. Our click does this exactly as a
+// genuine mouse click does; both leave it empty. The controls seen there on
+// another day exist only once the site has filled it.
+//
+// So the card was describing our own tooling rather than the page:
+// "toggleFloodCategory: inundation not found", and "never accounted for:
+// flood, inundation" - which says the search failed when what happened is
+// that the page has no such control yet.
+const emptyPanel = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-accordion">
+    <li><a id="uk-accordion-9" class="uk-accordion-title" aria-expanded="false">Flood Inundation</a>
+      <div class="uk-accordion-content" style="display:none"></div></li>
+  </ul>
+  <script>
+    document.getElementById("uk-accordion-9").addEventListener("click", function () {
+      this.setAttribute("aria-expanded", "true");
+      this.closest("li").classList.add("uk-open");
+      this.closest("li").querySelector(".uk-accordion-content").style.display = "block";
+    });
+  <\/script></body></html>`;
+const ep = loadPage(emptyPanel, { url: "https://water.noaa.gov/" });
+if (!ep) skip("empty panels", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: ep });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+    const d = r.display || {};
+    ensure("the card says the panel opened and was empty",
+      /opened .*and it is empty/i.test(d.subtitle || ""), d.subtitle);
+    ensure("it is titled after the panel, not after a hand-written tool",
+      /flood inundation/i.test(d.title || ""), d.title);
+    ensure("and does not claim the words went unmatched",
+      !/never accounted for/i.test(JSON.stringify(d.rows || [])), d.rows);
+    // The panel really was opened, which is the one thing that did work.
+    check("the accordion is left open",
+      ep.document.getElementById("uk-accordion-9").getAttribute("aria-expanded"), "true");
+  });
+}
+
 section("what the live page actually said");
 // Driven against water.noaa.gov itself through Chrome's debugging protocol,
 // not a rebuild. 191 controls. Three things that only the real page could

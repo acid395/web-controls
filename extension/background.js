@@ -4361,6 +4361,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   let remaining = subjectOf(meaningfulWords(instruction));
   let lastCount = -1;
   let deadEnds = 0;
+  let emptyPanel = null;
   const stateCommand = STATE_COMMAND.test(instruction);
 
   for (let step = 0; step < maxSteps; step++) {
@@ -4419,6 +4420,13 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       forgetPageTools();
       const appeared = (opened && opened.ok && opened.result.appeared) || 0;
       steps.push({ did: "opened", label: door.label, appeared });
+      // Opened the very thing that was asked for, and found it empty. On
+      // water.noaa.gov the Flood Inundation panel expands - aria-expanded
+      // goes true, the panel gets a height - and holds nothing at all until
+      // the site fills it. That is worth saying in those words, because
+      // "nothing matched flood, inundation" describes a search that failed
+      // when what happened is that the page has no such control yet.
+      if (!appeared && door.related) emptyPanel = door.label;
       if (!opened || !opened.ok) break;
       // A door that adds no controls has not necessarily failed. The panel
       // may hold things already counted - every pass reads hidden controls
@@ -4502,6 +4510,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     steps,
     done: !remaining.length && acted.some((st) => st.proven),
     unaccounted: remaining,
+    emptyPanel,
     opened: steps.filter((st) => st.did === "opened").map((st) => st.label),
   };
 }
@@ -6675,7 +6684,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             ...result, ok: result.ok !== false,
             plannedBy: cameFromPage ? "page" : "manifest", toolCall: manifestCall,
             display: {
-              title: friendlyToolName(usedInstead || manifestCall.name),
+              title: chased && chased.emptyPanel
+                ? String(chased.emptyPanel).slice(0, 60)
+                : friendlyToolName(usedInstead || manifestCall.name),
               // A substitution has to be stated, but never at the cost of
               // the verification result - saying "went there by searching"
               // while hiding that nothing moved is worse than either alone.
@@ -6706,6 +6717,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // "ran - could not check whether the page changed". The
                   // one thing that was certain got reported as the one thing
                   // that was unknown.
+                  // What the page did beats what a hand-written tool said
+                  // about it. "Flood Inundation" opens on water.noaa.gov and
+                  // holds nothing until the site fills it, and reporting
+                  // that as toggleFloodCategory not finding "inundation"
+                  // describes our own tooling rather than the page.
+                  if (chased && chased.emptyPanel) {
+                    return `opened "${chased.emptyPanel}" and it is empty - this page has not `
+                      + `put any controls in it yet`;
+                  }
                   if (result.ok === false) {
                     return `did not run: ${String(result.error || "no reason given").slice(0, 90)}`;
                   }
@@ -6733,6 +6753,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 meta: c.was === undefined ? "" : `was ${String(c.was).slice(0, 24)}`,
                 tone: "ok",
               }))).concat(chased && chased.unaccounted && chased.unaccounted.length
+                && !(chased && chased.emptyPanel)
                 ? [{ name: `never accounted for: ${chased.unaccounted.join(", ")}`,
                      value: "", meta: "", tone: "warn" }]
                 : []),
