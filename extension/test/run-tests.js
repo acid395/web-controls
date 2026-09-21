@@ -699,6 +699,57 @@ else {
   });
 }
 
+section("the panel survives a bare browser");
+// The panel sat on "checking page..." for good, with its badge never filled
+// and its enable buttons never shown. Not a failure of the check - a failure
+// to reach it: three chrome APIs were guarded where they appeared early in
+// popup.js and used unguarded where they appeared later, and an absent one
+// throws, stopping every line after it, describeRoute among them.
+//
+// The buttons behind that check are the only thing that fixes an un-enabled
+// site, so hiding them exactly when the check fails is a dead end.
+if (typeof require === "undefined") skip("the panel", "no require");
+else {
+  let JSDOMLib = null;
+  try { JSDOMLib = require("jsdom"); } catch (e) { /* skipped below */ }
+  if (!JSDOMLib) skip("the panel", "jsdom not installed");
+  else {
+    const fsx = require("fs"), pathx = require("path");
+    const dir = pathx.join(__dirname, "..", "popup");
+    const dom = new JSDOMLib.JSDOM(fsx.readFileSync(pathx.join(dir, "popup.html"), "utf8"), {
+      runScripts: "outside-only",
+      virtualConsole: new JSDOMLib.VirtualConsole(),
+      url: "chrome-extension://test/popup/popup.html",
+    });
+    const w = dom.window;
+    // Only what an extension page is guaranteed to have. No storage.onChanged,
+    // no tabs.onActivated, no windows - the things that were unguarded.
+    w.chrome = {
+      runtime: { sendMessage: () => {}, lastError: null, getURL: (p) => p },
+      storage: { local: { get: (k, cb) => cb && cb({}), set: (o, cb) => cb && cb() } },
+      tabs: { query: (q, cb) => cb && cb([{ id: 1, url: "https://water.noaa.gov/", active: true }]) },
+      permissions: { request: (o, cb) => cb && cb(true) },
+    };
+    let threw = null;
+    try { w.eval(fsx.readFileSync(pathx.join(dir, "popup.js"), "utf8")); }
+    catch (e) { threw = String(e.message); }
+    ensure("popup.js runs without every chrome API present", !threw, threw);
+    ensure("and the enable buttons are in the markup at all",
+      !!w.document.getElementById("enableAll"), "no #enableAll");
+
+    // And when the worker never answers, the way out appears on its own.
+    runAsync(async () => {
+      await new Promise((r) => setTimeout(r, 4500));
+      const row = w.document.getElementById("enableRow");
+      ensure("a worker that never answers still leaves a way out",
+        !!(row && /show/.test(row.className)), row && row.className);
+      ensure("and the badge says so rather than checking for ever",
+        !/checking page/.test((w.document.getElementById("routeText") || {}).textContent || ""),
+        (w.document.getElementById("routeText") || {}).textContent);
+    });
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

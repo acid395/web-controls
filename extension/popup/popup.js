@@ -252,7 +252,7 @@ function restoreHistory() {
 
 // A result that arrives while the popup happens to be open should appear
 // without waiting for a reopen.
-chrome.storage.onChanged.addListener((changes, area) => {
+if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.askHistory) return;
   const next = changes.askHistory.newValue || [];
   const unseen = next.filter((e) => e.status !== "running" && !renderedIds.has(e.id));
@@ -473,14 +473,24 @@ function refreshRoute() {
   clearTimeout(routeDebounce);
   routeDebounce = setTimeout(describeRoute, 150);
 }
-chrome.tabs.onActivated.addListener(refreshRoute);
-chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-  // A page announces itself many times while loading; only a settled URL or
-  // a finished load changes the answer.
-  if (!tab || !tab.active) return;
-  if (info.url || info.status === "complete") refreshRoute();
-});
-chrome.windows.onFocusChanged.addListener(refreshRoute);
+// Guarded, like the same three APIs are further up this file. They were not
+// here, and an absent one throws - which stops every line after it running,
+// describeRoute among them. That is a panel stuck on "checking page..." with
+// its badge never filled in and its enable buttons never shown: not a
+// failure of the check, a failure to ever reach it. Keeping the guards in one
+// place and not the other was the whole bug.
+if (chrome.tabs && chrome.tabs.onActivated) chrome.tabs.onActivated.addListener(refreshRoute);
+if (chrome.tabs && chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    // A page announces itself many times while loading; only a settled URL or
+    // a finished load changes the answer.
+    if (!tab || !tab.active) return;
+    if (info.url || info.status === "complete") refreshRoute();
+  });
+}
+if (chrome.windows && chrome.windows.onFocusChanged) {
+  chrome.windows.onFocusChanged.addListener(refreshRoute);
+}
 
 // Enter submits, which is what anyone types into a single-line box expects.
 // Up and down walk previous instructions, as any prompt does - most asks here
@@ -576,7 +586,7 @@ function clearStatus() {
   if (node) node.remove();
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "llmProgress") setStatus("model loading - " + msg.text);
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
 });
