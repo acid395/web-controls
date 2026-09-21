@@ -146,7 +146,9 @@ async function publishTools(routeGlobal, tabId) {
     : invokeOnActiveTab(fn, args).catch(() => ({ ok: false })));
 
   const manifest = defs.length ? await call("mcpRegister", [defs]) : { ok: true, result: { registered: 0, names: [] } };
-  const page = await call("mcpPublishControls", [{}]);
+  const page = PUBLISH_WEBMCP
+    ? await call("mcpPublishControls", [{}])
+    : { ok: true, result: { registered: 0, names: [], parked: true } };
   const a = (manifest.ok && manifest.result) || { registered: 0, names: [] };
   const b = (page.ok && page.result) || { registered: 0, names: [] };
   return {
@@ -156,6 +158,17 @@ async function publishTools(routeGlobal, tabId) {
     names: [...(a.names || []), ...(b.names || [])],
   };
 }
+
+// Parked, with the code intact. Publishing derived tools to modelContext
+// works and is tested, but nothing consumes it: no site declares tools of its
+// own, and no agent on Chrome reads what we publish. It was a claim rather
+// than a capability, and the local model now plans directly against the same
+// derived tools without the protocol in between.
+//
+// Left switchable rather than deleted, because the moment a consumer exists
+// this is a one-line change and the measurements taken through it should stay
+// reproducible. The content script guards itself on the same flag.
+const PUBLISH_WEBMCP = false;
 
 // Publishing has to happen without anybody asking, or a site is only
 // agent-usable once a human has opened this panel on it - which defeats the
@@ -5432,6 +5445,14 @@ async function runDiagnostics() {
     return `${(d.tables || []).length} tables, ${(d.labelledNumbers || []).length} numbers`;
   });
   await step("WebMCP", async () => {
+    // Says what is true rather than what used to be. Publishing is parked, so
+    // a count of tools here would be reporting a path nothing walks.
+    if (!PUBLISH_WEBMCP) {
+      const r = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
+      const theirs = ((r.ok && r.result && r.result.tools) || [])
+        .filter((t) => t.declaredBy === "page").length;
+      return `publishing parked · this site declares ${theirs}`;
+    }
     const r = await invokeOnActiveTab("mcpTools", []);
     if (!r.ok) throw new Error(r.error || "could not check");
     if (!r.result.available) throw new Error("no modelContext API in this browser (expected outside Edge 147+)");

@@ -745,6 +745,14 @@ else {
     // that would not click, Ask doing nothing - was that one missing line.
     const rawHtml = fsx.readFileSync(pathx.join(dir, "popup.html"), "utf8");
     ensure("the panel loads its script", /<script[^>]+popup\.js/.test(rawHtml), "no script tag");
+    // Two of them shipped: the button was added on main months ago, and
+    // rebuilding this file from that same original added a second. Only one
+    // can ever be reached - getElementById returns the first - so the other
+    // was a button that looked live and did nothing.
+    check("each control appears once",
+      (rawHtml.match(/id="enableAll"/g) || []).length, 1);
+    const ids = (rawHtml.match(/id="([^"]+)"/g) || []).map((m) => m.slice(4, -1));
+    check("and no id is used twice anywhere", ids.length, new Set(ids).size);
     ensure("and the document is closed properly",
       /<\/body>\s*<\/html>\s*$/.test(rawHtml.trim() + "\n"), rawHtml.slice(-60));
     const opens = (rawHtml.match(/<div[\s>]/g) || []).length;
