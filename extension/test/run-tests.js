@@ -483,6 +483,32 @@ else {
   }
 }
 
+section("the search you can see");
+// "Search how to vote" on usa.gov typed into
+// #search-field-small-mobile-menu - the copy of the search box inside the
+// collapsed mobile menu - and the page did nothing, because nothing on the
+// screen had been touched. Federal sites carry the same search twice, header
+// and mobile menu, and the box was chosen by document order.
+const twoSearches = { url: "https://www.usa.gov/", controls: [
+  { kind: "input", type: "search", label: "Search", selector: "#mobile", hidden: true, confidence: "high" },
+  { kind: "input", type: "search", label: "Search", selector: "#header", confidence: "high" },
+] };
+const votePlan = sb.planGenericTool("search how to vote", twoSearches);
+check("the one on the screen is used", votePlan.calls[0].args.selector, "#header");
+// The phrase, not the leftovers. "Search how to vote" means how to vote.
+check("and the whole phrase is typed", votePlan.calls[0].args.text, "how to vote");
+check("then submitted", votePlan.calls[1].name, "pageSubmit");
+
+// A box that is hidden but can be opened beats one that cannot be opened at
+// all - the runner presses the opener before typing.
+const openable = { url: "https://www.usa.gov/", controls: [
+  { kind: "input", type: "search", label: "Search", selector: "#buried", hidden: true, confidence: "high" },
+  { kind: "input", type: "search", label: "Search", selector: "#drawer", hidden: true,
+    revealedBy: "#toggle", revealedByLabel: "Open search", confidence: "high" },
+] };
+check("otherwise the one that can be opened",
+  sb.planGenericTool("search how to vote", openable).calls[0].args.selector, "#drawer");
+
 section("accents are not word boundaries");
 // "Click espanol" matched nothing on usa.gov. Splitting on [^a-z0-9] treats
 // every accented letter as a boundary, so the label tokenised to "espa" and

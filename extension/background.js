@@ -2535,6 +2535,15 @@ function scoreControl(control, words, phrase, opts = {}) {
   // A low-confidence row is a cursor:pointer guess, not a known control.
   if (control.confidence === "low") score -= 1.5;
 
+  // Between two controls of the same name, the one on the screen. Federal
+  // sites carry their search twice - header and collapsed mobile menu - and
+  // document order picked the mobile one, so usa.gov typed into a field
+  // nobody could see and the page did nothing at all. Small, and smaller
+  // still where something is known to open it: a layer behind a panel is
+  // hidden too, and reaching those is the entire point of the disclosure
+  // work, so this must not outweigh a genuine name match.
+  if (score > 0 && control.hidden) score -= control.revealedBy ? 0.5 : 2;
+
   // A thing you can switch on beats a thing you can only navigate to, when
   // both are called the same. water.noaa.gov has "Flood Inundation Mapping"
   // as a navbar link and as a map layer, and the link kept winning - so
@@ -2801,10 +2810,25 @@ function carriesText(instruction) {
 function findSearchBox(controls) {
   const typeOf = (c) => String(c.type || c.kind || "").toLowerCase();
   const textual = (c) => TEXT_INPUT_KINDS.has(typeOf(c)) || typeOf(c) === "textarea";
-  return controls.find((c) => textual(c) && /\bsearch\b/i.test(c.label || ""))
-    || controls.find((c) => typeOf(c) === "search")
-    || controls.find(textual)
-    || null;
+
+  // Federal sites carry the same search twice - once in the header and once
+  // inside the collapsed mobile menu - and taking the first in document
+  // order took the mobile one. usa.gov filled
+  // #search-field-small-mobile-menu, which is not on the screen, and the
+  // page did exactly nothing. A box nobody can see is the last resort, not
+  // the first; and one that can be opened first beats one that cannot be
+  // opened at all.
+  const rank = (c) => {
+    let r = 0;
+    if (!c.hidden) r += 4;                 // on the screen now
+    else if (c.revealedBy) r += 2;         // openable, and the runner opens it
+    if (/\bsearch\b/i.test(c.label || "")) r += 1;
+    if (typeOf(c) === "search") r += 1;
+    return r;
+  };
+  const boxes = controls.filter(textual);
+  if (!boxes.length) return null;
+  return boxes.slice().sort((a, b) => rank(b) - rank(a))[0];
 }
 
 function planGenericTool(instruction, inventory) {
