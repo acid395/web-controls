@@ -76,12 +76,10 @@
   }
   .chip:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* Always shown. This row was hidden until the capabilities check reported
-     a problem, which is the one moment the check itself is least likely to
-     answer - so the only control that fixes an un-enabled site was invisible
-     exactly when it was needed, and three rounds of "I don't see Enable
-     everywhere" were the result. A row of buttons nobody needs costs a
-     little space; a dead end costs the whole panel. */
+  /* Always shown. This row was hidden until the capabilities check reported a
+     problem, which is the one moment that check is least likely to answer -
+     so the only control that fixes an un-enabled site was invisible exactly
+     when it was needed. */
   .enable-row { margin-top: 10px; display: block; }
   button.secondary {
     width: 100%; padding: 7px; cursor: pointer;
@@ -230,6 +228,7 @@
     <div class="enable-row" id="enableRow">
       <button id="enable" class="secondary">Enable on this site</button>
       <button id="enableAll" class="secondary">Enable everywhere</button>
+      <button id="enableAll" class="secondary">Enable everywhere</button>
       <div class="hint" id="enableStatus" style="margin-top:6px"></div>
     </div>
   </div>
@@ -268,5 +267,9 @@
         <button id="runToolCall">Run one tool</button>
       </div>
 
-      <div class="tool-group">
-        
+    </div>
+  </details>
+
+  <script src="popup.js"></script>
+</body>
+</html>

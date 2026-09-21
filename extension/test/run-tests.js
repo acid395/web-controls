@@ -737,6 +737,20 @@ else {
     ensure("and the enable buttons are in the markup at all",
       !!w.document.getElementById("enableAll"), "no #enableAll");
 
+    // The panel shipped with no <script> tag at all. A regex meant to cut one
+    // section out of popup.html ran to the end of the file and took the
+    // script, </body> and </html> with it - and a browser renders that
+    // happily, so the panel looked right and nothing in it worked. Every
+    // symptom that followed - a badge stuck on "checking page...", buttons
+    // that would not click, Ask doing nothing - was that one missing line.
+    const rawHtml = fsx.readFileSync(pathx.join(dir, "popup.html"), "utf8");
+    ensure("the panel loads its script", /<script[^>]+popup\.js/.test(rawHtml), "no script tag");
+    ensure("and the document is closed properly",
+      /<\/body>\s*<\/html>\s*$/.test(rawHtml.trim() + "\n"), rawHtml.slice(-60));
+    const opens = (rawHtml.match(/<div[\s>]/g) || []).length;
+    const closes = (rawHtml.match(/<\/div>/g) || []).length;
+    check("with its divs balanced", `${opens}/${closes}`, `${closes}/${closes}`);
+
     // And when the worker never answers, the way out appears on its own.
     runAsync(async () => {
       await new Promise((r) => setTimeout(r, 4500));
