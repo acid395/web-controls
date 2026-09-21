@@ -2281,7 +2281,13 @@
     return tool.execute(args || {});
   }
 
-  function mcpPublishControls({ max = 40 } = {}) {
+  // Everything the page offers, not the first forty. The cap was borrowed
+  // from what a model can be shown at once, which is a different thing
+  // entirely: a registry is not a prompt, and an agent reading this page
+  // should see what the page can do rather than an arbitrary slice of it.
+  // Live on water.noaa.gov that slice was 91 of 160, and only 91 because
+  // several passes each added another forty.
+  function mcpPublishControls({ max = 250 } = {}) {
     // Provide the surface if nothing else does. Without this, every derived
     // tool stayed private to the extension on every browser that ships no
     // modelContext - which is all of them but Edge.
@@ -2295,9 +2301,13 @@
     const add = (def) => {
       if (taken.has(def.name)) return;
       try {
-        api.registerTool(def);
         def.declaredBy = "extension";
-        MCP_REGISTRY.push(def);
+        api.registerTool(def);
+        // The registry belongs to registerTool. Where that is the polyfill
+        // it has already recorded this - pushing again put every tool in
+        // twice, which a cap of forty kept small enough never to notice:
+        // 105 tools published, 210 listed back.
+        if (!MCP_REGISTRY.some((t) => t.name === def.name)) MCP_REGISTRY.push(def);
         taken.add(def.name);
         names.push(def.name);
       } catch (e) { /* duplicate or rejected schema - keep going */ }

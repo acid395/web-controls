@@ -271,6 +271,23 @@ else {
   check("republishing adds nothing the second time", again.registered, 0);
   check("and the list does not grow", api.getTools().length, before);
 
+  // Every tool went in twice: registerTool records it and the publisher
+  // pushed it again. A cap of forty kept the numbers small enough never to
+  // notice - live, 160 tools derived read back as 91 published, and only 91
+  // because several passes each added another forty.
+  const fresh = loadPage(`<!doctype html><html><body>${
+    Array.from({ length: 30 }, (_, i) => `<button id="b${i}">Action ${i}</button>`).join("")
+  }</body></html>`, { url: "https://water.noaa.gov/" });
+  if (fresh) {
+    const derived = fresh.GENERIC.pageTools().tools.length;
+    const pub = fresh.GENERIC.mcpPublishControls();
+    const listed = fresh.document.modelContext.getTools().length;
+    check("each tool is listed once, not twice", listed, pub.registered);
+    // And everything the page offers, not an arbitrary slice: a registry is
+    // not a prompt, and an agent should see what the page can do.
+    check("everything derived is published", pub.registered, derived);
+  }
+
   // Chrome's own implementation names invocation executeTool and takes its
   // arguments as a JSON string, not an object. We probed callTool, invokeTool
   // and invoke, and passed an object - so against the real API this threw
