@@ -402,7 +402,27 @@ function renderChips(route) {
 }
 
 function describeRoute() {
+  // The enable buttons live behind this check, and the check is exactly what
+  // fails when a site is not enabled - or when the worker is still waking, or
+  // the panel was opened on a page the extension cannot see at all. If the
+  // answer never comes the badge sat on "checking page..." with the one
+  // control that fixes it hidden, which leaves nothing to do but guess.
+  //
+  // So the buttons appear on their own after a moment. Showing them when they
+  // were not needed costs a row of the panel; hiding them when they were is a
+  // dead end.
+  let answered = false;
+  const giveUp = setTimeout(() => {
+    if (answered) return;
+    const text = document.getElementById("routeText");
+    if (text) text.textContent = "can't tell yet - try Enable everywhere";
+    const row = document.getElementById("enableRow");
+    if (row) row.classList.add("show");
+  }, 2500);
+
   chrome.runtime.sendMessage({ type: "capabilities" }, (res) => {
+    answered = true;
+    clearTimeout(giveUp);
     const pill = document.getElementById("routePill");
     const text = document.getElementById("routeText");
     if (chrome.runtime.lastError || !res || !res.ok) {
