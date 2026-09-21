@@ -5626,6 +5626,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // was decided on - so each fix was aimed at a guess. This prints the
         // evidence instead: the words, the candidates with their scores, and
         // what the runner would actually do.
+        // The data the site fetched for itself. Clicking is one way to reach
+        // what a page knows and the least reliable: every layer, chart and
+        // gauge on these sites is drawn from a JSON call the page already
+        // made, and those calls are captured at document_start whether or
+        // not any control was ever found. Reading them asks nothing of the
+        // DOM, so it works on the pages where the controls defeat us.
+        if (/^\s*(data|feeds?|what did (this|the) (page|site) (fetch|load|request))\b/i.test(wanted)) {
+          const [feeds, series] = await Promise.all([
+            invokeOnActiveTab("capturedFeeds", []).catch(() => ({ ok: false })),
+            invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false })),
+          ]);
+          const got = (feeds.ok && feeds.result && feeds.result.feeds) || [];
+          const nums = (series.ok && series.result && series.result.series) || [];
+          respond({
+            ok: true, plannedBy: "feeds", feeds: got, series: nums,
+            display: {
+              title: "what this page fetched for itself",
+              subtitle: got.length
+                ? `${got.length} data request${got.length === 1 ? "" : "s"} captured`
+                  + (nums.length ? `, ${nums.length} with numbers in them` : "")
+                : "nothing captured yet - feeds are recorded from a page's next load, so reload and ask again",
+              stats: [
+                { label: "requests", value: String(got.length) },
+                { label: "with series", value: String(nums.length) },
+              ],
+              rows: got.slice(0, 20).map((f) => ({
+                name: String(f.url || "").replace(/^https?:\/\//, "").slice(0, 62),
+                value: f.count > 1 ? `x${f.count}` : "",
+                meta: [f.method, f.status, f.type].filter(Boolean).join(" ").slice(0, 28),
+                tone: "ok",
+              })),
+              note: nums.length
+                ? `series available: ${nums.slice(0, 6).map((n) => n.label || n.key || "unnamed").join(", ")}`
+                : "",
+              source: route.global,
+            },
+          });
+          return;
+        }
+
         const explainMatch = wanted.match(/^\s*(?:explain|match|why did|what matches)\s+(.+)$/i);
         if (explainMatch) {
           const q = explainMatch[1].trim();
@@ -6217,9 +6257,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // loop is for. This path never reached it: it was wired into the
           // one-list route and the nothing-matched fallback, and a manifest
           // route that failed simply reported its failure.
+          let chased = null;
           if ((result.ok === false || !result.verified || result.verified.changed === false)
               && !usedInstead && commandLike && !forceModel) {
-            const chased = await pursueGoal(route.global, wanted).catch(() => null);
+            chased = await pursueGoal(route.global, wanted).catch(() => null);
             if (chased && chased.done) {
               const acted = chased.steps.filter((st) => st.did !== "opened");
               const last = acted[acted.length - 1] || {};
@@ -6295,13 +6336,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 })(),
                 ignored ? `ignored: ${ignored.join(", ")}` : null,
               ].filter(Boolean).join(" · "),
-              stats: [],
-              rows: rankedChanges(result.verified).map((c) => ({
+              stats: chased ? [{ label: "steps tried", value: String(chased.steps.length) }] : [],
+              // What the loop tried, when it tried and failed. Reporting only
+              // the hand-written tool's error threw away the entire attempt -
+              // four rounds of reports came back saying nothing but "it did
+              // not work", because the card had nothing else to say.
+              rows: (chased && chased.steps.length ? chased.steps.map((st) => ({
+                name: String(st.label || st.did).slice(0, 50),
+                value: st.did === "opened"
+                  ? `revealed ${st.appeared}`
+                  : (st.changed ? "changed" : "no change"),
+                meta: st.did,
+                tone: st.did === "opened" || st.changed ? "ok" : "warn",
+              })) : rankedChanges(result.verified).map((c) => ({
                 name: nameOfChange(c),
                 value: c.now === undefined ? "" : String(c.now).slice(0, 24),
                 meta: c.was === undefined ? "" : `was ${String(c.was).slice(0, 24)}`,
                 tone: "ok",
-              })),
+              }))).concat(chased && chased.unaccounted && chased.unaccounted.length
+                ? [{ name: `never accounted for: ${chased.unaccounted.join(", ")}`,
+                     value: "", meta: "", tone: "warn" }]
+                : []),
               caveat: note && note.tone === "alert" ? note.text : undefined,
               source: route.global,
             },

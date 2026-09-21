@@ -483,6 +483,29 @@ else {
   }
 }
 
+section("the data the page fetched for itself");
+// Clicking is one way to reach what a page knows, and the least reliable.
+// Every layer, chart and gauge on these sites is drawn from a JSON call the
+// page already made, captured at document_start whether or not any control
+// was ever found - so this reads what the site fetched without asking the
+// DOM for anything, which is the case where the controls have defeated us.
+const feedPage = loadPage("<!doctype html><html><body><p>map</p></body></html>",
+  { url: "https://water.noaa.gov/" });
+if (!feedPage) skip("captured feeds", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: feedPage });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "data" });
+    ensure("asking for the data answers", !!(r && r.display), r);
+    const d = (r && r.display) || {};
+    ensure("it is about what was fetched", /fetched/i.test(d.title || ""), d.title);
+    // With nothing captured it must say so, not imply the page has no data.
+    ensure("an empty capture explains itself rather than reading as none",
+      /reload|captured/i.test(d.subtitle || ""), d.subtitle);
+    ensure("and it counts requests", (d.stats || []).some((x) => /requests/i.test(x.label)), d.stats);
+  });
+}
+
 section("select and enable mean the same thing");
 // Rebuilt from the live explain dump: navbar duplicates of the layer name, an
 // already-open accordion of gauge-table checkboxes, and the closed
