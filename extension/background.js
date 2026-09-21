@@ -34,14 +34,12 @@
  *      offscreen document. Requires a real (large) one-time model download
  *      and WebGPU. Confirmed loading and answering; tool-calling itself
  *      still mid-test as of this writing.
- *   7. askGemini + geminiPlan - a second, parallel path to the exact same
- *      TOOL_DEFS and the exact same invokeOnActiveTab execution afterward,
- *      calling Google's Gemini API (free tier, needs an API key from
- *      aistudio.google.com/apikey, saved via the popup) instead of a local
- *      model. No download, no WebGPU, no offscreen document - a plain
- *      fetch() from this file. Traded away "fully local" for "instant and
- *      still free." An explicit, separate choice a user opts into (needs a
- *      key), not something smartAsk below falls back to on its own.
+ *   7. (removed) A hosted model - Gemini, behind a user-supplied key - once
+ *      sat beside the local one as a second path to the same problem. It is
+ *      gone: every decision comes from WebLLM in the offscreen document, so
+ *      nothing here depends on a key, an account, or a request leaving the
+ *      machine. What that costs is a model download and seconds per step,
+ *      which is the honest price of running locally.
  *   8. smartAsk - the actual intended default: try the free, instant
  *      planTool() stub first; only reach for WebLLM if that didn't match,
  *      and only if it has actually finished loading (checked via
@@ -4714,46 +4712,7 @@ function findToolDef(route, name) {
 
 // Check aistudio.google.com/apikey's own model list if this ever 404s -
 // Google's free-tier model names change more often than most APIs'.
-const GEMINI_MODEL = "gemini-3.8-flash";
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-
-// Same shape as toOpenAITools, wrapped the way Gemini's REST API wants it:
-// one functionDeclarations array instead of one {type,function} object per
-// tool. The actual JSON Schema in each tool's `parameters` is identical
-// either way - both APIs happen to want plain JSON Schema here.
-function toGeminiTools(defs) {
-  return [{ functionDeclarations: defs.map((d) => ({ name: d.name, description: d.description, parameters: d.parameters })) }];
-}
-
-async function askGemini(instruction, defs, context) {
-  const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
-  if (!geminiApiKey) {
-    throw new Error('no Gemini API key saved. Get a free one at aistudio.google.com/apikey and save it in the popup.');
-  }
-  const res = await fetch(GEMINI_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": geminiApiKey },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: instruction }] }],
-      ...(context ? { systemInstruction: { parts: [{ text: context }] } } : {}),
-      tools: toGeminiTools(defs),
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Gemini API error ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
-  // Gemini's args come back as a real object already, unlike WebLLM/OpenAI's
-  // JSON-stringified arguments - one less parsing step, one less way to fail.
-  const callPart = parts.find((p) => p.functionCall);
-  if (callPart) return { toolCall: { name: callPart.functionCall.name, args: callPart.functionCall.args || {} } };
-  const textPart = parts.find((p) => p.text);
-  return { toolCall: null, text: textPart ? textPart.text : "" };
-}
-
-// Shared by llmPlan, geminiPlan, and smartAsk below: whichever model
+// Shared by llmPlan and smartAsk below: whichever model
 // decided on a tool call, actually running it is the same one step either
 // way - look up the real manifest function behind the tool's WebMCP-style
 // name, reorder the model's named arguments into the positional array
@@ -4830,7 +4789,7 @@ const ENV_VOCAB_CONTEXT = envVocabPreamble();
 
 // Combines the two context sources: ENV_VOCAB (every route) and, for
 // GENERIC specifically, the page's live inventory (see buildGenericContext
-// above). Single entry point for smartAsk/llmPlan/geminiPlan to call.
+// above). Single entry point for smartAsk/llmPlan to call.
 // What a model should be choosing between on this page.
 //
 // It used to get the static TOOL_DEFS - pageClick{selector}, pageFill{selector}
@@ -5656,36 +5615,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Same shape as llmPlan above, same TOOL_DEFS, same invokeOnActiveTab
   // execution - only the "which tool" decision is different: a direct
-  // fetch() to Gemini instead of the offscreen document's local model.
-  if (msg.type === "geminiPlan") {
-    (async () => {
-      const stopKeepAlive = keepAlive();
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.url) throw new Error("no active tab");
-        const route = routeFor(tab.url);
-        // The page's own tools, like every other model path. This one was
-        // still being handed toolsFor(route) - the static selector
-        // primitives - so the only model in here capable of real judgment
-        // was getting the worst inputs of the three.
-        const known = await agentTools(route.global, msg.instruction || "", { max: 24 });
-        const context = known.page.length ? null : await buildContext(route.global);
-        const plan = await askGemini(msg.instruction, known.all, context);
-        if (!plan.toolCall) {
-          sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
-          return;
-        }
-        const result = await executeToolCall(route.global, plan.toolCall);
-        sendResponse({ ...result, plannedBy: "gemini", toolCall: plan.toolCall,
-          fromPageTools: known.page.length });
-      } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
-      } finally {
-        stopKeepAlive();
-      }
-    })();
-    return true;
-  }
+  // the offscreen document's local model.
 
   // Debug: run a hand-written tool call through the exact path a model's
   // output takes - findToolDef's name lookup, argOrder's named->positional
@@ -5836,7 +5766,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // it's always been) - if that hits, done, no model involved at all, no
   // wait. Only reaches for WebLLM if the fast path didn't match, and even
   // then checks it's actually finished loading first rather than kicking
-  // off a multi-minute wait a user didn't ask for. Never touches Gemini:
+  // off a multi-minute wait a user didn't ask for.
   // that stays an explicit, separate choice (needs a key), not a fallback.
   if (msg.type === "smartAsk") {
     (async () => {
@@ -7217,35 +7147,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // It was reachable only from Debug tools, so in practice it never
         // ran: the one model in here able to judge was sitting behind a
         // button nobody presses.
-        const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
-        if (geminiApiKey) {
-          const known = await agentTools(route.global, wanted, { max: 24 });
-          const context = known.page.length ? null : await buildContext(route.global);
-          const plan = await askGemini(wanted, known.all, context).catch((e) => ({ ok: false, error: String(e.message || e) }));
-          if (plan.ok && plan.toolCall) {
-            const result = await runVerified(route.global, plan.toolCall);
-            const inner = result.result && result.result.display;
-            respond({
-              ...result, plannedBy: "gemini", toolCall: plan.toolCall,
-              display: inner || {
-                title: friendlyToolName(plan.toolCall.name),
-                subtitle: "chosen by the model you supplied a key for",
-                stats: [],
-                rows: Object.entries(plan.toolCall.args || {})
-                  .filter(([k]) => k !== "selector")
-                  .map(([k, v]) => ({ name: k, value: String(v).slice(0, 40), meta: "" })),
-                source: "Gemini",
-              },
-            });
-            return;
-          }
-          if (plan.ok && plan.text) {
-            respond({ ok: true, plannedBy: "gemini", modelReply: plan.text,
-              display: { title: "The model's answer", subtitle: String(plan.text).slice(0, 140),
-                stats: [], rows: [], source: "Gemini" } });
-            return;
-          }
-        }
 
         // Nothing single-step matched. Before the one-door-then-act fallback
         // below, try the general form: pursue the goal for as many steps as
@@ -7345,7 +7246,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // searched rather than a bare failure.
           const why = explainFailure(msg.instruction || "", route, inv, { modelOff: true });
           why.hint = "name a measurement and a place (\"gage height in Wyoming\"), or use a control's own wording from the list above"
-            + (geminiApiKey ? "" : " - a Gemini key in Debug tools would let a model try the ones it cannot work out, though nothing here needs one");
+
           respond(why);
           return;
         }

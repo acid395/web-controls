@@ -576,33 +576,7 @@ localModelBox.addEventListener("change", () => {
   });
 });
 
-// Shows "(key saved)" as a placeholder rather than the real key, so the
-// field doesn't need to hold and display the actual secret every time the
-// popup reopens - chrome.storage.local already has it.
-chrome.storage.local.get("geminiApiKey", ({ geminiApiKey }) => {
-  if (geminiApiKey) document.getElementById("geminiKey").placeholder = "(key saved)";
-});
-
-on("saveKey", "click", () => {
-  const key = document.getElementById("geminiKey").value.trim();
-  if (!key) {
-    log("no key entered");
-    return;
-  }
-  chrome.storage.local.set({ geminiApiKey: key }, () => {
-    log("Gemini API key saved.");
-    document.getElementById("geminiKey").value = "";
-    document.getElementById("geminiKey").placeholder = "(key saved)";
-  });
-});
-
-on("geminiAsk", "click", () => {
-  const instruction = document.getElementById("geminiInstruction").value.trim();
-  if (!instruction) return;
-
-  logEcho(`ask gemini: "${instruction}"`);
-  chrome.runtime.sendMessage({ type: "geminiPlan", instruction }, (res) => {
-    logResult(res);
-  });
-});
+// The API-key field and the hosted-model button are gone. Everything the
+// panel can do is decided by the local model in the offscreen document, so
+// there is no key to save and nothing to send anywhere.
 

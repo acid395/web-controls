@@ -2314,19 +2314,22 @@ else {
     const pass = keyless.fetch;
     keyless.fetch = (u, o) => { if (/generativelanguage/.test(String(u))) reachedOut = true; return pass(u, o); };
     const r = await keyless.__ask({ type: "smartAsk", instruction: "fly me to the moon" });
-    check("no key, no request to anybody's model", reachedOut, false);
+    check("no request to anybody's model", reachedOut, false);
     ensure("and it still answers for itself", r.ok === false && !!r.display, r);
-    ensure("mentioning the upgrade without demanding it", /Gemini key/.test(r.hint || ""), r.hint);
 
+    // The hosted path is gone rather than optional. A key in storage used to
+    // switch reasoning onto somebody else's GPU; there is nothing left to
+    // switch, so a stored key changes nothing and no request leaves the
+    // machine whatever is in there.
     const keyed = loadBackground({ page: plainPage2 });
     await keyed.chrome.storage.local.set({ geminiApiKey: "test-key" });
     let consulted = false;
     keyed.fetch = async (u) => {
-      if (/generativelanguage/.test(String(u))) { consulted = true; return { ok: false, status: 401, json: async () => ({}) }; }
+      if (/generativelanguage|openai|anthropic/.test(String(u))) consulted = true;
       return { ok: false, status: 404, json: async () => ({}) };
     };
     await keyed.__ask({ type: "smartAsk", instruction: "fly me to the moon" });
-    check("with a key, the model is consulted", consulted, true);
+    check("a leftover key consults nobody", consulted, false);
   });
 }
 
