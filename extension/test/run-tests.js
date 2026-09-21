@@ -506,6 +506,43 @@ else {
   });
 }
 
+section("without any code written for the site");
+// The thesis, tested directly. Strip every hand-written NOAA tool and the
+// page must still work - otherwise the success is borrowed from prebuilt
+// code, which is the thing this is supposed to do without.
+//
+// It was borrowed. With the site code present the layer was reached; with it
+// removed the same instruction stopped at "Which one did you mean?", because
+// the navbar copy of the layer name and the accordion looked like a genuine
+// choice. The loop, called directly on that same page, reached the layer. So
+// the only thing making it work was a prebuilt tool failing in the right
+// way, and the last step was to try acting before asking.
+const noSiteCode = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-navbar-nav layer-1"><li><a href="/b">Flood Inundation Mapping</a></li></ul>
+  <ul class="uk-accordion">
+    <li><button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div id="fi" class="uk-accordion-content" style="display:none"></div></li></ul>
+  <script>
+    document.getElementById("uk-accordion-9").addEventListener("click", () => {
+      const c = document.getElementById("fi");
+      c.style.display = "block";
+      if (!c.innerHTML) c.innerHTML =
+        '<label><input type="checkbox" name="fim"> Flood Inundation Mapping</label>';
+    });
+  <\/script></body></html>`;
+for (const phrasing of ["enable flood inundation", "select flood inundation"]) {
+  const page = loadPage(noSiteCode, { url: "https://water.noaa.gov/" });
+  if (!page) { skip(`no site code: ${phrasing}`, "jsdom not installed"); continue; }
+  const bg = loadBackground({ page });
+  bg.planManifestTool = () => null;   // as though nobody had ever written for NOAA
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: phrasing });
+    check(`"${phrasing}" works with no code written for this site`,
+      !!(page.document.querySelector('[name="fim"]') || {}).checked, true);
+    ensure("and it is not asking which one was meant", !r.needsChoice, (r.display || {}).title);
+  });
+}
+
 section("select and enable mean the same thing");
 // Rebuilt from the live explain dump: navbar duplicates of the layer name, an
 // already-open accordion of gauge-table checkboxes, and the closed

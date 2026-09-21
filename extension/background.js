@@ -6503,6 +6503,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
           }
           if (guess && guess.ambiguous) {
+            // Two controls sharing a name are not always a real choice. NWPS
+            // carries "Flood Inundation Mapping" in its navbar and again as
+            // the layer itself, so the page looks ambiguous while only one
+            // of the two does anything - and asking which was meant puts the
+            // work back on the person who already said what they wanted.
+            //
+            // Acting and checking settles it better than guessing: the loop
+            // tries, verifies, and moves on when nothing happened. Only its
+            // finished result is taken; anything less and the question is
+            // still the honest answer.
+            //
+            // This was the last thing standing between the generic path and
+            // the hand-written one. With the site code removed, "enable
+            // flood inundation" stopped here - and the loop, called directly
+            // on the same page, reached the layer. The success was borrowed
+            // from a prebuilt tool failing in the right way.
+            if (commandLike && !forceModel) {
+              const chased = await pursueGoal(route.global, wanted).catch(() => null);
+              if (chased && chased.done) {
+                const acted = chased.steps.filter((st) => st.did !== "opened");
+                const last = acted[acted.length - 1] || {};
+                respond({
+                  ok: true, plannedBy: "pursued", steps: chased.steps,
+                  display: {
+                    title: String(last.label || "Done").slice(0, 60),
+                    subtitle: [
+                      chased.opened.length
+                        ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                        : "more than one control shared that name, so each was tried",
+                      typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                    ].filter(Boolean).join(" \u00b7 "),
+                    stats: [{ label: "steps", value: String(chased.steps.length) }],
+                    rows: chased.steps.map((st) => ({
+                      name: String(st.label || st.did).slice(0, 50),
+                      value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
+                      meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                    })),
+                    source: route.global,
+                  },
+                });
+                return;
+              }
+            }
             respond({
               ok: false,
               needsChoice: true,
