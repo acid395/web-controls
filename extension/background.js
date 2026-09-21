@@ -2644,6 +2644,17 @@ function wordMatchesText(rawWord, rawText) {
   const boundary = word.length <= 3 ? "\\b" : "";
   if (new RegExp(`\\b${escaped}${boundary}`).test(text)) return "exact";
 
+  // A plural is the same word. "Set the time span to 7 day" against an option
+  // reading "7 days" matched only the digit, because \bday\b does not match
+  // "days" - so it tied with "1 day", which won on document order. Someone
+  // typing "30 day" and someone typing "30 days" mean the same thing, and
+  // these sites write spans both ways on the same page.
+  const other = word.endsWith("s") ? word.slice(0, -1) : `${word}s`;
+  if (other.length > 2) {
+    const esc = other.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${esc}\\b`).test(text)) return "exact";
+  }
+
   // People close up compounds that a page spaces out, and the reverse.
   // "Dewpoint" and "Dew Point/Humidity" are the same thing, and matching
   // token against token never sees it. Long words only: closing up the
@@ -4058,6 +4069,16 @@ function argsForTool(def, instruction, words) {
     // tool call that could only fail, having first won the plan and shut out
     // the planner that would have got it right.
     if (spec.pattern && !new RegExp(spec.pattern, "i").test(value)) continue;
+
+    // A state argument takes a state. "What is the current stage" filled one
+    // with the words "what stage" - "stage" is one letter from "state" and
+    // the leftovers were whatever the tool's name did not claim - so a
+    // question about a river's level won the plan as a request to jump to a
+    // state that does not exist, and the answer was "don't recognize 'what
+    // stage' as a US state". Nothing about that told anyone what went wrong.
+    // Same reasoning as the url and hex-colour check above: some free strings
+    // are only free in type.
+    if (/state/i.test(key) && !findStateInText(value)) continue;
     args[key] = value;
   }
 

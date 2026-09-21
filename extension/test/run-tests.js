@@ -682,6 +682,48 @@ else {
   });
 }
 
+section("a plural is the same word");
+// Found by sweeping invented phrasings: "set the time span to 7 day" chose
+// "1 day". The option reads "7 days", and \bday\b does not match "days", so
+// only the digit matched - tying with "1 day", which won on document order.
+// These sites write spans both ways on the same page.
+check("singular reaches plural", sb.wordMatchesText("day", "7 days"), "exact");
+check("and plural reaches singular", sb.wordMatchesText("days", "1 day"), "exact");
+// Not a licence for short words to collide.
+check("but a short word does not grow an s into a match",
+  sb.wordMatchesText("is", "islands"), false);
+const spans = { url: "https://water.noaa.gov/", controls: [
+  { kind: "select", label: "Time span", selector: "#ts", confidence: "high",
+    options: [{ text: "1 day" }, { text: "7 days" }, { text: "30 days" }] },
+] };
+check("so the span asked for is the span chosen",
+  sb.planGenericTool("set time span to 7 day", spans).calls[0].args.value, "7 days");
+
+section("a state argument takes a state");
+// "What is the current stage" came back "don't recognize 'what stage' as a
+// US state". "Stage" is one letter from "state", the leftover words were
+// whatever the tool's name did not claim, and a question about a river's
+// level won the plan as a request to jump to a state that does not exist.
+// Nothing in that message told anyone what had gone wrong.
+const stagePage = loadPage(`<!doctype html><html><head><title>Smith River</title></head><body>
+  <p>Current stage: <span class="value">12.4</span> ft</p>
+  <dl><dt>Flood stage</dt><dd>18 ft</dd></dl></body></html>`,
+  { url: "https://water.noaa.gov/gauges/CRSC1" });
+if (!stagePage) skip("state arguments", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: stagePage });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "what is the current stage" });
+    ensure("a question about stage is not a question about a state",
+      !/as a US state/i.test(String(r.error || "")), r.error);
+  });
+}
+// A real state still fills a state argument.
+ensure("and a real one is still recognised", !!sb.findStateInText("wyoming"),
+  sb.findStateInText("wyoming"));
+ensure("while a near-miss is not", !sb.findStateInText("what stage"),
+  sb.findStateInText("what stage"));
+
 section("an open panel's title is not a switch");
 // From the live page with the panel finally open. The layer is a checkbox
 // labelled "INUNDATION"; the accordion above it is titled "Flood Inundation"
