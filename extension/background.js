@@ -4470,8 +4470,15 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
   if (modelStatusCache.value && Date.now() - modelStatusCache.at < maxAgeMs) {
     return modelStatusCache.value;
   }
-  const value = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" })
-    .catch(() => null);
+  // Bounded. Every instruction now begins by asking whether the model can
+  // answer, so anything that can hang here hangs the panel - and a panel
+  // stuck on "checking page..." is far worse than falling back to the
+  // scorer. An offscreen document that has not been created, or is busy
+  // loading weights, must cost a moment and not the whole request.
+  const value = await Promise.race([
+    chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" }).catch(() => null),
+    new Promise((r) => setTimeout(() => r(null), 1500)),
+  ]);
   // Only a definite answer is worth remembering. "Not loaded yet" changes.
   if (value && value.ready) modelStatusCache = { at: Date.now(), value };
   return value;
