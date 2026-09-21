@@ -43,10 +43,16 @@ for (const [name,file] of SITES) {
     // A wrapper inside a link is the same control. Resolving "click Facebook"
     // to the <a> when it was generated from the <span> inside it is the right
     // answer, not a miss - scoring it as a miss measured the harness.
+    // Several controls on these pages carry an identical label - nps.gov has
+    // three called "Search". Reaching a different one of those is not a miss:
+    // from the label alone there is no correct answer to pick.
+    const resolved = (inv.controls||[]).find(x => x.selector === (call&&call.args&&call.args.selector));
+    const sameLabelHit = !!(resolved && String(resolved.label||"").trim().toLowerCase()
+      === String(c.label||"").trim().toLowerCase());
     const sel = call && call.args && call.args.selector;
     const hit = !!(sel && (sel === c.selector
       || c.selector.startsWith(sel + " ") || sel.startsWith(c.selector + " ")
-      || c.selector.endsWith(" > " + sel.split(" > ").pop())));
+      || c.selector.endsWith(" > " + sel.split(" > ").pop()))) || sameLabelHit;
     const radioHit=!!(call&&call.name==="pagePickRadio"&&String(call.args.value||"").toLowerCase()===String(c.label||"").trim().toLowerCase());
     rows.push({site:name,label:(c.label||"").trim().replace(/\s+/g," ").slice(0,40),
       kind:`${c.kind}${c.type?":"+c.type:""}`,instr:instr.slice(0,46),

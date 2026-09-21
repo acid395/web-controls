@@ -506,6 +506,51 @@ else {
   });
 }
 
+section("the whole label, compared the same way on both sides");
+// "Click Secretary of Energy" tied with "Deputy Secretary of Energy" on
+// energy.gov. The instruction's phrase has its filler stripped - it arrives
+// as "secretary energy" - while the label kept its "of", so the exact-match
+// bonus never fired and the control named word for word had no advantage at
+// all. A whole-label match is the strongest signal a page offers.
+const officials = { url: "https://www.energy.gov/", controls: [
+  { kind: "a", label: "Deputy Secretary of Energy", selector: "#deputy", confidence: "high" },
+  { kind: "a", label: "Secretary of Energy", selector: "#sec", confidence: "high" },
+  { kind: "a", label: "Under Secretary of Energy", selector: "#under", confidence: "high" },
+] };
+check("the one named word for word wins",
+  sb.planGenericTool("click Secretary of Energy", officials).calls[0].args.selector, "#sec");
+check("and the longer one is still reachable by its own name",
+  sb.planGenericTool("click Deputy Secretary of Energy", officials).calls[0].args.selector, "#deputy");
+
+section("identical labels are not a choice");
+// nps.gov carries three controls labelled exactly "Search" - a link, a
+// button and a text field - and census.gov, nasa.gov, data.gov and AirNow
+// all do something similar. "Which one did you mean?" offered a list the
+// person cannot tell apart either, because the only thing shown is the
+// label they all share.
+const threeSearches = { url: "https://www.nps.gov/", controls: [
+  { kind: "a", label: "Search", selector: "#a", confidence: "high" },
+  { kind: "button", type: "button", label: "Search", selector: "#b", confidence: "high" },
+  { kind: "input", type: "text", label: "Search", selector: "#c", confidence: "high" },
+] };
+const searchPlan = sb.planGenericTool("click Search", threeSearches);
+ensure("it acts instead of asking", !!(searchPlan && searchPlan.calls), searchPlan);
+ensure("and does not report ambiguity it cannot explain",
+  !(searchPlan || {}).ambiguous, (searchPlan || {}).ambiguous);
+// But genuinely different controls sharing a word remain a real question.
+const realChoice = { url: "https://x.gov/", controls: [
+  { kind: "a", label: "Year to date", selector: "#ytd", confidence: "high" },
+  { kind: "a", label: "Date range", selector: "#range", confidence: "high" },
+] };
+ensure("a real choice is still put to the person",
+  !!(sb.planGenericTool("show me the date", realChoice) || {}).ambiguous,
+  sb.planGenericTool("show me the date", realChoice));
+
+// "Click Search" is not a query. The word alone routed to the search box and
+// filled nothing into nothing, reporting a search, on five of seventeen sites.
+check("the word search alone is not text to type", sb.carriesText("click Search"), false);
+check("but a query after it is", sb.carriesText("search for smith river"), true);
+
 section("one link is one control");
 // Straight off wisconsin.gov, nasa.gov and half the federal estate:
 // <a><i class="fa-facebook"></i><span>Facebook</span></a> was recorded as an

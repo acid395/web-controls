@@ -2521,6 +2521,13 @@ function scoreControl(control, words, phrase, opts = {}) {
     else if (hit === "fuzzy") score += 1.5; // below exact, never instead of it
   }
   if (label === phrase) score += 10;
+  // Compared the same way on both sides. The instruction's phrase has its
+  // filler words stripped - "Secretary of Energy" arrives as "secretary
+  // energy" - while the label kept its "of", so an exact match never
+  // registered and the control named word for word tied with "Deputy
+  // Secretary of Energy". Whole-label matches are the strongest signal a
+  // page offers and were the one thing not being recognised.
+  if (phrase && meaningfulWords(control.label || "").join(" ") === phrase) score += 10;
   // A dropdown's label is often a category ("Variable") while the thing the
   // user actually named is one of its options ("Precipitation"), so options
   // count too - scored below a label hit, since naming the option is a
@@ -2868,14 +2875,28 @@ function planGenericTool(instruction, inventory) {
     };
     const tied = scored.filter((x) => best.score - x.score < 2 && sameWords(x.control, best.control));
     // Several copies of one control are not a choice to put to the user.
-    const duplicates = tied.length > 1 && sameControlRepeated(tied.map((x) => x.control));
+    // Nor are several controls called the same thing. nps.gov carries three
+    // labelled exactly "Search" - a link, a button and a text field - and
+    // census.gov, nasa.gov, data.gov and AirNow all do something similar.
+    // "Which one did you mean?" offers a list the person cannot tell apart
+    // either, since the only thing shown is the label they all share. Acting
+    // on the best of them and reporting what moved beats handing back a
+    // question with no way to answer it.
+    const oneLabel = tied.length > 1 && new Set(
+      tied.map((x) => String(x.control.label || "").trim().toLowerCase()).filter(Boolean)).size === 1;
+    const duplicates = tied.length > 1
+      && (sameControlRepeated(tied.map((x) => x.control)) || oneLabel);
     const rivals = !duplicates && runnerUp && best.score - runnerUp.score < 2 && sameWords(best.control, runnerUp.control);
     if (rivals) {
       if (!calls.length) {
         // "look up 8443970" tied three unrelated links on a real site, and
         // asking which was meant is the wrong answer when the instruction
         // plainly says to search and the page has somewhere to type.
-        const searching = /\b(search|look\s*up|find|query|enter|type)\b/i.test(instruction);
+        // Only when there is something to type. The word "search" alone is not
+        // a query: "click Search" means press the button of that name, and
+        // routing it to the box filled nothing into nothing and reported a
+        // search on five of seventeen sites tested.
+        const searching = carriesText(instruction);
         const box = searching && findSearchBox(controls);
         if (box) {
           const call = toolCallFor(box, allWords, instruction);
@@ -2956,7 +2977,7 @@ function planGenericTool(instruction, inventory) {
   // search and the page has somewhere to type, that is the control meant,
   // even though scoring found nothing.
   if (!calls.length) {
-    const searching = /\b(search|look\s*up|find|query|enter|type)\b/i.test(instruction);
+    const searching = carriesText(instruction);
     if (searching) {
       const box = findSearchBox(controls);
       if (box) {
