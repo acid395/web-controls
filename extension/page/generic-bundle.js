@@ -119,7 +119,26 @@
     }
     const wrap = el.closest("label");
     if (wrap) return clean(shortText(wrap));
-    return clean(el.placeholder || el.title || el.name || shortText(el) || "");
+    return clean(el.placeholder || el.title || rowText(el) || el.name || shortText(el) || "");
+  };
+
+  // What the row this control sits in is called. water.noaa.gov puts a bare
+  // checkbox beside the button that names the layer, so the checkbox has no
+  // label of its own and fell back to its name attribute - "fi". Scored on
+  // that, "enable flood inundation" could never reach it, and the only thing
+  // left to match was the button, which opens the panel rather than
+  // switching the layer on. Author shorthand is shorthand: the row's own
+  // words are what a person would call it.
+  //
+  // Bounded hard. A row is a few words; anything longer is a container, and
+  // a container's text is not a label.
+  const rowText = (el) => {
+    if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
+    for (let n = el.parentElement, up = 0; n && up < 3; n = n.parentElement, up++) {
+      const t = (shortText(n) || "").replace(/\s+/g, " ").trim();
+      if (t && t.length <= 60) return t;
+    }
+    return "";
   };
 
   // A label is a few words. textContent on a container builds the whole

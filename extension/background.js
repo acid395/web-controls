@@ -4296,8 +4296,15 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4 } = {}) {
     if (ran.ok === false) break;
 
     // What the instruction still has not accounted for.
-    const left = subjectOf(plan.unmatchedWords || []);
-    remaining = left;
+    // What THIS step accounted for, not what the whole plan would have. A
+    // plan can cover every word using several controls while only its first
+    // one runs here - so "enable flood inundation" picked a radio called
+    // Long Range Flood Outlook, which covers "flood", and the loop then
+    // treated "inundation" as accounted for by a control it never touched.
+    // It stopped after one step and reported the wrong layer switched on.
+    const coveredNow = new Set(((plan.matched && plan.matched[0] && plan.matched[0].covered)
+      || (ambiguousPick ? subjectOf(meaningfulWords(ambiguousPick.label || "")) : [])) || []);
+    remaining = remaining.filter((w) => !coveredNow.has(w));
     lastCount = countNow;
 
     // Opening a panel changes the page and accounts for the words, because

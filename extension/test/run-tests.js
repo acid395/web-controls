@@ -224,9 +224,12 @@ section("a dead click does not set off something else");
 // were allowed to pick another click, an ordinary button doing nothing
 // measurable would quietly press something else on the page. It may only
 // finish the job with a switch.
+// The checkbox is in a row of its own and named after something else - a
+// checkbox sharing a row with the button would be that button's control, and
+// ticking it would be right rather than a stray second action.
 const deadClick = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
-  <ul><li><button id="info">Flood Inundation</button>
-    <input type="checkbox" name="unrelated"></li>
+  <ul><li><button id="info">Flood Inundation</button></li>
+    <li><span>Basemap opacity</span><input type="checkbox" name="unrelated"></li>
     <li><a id="elsewhere" href="#x">Flood Inundation Details</a></li></ul>
   </body></html>`, { url: "https://water.noaa.gov/" });
 if (!deadClick) skip("dead clicks", "jsdom not installed");
@@ -647,6 +650,52 @@ for (const [q, want, other] of [["enable snow depth", "sd", "swe"],
     // The navbar copy of the panel's name would have left the page.
     check(`"${q}" does not navigate away`, page.location.pathname, "/");
   });
+}
+
+section("the bare checkbox beside the button that names it");
+// The live page, rebuilt from three rounds of cards. water.noaa.gov puts a
+// bare checkbox beside the button that names each layer, so the checkbox has
+// no label of its own and fell back to its name attribute - "fi". Scored on
+// that, "enable flood inundation" could never reach it, and the only thing
+// left to match was the button, which opens the panel rather than switching
+// the layer on: "Flood Inundation: clicked, but it is still false".
+//
+// Meanwhile an already-open accordion holds a radio called Long Range Flood
+// Outlook, which covers "flood" - and the loop, counting the whole plan's
+// coverage rather than the step it actually ran, treated "inundation" as
+// accounted for by a control it never touched. It switched on the outlook
+// and reported the job done.
+const livePage = `<!doctype html><html><head><title>NWPS</title></head><body>
+  <ul class="uk-accordion">
+    <li class="uk-open"><button class="uk-accordion-title">Products</button>
+      <div class="uk-accordion-content"><div class="products">
+        <label><input type="radio" name="p" value="lrfo"> Long Range Flood Outlook</label>
+      </div></div></li>
+    <li><input type="checkbox" name="fi">
+      <button id="uk-accordion-9" class="uk-accordion-title">Flood Inundation</button>
+      <div id="c" class="uk-accordion-content" style="display:none"></div></li>
+  </ul></body></html>`;
+for (const phrasing of ["enable flood inundation", "select flood inundation"]) {
+  const page = loadPage(livePage, { url: "https://water.noaa.gov/" });
+  if (!page) { skip(`live shape: ${phrasing}`, "jsdom not installed"); continue; }
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: phrasing });
+    check(`"${phrasing}" ticks the layer's own checkbox`,
+      !!(page.document.querySelector('[name="fi"]') || {}).checked, true);
+    check(`"${phrasing}" does not switch on the flood outlook instead`,
+      !!(page.document.querySelector('[value="lrfo"]') || {}).checked, false);
+  });
+}
+// The label has to come from the row, or none of the above can happen.
+const bareBox = loadPage(`<!doctype html><html><body>
+  <li><input type="checkbox" name="fi"><button>Flood Inundation</button></li>
+  </body></html>`, { url: "https://water.noaa.gov/" });
+if (bareBox) {
+  const box = bareBox.GENERIC.inventory({ includeHidden: true })
+    .controls.find((c) => c.type === "checkbox");
+  check("an unlabelled checkbox is named after its row, not its name attribute",
+    (box || {}).label, "Flood Inundation");
 }
 
 section("a tie is not an empty page");
