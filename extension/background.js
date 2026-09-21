@@ -3264,6 +3264,45 @@ function capabilitiesFor(routeGlobal) {
 // been tried: data tools, the named-manifest keyword path, and a full scan of
 // the page's own controls. It reports what was understood, what was searched,
 // and what is available - so the reply is a diagnosis rather than a shrug.
+// What this page says next to a label the question names. The data paths
+// ahead of this only know measurements the vocabulary lists - stage,
+// discharge, temperature - so "what is the datum" and "what is the drainage
+// area" found nothing, on a page printing both in plain sight. A page's own
+// labels are the last and most literal place to look, and the one nobody
+// had looked in.
+function answerFromPageLabels(instruction, pageData) {
+  if (!pageData) return null;
+  const words = meaningfulWords(instruction)
+    .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2
+      && !/^(what|whats|which|how|the|is|are|of|on|at|for|this|page|value|show|tell)$/.test(w));
+  if (!words.length) return null;
+
+  const rows = [
+    ...(pageData.pairs || []).map((p) => ({ label: p.label, value: p.value })),
+    ...(pageData.readouts || []).map((r) => ({ label: r.label, value: r.text })),
+    ...(pageData.labelledNumbers || []).map((n) => ({ label: n.text, value: n.text })),
+  ].filter((r) => String(r.label || "").trim() && String(r.value || "").trim());
+
+  const scored = rows.map((r) => {
+    const label = String(r.label).toLowerCase();
+    let n = 0;
+    for (const w of words) {
+      const hit = wordMatchesText(w, label);
+      if (hit === "exact") n += 2; else if (hit) n += 1;
+    }
+    // The whole question, answered by one label.
+    if (meaningfulWords(label).join(" ") === words.join(" ")) n += 6;
+    return { r, n };
+  }).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+  if (!scored.length) return null;
+
+  // Every word the question named, or it is a coincidence of one word.
+  const best = scored[0];
+  const covered = words.filter((w) => wordMatchesText(w, String(best.r.label).toLowerCase()));
+  if (covered.length < words.length) return null;
+  return { hit: best.r, others: scored.slice(1, 4).map((x) => x.r) };
+}
+
 function explainFailure(instruction, route, inv, { modelOff }) {
   const parameter = findParameterInText(instruction);
   const state = findStateInText(instruction);
@@ -6908,6 +6947,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // question. If the page cannot answer, say so; the failure card
           // already lists what is here and what was understood, which is
           // more use than two things to try at random.
+          // Before giving up on a question: the page's own labels.
+          if (!commandLike) {
+            const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+            const found = read.ok ? answerFromPageLabels(wanted, read.result) : null;
+            if (found) {
+              respond({
+                ok: true, plannedBy: "page-label", readFrom: read.result && read.result.url,
+                display: {
+                  title: String(found.hit.label).slice(0, 60),
+                  subtitle: `${String(found.hit.value).slice(0, 60)} \u00b7 read from this page`,
+                  stats: [{ label: String(found.hit.label).slice(0, 24),
+                    value: String(found.hit.value).slice(0, 24) }],
+                  rows: found.others.map((o) => ({
+                    name: String(o.label).slice(0, 50), value: String(o.value).slice(0, 24),
+                    meta: "also on this page", tone: "ok" })),
+                  source: "this page",
+                },
+              });
+              return;
+            }
+          }
           if (guess && guess.calls && !commandLike) {
             const why = explainFailure(wanted, route, inv, { modelOff: true });
             why.hint = "this page has controls with related names, but pressing one would change the page rather than answer - name the control if that is what you want";

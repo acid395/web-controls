@@ -682,6 +682,42 @@ else {
   });
 }
 
+section("the page's own labels answer for it");
+// The data paths only knew measurements the vocabulary lists - stage,
+// discharge, temperature - so "what is the datum" and "what is the drainage
+// area" found nothing on a page printing both in plain sight. A page's own
+// labels are the last and most literal place to look, and nobody looked.
+const labelled = `<!doctype html><html><head><title>Smith River</title></head><body>
+  <p>Current stage: <span class="value">12.4</span> ft</p>
+  <dl><dt>Flood stage</dt><dd>18 ft</dd><dt>Datum</dt><dd>4.2 ft</dd>
+      <dt>Drainage area</dt><dd>613 sq mi</dd><dt>Gage number</dt><dd>11532500</dd></dl>
+  </body></html>`;
+for (const [q, want] of [["what is the datum", "4.2 ft"],
+                         ["drainage area", "613 sq mi"],
+                         ["what is the gage number", "11532500"]]) {
+  const page = loadPage(labelled, { url: "https://water.noaa.gov/gauges/CRSC1" });
+  if (!page) { skip(`page label: ${q}`, "jsdom not installed"); continue; }
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: q });
+    const d = r.display || {};
+    ensure(`"${q}" is answered from the page`,
+      new RegExp(want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(d.subtitle || ""), d.subtitle);
+    ensure(`"${q}" is titled with the label it read`,
+      !!(d.title && /datum|drainage|gage number/i.test(d.title)), d.title);
+  });
+}
+// Every word, or it is a coincidence of one. A page about rivers must not
+// answer a question about the moon with whatever shares a word with it.
+const nonsense = loadPage(labelled, { url: "https://water.noaa.gov/gauges/CRSC1" });
+if (nonsense) {
+  const bg = loadBackground({ page: nonsense });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "what is the moon phase" });
+    check("a question this page cannot answer is still refused", r.ok, false);
+  });
+}
+
 section("the domain's own words for the same thing");
 // ENV_VOCAB has held these since the beginning - discharge is streamflow is
 // flow is cfs, gage height is stage - and nothing that matched a control
