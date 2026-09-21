@@ -134,8 +134,24 @@
   // a container's text is not a label.
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
+    const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
+
+    // The thing beside it, before the thing around it. Snow Water Equivalent
+    // sits in a row of its own and was named correctly from the row; Flood
+    // Inundation sits in a row that also holds the panel's prose, so the
+    // row's text ran past any sane limit and the checkbox fell back to its
+    // name attribute - "fi" - and stayed unreachable while its neighbours
+    // worked. The label is right next to it either way.
+    for (const dir of ["previousElementSibling", "nextElementSibling"]) {
+      let sib = el[dir];
+      for (let seen = 0; sib && seen < 3; seen++, sib = sib[dir]) {
+        if (/^(input|select|textarea)$/i.test(sib.tagName || "")) break;  // the next control along
+        const t = clean(shortText(sib));
+        if (t && t.length <= 60) return t;
+      }
+    }
     for (let n = el.parentElement, up = 0; n && up < 3; n = n.parentElement, up++) {
-      const t = (shortText(n) || "").replace(/\s+/g, " ").trim();
+      const t = clean(shortText(n));
       if (t && t.length <= 60) return t;
     }
     return "";

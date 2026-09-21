@@ -805,15 +805,42 @@ for (const phrasing of ["enable flood inundation", "select flood inundation"]) {
       !!(page.document.querySelector('[value="lrfo"]') || {}).checked, false);
   });
 }
-// The label has to come from the row, or none of the above can happen.
+// The label has to come from the row, or none of the above can happen. And
+// from the thing beside it rather than the thing around it: Snow Water
+// Equivalent sits in a row of its own and was named correctly, while Flood
+// Inundation shares its row with the panel's prose - so the row's text ran
+// long, the checkbox fell back to its name attribute, and it stayed
+// unreachable while its neighbours worked. That is exactly what the live
+// page reported: snow depth and snow water equivalent fixed, flood
+// inundation still saying "clicked, but it is still false".
 const bareBox = loadPage(`<!doctype html><html><body>
-  <li><input type="checkbox" name="fi"><button>Flood Inundation</button></li>
+  <li><input type="checkbox" name="swe"><button>Snow Water Equivalent</button></li>
+  <li><input type="checkbox" name="fi"><button>Flood Inundation</button>
+    <div class="uk-accordion-content">Flood inundation mapping shows modelled
+      extents for selected communities and is updated as forecasts change.</div></li>
   </body></html>`, { url: "https://water.noaa.gov/" });
 if (bareBox) {
-  const box = bareBox.GENERIC.inventory({ includeHidden: true })
-    .controls.find((c) => c.type === "checkbox");
-  check("an unlabelled checkbox is named after its row, not its name attribute",
-    (box || {}).label, "Flood Inundation");
+  const boxes = bareBox.GENERIC.inventory({ includeHidden: true })
+    .controls.filter((c) => c.type === "checkbox");
+  check("a checkbox in a short row is named after it",
+    (boxes.find((c) => c.name === "swe") || {}).label, "Snow Water Equivalent");
+  check("and one sharing its row with a paragraph is named after its neighbour",
+    (boxes.find((c) => c.name === "fi") || {}).label, "Flood Inundation");
+
+  const bg = loadBackground({ page: bareBox });
+  runAsync(async () => {
+    for (const phrasing of ["click flood inundation", "enable flood inundation"]) {
+      const page = loadPage(bareBox.document.documentElement.outerHTML,
+        { url: "https://water.noaa.gov/" });
+      if (!page) continue;
+      const b = loadBackground({ page });
+      await b.__ask({ type: "smartAsk", instruction: phrasing });
+      check(`"${phrasing}" ticks the layer even in a crowded row`,
+        !!(page.document.querySelector('[name="fi"]') || {}).checked, true);
+      check(`"${phrasing}" leaves the snow layer alone`,
+        !!(page.document.querySelector('[name="swe"]') || {}).checked, false);
+    }
+  });
 }
 
 section("a tie is not an empty page");
