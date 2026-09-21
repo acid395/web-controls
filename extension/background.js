@@ -2500,7 +2500,11 @@ function meaningfulWords(text) {
     // there. On a river page the number is the whole distinction: 1-day,
     // 3-day and 7-day are different questions, and 30-day survived only by
     // having two digits.
-    .filter((w) => (w.length > 1 || /^[0-9]$/.test(w)) && !STOP_WORDS.has(w));
+    // A single character can be the whole label: "x" closes a panel on half
+    // the federal estate, and dropping it left "click x" with no words at all
+    // and nothing to match. Letters and digits both, since a lone "a" or "an"
+    // is a stop word already.
+    .filter((w) => (w.length > 1 || /^[a-z0-9]$/.test(w)) && !STOP_WORDS.has(w));
 }
 
 // How well one control's label answers the instruction. Whole-phrase hits
@@ -2711,8 +2715,13 @@ function wordsCoveredBy(control, words) {
   // not the weakest. Still strict: the whole label has to be that word, so
   // "Enabled" is not reached by "enable", which is the case the rule exists
   // for.
-  const bare = label.replace(/[^a-z0-9]+/g, " ").trim();
-  if (bare && hit.some((w) => w === bare)) return hit;
+  // Compared word for word, with filler dropped from the label too. The
+  // whole-label escape hatch tested the raw text, so a control called "Close
+  // button" could never be reached: the instruction reduces to "close", the
+  // label to the string "close button", and the two never matched. Any label
+  // carrying a filler word - button, option, tab - was in the same position.
+  const bareWords = meaningfulWords(label);
+  if (bareWords.length && bareWords.every((w) => hit.includes(w))) return hit;
   return [];
 }
 
@@ -2793,6 +2802,16 @@ function toolCallFor(control, words, instruction = "") {
 
   if (kind === "select" || (control.options && control.options.length)) {
     const option = matchOption(control, words);
+    // A dropdown named without naming a value. "Open input location" matched
+    // drought.gov's location select at 47.9 - as clear a match as the page
+    // offers - and then planned nothing at all, because no option was named,
+    // and reported "nothing matched". Clicking a select is how a person opens
+    // one to see what is in it.
+    if (!option) {
+      const named = words.some((w) => !verbFamily(w) && !CONTROL_VERB.test(w)
+        && wordMatchesText(w, String(control.label || "").toLowerCase()));
+      if (named) return { name: "pageClick", args: { selector: control.selector } };
+    }
     if (!option) return null;
     // Picking an option is often only half of it: plenty of dropdowns sit in
     // a form with a Go button and do nothing on change alone. "Click Alaska"
@@ -2887,6 +2906,10 @@ function findSearchBox(controls) {
     else if (c.revealedBy) r += 2;         // openable, and the runner opens it
     if (/\bsearch\b/i.test(c.label || "")) r += 1;
     if (typeOf(c) === "search") r += 1;
+    // nps.gov carries two text inputs, one labelled "Search" and one "Search
+    // text", and document order picked the second. A control called exactly
+    // what a person would say it is beats one that qualifies the name.
+    if (/^\s*search\s*$/i.test(c.label || "")) r += 1;
     return r;
   };
   const boxes = controls.filter(textual);

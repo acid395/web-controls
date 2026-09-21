@@ -682,6 +682,50 @@ else {
   });
 }
 
+section("three rounds over a hundred actions");
+// Found by sweeping 108 derived actions across five federal sites three
+// times over, fixing between rounds. All three were real.
+
+// A dropdown named without naming a value. "Open input location" matched
+// drought.gov's location select at 47.9 - as clear a match as that page
+// offers - then planned nothing, because no option was named, and reported
+// "nothing matched". Clicking a select is how a person opens one to look.
+const lonelySelect = { url: "https://www.drought.gov/", controls: [
+  { kind: "select", type: "select-one", label: "Input location", selector: "#loc",
+    confidence: "high", options: [{ text: "Choose" }] },
+] };
+check("a dropdown named without a value is opened",
+  (sb.planGenericTool("open input location", lonelySelect).calls || [])[0].name, "pageClick");
+
+// A single character can be the whole label: "x" closes a panel on half the
+// federal estate, and dropping it left "click x" with no words at all.
+check("a one-character label is still a word", sb.meaningfulWords("click x"), ["x"]);
+const closer = { url: "https://mywaterway.epa.gov/", controls: [
+  { kind: "button", type: "submit", label: "x", selector: "#x", confidence: "high" },
+  { kind: "button", label: "Search", selector: "#s", confidence: "high" },
+] };
+check("so the one-character button can be pressed",
+  sb.planGenericTool("click x", closer).calls[0].args.selector, "#x");
+
+// The whole-label escape hatch compared raw text, so a control called "Close
+// button" could never be reached: the instruction reduces to "close", the
+// label to the string "close button", and the two never met. Any label
+// carrying a filler word was in the same position.
+const closeBtn = { url: "https://data.gov/", controls: [
+  { kind: "button", type: "submit", label: "Close button", selector: "#cb", confidence: "high" },
+] };
+check("a label with filler in it is still matched whole",
+  sb.planGenericTool("click close button", closeBtn).calls[0].args.selector, "#cb");
+
+// nps.gov carries two text inputs, "Search" and "Search text", and document
+// order picked the second.
+const twoText = { url: "https://www.nps.gov/", controls: [
+  { kind: "input", type: "text", label: "Search text", selector: "#long", confidence: "high" },
+  { kind: "input", type: "text", label: "Search", selector: "#plain", confidence: "high" },
+] };
+check("the box called exactly what you would call it wins",
+  sb.planGenericTool("search for smith river", twoText).calls[0].args.selector, "#plain");
+
 section("a plural is the same word");
 // Found by sweeping invented phrasings: "set the time span to 7 day" chose
 // "1 day". The option reads "7 days", and \bday\b does not match "days", so

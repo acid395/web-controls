@@ -50,8 +50,8 @@ for (const [name, file, url] of SITES) {
   }
   const picked = [];
   let round = 0;
-  while (picked.length < 22 && round < 40) {
-    for (const [, list] of byKind) if (list[round] && picked.length < 22) picked.push(list[round]);
+  while (picked.length < 25 && round < 60) {
+    for (const [, list] of byKind) if (list[round] && picked.length < 25) picked.push(list[round]);
     round++;
   }
 
@@ -61,7 +61,18 @@ for (const [name, file, url] of SITES) {
     let plan = null, err = null;
     try { plan = sb.planGenericTool(instr, inv); } catch (e) { err = e.message; }
     const call = plan && plan.calls && plan.calls[0];
-    const hit = !!(call && call.args && call.args.selector === c.selector);
+    // Several controls on these pages carry an identical label - EPA has three
+    // called "Search": an input, a submit button and a hidden field. Reaching
+    // a different one of those is not a miss, because from the label alone
+    // there is no correct answer to pick. The wide matrix has scored it this
+    // way since it was written; this one did not, which was an inconsistency
+    // rather than a stricter standard.
+    const sel = call && call.args && call.args.selector;
+    const resolvedControl = (inv.controls || []).find((x) => x.selector === sel);
+    const sameLabelHit = !!(resolvedControl
+      && String(resolvedControl.label || "").trim().toLowerCase()
+        === String(c.label || "").trim().toLowerCase());
+    const hit = sameLabelHit || !!(sel && sel === c.selector);
     // A radio has no selector in its args; match on value instead.
     const radioHit = !!(call && call.name === "pagePickRadio" && !call.args.selector
       && String(call.args.value||"").toLowerCase() === String(c.label||"").trim().toLowerCase());
