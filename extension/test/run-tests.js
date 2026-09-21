@@ -483,6 +483,52 @@ else {
   }
 }
 
+section("accents are not word boundaries");
+// "Click espanol" matched nothing on usa.gov. Splitting on [^a-z0-9] treats
+// every accented letter as a boundary, so the label tokenised to "espa" and
+// "ol" - two fragments matching nothing a person would ever type. Federal
+// sites carry that link by law, so this was every one of them; and the same
+// break hit "Mayaguez", which is a tide gauge somebody actually asked for
+// earlier.
+check("an accented label survives tokenising",
+  sb.meaningfulWords("Espa\u00f1ol"), ["espanol"]);
+check("and a place name is not cut in half",
+  sb.meaningfulWords("Mayag\u00fcez tide gauge"), ["mayaguez", "tide", "gauge"]);
+check("typed without the accent, matched with it",
+  sb.wordMatchesText("espanol", "Espa\u00f1ol"), "exact");
+// And the reverse: the accent typed, the label plain.
+check("typed with the accent, matched without",
+  sb.wordMatchesText("mayag\u00fcez", "Mayaguez gauge"), "exact");
+const bilingual = { url: "https://www.usa.gov/", controls: [
+  { kind: "link", label: "Espa\u00f1ol", selector: "#es", confidence: "high" },
+  { kind: "link", label: "Contact us", selector: "#c", confidence: "high" },
+] };
+check("so the link is reached",
+  sb.planGenericTool("click espanol", bilingual).calls[0].args.selector, "#es");
+
+section("a tool that threw did not run");
+// Straight from the live panel. noaaToggleFloodCategory threw
+// `"inundation" not found`, the error travelled all the way to the card
+// inside the payload, and the subtitle read "ran - could not check whether
+// the page changed". It did not run. The one thing that was certain got
+// reported as the one thing that was unknown, which is the most damaging
+// wording available: an outright failure wearing the clothes of an
+// unverifiable success.
+const threw = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body>
+  <p>nothing here answers to that</p></body></html>`, { url: "https://water.noaa.gov/" });
+if (!threw) skip("a throwing tool", "jsdom not installed");
+else {
+  const bg = loadBackground({ page: threw });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+    const sub = (r.display || {}).subtitle || "";
+    ensure("a failure is never described as having run",
+      !/^ran\b|ran - could not check/.test(sub), sub);
+    ensure("and the reason is on the card, not only in the payload",
+      !r.ok ? /did not run|could not|no |nothing/i.test(sub) : true, { ok: r.ok, sub });
+  });
+}
+
 section("the navbar says it too");
 // The live shape, and the reason the loop had to survive a dead end. NWPS
 // carries "Flood Inundation Mapping" in its navbar and again as a map layer

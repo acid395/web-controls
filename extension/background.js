@@ -2479,8 +2479,19 @@ const STOP_WORDS = new Set([
   "option", "tab", "give", "get", "want", "would", "like", "can", "you",
 ]);
 
+// Accents folded away before anything is compared. Splitting on [^a-z0-9]
+// treated every accented letter as a word boundary, so "Espanol" could never
+// reach a link labelled "Espanol" - the label tokenised to "espa" and "ol",
+// two fragments matching nothing. Every federal site carries that link by
+// law, and the same break hit "Mayaguez", "Canon City" and every other
+// place name a river gauge is named after.
+function foldAccents(text) {
+  try { return String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+  catch (e) { return String(text || ""); }
+}
+
 function meaningfulWords(text) {
-  return (text || "")
+  return foldAccents(text || "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     // A lone digit is a word. Dropping anything shorter than two characters
@@ -2496,7 +2507,7 @@ function meaningfulWords(text) {
 // score far above scattered word hits, so "year to date" prefers a control
 // actually labelled "Year to date" over one merely containing "date".
 function scoreControl(control, words, phrase, opts = {}) {
-  const label = (control.label || "").toLowerCase();
+  const label = foldAccents(control.label || "").toLowerCase();
   if (!label) return 0;
   // A hidden input cannot be clicked, typed into or seen. Five of them sat in
   // the candidate list on mywaterway.epa.gov, tied with the real search box,
@@ -2577,7 +2588,9 @@ function controlTypoBudget(word) {
   return word.length >= 9 ? 2 : 1;
 }
 
-function wordMatchesText(word, text) {
+function wordMatchesText(rawWord, rawText) {
+  const word = foldAccents(rawWord).toLowerCase();
+  const text = foldAccents(rawText).toLowerCase();
   if (!word || !text) return false;
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // A short word matching by prefix is noise. "Go to mayaguez tide gauge"
@@ -2623,9 +2636,9 @@ function wordMatchesText(word, text) {
 // Which instruction words a control's label or options actually account for.
 // Used to let several controls divide one instruction between them.
 function wordsCoveredBy(control, words) {
-  const label = (control.label || "").toLowerCase();
+  const label = foldAccents(control.label || "").toLowerCase();
   const optionText = (control.options || [])
-    .map((o) => String(o.text || o.value || "").toLowerCase()).join(" ");
+    .map((o) => foldAccents(o.text || o.value || "").toLowerCase()).join(" ");
   const hay = `${label} ${optionText}`;
   const hit = words.filter((w) => wordMatchesText(w, hay));
   // A control matched only by the instruction's verb has not been matched.
@@ -6140,7 +6153,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // that could not be checked is equally unproven, and "ran - could
           // not check whether the page changed" is not a result worth
           // stopping on when the page offers another way.
-          if (!result.verified || result.verified.changed === false) {
+          // A tool that threw is the clearest case of all, and it was the
+          // one this did not cover. noaaToggleFloodCategory threw
+          // `"inundation" not found`, the error travelled all the way to the
+          // panel inside the payload, and the card said "ran - could not
+          // check whether the page changed". It did not run. An outright
+          // failure reported as an unverifiable success is worse than either.
+          if (result.ok === false || !result.verified || result.verified.changed === false) {
             const second = confidentPick(
               await unifiedTools(route.global, wanted, { acting: true }), wanted);
             if (second && second.tool.name !== manifestCall.name) {
@@ -6152,13 +6171,50 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
 
+          // Still nothing. The hand-written tool is a single step by
+          // construction - it looks for a checkbox that is not in the
+          // document yet - and one more single step will not find it either.
+          // The page's own control is three levels down, which is what the
+          // loop is for. This path never reached it: it was wired into the
+          // one-list route and the nothing-matched fallback, and a manifest
+          // route that failed simply reported its failure.
+          if ((result.ok === false || !result.verified || result.verified.changed === false)
+              && !usedInstead && commandLike && !forceModel) {
+            const chased = await pursueGoal(route.global, wanted).catch(() => null);
+            if (chased && chased.done) {
+              const acted = chased.steps.filter((st) => st.did !== "opened");
+              const last = acted[acted.length - 1] || {};
+              respond({
+                ok: true, plannedBy: "pursued", steps: chased.steps,
+                display: {
+                  title: String(last.label || "Done").slice(0, 60),
+                  subtitle: [
+                    `${friendlyToolName(manifestCall.name)} could not do it, so this page's own controls were used`,
+                    chased.opened.length
+                      ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")}` : null,
+                    typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                  ].filter(Boolean).join(" \u00b7 "),
+                  stats: [{ label: "steps", value: String(chased.steps.length) }],
+                  rows: chased.steps.map((st) => ({
+                    name: String(st.label || st.did).slice(0, 50),
+                    value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
+                    meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                  })),
+                  source: route.global,
+                },
+              });
+              return;
+            }
+          }
+
           const note = describeVerification(result.verified, manifestCall);
           // Anything the tool could not account for is said out loud - a
           // dropped word is how an action ends up answering a different
           // question than the one asked.
           const ignored = manifestCall.unmatchedWords;
           respond({
-            ...result, plannedBy: cameFromPage ? "page" : "manifest", toolCall: manifestCall,
+            ...result, ok: result.ok !== false,
+            plannedBy: cameFromPage ? "page" : "manifest", toolCall: manifestCall,
             display: {
               title: friendlyToolName(usedInstead || manifestCall.name),
               // A substitution has to be stated, but never at the cost of
@@ -6185,6 +6241,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     return r.how === "click"
                       ? `${r.control}: clicked, but it is still ${r.now} - the click did not take`
                       : `${r.control} was already ${r.now} - nothing to change`;
+                  }
+                  // It did not run. The error was in the payload the whole
+                  // time - `"inundation" not found` - while the card said
+                  // "ran - could not check whether the page changed". The
+                  // one thing that was certain got reported as the one thing
+                  // that was unknown.
+                  if (result.ok === false) {
+                    return `did not run: ${String(result.error || "no reason given").slice(0, 90)}`;
                   }
                   return note ? note.text
                     : result.verified ? "ran, but nothing on the page changed"
