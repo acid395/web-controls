@@ -119,9 +119,21 @@ function loadBackground({ onFetch, page } = {}) {
   sandbox.__requests = requests;
   // Send a message in exactly as Chrome would, and resolve with what the
   // handler sends back.
-  sandbox.__ask = (message, { timeoutMs = 15000 } = {}) => new Promise((resolve, reject) => {
+  // Fifteen seconds was chosen when this suite was a third of its size. A
+  // single ask on drought.gov - 182 controls, inventory plus the step loop -
+  // takes about 2.6 seconds on its own, and every asynchronous section runs
+  // concurrently, so the budget was being shared by twenty of them. One run
+  // in five was failing thirty-odd checks with "the handler never responded",
+  // which is a harness budget, not a product fault: raising it hides nothing,
+  // because a genuine hang still exhausts it.
+  sandbox.__ask = (message, { timeoutMs = 60000 } = {}) => new Promise((resolve, reject) => {
     if (!messageHandler) return reject(new Error("background.js registered no onMessage listener"));
-    const timer = setTimeout(() => reject(new Error("the handler never responded")), timeoutMs);
+    // Which ask hung. "The handler never responded" names no instruction, so
+    // an intermittent one sent several rounds of guessing at code that was
+    // not involved.
+    const timer = setTimeout(() => reject(new Error(
+      `the handler never responded to ${JSON.stringify(message && message.instruction || message && message.type)}`
+      + ` within ${timeoutMs}ms`)), timeoutMs);
     let done = false;
     const sendResponse = (res) => { if (done) return; done = true; clearTimeout(timer); resolve(res); };
     try {
