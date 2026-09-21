@@ -75,6 +75,8 @@
   };
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  let ariaIndex = null;
+  let labelForIndex = null, labelForRoot = null;
 
   // Reads the text that identifies a control, original case, whitespace
   // collapsed. Same order every file uses, including inventory-controls.js's
@@ -99,13 +101,40 @@
     }
     if (el.labels && el.labels[0]) return clean(el.labels[0].textContent);
     if (el.id) {
+      // Indexed once per pass. This was a document scan for every control
+      // carrying an id, which on a page of several hundred is several
+      // hundred sweeps of the whole document to find one <label for>.
       const root = el.getRootNode();
-      const forLabel = root.querySelector && root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (!labelForIndex || labelForRoot !== root) {
+        labelForIndex = new Map();
+        labelForRoot = root;
+        const labels = (root.querySelectorAll ? root.querySelectorAll("label[for]") : []);
+        for (const l of labels) {
+          const target = l.getAttribute("for");
+          if (target && !labelForIndex.has(target)) labelForIndex.set(target, l);
+        }
+      }
+      const forLabel = labelForIndex.get(el.id);
       if (forLabel) return clean(forLabel.textContent);
     }
     const wrap = el.closest("label");
-    if (wrap) return clean(wrap.textContent);
-    return clean(el.placeholder || el.title || el.name || el.textContent || "");
+    if (wrap) return clean(shortText(wrap));
+    return clean(el.placeholder || el.title || el.name || shortText(el) || "");
+  };
+
+  // A label is a few words. textContent on a container builds the whole
+  // subtree's text - on a page like cdec.water.ca.gov that is most of the
+  // document, rebuilt and whitespace-collapsed once per candidate control,
+  // which is what turned reading that page into a hang rather than a pause.
+  // Nothing downstream keeps more than 80 characters of it anyway.
+  const shortText = (el) => {
+    if (!el) return "";
+    let out = "";
+    for (const node of el.childNodes) {
+      out += node.nodeType === 3 ? (node.nodeValue || "") : (node.textContent || "");
+      if (out.length > 200) break;
+    }
+    return out.slice(0, 200);
   };
   // Matching form: lowercased and collapsed. Everything in this file that
   // compares labels (pickRadio, clickByText, ...) uses this, not rawLabelOf.
@@ -123,6 +152,7 @@
   // Full pointer and mouse sequence, then a real click. React fires its own
   // onChange from that click's default action.
   const realClick = (elOrSel) => {
+    pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`realClick: not found: ${elOrSel}`);
     // Guarded so a click is testable outside a real browser: jsdom has no
@@ -138,6 +168,7 @@
   };
 
   const fill = (elOrSel, text) => {
+    pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`fill: not found: ${elOrSel}`);
     el.focus();
@@ -150,6 +181,7 @@
   };
 
   const setSelect = (elOrSel, valueOrText) => {
+    pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
     const opt = [...el.options].find(
@@ -163,6 +195,7 @@
   };
 
   const setChecked = (elOrSel, on = true) => {
+    pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`setChecked: not found: ${elOrSel}`);
     if (!!el.checked !== !!on) realClick(el);
@@ -271,11 +304,30 @@
     }
   }
 
+  // getComputedStyle is the most expensive thing this file does, and the
+  // ancestor and sibling walks below ask for the same elements over and over.
+  // Reset at the start of each pass, because opening a panel is precisely the
+  // thing that changes the answers - a cache that outlived a pass would keep
+  // reporting a revealed control as hidden.
+  let visCache = null;
+  const freshPass = () => { visCache = new WeakMap(); };
+  // Anything that touches the page throws the cache away. Opening a panel is
+  // the whole reason to ask again, and a cache that survived a click reported
+  // every revealed control as still hidden - which is the opposite of what
+  // the disclosure work is for. Speed inside a pass, never across an action.
+  const pageTouched = () => { visCache = null; ariaIndex = null; labelForIndex = null; };
   const isVisible = (el) => {
+    if (!el) return false;
+    if (visCache && visCache.has(el)) return visCache.get(el);
     const r = el.getBoundingClientRect();
-    if (!r.width && !r.height) return false;
-    const s = getComputedStyle(el);
-    return s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
+    let out;
+    if (!r.width && !r.height) out = false;
+    else {
+      const s = getComputedStyle(el);
+      out = s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
+    }
+    if (visCache) visCache.set(el, out);
+    return out;
   };
 
   const reactProps = (el) => {
@@ -332,9 +384,26 @@
       let s = tagOf(cur);
       if (cur.classList.length) s += "." + [...cur.classList].map((c) => CSS.escape(c)).join(".");
       const p = cur.parentNode;
-      if (p && p.children) {
-        const sib = [...p.children].filter((c) => c.tagName === cur.tagName);
-        if (sib.length > 1) s += `:nth-of-type(${sib.indexOf(cur) + 1})`;
+      if (p && p.firstElementChild) {
+        // Walked, not materialised. Spreading an HTMLCollection copies it and
+        // touches every member, and a page with a few thousand siblings then
+        // pays that once per element per ancestor - which is what made
+        // cdec.water.ca.gov, whose markup puts 3,508 children under one
+        // parent, impossible to read at all rather than merely slow.
+        //
+        // Capped as well: past a few hundred siblings the index is no longer
+        // a useful identifier anyway. That is the same list whose reflow made
+        // positional selectors go stale, and labels re-resolve at click time
+        // now, so a selector that stops short is the cheaper mistake.
+        let index = 0, same = 0, capped = false;
+        for (let sib = p.firstElementChild; sib; sib = sib.nextElementSibling) {
+          if (sib.tagName === cur.tagName) {
+            same++;
+            if (sib === cur) index = same;
+          }
+          if (same > 300) { capped = true; break; }
+        }
+        if (same > 1 && index && !capped) s += `:nth-of-type(${index})`;
       }
       parts.unshift(s);
       cur = p instanceof ShadowRoot ? p.host : p;
@@ -384,7 +453,17 @@
 
     const id = hiddenAncestor.id;
     if (id) {
-      const byAria = deepQuery(`[aria-controls="${CSS.escape(id)}"]`);
+      // Indexed once per pass. This was a full-document scan for every
+      // hidden control, so a page of hidden menu items cost one sweep each.
+      if (!ariaIndex) {
+        ariaIndex = new Map();
+        for (const opener of deepQueryAll("[aria-controls]")) {
+          for (const target of String(opener.getAttribute("aria-controls") || "").split(/\s+/)) {
+            if (target && !ariaIndex.has(target)) ariaIndex.set(target, opener);
+          }
+        }
+      }
+      const byAria = ariaIndex.get(id);
       if (byAria && isVisible(byAria)) return byAria;
     }
     if (hiddenAncestor.tagName === "DETAILS" || hiddenAncestor.closest) {
@@ -395,14 +474,20 @@
       }
     }
     // The nearest thing above it that says it opens something.
+    // Bounded. cdec.water.ca.gov has a div with 3,508 children, and walking
+    // every one of them for every hidden control - asking the browser for a
+    // computed style each time - is what turned reading that page into a
+    // hang. A control's opener sits beside it, not three thousand elements
+    // away.
     let prev = hiddenAncestor.previousElementSibling;
-    while (prev) {
+    for (let seen = 0; prev && seen < 40; seen++) {
       if (prev.getAttribute && prev.getAttribute("aria-expanded") === "false" && isVisible(prev)) return prev;
       prev = prev.previousElementSibling;
     }
     const parent = hiddenAncestor.parentElement;
     if (parent) {
       const toggler = [...parent.querySelectorAll('[aria-expanded="false"], button, summary')]
+        .slice(0, 40)
         .find((t) => isVisible(t) && !t.contains(el));
       if (toggler) return toggler;
     }
@@ -410,6 +495,8 @@
   }
 
   function inventory({ includeHidden = false } = {}) {
+    freshPass();
+    ariaIndex = null; labelForIndex = null;
     const seen = new Set();
     const all = [];
     for (const el of walk(document.documentElement)) {
@@ -426,6 +513,19 @@
       const weak = !strong && looksClickable(el);
       if (!(strong || weak)) continue;
       if (seen.has(el)) continue;
+      // A link wrapping an icon and a caption is one control, not three.
+      // <a><i class="fa-facebook"></i><span>Facebook</span></a> was recorded
+      // as an anchor, a span and an italic, all labelled Facebook, all
+      // offered as separate tools - so the list was padded with duplicates
+      // of whatever a site wraps its links in, and the same click was on
+      // offer three times over. Walk order is outside-in, so the element
+      // that owns the label has already been taken by the time its
+      // decoration is reached.
+      let nestedDuplicate = false;
+      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+        if (seen.has(a) && norm(rawLabelOf(a)) === norm(rawLabelOf(el))) { nestedDuplicate = true; break; }
+      }
+      if (nestedDuplicate) continue;
       // A control behind a closed panel is still a control. Recorded with
       // what would have to be opened first, so using it can open it.
       const shown = isVisible(el);
@@ -1869,6 +1969,8 @@
   //
   // The only way in is to press the thing and look again.
   function disclosures({ limit = 6, match = "" } = {}) {
+    freshPass();
+    ariaIndex = null;
     const out = [];
     const seen = new Set();
     const NAMES = /\b(layer|layers|menu|filter|filters|options|settings|more|panel|legend|tools|expand|show)\b/i;

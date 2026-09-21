@@ -506,6 +506,46 @@ else {
   });
 }
 
+section("one link is one control");
+// Straight off wisconsin.gov, nasa.gov and half the federal estate:
+// <a><i class="fa-facebook"></i><span>Facebook</span></a> was recorded as an
+// anchor, a span and an italic, all labelled Facebook, all offered as
+// separate tools. The list was padded with duplicates of whatever a site
+// wraps its links in, and the same click was on offer three times. nasa.gov
+// reported 569 controls; 307 of them were real.
+const wrapped = loadPage(`<!doctype html><html><body>
+  <a href="/fb"><i class="icon"></i><span>Facebook</span></a>
+  <a href="/yt"><i class="icon"></i><span>YouTube</span></a>
+  </body></html>`, { url: "https://dnr.wisconsin.gov/" });
+if (!wrapped) skip("nested duplicates", "jsdom not installed");
+else {
+  const labels = wrapped.GENERIC.inventory({ includeHidden: true })
+    .controls.filter((c) => /facebook/i.test(c.label || ""));
+  check("the wrapper and its decoration are not separate controls", labels.length, 1);
+  check("and the one kept is the link", (labels[0] || {}).kind, "a");
+}
+
+section("a page too big to read is a page that does not work");
+// cdec.water.ca.gov could not be read at all - not slowly, at all. cssPath
+// spread the parent's HTMLCollection to number the siblings, and that page
+// puts 3,508 children under one parent, so the copy was made once per
+// element per ancestor. Walking beats copying, and past a few hundred
+// siblings the index is not a useful identifier anyway.
+const wide = loadPage(`<!doctype html><html><body><div>${
+  Array.from({ length: 1200 }, (_, i) => `<span>row ${i}</span>`).join("")
+}<a href="/x">Reservoir storage</a></div></body></html>`,
+  { url: "https://cdec.water.ca.gov/" });
+if (!wide) skip("wide pages", "jsdom not installed");
+else {
+  const t0 = Date.now();
+  const inv = wide.GENERIC.inventory({ includeHidden: true });
+  const ms = Date.now() - t0;
+  ensure(`a parent with 1,200 children is read in reasonable time (${ms}ms)`, ms < 8000, ms);
+  ensure("and the control past them is still found",
+    inv.controls.some((c) => /reservoir storage/i.test(c.label || "")),
+    inv.controls.length);
+}
+
 section("without any code written for the site");
 // The thesis, tested directly. Strip every hand-written NOAA tool and the
 // page must still work - otherwise the success is borrowed from prebuilt
