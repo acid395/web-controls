@@ -652,6 +652,65 @@ for (const [q, want, other] of [["enable snow depth", "sd", "swe"],
   });
 }
 
+section("how many steps, and which kinds");
+// The boundary, written down. Everything here was measured rather than
+// assumed, and the last two fail on purpose - a limit that is tested is a
+// limit somebody can rely on.
+const multi = `<!doctype html><html><head><title>T</title></head><body>
+  <button id="open">Layers</button><div id="p"></div>
+  <label for="span">Time span</label>
+  <select id="span"><option>1 day</option><option>7 day</option><option>30 day</option></select>
+  <button id="reset">Reset</button><p id="log"></p>
+  <script>
+    const log = (t) => { document.getElementById("log").textContent += t + ";"; };
+    document.getElementById("open").addEventListener("click", () => {
+      const p = document.getElementById("p");
+      if (!p.innerHTML) p.innerHTML =
+        '<label><input type="checkbox" name="fi"> Flood Inundation</label>' +
+        '<label><input type="checkbox" name="sd"> Snow Depth</label>';
+      log("opened");
+    });
+    document.getElementById("reset").addEventListener("click", () => log("reset"));
+    document.getElementById("span").addEventListener("change", (e) => log("span=" + e.target.value));
+  <\/script></body></html>`;
+const runMulti = (instr, then) => {
+  const page = loadPage(multi, { url: "https://water.noaa.gov/" });
+  if (!page) { skip(instr.slice(0, 30), "jsdom not installed"); return; }
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: instr });
+    then(r, page, (n) => !!(page.document.querySelector(`[name="${n}"]`) || {}).checked);
+  });
+};
+// Three parts, where each later part needs the one before it to have run.
+runMulti("click layers and then enable flood inundation and then enable snow depth",
+  (r, page, on) => {
+    check("three parts all run", ((r.display || {}).rows || []).length, 3);
+    check("and each one lands", `${on("fi")} ${on("sd")}`, "true true");
+  });
+// Five: the old cap was four, and a five-part instruction fell out of the
+// sequence to be handled as one command - which pressed Reset, a step from
+// the middle of the sentence, chosen alone.
+runMulti("click layers and then enable flood inundation and then enable snow depth"
+  + " and then click reset and then click layers",
+  (r) => check("five parts still run as a sequence", ((r.display || {}).rows || []).length, 5));
+// A comma is a sequence too.
+runMulti("click layers, then enable snow depth",
+  (r, page, on) => check("a comma separates steps as well as the word and", on("sd"), true));
+// The number is the point of the instruction, not the unit.
+runMulti("set time span to 30 day and then click reset",
+  (r, page) => ensure("an option is matched whole, not on its first shared word",
+    /span=30 day/.test((page.document.getElementById("log") || {}).textContent || ""),
+    (page.document.getElementById("log") || {}).textContent));
+
+// Not supported, and tested so that stays true rather than drifting.
+runMulti("if flood inundation is off then enable it",
+  (r) => ensure("a condition is not understood, and does not pretend to be",
+    r.ok === false || !(r.display || {}).rows || (r.display || {}).rows.length <= 2, r.ok));
+runMulti("enable the layer with the longest name",
+  (r) => ensure("a superlative over the page is not understood either",
+    r.ok === false, { ok: r.ok, sub: (r.display || {}).subtitle }));
+
 section("and then means and then");
 // "Click bear river monitoring location page and then click 30 day" did the
 // first half and stopped. Sequencing existed, but it required every part to

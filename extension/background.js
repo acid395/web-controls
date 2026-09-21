@@ -2680,10 +2680,27 @@ function wordsCoveredBy(control, words) {
 // Picks the option inside a <select> that the instruction named.
 function matchOption(control, words) {
   const options = control.options || [];
-  // Exact across every option before any fuzzy one, so a correctly spelled
-  // option is never beaten by a near-miss on a different one.
-  return options.find((o) => words.some((w) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))
-    || options.find((o) => words.some((w) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase())));
+  if (!options.length) return null;
+  // Weighed, not first-past-the-post. This took the first option where any
+  // single word matched, so "set the time span to 30 day" picked "1 day" -
+  // the first option in the list, matched on the word "day" alone, with the
+  // number that was the entire point of the instruction ignored. Every
+  // option is scored, and an option matched whole beats one matched in part.
+  const phrase = words.join(" ");
+  let best = null, bestScore = 0;
+  for (const o of options) {
+    const text = String(o.text || o.value || "").toLowerCase();
+    if (!text) continue;
+    let score = 0;
+    if (meaningfulWords(text).join(" ") === phrase) score += 10;
+    for (const w of words) {
+      const hit = wordMatchesText(w, text);
+      if (hit === "exact") score += 2;
+      else if (hit) score += 1;   // fuzzy, below exact, never instead of it
+    }
+    if (score > bestScore) { best = o; bestScore = score; }
+  }
+  return bestScore > 0 ? best : null;
 }
 
 // What the instruction wants done to a checkbox. Absent an explicit verb,
@@ -5670,7 +5687,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (commandLike) {
           const parts = String(msg.instruction).split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*/i)
             .map((t) => t.trim()).filter(Boolean);
-          if (parts.length > 1 && parts.length <= 4) {
+          // Eight, not four. A five-part instruction fell out of the sequence
+          // and was handled as one command, which on the page tested pressed
+          // Reset - a step from the middle of the sentence, chosen alone.
+          // Falling through to "do part of it" is worse than the length.
+          if (parts.length > 1 && parts.length <= 8) {
             const plans = parts.map((part) => ({
               part,
               call: planManifestTool(part, route.global) || (route.global === "USGS" ? planTool(part) : null),
@@ -5688,14 +5709,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const steps = [];
               for (const { part, call } of plans) {
                 let result;
-                if (call) {
+                // The page's own controls first, as everywhere else. This
+                // path asked the manifest first, so "search station for smith
+                // river" became noaaSearch - which on the page tested reached
+                // for the Layers button - while the generic planner had the
+                // right answer, a fill of the search box, all along. The main
+                // route has preferred the page since the one-list picker
+                // landed; the sequence never did.
+                const own = await pursueGoal(route.global, part).catch(() => null);
+                const ownActed = ((own && own.steps) || [])
+                  .filter((st) => st.did !== "opened" && st.ok);
+                // Confirmed, or merely done-but-unverifiable: either way the
+                // page's own control has already acted, and letting the
+                // hand-written tool take a second turn is how a filled search
+                // box was followed by a press of the Layers button. The
+                // manifest only gets a turn when the page offered nothing.
+                if (own && own.done) {
+                  result = { ok: true, verified: { changed: true } };
+                } else if (ownActed.length) {
+                  result = { ok: true, unconfirmed: true };
+                } else if (call) {
                   // A manifest tool call and a planTool result have different
                   // shapes; both end up at the same executor.
                   result = call.name
                     ? await runVerified(route.global, call)
                     : await invokeOnActiveTab(call.fn, call.args);
-                } else {
-                  const chased = await pursueGoal(route.global, part).catch(() => null);
+                  // A hand-written tool that fails must not end the sequence.
+                  // "Click layers and then enable flood inundation" stopped
+                  // dead because noaaToggleFloodCategory threw, while the
+                  // same sentence ending in "enable snow depth" - which no
+                  // manifest covers - went through the generic path and
+                  // worked. Having a hand-written tool made the site worse.
+                }
+                if (!result) {
+                  const chased = own;
                   const ran = ((chased && chased.steps) || [])
                     .filter((st) => st.did !== "opened" && st.ok);
                   // Three outcomes, not two. A step that ran and was
