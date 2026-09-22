@@ -4661,8 +4661,20 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // "the page changed", and revisions never reached. The label is the
     // stable thing about a control; the selector is not, which is the same
     // lesson the click path learned earlier.
-    const repeatKey = `${act}|${String(target.label || "").trim().toLowerCase()}`;
-    const already = history.find((h) => h.key === repeatKey);
+    const label = String(target.label || "").trim().toLowerCase();
+    if (!actionFits(act, target)) {
+      if (++repeats > 1) return { ok: true, answer: null, history, steps: history.length };
+      note = `"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind} - it cannot be`
+        + ` ${act}ed. Click it, or choose another control.`;
+      continue;
+    }
+
+    // Any action on a control that already moved, not just the same action.
+    // The model clicked Related links, saw the page change, and then checked
+    // the same link - a different action, so the guard let it through.
+    const repeatKey = `${act}|${label}`;
+    const already = history.find((h) => h.key === repeatKey)
+      || history.find((h) => h.label === target.label && h.changed);
     if (already) {
       if (already.changed) {
         return { ok: true, answer: null, history, steps: history.length, repeated: true };
@@ -4684,8 +4696,19 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     const ran = await runVerified(routeGlobal, call);
     const r = (ran && ran.result) || {};
     const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+    // Whether what it acted on has anything to do with what was asked. Not a
+    // veto - the decision is the model's, and a control can be the right one
+    // under a name that shares no words. But "view related graphs" became a
+    // click on "Related links" and "change time span" became a checkbox
+    // called "30 days", and both were reported as plain successes. A wrong
+    // action nobody is told about is the failure this project keeps meeting;
+    // said out loud it is something a person can judge.
+    const goalWords = meaningfulWords(goal)
+      .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
+    const shares = goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase()));
     history.push({
       key: repeatKey,
+      unrelated: goalWords.length && !shares ? String(target.label).slice(0, 40) : undefined,
       did: `${act} "${String(target.label).slice(0, 40)}"`,
       outcome: ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}`
@@ -4701,6 +4724,27 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
 
 // One action, one tool call. The model says what it wants done; which tool
 // that is depends on the control, not on the wording of the request.
+// Can this control do that at all? A model will ask to check a link or type
+// into a button, and the old code obliged - "check Related links" ran a
+// pageCheck against an anchor and reported that the page changed, which is
+// the confidently-wrong answer this whole project exists to avoid, arriving
+// from the model instead of the scorer this time.
+//
+// The page's own markup settles it, so it is settled here rather than asked
+// of the model, which at this size will not hold a rule it is merely told.
+function actionFits(act, control) {
+  const type = String(control.type || "").toLowerCase();
+  const kind = String(control.kind || "").toLowerCase();
+  const isBox = type === "checkbox" || type === "radio" || kind === "checkbox";
+  const isSelect = kind === "select" || (control.options || []).length > 0;
+  const isText = TEXT_INPUT_KINDS.has(type) || kind === "textarea";
+  if (act === "check") return isBox;
+  if (act === "select") return isSelect;
+  if (act === "type") return isText;
+  if (act === "click") return !isText;   // typing is what a text box is for
+  return true;
+}
+
 function actionToCall(act, control, s) {
   const sel = control.selector;
   if (act === "click") return { name: "pageClick", args: { selector: sel } };
@@ -6203,13 +6247,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   subtitle: [
                     `${agent.history.length} step${agent.history.length === 1 ? "" : "s"}`
                       + ` (${acted.length} on the page), decided by the local model`,
-                    agent.ranOut ? "stopped at the step limit" : null,
+                    agent.history.some((h) => h.unrelated)
+                      ? "some steps acted on controls your words did not name" : null,
+                    agent.outOfTime ? "ran out of time" : agent.ranOut ? "stopped at the step limit" : null,
                   ].filter(Boolean).join(" \u00b7 "),
                   stats: [{ label: "steps", value: String(agent.history.length) }],
                   rows: agent.history.map((h) => ({
                     name: String(h.did).slice(0, 50), value: h.ok === false ? "failed" : (h.changed ? "changed" : ""),
-                    meta: String(h.outcome || "").slice(0, 60),
-                    tone: h.ok === false ? "alert" : h.changed ? "ok" : "warn",
+                    meta: h.unrelated
+                      ? `nothing in what you asked names "${h.unrelated}"`
+                      : String(h.outcome || "").slice(0, 60),
+                    tone: h.ok === false ? "alert" : h.unrelated ? "warn" : h.changed ? "ok" : "warn",
                   })),
                   source: "local model",
                 },

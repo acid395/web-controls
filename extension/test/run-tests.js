@@ -979,6 +979,76 @@ if (baselinePage) {
   });
 }
 
+// A model asks a link to be checked, or a button to be typed into. The old
+// code obliged: "check Related links" ran a pageCheck against an anchor and
+// reported that the page changed - a confidently wrong answer arriving from
+// the model instead of the scorer. The action now has to suit the control.
+const wrongAct = loadPage(`<!doctype html><html><body>
+  <a id="rl" href="#rl">Related links</a>
+  <label><input type="checkbox" name="d30"> 30 days</label></body></html>`,
+  { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (wrongAct) {
+  const bg4 = loadBackground({ page: wrongAct });
+  bg4.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      const n = m.controls.findIndex((c) => /related links/i.test(c.label));
+      return { ok: true, step: { n, do: "check" } };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bg4.__ask({ type: "smartAsk", instruction: "click view related graphs" });
+    const did = ((r.display || {}).rows || []).map((x) => String(x.name));
+    ensure("a link is not checked, whoever asked", !did.some((d) => /^check/.test(d)), did);
+    check("and the unrelated checkbox is left alone",
+      !!(wrongAct.document.querySelector('[name="d30"]') || {}).checked, false);
+  });
+}
+
+// The model's choice stands - a control can be the right one under a name
+// that shares no words - but it is said out loud. "change time span" became
+// a checkbox called "30 days", reported as a plain success; a wrong action
+// nobody is told about is the failure this whole project exists to avoid.
+const unrelated = loadPage(`<!doctype html><html><body>
+  <label><input type="checkbox" name="d30"> 30 days</label></body></html>`,
+  { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (unrelated) {
+  const bg5 = loadBackground({ page: unrelated });
+  bg5.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") return { ok: true, step: { n: 0, do: "check" } };
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bg5.__ask({ type: "smartAsk", instruction: "click change time span" });
+    const d = r.display || {};
+    ensure("acting on a control the words never named is disclosed",
+      /did not name/.test(String(d.subtitle || "")), d.subtitle);
+    ensure("and the step itself says which control",
+      (d.rows || []).some((x) => /nothing in what you asked names/.test(String(x.meta || ""))), d.rows);
+  });
+}
+
+// A shared word is a real match, so the disclosure stays quiet for it -
+// otherwise every run carries a warning and the warning means nothing.
+const shared = loadPage(`<!doctype html><html><body>
+  <a id="rl" href="#rl">Related links</a></body></html>`,
+  { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (shared) {
+  const bg6 = loadBackground({ page: shared });
+  bg6.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") return { ok: true, step: { n: 0, do: "click" } };
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bg6.__ask({ type: "smartAsk", instruction: "click view related graphs" });
+    ensure("a genuine word overlap raises no warning",
+      !/did not name/.test(String((r.display || {}).subtitle || "")), (r.display || {}).subtitle);
+  });
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
