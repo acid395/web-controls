@@ -98,7 +98,7 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
       ? ` [${c.options.map((o) => String(o.text || o.value).slice(0, 14)).slice(0, 3).join("|")}]` : "";
     const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
     const label = collides.has(i) ? String(c.label || "").slice(0, 52) : short[i];
-    return `${i}. ${label}${what}${state}${opts}`;
+    return `- ${label}${what}${state}${opts}`;
   }).join("\n");
 
   const done = history.length
@@ -118,9 +118,15 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     observation ? `\nWhat the page shows now:\n${String(observation).slice(0, 1200)}` : "",
     note ? `\nNote: ${note}` : "",
     "",
-    "One action, by number:",
-    '  {"n":N,"do":"click"}  {"n":N,"do":"check","on":true}',
-    '  {"n":N,"do":"select","value":"<option>"}  {"n":N,"do":"type","value":"<text>"}',
+    // Named rather than numbered. A 1.5B replied {"n":108,...} on a page
+    // with fewer controls than that - the right format, about a control that
+    // did not exist - because counting a hundred numbered lines is not
+    // something a model this size does reliably. It has no trouble saying
+    // which one it means.
+    "One action. Copy the control's name exactly as listed:",
+    '  {"name":"<control>","do":"click"}  {"name":"<control>","do":"check","on":true}',
+    '  {"name":"<control>","do":"select","value":"<option>"}',
+    '  {"name":"<control>","do":"type","value":"<text>"}',
     '  {"do":"read"}  {"do":"finish","answer":"<answer>"}',
     "",
     // These lines were a third of the prompt, and the prompt is prefill on

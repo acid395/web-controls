@@ -4865,11 +4865,41 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       continue;
     }
 
-    const target = controls[Number(s.n)];
+    // By name first, by number second. A 1.5B replied
+    // {"n":108,"do":"check","on":true} to "enable snow depth" on a page with
+    // fewer controls than that - a perfectly formed decision, in the right
+    // format, about a control that did not exist. It had understood the task
+    // completely and could not count a hundred-odd numbered lines, which is
+    // not something a model of that size is going to get better at.
+    //
+    // Naming the control it wants is the part that needs intelligence -
+    // mapping "how deep is the snow" onto "Snow Depth" is the whole job -
+    // and turning that name into a selector is plumbing. So the reference is
+    // resolved here: exact first, then a single unmistakable partial match.
+    // Never a best-of-several: two candidates is a reference that did not
+    // land, and guessing between them is how a confident wrong action gets
+    // made, only with the model's name on it this time.
+    const flatLabel = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const wantedName = flatLabel(s.name || s.label || s.control || s.target);
+    let target = null;
+    if (wantedName) {
+      const exact = controls.filter((c) => flatLabel(c.label) === wantedName);
+      if (exact.length === 1) target = exact[0];
+      if (!target) {
+        const part = controls.filter((c) => {
+          const l = flatLabel(c.label);
+          return l.includes(wantedName) || wantedName.includes(l);
+        });
+        if (part.length === 1) target = part[0];
+      }
+    }
+    if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
     if (!target) {
-      if (!correct(`There is no control ${s.n}.`
-        + ` Choose a number between 0 and ${controls.length - 1}.`)) {
-        return giveUp(`the model kept choosing control ${s.n}, which is not on the list`);
+      const asked = wantedName ? `"${String(s.name || s.label || s.control).slice(0, 40)}"`
+        : `control ${s.n}`;
+      if (!correct(`There is no ${asked} on this page.`
+        + " Reply with the name of one of the controls listed above, exactly as written.")) {
+        return giveUp(`the model asked for ${asked}, which is not on this page`);
       }
       continue;
     }
@@ -8700,6 +8730,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // build a selector. The tools describe the page now, so the context
         // restates what the tool list already says, and prefill on a small
         // model is where the time goes.
+        // The model has already had its turn. This is the older path - name
+        // one tool from a shortlist - and it predates the agent loop that is
+        // now the model's route onto a page. Running both meant one request
+        // bought two model decisions at forty-odd seconds each, and the
+        // second one's verdict ("none of this page's tools fit that")
+        // overwrote what the first had actually said. One request, one
+        // planner.
+        if (modelTried) {
+          respond({
+            ok: false, plannedBy: "model",
+            error: "the local model did not find a way to do that on this page",
+            display: {
+              title: "the model got nowhere",
+              subtitle: "it was asked and did not reach a control that does this",
+              stats: [], rows: [],
+              note: modelSaid ? `it replied: ${String(modelSaid).slice(0, 140)}` : undefined,
+              source: modelName((await modelStatus()) && (await modelStatus()).model),
+            },
+          });
+          return;
+        }
         const known = await agentTools(route.global, wanted, { max: 12 });
         // Kept only where there are no page tools to describe it.
         const context = known.page.length ? null : await buildContext(route.global);
@@ -8741,6 +8792,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             instruction: wanted, tools: known.all, context,
           });
         }
+        // A message to an offscreen document that is not there resolves
+        // undefined, and reading .ok off it threw a TypeError that reached
+        // the panel as "Cannot read properties of undefined (reading 'ok')"
+        // - a card about our own plumbing, offered as if it were about the
+        // page.
+        if (!plan) {
+          respond({ ok: false, error: "the local model did not answer - it may still be loading" });
+          return;
+        }
         if (!plan.ok) { respond(plan); return; }
         if (!plan.toolCall) {
           respond({ ok: true, modelReply: plan.text, calledOn: route.global });
@@ -8777,6 +8837,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           modelChose: chose, scorerWouldChoose: plan.scorerPick, agreed: plan.agreed,
           display });
       } catch (err) {
+        // The stack, not only the message. "Cannot read properties of
+        // undefined (reading 'ok')" arrived in a card with no way to find
+        // out where from, and hunting it by reading every ".ok" in a
+        // thousand-line handler is not a debugging method.
+        debugLog("[smartAsk] threw", err && err.stack ? err.stack : err);
         respond({ ok: false, error: String((err && err.message) || err) });
       } finally {
         stopKeepAlive();

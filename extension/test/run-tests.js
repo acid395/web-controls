@@ -2123,6 +2123,55 @@ for (const b of budgets) {
   }
 }
 
+// A 1.5B replied {"n":108,"do":"check","on":true} to "enable snow depth" on
+// a page with fewer controls than that. A perfectly formed decision, in the
+// right format, about a control that did not exist - it had understood the
+// task completely and could not count a hundred-odd numbered lines, which is
+// not something a model that size improves at. Naming the control is the
+// part that needs intelligence; turning a name into a selector is plumbing.
+{
+  let noise = "";
+  for (let i = 0; i < 60; i++) noise += `<a href="#n${i}">Gauge report ${i}</a>`;
+  const byName = [
+    ["named exactly", { name: "Snow Depth", do: "check", on: true }, true],
+    ["named in another case", { name: "snow depth", do: "check", on: true }, true],
+    ["a number off the end", { n: 108, do: "check", on: true }, false],
+    ["a name that is not on the page", { name: "Tsunami Warnings", do: "check", on: true }, false],
+  ];
+  for (const [what, reply, shouldAct] of byName) {
+    const np2 = loadPage(`<!doctype html><html><body>${noise}
+      <label><input type="checkbox" name="sd"> Snow Depth</label>
+      <label><input type="checkbox" name="pe"> Precipitation</label>
+      </body></html>`, { url: "https://water.noaa.gov/" });
+    if (!np2) continue;
+    const bgnm = loadBackground({ page: np2 });
+    let turns = 0;
+    bgnm.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Llama-3.2-1B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") { turns++; return { ok: true, step: reply, raw: JSON.stringify(reply) }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgnm.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+      check(`${what}: the box ends ${shouldAct ? "on" : "untouched"}`,
+        !!(np2.document.querySelector('[name="sd"]') || {}).checked, shouldAct);
+      if (!shouldAct) {
+        // Nothing else gets pressed to cover for it, and it says the model
+        // was the one that got nowhere.
+        check(`${what}: the other box is left alone`,
+          !!(np2.document.querySelector('[name="pe"]') || {}).checked, false);
+        check(`${what}: attributed to the model`, r.plannedBy, "model");
+      }
+      // One request, one planner. The older shortlist path ran after the
+      // agent loop, so a forced request bought two decisions at forty-odd
+      // seconds each, and the second one's verdict overwrote the first's.
+      ensure(`${what}: the model is asked once, not twice`, turns <= 2, turns);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
