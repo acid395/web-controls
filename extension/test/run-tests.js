@@ -3771,8 +3771,16 @@ else {
       const broken = loadBackground({ page: realPage });
       broken.chrome.tabs.sendMessage = async () => { throw new Error("timed out waiting for the page bundle to reply"); };
       const unreadable = await broken.__ask({ type: "smartAsk", instruction: "go to contact" });
+      // Wherever it lands - the error, the card - the reason has to reach the
+      // person. It used to arrive in `checked`, from the failure explainer;
+      // with the model on by default this answers earlier and more directly.
+      // What must not happen is the model's state replacing the page's
+      // reason, which is what "the local model is not answering yet" did to
+      // "timed out waiting for the page bundle to reply".
       ensure("an unreadable page says why",
-        (unreadable.checked || []).some((c) => /timed out/.test(c)), unreadable.checked);
+        /timed out/.test(`${unreadable.error || ""} ${(unreadable.display || {}).subtitle || ""} `
+          + `${(unreadable.checked || []).join(" ")}`),
+        { error: unreadable.error, sub: (unreadable.display || {}).subtitle });
 
       // The self-test has to survive whatever it is diagnosing, or it tells
       // you less than the problem did.
@@ -3810,8 +3818,10 @@ else {
       // everything else has failed, so there is no way to find out whether it
       // would have got something right.
       const forced = await ask("model: select 30 day precipitation");
+      // The local model is on by default now, so the answer here is about it
+      // loading or not answering rather than about it being switched off.
       ensure("model: is recognised as a request for the model",
-        /model is switched off|still loading|webllm/i.test(
+        /still loading|not answering|no WebGPU|webllm/i.test(
           `${(forced.display || {}).title || ""} ${forced.error || ""} ${forced.plannedBy || ""}`), forced);
       // The same question without the prefix is answered without it.
       const unforced = await ask("select 30 day precipitation");

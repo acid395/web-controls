@@ -4479,6 +4479,7 @@ const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "read", "fini
 // on every keystroke-driven retry. Short-lived on purpose: a model that
 // finishes loading a moment later should be picked up without a reload.
 let modelStatusCache = { at: 0, value: null };
+let warmedOnce = false;
 async function modelStatus({ maxAgeMs = 4000 } = {}) {
   if (modelStatusCache.value && Date.now() - modelStatusCache.at < maxAgeMs) {
     return modelStatusCache.value;
@@ -4488,6 +4489,21 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
   // stuck on "checking page..." is far worse than falling back to the
   // scorer. An offscreen document that has not been created, or is busy
   // loading weights, must cost a moment and not the whole request.
+  // Create it, then ask. Asking an offscreen document that does not exist
+  // returns nothing, which read as "not ready", which meant the model path
+  // was skipped - and the only other place that created the document was
+  // inside the model path. So it could never start: status said not ready
+  // because nothing had loaded, and nothing loaded because status said not
+  // ready. Creating it here also begins the download, which is the thing
+  // that has to happen first anyway.
+  try {
+    await ensureOffscreenDocument();
+    if (!warmedOnce) {
+      warmedOnce = true;
+      chrome.runtime.sendMessage({ target: "offscreen", type: "llmWarm" }).catch(() => {});
+    }
+  } catch (e) { /* no offscreen support; the scorer still answers */ }
+
   const value = await Promise.race([
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" }).catch(() => null),
     new Promise((r) => setTimeout(() => r(null), 1500)),
@@ -5283,9 +5299,15 @@ async function ensureOffscreenDocument() {
 // default for a tool whose fast paths already answer most questions in under
 // a second. The debug tools can still load it explicitly - clicking a button
 // labelled "load model" is its own consent.
+// On by default here, where it was opt-in before. The model is the planner
+// on this branch, and leaving it behind a setting nobody had turned on meant
+// every instruction quietly fell through to the keyword scorer: the panel
+// said page-match and manifest, diagnose said the offscreen document was not
+// up, and the model had never been asked anything. Someone can still turn it
+// off; the default now matches what the extension is for.
 async function isLocalModelEnabled() {
   const { localModelEnabled } = await chrome.storage.local.get("localModelEnabled");
-  return localModelEnabled === true;
+  return localModelEnabled !== false;
 }
 
 // Start loading the model as soon as the browser opens, or the extension is
@@ -7488,15 +7510,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        await ensureOffscreenDocument();
-        const status = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" });
-        if (!status.ready) {
+        // A document that is not up answers with nothing, and reading .ready
+        // off nothing threw - which the panel then showed as "That did not
+        // work: Cannot read properties of undefined". The same shared helper
+        // the rest of this file uses handles the absent case.
+        const status = await modelStatus({ maxAgeMs: 0 });
+        // A page that could not be read says so, whatever the model is doing.
+        // With the model on by default this branch started answering first,
+        // and "the local model is not answering yet" replaced "timed out
+        // waiting for the page bundle to reply" - trading the one reason that
+        // says what to do for one that does not.
+        const pageUnreadable = inv && inv.ok === false;
+        if ((!status || !status.ready) && !pageUnreadable) {
           respond({
             ok: false,
             stillLoading: true,
-            error: status.hasGpu
-              ? "No quick match for that, and the local model is still loading in the background. Try a simpler instruction, or wait and ask again."
-              : "No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.",
+            error: !status
+              ? "No quick match for that, and the local model is not answering yet - it loads in the background, so wait a moment and ask again."
+              : status.hasGpu
+                ? `No quick match for that, and the local model is still loading${status.progress ? ` (${status.progress})` : ""}. Wait and ask again.`
+                : "No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.",
           });
           return;
         }
