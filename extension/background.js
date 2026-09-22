@@ -6512,6 +6512,128 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
         // available or could not finish, and under "baseline:" on request.
+        // Instant where there is nothing to be intelligent about. One
+        // decision of the 3B measured 32.6 seconds on real hardware, and the
+        // page's own controls answered the same instruction correctly in
+        // under a second and a half - so a model decision is a toll worth
+        // paying on a request that needs judgment and pure waste on one
+        // where a single control on the page is named by the request word
+        // for word.
+        //
+        // Deliberately narrow, because the wide version of this is the
+        // rule-based system this project is trying not to be. All of it has
+        // to hold: one clause only, an instruction rather than a question,
+        // a pick that is clearly ahead of the runners-up, and that pick's
+        // own name accounting for every subject word in the request. Loose
+        // phrasing fails the last of those, which is exactly the case the
+        // model exists for.
+        let instant = null;
+        if (!forceBaseline && !forceModel && isCommand(wanted)
+            && splitIntoSteps(wanted).length === 1) {
+          const subject = meaningfulWords(wanted)
+            .filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
+          if (subject.length) {
+            const tools = await unifiedTools(route.global, wanted, { acting: true });
+            // The strongest evidence there is: the request, with its leading
+            // verb taken off, is the control's own name word for word. That
+            // needs no scoring and survives a near-tie, which scoring does
+            // not - "select data for same time span in prior year" scored
+            // close against "select data to graph on second y-axis", since
+            // they share their first two words, so the confident pick found
+            // a tie where the request was in fact exact. One match only: two
+            // controls with the same name is ambiguity, not certainty.
+            const pick = confidentPick(tools, wanted);
+            // Only the tools that set a state. Derived tools are named
+            // verb-first precisely so this is legible - click presses,
+            // toggle and choose set - and a state setter reports its own
+            // before and after, so this path can prove what it did instead
+            // of inferring it from the page moving.
+            //
+            // It also keeps this away from doorways. A press whose exact
+            // match turns out to be the accordion named after the layer
+            // opens the panel, changes the page, and proves nothing about
+            // the layer inside - and pressing it here and then handing on
+            // means the next path presses it again and closes it. "click
+            // flood inundation" is that case, and it belongs to the loop
+            // that goes three levels down, not to a fast path.
+            // Named, not excluded. A blacklist of "click" let openX through,
+            // and a map point is a navigation, not a setting - reaching one
+            // is the loop's job. Only the verbs that set a value qualify.
+            const setsState = pick
+              && /^(toggle|choose|select|set|pick|enable|disable|type|fill)[A-Z]/
+                .test(String(pick.tool.name || ""));
+            if (setsState && namedCoverage(`${pick.tool.name} ${pick.tool.label || ""}`, subject)
+                === subject.length) {
+              instant = pick;
+            }
+          }
+        }
+        if (instant) {
+          const ran = await runVerified(route.global, { name: instant.tool.name, args: instant.args });
+          const r = (ran && ran.result) || {};
+          // Reported, never guessed at - the same standard every other path
+          // is held to. A tool that ran without being able to prove anything
+          // says so rather than claiming success.
+          const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+          // Proof, or it does not get to answer. A fast path that reports
+          // "ran - could not check whether the page changed" would be
+          // standing in front of the loop that opens the disclosure and
+          // finds the real control - which is how flood inundation gets
+          // switched on, and it is three levels down. Unproven means this
+          // was not the answer, so the slower paths get their turn.
+          // Asked to switch something on, only that control's own before and
+          // after is proof - a click that moved the page may only have
+          // opened the panel the real control sits in, which is how "select
+          // flood inundation" ends up reporting success having switched
+          // nothing on. For a plain press, moving the page is the job.
+          const ownState = r.itChanged === true
+            || (r.itChanged === false && (r.now === true
+              || (instant.args && instant.args.value !== undefined
+                && String(r.now) === String(instant.args.value))));
+          const stateAsked = STATE_COMMAND.test(wanted);
+          // Opening a panel is never the answer here. If the one control
+          // the request named exactly turns out to be a doorway, what was
+          // asked for is inside it, and finding things inside things is
+          // what the slower loop is for.
+          const onlyOpened = r.opened === true;
+          const proved = !onlyOpened && (stateAsked ? ownState : (ownState || moved));
+          // When to hand on instead of answering. Only where the control's
+          // own state says outright that it did not happen - that is
+          // evidence, and the real control is somewhere else on the page.
+          // A plain press whose effect cannot be seen is not evidence:
+          // absence of it is not evidence, and going on to press the next
+          // thing is the move that does harm. That case reports what it
+          // knows and stops, which is the same standard every other path
+          // is held to.
+          const disproved = onlyOpened
+            || (stateAsked && r.itChanged === false && !ownState);
+          if (ran.ok !== false && !disproved) {
+            respond({
+              ...ran, ok: true, plannedBy: "exact-match",
+              toolCall: { name: instant.tool.name, args: instant.args },
+              display: {
+                title: String(r.control || instant.tool.label || instant.tool.name).slice(0, 60),
+                subtitle: [
+                  typeof r.itChanged === "boolean"
+                    ? (r.itChanged ? `${r.control}: ${r.was} \u2192 ${r.now}`
+                      : `${r.control} was already ${r.now} - nothing to change`)
+                    : moved ? "the page changed"
+                    : "ran - could not check whether the page changed",
+                  proved ? null : "so this may not have been the right control",
+                ].filter(Boolean).join(" \u00b7 "),
+                stats: [],
+                rows: [],
+                note: "your words named one control on this page exactly, so this did not"
+                  + " wait for the model",
+                source: "this page",
+              },
+            });
+            return;
+          }
+          // It could not run at all, so nothing has been touched and the
+          // model gets its turn - which is what it is for.
+        }
+
         if (!forceBaseline) {
           const status = await modelStatus();
           if (!status || !status.ready) {

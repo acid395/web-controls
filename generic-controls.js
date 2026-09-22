@@ -2540,7 +2540,16 @@
       // invent one for them. But a disclosure, a toggle button, a tab and a
       // details element all carry theirs on the element being clicked, and
       // that is most of what a government site is built from.
+      // aria-expanded first, and marked, because opening a thing is not the
+      // same as doing the thing. A press that expands an accordion changes
+      // the page and reports its own state honestly, and a caller reading
+      // only "it changed" would call the job done having switched nothing
+      // on - which is how "click flood inundation" reports success while
+      // the layer stays off, three levels down inside the panel it opened.
       const STATEFUL = ["aria-expanded", "aria-pressed", "aria-selected", "aria-checked"];
+      const isDoor = (n) => !!(n && n.getAttribute
+        && (n.getAttribute("aria-expanded") !== null
+          || String(n.tagName || "").toLowerCase() === "summary"));
       const stateOf = (n) => {
         if (!n || !n.getAttribute) return undefined;
         for (const a of STATEFUL) {
@@ -2570,6 +2579,8 @@
         ...(was === undefined ? {} : {
           control: rawLabelOf(before) || undefined,
           was, now, itChanged: was !== now, how: "click",
+          // Said out loud so a caller need not infer it from the attribute.
+          ...(isDoor(before) ? { opened: was !== now } : {}),
         }),
       };
     },

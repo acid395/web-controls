@@ -1303,7 +1303,7 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
-      await bgn.__ask({ type: "smartAsk", instruction: "click view tabular data" });
+      await bgn.__ask({ type: "smartAsk", instruction: "model: click view tabular data" });
       ensure("a control late on a long page is still offered to the model",
         (shown || []).some((c) => /tabular/i.test(c.label || "")),
         { shown: (shown || []).length });
@@ -1364,7 +1364,7 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
-      const r = await bgd.__ask({ type: "smartAsk", instruction: "click gage height" });
+      const r = await bgd.__ask({ type: "smartAsk", instruction: "model: click gage height" });
       check("one clause, one turn", turns, 1);
       check("and it is reported with the time it took",
         !!((r.display || {}).stats || []).find((x) => x.label === "took"), true);
@@ -1397,7 +1397,7 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
-      const r = await bga.__ask({ type: "smartAsk", instruction: "click gage height" });
+      const r = await bga.__ask({ type: "smartAsk", instruction: "model: click gage height" });
       check("a request the page already satisfies is the model's answer", r.plannedBy, "model");
       check("and is not run a second time to reach it", turns, 1);
       ensure("the card says the page was already that way",
@@ -1441,7 +1441,9 @@ for (const b of budgets) {
     bgl.__model = (m) => (m.type === "llmStatus"
       ? { ready: false, hasGpu: true, loading: true, progress: "fetching weights 41%" } : undefined);
     runAsync(async () => {
-      const r = await bgl.__ask({ type: "smartAsk", instruction: "click gage height" });
+      // Routed past the instant path on purpose: the question here is what a
+      // card says when the model was not available, not which path was quickest.
+      const r = await bgl.__ask({ type: "smartAsk", instruction: "click the gage height box" });
       ensure("a card not planned by the model says why",
         /still loading/.test(String((r.display || {}).note || "")), (r.display || {}).note);
     });
@@ -1452,7 +1454,7 @@ for (const b of budgets) {
       const bgw = loadBackground({ page: noGpuPage });
       bgw.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
       runAsync(async () => {
-        const r = await bgw.__ask({ type: "smartAsk", instruction: "click gage height" });
+        const r = await bgw.__ask({ type: "smartAsk", instruction: "click the gage height box" });
         ensure("and names WebGPU when that is the reason",
           /WebGPU/.test(String((r.display || {}).note || "")), (r.display || {}).note);
       });
@@ -1812,6 +1814,50 @@ for (const b of budgets) {
         instruction: "click select data to graph on second y-axis" });
       check(`and an answer it did plan is credited to it (${want})`,
         (r.display || {}).source, want);
+    });
+  }
+}
+
+// One decision of the 3B measured 32.6s of a 33.2s request on real
+// hardware, and the page's own controls answered the same instruction
+// correctly in under a second and a half. So where the request names one
+// control on the page word for word there is nothing to be intelligent
+// about, and the model is not waited for. Deliberately narrow: the wide
+// version of this is the rule-based system this is trying not to be.
+{
+  const fastHtml = `<!doctype html><html><body>
+    <label><input type="checkbox" name="gh"> Gage height</label>
+    <label><input type="checkbox" name="dis"> Discharge</label>
+    <a href="#y">1 year</a>
+    </body></html>`;
+  const shapes = [
+    ["click gage height", 0, "exact-match", "one control named word for word"],
+    ["show me what the flow is doing", 1, null, "loose phrasing is the model's job"],
+    ["click gage height and click discharge", 1, null, "more than one clause"],
+    ["what is the gage height", 1, null, "a question, not an instruction"],
+  ];
+  for (const [instr, wantCalls, wantPlanner, why] of shapes) {
+    const fp = loadPage(fastHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!fp) continue;
+    const bgf2 = loadBackground({ page: fp });
+    let calls = 0;
+    bgf2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { calls++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgf2.__ask({ type: "smartAsk", instruction: instr });
+      if (wantCalls === 0) {
+        check(`"${instr}" does not wait for a decision - ${why}`, calls, 0);
+        check("and is answered by the page itself", r.plannedBy, wantPlanner);
+        check("and actually acts", !!(fp.document.querySelector('[name="gh"]') || {}).checked, true);
+        ensure("and says it did not need the model",
+          /did not\s+wait for the model/.test(String((r.display || {}).note || "")),
+          (r.display || {}).note);
+      } else {
+        ensure(`"${instr}" still goes to the model - ${why}`, calls >= 1, calls);
+      }
     });
   }
 }
@@ -3283,7 +3329,13 @@ else {
     check("the box starts unticked", box.checked, false);
     const r = await bg.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
     check("the instruction reaches it", box.checked, true);
-    check("through the page's own controls", r.plannedBy, "one-list");
+    // Either of the page's own paths. An instruction naming one control on
+    // the page word for word is answered without waiting for a model
+    // decision, which on real hardware was 32.6s of a 33.2s request - and
+    // this is that case. Both are the page's own controls, which is what
+    // this is checking; "one-list" alone was the name of the slower one.
+    ensure("through the page's own controls",
+      ["one-list", "exact-match"].includes(r.plannedBy), r.plannedBy);
     check("and the panel was opened to get there",
       panelled.document.getElementById("layers").style.display, "block");
   });
