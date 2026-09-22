@@ -874,6 +874,74 @@ if (repeater) {
   });
 }
 
+// Live, on a USGS page: six clicks on "Related links", every one reporting
+// "the page changed", and revisions never reached. Two faults at once.
+//
+// The repeat guard keyed on the selector, and Related links is a toggle -
+// pressing it changes the page, the page reflows, and its positional
+// selector is not what it was. So every turn looked like a new control. The
+// label is the stable thing about a control; the selector is not, which the
+// click path learned earlier and this had not.
+//
+// And the model was handed "click A and click B" whole. The splitter existed
+// but sat below the model path, so the model had to chain inside its own turn
+// budget - several inferences and a page read each - and ran out before the
+// second half.
+const reflowing = `<!doctype html><html><body><div id="host">
+    <a id="rl" href="#rl">Related links</a></div>
+  <a id="rv" href="#rv">Revisions</a><p id="log"></p>
+  <script>
+    document.getElementById("rl").addEventListener("click", () => {
+      const h = document.getElementById("host");
+      h.insertBefore(document.createElement("span"), h.firstChild);   // reflow
+      document.getElementById("log").textContent += "links;";
+    });
+    document.getElementById("rv").addEventListener("click", () => {
+      document.getElementById("log").textContent += "revisions;";
+    });
+  <\/script></body></html>`;
+const reflowPage = loadPage(reflowing, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (reflowPage) {
+  const bg = loadBackground({ page: reflowPage });
+  let calls = 0;
+  // A model that only ever repeats its first pick, which is what was observed.
+  bg.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      calls++;
+      const want = /revision/i.test(m.goal) ? /revisions/i : /related links/i;
+      return { ok: true, step: { n: m.controls.findIndex((c) => want.test(c.label)), do: "click" } };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: "click related links and click revisions" });
+    check("a toggle that reflows is still only clicked once",
+      (reflowPage.document.getElementById("log") || {}).textContent, "links;revisions;");
+    ensure("both halves are attempted", ((r.display || {}).rows || []).length >= 2, (r.display || {}).rows);
+    ensure("and the run stays short", calls <= 6, calls);
+  });
+}
+
+// A run has a clock as well as a turn limit: six turns of a 3B model with a
+// page read each is comfortably a minute, and "still running" with no end
+// reads the same as a hang.
+const slowPage = loadPage("<!doctype html><html><body><button>Go</button></body></html>",
+  { url: "https://example.gov/" });
+if (slowPage) {
+  const bg2 = loadBackground({ page: slowPage });
+  bg2.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") return { ok: true, step: { do: "read" } };
+    return undefined;
+  };
+  runAsync(async () => {
+    const out = await bg2.runModelAgent("GENERIC", "read everything", { maxSteps: 50, budgetMs: 1 });
+    ensure("a run out of time stops and says so", out.outOfTime === true, out);
+    ensure("and reports what it managed", Array.isArray(out.history), out.history);
+  });
+}
+
 // A model that answers off-format is told once, then the loop stops. Looping
 // on a malformed reply costs a multi-second turn each time round.
 const offFormat = loadPage("<!doctype html><html><body><button>Go</button></body></html>",

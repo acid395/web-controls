@@ -589,6 +589,9 @@ function clearStatus() {
 if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "llmProgress") setStatus("model loading - " + msg.text);
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
+  // Which step, not just that something is happening. "Still running" for a
+  // minute reads the same as a hang.
+  if (msg.type === "agentProgress") setStatus(msg.text);
 });
 
 // Reflects and sets the opt-in. Off means background.js never downloads the

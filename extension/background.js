@@ -4473,6 +4473,21 @@ function planManifestTool(instruction, routeGlobal) {
  */
 const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "read", "finish"]);
 
+// "Click A and click B" is two requests. The splitter already existed for the
+// keyword path and sat below the model path, so the model never saw the
+// benefit: it got the whole sentence as one goal and had to chain it inside
+// its turn budget, which on a 3B model is several inferences and a page read
+// each. One thing at a time is both faster and far more likely to work.
+//
+// A bare "and" only separates where a verb follows it, because the first half
+// of "click forecasts and outlooks and click key messages" is the name of a
+// control.
+function splitIntoSteps(instruction) {
+  return String(instruction || "")
+    .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read)\b)/i)
+    .map((t) => t.trim()).filter(Boolean);
+}
+
 // Whether the model can answer, asked at most once every few seconds. Every
 // instruction now begins by asking, and that means creating the offscreen
 // document and a message round trip - a cost worth paying once rather than
@@ -4551,11 +4566,16 @@ function controlsForModel(inv, { max = 45 } = {}) {
   return kept;
 }
 
-async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
+async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000 } = {}) {
   const history = [];
   let observation = null;
   let note = null;
   let repeats = 0;
+  // A wall-clock limit as well as a turn limit. Six turns of a 3B model over
+  // WebGPU, each with a page read, is comfortably a minute - and "still
+  // running" with no end and no sign of progress is worse than a partial
+  // answer. Whatever has been done by the deadline is reported as done.
+  const deadline = Date.now() + budgetMs;
 
   let lastInv = null;
   for (let step = 0; step < maxSteps; step++) {
@@ -4563,6 +4583,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
     // when it did not. On drought.gov an inventory is about half a second,
     // so three turns spent a second and a half re-reading a page nothing had
     // touched - time that is not the model thinking.
+    if (Date.now() > deadline) {
+      return { ok: true, answer: null, history, steps: history.length, ranOut: true, outOfTime: true };
+    }
+    // Which turn, and what it just did. The panel showed "still running" and
+    // nothing else for the length of the whole run, so a minute of work was
+    // indistinguishable from a hang.
+    try {
+      chrome.runtime.sendMessage({
+        type: "agentProgress",
+        text: history.length
+          ? `step ${history.length + 1} of ${maxSteps} - last: ${history[history.length - 1].did}`
+          : `step 1 of ${maxSteps} - reading the page`,
+      });
+    } catch (e) { /* nobody listening; the run continues */ }
+
     const priorDidNothing = history.length
       && history[history.length - 1].did !== "read the page"
       && history[history.length - 1].changed === false;
@@ -4619,7 +4654,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
     // Repeating something that worked means the job is done. Repeating
     // something that did nothing means this control is not the answer, and
     // the next-best one deserves the turn.
-    const already = history.find((h) => h.key === `${act}|${target.selector}`);
+    // Keyed on the label, not the selector. "Related links" is a toggle:
+    // clicking it changes the page, the page reflows, and its positional
+    // selector is not what it was - so every turn looked like a new control
+    // and the guard never matched. Six clicks on one link, all reporting
+    // "the page changed", and revisions never reached. The label is the
+    // stable thing about a control; the selector is not, which is the same
+    // lesson the click path learned earlier.
+    const repeatKey = `${act}|${String(target.label || "").trim().toLowerCase()}`;
+    const already = history.find((h) => h.key === repeatKey);
     if (already) {
       if (already.changed) {
         return { ok: true, answer: null, history, steps: history.length, repeated: true };
@@ -4642,7 +4685,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
     const r = (ran && ran.result) || {};
     const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
     history.push({
-      key: `${act}|${target.selector}`,
+      key: repeatKey,
       did: `${act} "${String(target.label).slice(0, 40)}"`,
       outcome: ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}`
@@ -6125,8 +6168,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!forceBaseline) {
           const status = await modelStatus();
           if (status && status.ready) {
-            const agent = await runModelAgent(route.global, wanted).catch((e) => ({
-              ok: false, error: String((e && e.message) || e) }));
+            // One part at a time, each with its own turn budget, so a
+            // two-part instruction is two short runs rather than one long
+            // one that may never reach the second half.
+            const parts = splitIntoSteps(wanted);
+            let agent;
+            if (parts.length > 1 && parts.length <= 6) {
+              const all = [];
+              let failed = null;
+              for (const part of parts) {
+                const one = await runModelAgent(route.global, part, { maxSteps: 4, budgetMs: 30000 })
+                  .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
+                for (const h of one.history || []) all.push({ ...h, did: `${h.did}` });
+                if (!one.ok) { failed = one.error; break; }
+                if (one.answer) all.push({ did: `answered: ${one.answer}`, outcome: "", ok: true });
+              }
+              agent = { ok: !failed, error: failed, history: all, steps: all.length,
+                answer: null, parts: parts.length };
+            } else {
+              agent = await runModelAgent(route.global, wanted).catch((e) => ({
+                ok: false, error: String((e && e.message) || e) }));
+            }
             if (agent && agent.ok && (agent.answer || agent.history.some((h) => h.changed))) {
               const acted = agent.history.filter((h) => h.did !== "read the page");
               respond({
