@@ -43,7 +43,15 @@ import { CreateMLCEngine } from "./vendor/web-llm.js";
 //
 // The default stays at 3B for anyone who has already paid for the download;
 // switching costs a fresh one.
-const DEFAULT_MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+// Was the 3B. It crashed Chrome on the machine this was being tested on -
+// roughly two gigabytes of weights resident in the GPU process alongside a
+// map-heavy government page - and before that it was costing thirty-odd
+// seconds a decision there. A browser that falls over is not a slower
+// answer, it is somebody's tabs gone, and no amount of planning quality is
+// worth it. The 1.5B is about a gigabyte and two to three times quicker;
+// the 3B is still one line away in the panel for anyone whose machine can
+// hold it.
+const DEFAULT_MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
 let MODEL_ID = DEFAULT_MODEL_ID;
 const KNOWN_MODELS = [
   "Llama-3.2-3B-Instruct-q4f16_1-MLC",
@@ -199,7 +207,30 @@ let enginePromise = null;
 let lastProgress = null;
 let engineReady = false; // a Promise can't be asked "are you resolved yet?" directly - tracked separately so llmStatus can answer synchronously instead of waiting on the engine.
 
+// Weights let go of when nothing has used them for a while. They sit in the
+// GPU process for as long as the offscreen document lives, which is for as
+// long as the browser does, and on a machine where that is most of the
+// available memory the next thing to ask for some is what falls over. The
+// cache keeps the download, so coming back costs a load rather than a
+// fetch.
+const IDLE_RELEASE_MS = 5 * 60 * 1000;
+let idleTimer = null;
+function touchEngine() {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(async () => {
+    if (!enginePromise) return;
+    try {
+      const engine = await enginePromise;
+      if (engine && typeof engine.unload === "function") await engine.unload();
+    } catch (e) { /* already gone */ }
+    enginePromise = null;
+    engineReady = false;
+    lastProgress = null;
+  }, IDLE_RELEASE_MS);
+}
+
 function getEngine(onProgress) {
+  touchEngine();
   if (!enginePromise) {
     // The choice first, then the engine. Building one before knowing which
     // model was asked for is how the wrong weights get two gigabytes of
