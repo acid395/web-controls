@@ -1862,6 +1862,53 @@ for (const b of budgets) {
   }
 }
 
+// Every argument about whether the model earns its place has been anecdote.
+// This puts reworded asks - worded to avoid the words printed on the control
+// - to both planners on the same page, and records what each one chose.
+// Neither acts: a benchmark that pressed things would change the page it is
+// measuring and could not be run twice.
+{
+  const bmPage = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="gh"> Gage height</label>
+    <label><input type="checkbox" name="dis"> Discharge</label>
+    <a href="#a">1 year</a><a href="#b">30 days</a>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (bmPage) {
+    const bgbm = loadBackground({ page: bmPage });
+    bgbm.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") {
+        const g = String(m.goal).toLowerCase();
+        // right about the water level, silent otherwise
+        if (/water level|how high|stage|height of the water|surface elevation/.test(g)) {
+          return { ok: true,
+            step: { n: m.controls.findIndex((c) => /gage height/i.test(c.label)), do: "check" } };
+        }
+        return { ok: true, step: { do: "finish", answer: "" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const out = await bgbm.benchmarkPlanners({ onlyTargets: ["gage height"] });
+      check("every reworded ask for a control on the page is put to both", out.asked, 5);
+      check("the model's right answers are counted", out.modelScore.right, 5);
+      check("and the scorer's separately", out.scorer.right, 0);
+      ensure("what is being measured is stated, not left to be inferred",
+        /avoid the words on the control/.test(String(out.measuring || "")), out.measuring);
+      // The distinction that decides what to do next: a wrong choice wants a
+      // better prompt, no choice at all wants a bigger model.
+      const silent = await bgbm.benchmarkPlanners({ onlyTargets: ["1 year"] });
+      check("a model that will not choose is counted apart from one that chooses wrongly",
+        silent.modelScore.silent, silent.asked);
+      check("and is not counted as a wrong answer", silent.modelScore.right, 0);
+      check("the page is left exactly as it was",
+        [...bmPage.document.querySelectorAll("input")].every((x) => !x.checked), true);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

@@ -533,6 +533,17 @@ on("smartAsk", "click", () => {
   setStatus(`working on "${instruction.slice(0, 50)}"...`);
 });
 
+// The comparison takes a while on a slow machine - one model decision per
+// reworded ask - so it says so up front rather than looking stalled.
+on("runBenchmark", "click", () => {
+  setStatus("scoring both planners - one model decision per ask, this can take a few minutes...");
+  chrome.runtime.sendMessage({ type: "benchmarkPlanners" }, (res) => {
+    void chrome.runtime.lastError;
+    clearStatus();
+    if (res) logResult(res);
+  });
+});
+
 // Same shape a model's tool call arrives in ({name, args}), typed by hand.
 // Everything downstream of the model - findToolDef, argOrder remapping,
 // invokeOnActiveTab, the bridge - runs exactly as it would for a real one.

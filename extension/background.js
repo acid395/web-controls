@@ -6039,6 +6039,173 @@ async function followToAnswer(instruction, { wants, agg, place, maxPages = 6, ma
   return null;
 }
 
+// Reworded instructions for controls these sites actually carry, written so
+// that the words in them are NOT the words on the control - which is the
+// whole question. A keyword scorer matches labels, so it can only reach a
+// control someone happened to phrase the request after; a model is supposed
+// to map what was meant onto what is there. That claim has never been
+// measured against the scorer on the same pages, and every argument about
+// whether the model earns its place has been anecdote until now.
+//
+// Each case names its target by label and lists asks that mean it. Only the
+// cases whose target is on the page in front of you are run.
+const PARAPHRASE_CASES = [
+  { target: "gage height",
+    asks: ["show me the water level", "how high is the river", "plot the stage",
+      "i want the height of the water", "water surface elevation"] },
+  { target: "discharge",
+    asks: ["how much water is flowing", "show me the flow", "cubic feet per second",
+      "streamflow please", "volume of water going past"] },
+  { target: "1 year",
+    asks: ["show me the last twelve months", "a year of data", "zoom out to annual",
+      "the past 365 days", "one year back"] },
+  { target: "30 days",
+    asks: ["show me the last month", "about four weeks", "a month of readings",
+      "the past thirty days", "recent month"] },
+  { target: "7 days",
+    asks: ["show me the last week", "a week of data", "the past seven days",
+      "this week's readings", "one week back"] },
+  { target: "revisions",
+    asks: ["what has been corrected", "show me edits to the record",
+      "changes made to this data", "amended values"] },
+  { target: "flood inundation",
+    asks: ["where would the water cover", "show the flooded area",
+      "which land goes under water", "extent of flooding"] },
+  { target: "precipitation estimate",
+    asks: ["how much rain fell", "rainfall totals", "show me the rain",
+      "estimated rain"] },
+  { target: "snow depth",
+    asks: ["how deep is the snow", "show me snow on the ground", "snowpack depth"] },
+  { target: "related links",
+    asks: ["what else is there about this", "other pages for this site",
+      "more about this gauge"] },
+];
+
+// Both planners choose, neither acts. A benchmark that pressed things would
+// change the page it is measuring and could not be run twice, and comparing
+// outcomes on a page that moves underneath you measures the page as much as
+// the planner. What is in question is the choice, so the choice is what is
+// recorded.
+async function benchmarkPlanners({ onlyTargets = null } = {}) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url) throw new Error("no active tab");
+  const route = routeFor(tab.url);
+  const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]);
+  if (!inv.ok) throw new Error(`could not read this page: ${inv.error || "no reason given"}`);
+  const controls = controlsForModel(inv.result);
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  // Only what is here. Scoring a planner on a control the page does not have
+  // measures nothing about either of them.
+  const present = PARAPHRASE_CASES
+    .filter((c) => !onlyTargets || onlyTargets.includes(c.target))
+    .map((c) => ({ ...c, on: controls.find((k) => flat(k.label).includes(flat(c.target))) }))
+    .filter((c) => c.on);
+  if (!present.length) {
+    return { ok: true, cases: 0, note: "none of the benchmark's controls are on this page" };
+  }
+
+  const status = await modelStatus();
+  const modelReady = !!(status && status.ready);
+  const slim = controls.map((c) => ({
+    label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
+  }));
+
+  const rows = [];
+  for (const c of present) {
+    const want = flat(c.on.label);
+    for (const ask of c.asks) {
+      // The scorer, planning only - and measured the way it actually
+      // decides. Asking confidentPick alone put it at 0 out of 10 here,
+      // which would have flattered the model: the path that answers these
+      // instructions live is planGenericTool, the one behind "one-list",
+      // and a benchmark that scores the baseline on a route it does not use
+      // is not evidence of anything. Its tie candidates count too, since a
+      // tie is acted on rather than abandoned further down.
+      const t0 = Date.now();
+      let scorerLabel = null;
+      try {
+        const plan = planGenericTool(ask, inv.result);
+        const hit = (plan && plan.matched && plan.matched[0])
+          || (plan && plan.ambiguous && plan.ambiguous[0]);
+        if (hit) scorerLabel = String(hit.label || "");
+        if (!scorerLabel) {
+          const pick = confidentPick(await unifiedTools(route.global, ask, { acting: true }), ask);
+          scorerLabel = pick ? String(pick.tool.label || pick.tool.name || "") : null;
+        }
+      } catch (e) { scorerLabel = null; }
+      const scorerMs = Date.now() - t0;
+
+      // The model, planning only. Its answer is a number into the same list
+      // the agent loop would have given it, so this is the decision it would
+      // have made, without the action.
+      let modelLabel = null;
+      let modelMs = 0;
+      let modelSaidNothing = true;
+      if (modelReady) {
+        const t1 = Date.now();
+        try {
+          const step = await askModelForStep({ goal: ask, controls: slim, history: [] });
+          modelMs = Date.now() - t1;
+          const n = step && step.ok && step.step ? Number(step.step.n) : NaN;
+          if (Number.isInteger(n) && controls[n]) {
+            modelLabel = String(controls[n].label || "");
+            modelSaidNothing = false;
+          } else if (step && step.ok && step.step && step.step.do === "finish") {
+            modelSaidNothing = true;
+          }
+        } catch (e) { modelMs = Date.now() - t1; }
+      }
+
+      // Counted apart from a wrong choice, deliberately. "Chose the wrong
+      // control" and "would not choose at all" are different failures and
+      // call for different answers - one is a better prompt, the other a
+      // bigger model - and averaging them together hides which you have.
+      rows.push({
+        ask, target: c.on.label,
+        scorer: scorerLabel, scorerRight: !!scorerLabel && flat(scorerLabel).includes(want),
+        scorerMs,
+        model: modelLabel, modelRight: !!modelLabel && flat(modelLabel).includes(want),
+        modelSaidNothing: modelReady ? modelSaidNothing : null, modelMs,
+      });
+    }
+  }
+
+  const asked = rows.length;
+  const sum = (f) => rows.reduce((a, r) => a + (f(r) || 0), 0);
+  const modelRows = rows.filter((r) => r.modelSaidNothing !== null);
+  return {
+    ok: true,
+    // Said plainly, because the number means nothing without it. These asks
+    // deliberately avoid the words printed on the control, so the scorer is
+    // being measured on the one thing it structurally cannot do. That is the
+    // question - whether the model reaches what the scorer cannot - and not
+    // a claim about instructions phrased after the labels, where the scorer
+    // is both accurate and thousands of times quicker.
+    measuring: "reworded asks that avoid the words on the control",
+    page: tab.url, route: route.global, controls: controls.length, cases: present.length, asked,
+    model: modelName(status && status.model), modelReady,
+    scorer: {
+      right: sum((r) => (r.scorerRight ? 1 : 0)),
+      silent: sum((r) => (r.scorer ? 0 : 1)),
+      medianMs: median(rows.map((r) => r.scorerMs)),
+    },
+    modelScore: modelReady ? {
+      right: sum((r) => (r.modelRight ? 1 : 0)),
+      silent: sum((r) => (r.modelSaidNothing ? 1 : 0)),
+      medianMs: median(modelRows.map((r) => r.modelMs)),
+    } : null,
+    rows,
+  };
+}
+
+function median(ns) {
+  const a = ns.filter((n) => typeof n === "number").sort((x, y) => x - y);
+  if (!a.length) return 0;
+  const mid = Math.floor(a.length / 2);
+  return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
+}
+
 async function buildCapabilities() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url) throw new Error("no active tab");
@@ -6158,6 +6325,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ...result, plannedCall: plan });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err), plannedCall: plan });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === "benchmarkPlanners") {
+    (async () => {
+      try {
+        const out = await benchmarkPlanners(msg.options || {});
+        const s2 = out.scorer || {};
+        const m2 = out.modelScore;
+        const pct = (n) => (out.asked ? `${Math.round((n / out.asked) * 100)}%` : "-");
+        sendResponse({
+          ok: true, ...out,
+          display: {
+            title: out.asked ? `${out.asked} reworded asks on ${out.cases} controls` : "nothing to compare",
+            subtitle: out.asked
+              ? ["asks worded to avoid the control's own words",
+                `keyword scorer ${pct(s2.right)} right`,
+                m2 ? `${out.model} ${pct(m2.right)} right` : `${out.model || "the model"} was not ready`,
+                m2 ? `${(m2.medianMs / 1000).toFixed(1)}s a decision vs ${s2.medianMs}ms` : null,
+              ].filter(Boolean).join(" \u00b7 ")
+              : String(out.note || ""),
+            stats: [
+              { label: "asks", value: String(out.asked || 0) },
+              { label: "scorer", value: pct(s2.right) },
+              ...(m2 ? [{ label: "model", value: pct(m2.right) }] : []),
+              ...(m2 ? [{ label: "silent", value: pct(m2.silent) }] : []),
+            ],
+            // Every ask, so a percentage can be checked rather than taken on
+            // trust - and so the disagreements can be read one by one, which
+            // is where anything worth knowing actually is.
+            rows: (out.rows || []).map((r) => ({
+              name: String(r.ask).slice(0, 44),
+              value: `${r.scorerRight ? "S" : "-"}${r.modelSaidNothing === null ? "" : (r.modelRight ? "M" : (r.modelSaidNothing ? "\u2013" : "x"))}`,
+              meta: [r.scorerRight ? null : `scorer: ${r.scorer || "nothing"}`,
+                r.modelSaidNothing === null ? null
+                  : r.modelRight ? null : `model: ${r.model || "nothing"}`,
+              ].filter(Boolean).join(" | ") || `both found "${String(r.target).slice(0, 24)}"`,
+              tone: r.modelRight && r.scorerRight ? "ok"
+                : (r.modelRight || r.scorerRight) ? "warn" : "alert",
+            })),
+            source: out.route || "this page",
+          },
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
       }
     })();
     return true;
