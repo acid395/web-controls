@@ -1582,6 +1582,58 @@ for (const b of budgets) {
   }
 }
 
+// "click location id - ascending" on a page already sorted that way ended
+// with the model having planned nothing - for a request the page had already
+// carried out. The model chose the right control and said "click", which
+// became a plain pageClick; clicking the already-selected radio of a group
+// cannot change anything, so its correct action was judged a no-op. A radio
+// is not something you press, it is something you choose.
+{
+  const sortHtml = (sel) => `<!doctype html><html><body>
+    <fieldset><legend>Sort by</legend>
+      <label><input type="radio" name="s" value="asc"${sel === "asc" ? " checked" : ""}> Location ID - Ascending</label>
+      <label><input type="radio" name="s" value="desc"${sel === "desc" ? " checked" : ""}> Location ID - Descending</label>
+    </fieldset></body></html>`;
+  for (const [start, expectAlready] of [["asc", true], ["desc", false]]) {
+    const sp2 = loadPage(sortHtml(start), { url: "https://waterdata.usgs.gov/state/" });
+    if (!sp2) continue;
+    const bgs2 = loadBackground({ page: sp2 });
+    let turns = 0;
+    bgs2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        turns++;
+        return { ok: true, step: { n: m.controls.findIndex((c) => /ascending/i.test(c.label || "")), do: "click" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgs2.__ask({ type: "smartAsk", instruction: "click location id - ascending" });
+      check(`clicking a radio from ${start} is the model's own answer`, r.plannedBy, "model");
+      check(`and costs one turn from ${start}`, turns, 1);
+      const on = [...sp2.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check(`and the radio asked for is selected from ${start}`, on && on.value, "asc");
+      if (expectAlready) {
+        ensure("a radio already chosen reads as already so, not as nothing happening",
+          ((r.display || {}).rows || []).some((x) => x.value === "already so" && x.tone === "ok"),
+          (r.display || {}).rows);
+      }
+    });
+  }
+  // A checkbox keeps its second meaning: "click" can mean toggle, and a
+  // click that turns something off is a real outcome.
+  const cb = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="c" checked> Snow depth</label></body></html>`,
+    { url: "https://example.gov/" });
+  if (cb) {
+    const bgc2 = loadBackground({ page: cb });
+    check("a click on a checkbox is still a click",
+      bgc2.actionToCall("click", { selector: "x", type: "checkbox" }, {}).name, "pageClick");
+    check("and a click on a radio asks for its state",
+      bgc2.actionToCall("click", { selector: "x", type: "radio" }, {}).name, "pageCheck");
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

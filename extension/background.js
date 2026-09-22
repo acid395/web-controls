@@ -4851,16 +4851,20 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // whole instruction was run a second time through the scorer, which
     // reached the same conclusion thirty seconds later. Nothing to change is
     // the answer, and the first run already had it.
-    const wantedState = act === "check" ? (s.on === false ? false : true)
-      : act === "select" ? String(s.value || "") : null;
+    // Read off the call rather than the model's wording, so a click that
+    // became a state-setting call for a radio is judged the same way a
+    // "check" would be.
+    const wantedState = call.name === "pageCheck" ? (call.args.on !== false)
+      : call.name === "pageSelectOption" ? String(call.args.value || "") : null;
     // Taken from what the page said before the action, because pageCheck
     // reports a bare true and carries no before-and-after of its own - only
     // the manifest tools do that. The inventory this turn was built from
     // already holds the control's state, so no extra page pass is needed to
     // know it: a box that was on when the request asked for it on means the
     // page was already as asked, whatever the click then did.
-    const stateBefore = act === "check" ? target.checked
-      : act === "select" && typeof r.now !== "undefined" ? String(r.now) : undefined;
+    const stateBefore = call.name === "pageCheck" ? target.checked
+      : call.name === "pageSelectOption" && typeof r.now !== "undefined" ? String(r.now)
+      : undefined;
     const satisfied = !moved && ran.ok !== false && wantedState !== null
       && typeof stateBefore !== "undefined"
       && String(stateBefore) === String(wantedState);
@@ -4917,7 +4921,24 @@ function actionFits(act, control) {
 
 function actionToCall(act, control, s) {
   const sel = control.selector;
-  if (act === "click") return { name: "pageClick", args: { selector: sel } };
+  if (act === "click") {
+    // A radio is not something you press, it is something you choose.
+    // Clicking the one already selected cannot change anything, so "click
+    // location id - ascending" on a page already sorted that way looked
+    // like an action that did nothing, and the run ended reporting that the
+    // model had planned nothing - for a request the page had already
+    // carried out. Asking for the state instead gets the control's own
+    // before and after, which is the difference between "already so" and
+    // "the click did not land".
+    //
+    // Radios only. A checkbox can mean toggle when someone says click, and
+    // a click that turns something off is a real outcome; a radio has no
+    // such second meaning.
+    if (String(control.type || "").toLowerCase() === "radio") {
+      return { name: "pageCheck", args: { selector: sel, on: true } };
+    }
+    return { name: "pageClick", args: { selector: sel } };
+  }
   if (act === "check") return { name: "pageCheck", args: { selector: sel, on: s.on !== false } };
   if (act === "type") return { name: "pageFill", args: { selector: sel, text: String(s.value ?? "") } };
   if (act === "select") {
@@ -7044,8 +7065,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
-                      meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                      value: st.did === "opened" ? `revealed ${st.appeared}`
+                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                      meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
                     source: route.global,
                   },
@@ -7504,8 +7526,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   stats: [{ label: "steps", value: String(chased.steps.length) }],
                   rows: chased.steps.map((st) => ({
                     name: String(st.label || st.did).slice(0, 50),
-                    value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
-                    meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                    value: st.did === "opened" ? `revealed ${st.appeared}`
+                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                    meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                   })),
                   source: route.global,
                 },
@@ -7602,9 +7625,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 name: String(st.label || st.did).slice(0, 50),
                 value: st.did === "opened"
                   ? `revealed ${st.appeared}`
-                  : (st.changed ? "changed" : "no change"),
+                  : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                 meta: st.did,
-                tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
               })) : rankedChanges(result.verified).map((c) => ({
                 name: nameOfChange(c),
                 value: c.now === undefined ? "" : String(c.now).slice(0, 24),
@@ -7785,8 +7808,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
-                      meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                      value: st.did === "opened" ? `revealed ${st.appeared}`
+                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                      meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
                     source: route.global,
                   },
@@ -7856,8 +7880,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
-                      meta: st.did, tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                      value: st.did === "opened" ? `revealed ${st.appeared}`
+                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                      meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
                     source: route.global,
                   },
@@ -7977,9 +8002,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 stats: [{ label: "steps", value: String(chased.steps.length) }],
                 rows: chased.steps.map((st) => ({
                   name: String(st.label || st.did).slice(0, 50),
-                  value: st.did === "opened" ? `revealed ${st.appeared}` : (st.changed ? "changed" : "no change"),
+                  value: st.did === "opened" ? `revealed ${st.appeared}`
+                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                   meta: st.did,
-                  tone: st.did === "opened" || st.changed ? "ok" : "warn",
+                  tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                 })),
                 source: route.global,
               },
