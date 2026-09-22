@@ -2531,9 +2531,47 @@
     // What was clicked, in words. realClick hands back the element because
     // callers inside this file use it; nothing outside can receive one.
     click: (selector) => {
-      const el = realClick(selector);
-      return { clicked: String(el.tagName || "").toLowerCase(),
-        label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined };
+      // A click was the one primitive with nothing to report, which is why
+      // "it worked and there was nothing left to change" and "it silently
+      // failed" reached the caller as the same observation - and why three
+      // separate reports blamed the model for actions it had got right.
+      //
+      // A link or a plain button genuinely has no state, and this does not
+      // invent one for them. But a disclosure, a toggle button, a tab and a
+      // details element all carry theirs on the element being clicked, and
+      // that is most of what a government site is built from.
+      const STATEFUL = ["aria-expanded", "aria-pressed", "aria-selected", "aria-checked"];
+      const stateOf = (n) => {
+        if (!n || !n.getAttribute) return undefined;
+        for (const a of STATEFUL) {
+          const v = n.getAttribute(a);
+          if (v !== null && v !== undefined) return v;
+        }
+        const tag = String(n.tagName || "").toLowerCase();
+        if (tag === "details") return String(!!n.open);
+        // The state of a <details> lives on the parent, while the thing
+        // anyone clicks is its <summary>.
+        if (tag === "summary" && n.parentElement
+          && String(n.parentElement.tagName || "").toLowerCase() === "details") {
+          return String(!!n.parentElement.open);
+        }
+        if ((n.type === "checkbox" || n.type === "radio") && typeof n.checked === "boolean") {
+          return String(n.checked);
+        }
+        return undefined;
+      };
+      const before = typeof selector === "string" ? deepQuery(selector) : selector;
+      const was = stateOf(before);
+      const el = realClick(before || selector);
+      const now = stateOf(before);
+      return {
+        clicked: String(el.tagName || "").toLowerCase(),
+        label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined,
+        ...(was === undefined ? {} : {
+          control: rawLabelOf(before) || undefined,
+          was, now, itChanged: was !== now, how: "click",
+        }),
+      };
     },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),

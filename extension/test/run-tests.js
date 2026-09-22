@@ -1634,6 +1634,48 @@ for (const b of budgets) {
   }
 }
 
+// A click was the one primitive with nothing to report, so "it worked and
+// there was nothing left to change" and "it silently failed" reached the
+// caller as the same observation - which is why three separate reports
+// blamed the model for actions it had got right. A link has no state and
+// this does not invent one; a disclosure, a toggle button and a details
+// element all carry theirs on the element being clicked, which is most of
+// what a government site is built from.
+{
+  const cp = loadPage(`<!doctype html><html><body>
+    <button id="acc" aria-expanded="false" aria-controls="x">Related links</button>
+    <div id="x" hidden>inside</div>
+    <button id="tog" aria-pressed="false">Show legend</button>
+    <a id="lnk" href="#y">Plain link</a>
+    <details id="d"><summary>More</summary>body</details>
+    </body></html>`, { url: "https://example.gov/" });
+  if (cp) {
+    cp.document.getElementById("acc").addEventListener("click", function () {
+      const x = cp.document.getElementById("x");
+      x.hidden = !x.hidden;
+      this.setAttribute("aria-expanded", String(!x.hidden));
+    });
+    cp.document.getElementById("tog").addEventListener("click", function () {
+      this.setAttribute("aria-pressed",
+        this.getAttribute("aria-pressed") === "true" ? "false" : "true");
+    });
+    const opened = cp.GENERIC.click("#acc");
+    check("a disclosure reports that it opened", opened.itChanged, true);
+    check("with its own before and after", `${opened.was} -> ${opened.now}`, "false -> true");
+    const closed = cp.GENERIC.click("#acc");
+    check("and that it closed again", `${closed.was} -> ${closed.now}`, "true -> false");
+    check("a toggle button reports its state", cp.GENERIC.click("#tog").now, "true");
+    check("a details reports through its summary",
+      cp.GENERIC.click("#d > summary").itChanged, true);
+    // The honest half: a link has no state, and a click on one still proves
+    // nothing by itself. Inventing a value here would be the same mistake
+    // in the other direction.
+    const link = cp.GENERIC.click("#lnk");
+    ensure("a plain link claims no state it does not have",
+      link.itChanged === undefined && link.was === undefined, link);
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
