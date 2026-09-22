@@ -1676,6 +1676,39 @@ for (const b of budgets) {
   }
 }
 
+// A part the model will not even attempt - no step taken, nothing answered
+// - is the strongest signal there is that it will not do the rest either,
+// and every further part costs its whole budget before anything else is
+// allowed to try. Two parts at forty-five seconds each is ninety seconds of
+// producing nothing, after which the baseline did the work anyway.
+{
+  const twoBox = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="y2"> Select data to graph on second y-axis</label>
+    <label><input type="checkbox" name="py"> Select data for same time span in prior year</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (twoBox) {
+    const bgt2 = loadBackground({ page: twoBox });
+    let turns = 0;
+    bgt2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { turns++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgt2.__ask({ type: "smartAsk",
+        instruction: "click select data to graph on second y-axis and select data for same time span in prior year" });
+      ensure("a model that will not attempt a step is not paid for every part",
+        turns <= 2, turns);
+      const on = [...twoBox.document.querySelectorAll("input")].filter((x) => x.checked).map((x) => x.name);
+      // Both, and neither undone by the other. The second step turning the
+      // first back off would be the page's own doing, not this.
+      check("and both controls the instruction named end up set", on.join(","), "y2,py");
+      ensure("and the card says how long the whole thing took",
+        ((r.display || {}).stats || []).some((x) => x.label === "took"), (r.display || {}).stats);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

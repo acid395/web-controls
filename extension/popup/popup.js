@@ -523,6 +523,14 @@ on("smartAsk", "click", () => {
     void chrome.runtime.lastError;
   });
   restoreHistory();
+  // Written after the redraw, not before it. Nothing said anything here at
+  // all: the first sign of life was the background's own progress message,
+  // which cannot arrive until the model has been asked whether it is ready
+  // and an offscreen document exists - so the first click looked like
+  // nothing had happened and a second was needed to see the run. And a
+  // status line written before restoreHistory is removed by it, since that
+  // rebuilds the log this line lives in.
+  setStatus(`working on "${instruction.slice(0, 50)}"...`);
 });
 
 // Same shape a model's tool call arrives in ({name, args}), typed by hand.

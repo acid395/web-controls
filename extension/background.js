@@ -6418,9 +6418,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // produced it, and the comparison the scorer is kept for needs that
       // on every answer, not only the ones the model won.
       let modelTried = false;
+      // Every card, not only the ones the model planned. "A simple task took
+      // almost four minutes" is the report that matters most and the hardest
+      // to act on, because it does not say which of the paths spent it.
+      const askBegan = Date.now();
       const respond = (res) => {
         if (plannedTool && !res.toolCall && !res.plannedCall) res.toolCall = plannedTool;
         const display = cardFor(res);
+        const took = Date.now() - askBegan;
+        if (display && took > 1500) {
+          display.stats = [...(display.stats || [])];
+          if (!display.stats.some((x) => x.label === "took")) {
+            display.stats.push({ label: "took", value: `${(took / 1000).toFixed(1)}s` });
+          }
+        }
         const why = [
           modelSkipped && res.plannedBy !== "model" && res.plannedBy !== "baseline" ? modelSkipped : null,
           // The model was there and got nowhere, so this is the baseline
@@ -6516,6 +6527,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // happen" test and fell through to be asked again.
                 if (one.answer) answers.push(one.answer);
                 if (!one.ok) { failed = one.error || "the model got no further"; break; }
+                // A part the model would not even attempt - no step taken
+                // and nothing answered - is the strongest signal there is
+                // that it is not going to do the rest either, and every
+                // further part costs its whole budget before anything else
+                // is allowed to try. "click select data to graph on second
+                // y-axis and select data for same time span in prior year"
+                // spent the model's entire ninety seconds producing nothing
+                // and then the baseline did the work anyway. A part that
+                // acted and changed nothing is different, and carries on.
+                if (!(one.history || []).length) {
+                  failed = "the local model did not attempt this step";
+                  break;
+                }
               }
               // A later part failing does not undo an earlier part that
               // worked. Reporting the whole run as failed sends this to the

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "114",
   "name": "web-controls (proof of concept)",
-  "version": "0.91.0",
+  "version": "0.92.0",
   "description": "Ask a water or weather site a question in plain English. Reads the page you're on, drives its controls, or answers from public USGS, NOAA and NWS data. No account, no API key.",
   "permissions": [
     "activeTab",
