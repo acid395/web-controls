@@ -5051,13 +5051,34 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     // that state; these raw primitives do not, so the tool's own nature
     // stands in for it.
     const SETS_STATE = /^page(Check|PickRadio|SelectOption|Fill)$/.test(call.name);
+    // A tool that sets an absolute state and reports no change found the
+    // page already as asked, which is the request carried out. Treating it
+    // as a dead end was not merely pessimistic, it was destructive: "select
+    // huc-8 subbasin" found HUC-08 already selected, called that a failure,
+    // struck it off and picked HUC-06 instead - so the answer to the request
+    // was to set the page to something the request did not ask for, and the
+    // card reported HUC-06 as though that had been the point.
+    //
+    // Only where the control's own state is what was asked for. "No change"
+    // and "the pick did not take" look identical from the outside otherwise,
+    // and claiming the first when it was the second is how this whole class
+    // of confidently wrong answer starts.
+    const askedFor = call.args && (call.args.value !== undefined ? call.args.value
+      : call.args.on !== undefined ? call.args.on : undefined);
+    // A box or radio reports its state as a boolean, a dropdown or a field
+    // as the value it holds, so both shapes count.
+    const alreadySo = ran.ok !== false && SETS_STATE && r.itChanged === false
+      && (r.now === true
+        || (askedFor !== undefined && typeof r.now !== "undefined"
+          && String(r.now) === String(askedFor)));
     const proven = r.itChanged === true ? true
+      : alreadySo ? true
       : r.itChanged === false ? false
       : SETS_STATE ? moved
       : !stateCommand && moved;
     steps.push({
       did: call.name, label: r.control || target.label || "", ok: ran.ok !== false,
-      changed: moved, proven, was: r.was, now: r.now,
+      changed: moved, proven, alreadySo, was: r.was, now: r.now,
     });
     if (ran.ok === false) break;
 
@@ -5068,8 +5089,17 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     // Long Range Flood Outlook, which covers "flood", and the loop then
     // treated "inundation" as accounted for by a control it never touched.
     // It stopped after one step and reported the wrong layer switched on.
-    const coveredNow = new Set(((plan.matched && plan.matched[0] && plan.matched[0].covered)
-      || (ambiguousPick ? subjectOf(meaningfulWords(ambiguousPick.label || "")) : [])) || []);
+    // Only a step that worked accounts for anything. A control that did
+    // nothing cannot have carried out the part of the request it is named
+    // after - and striking those words off anyway is what let a later,
+    // different control claim the whole request: "select huc-8 subbasin"
+    // tried HUC-08, which accounted for huc, 8 and subbasin and then did
+    // not work, so by the time HUC-06 was pressed there was nothing left
+    // outstanding and the loop declared the job done on the wrong basin.
+    const coveredNow = new Set(proven
+      ? (((plan.matched && plan.matched[0] && plan.matched[0].covered)
+        || (ambiguousPick ? subjectOf(meaningfulWords(ambiguousPick.label || "")) : [])) || [])
+      : []);
     remaining = remaining.filter((w) => !coveredNow.has(w));
     lastCount = countNow;
 
@@ -6358,7 +6388,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // else has worked either, because "nothing matched" and "a rule for
       // this page broke" are different things to go and look at.
       let ruleTried = null;
+      // What was planned, even where it could not run and something further
+      // down answered instead. The plan is the evidence of what the request
+      // was understood to mean, and it was being lost with the failure.
+      let plannedTool = null;
       const respond = (res) => {
+        if (plannedTool && !res.toolCall && !res.plannedCall) res.toolCall = plannedTool;
         const display = cardFor(res);
         const why = [
           modelSkipped && res.plannedBy !== "model" && res.plannedBy !== "baseline" ? modelSkipped : null,
@@ -7454,6 +7489,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // dropped word is how an action ends up answering a different
           // question than the one asked.
           const ignored = manifestCall.unmatchedWords;
+          // A tool that is not on this page cannot be the answer. A rule
+          // planned selectState, which lives on the USGS manifest, while
+          // this page had the GENERIC bundle loaded - so the bridge looked
+          // for it on every manifest it had and said "not a function". That
+          // error went to the panel as the result, and "select alaska",
+          // which worked before any of this, stopped working - while the
+          // dropdown it named sat on the page for the paths below to find.
+          // Which manifest gets planned for and which bundle is actually
+          // injected can disagree, and when they do this is where it shows.
+          // Not where the attempt learned something anyway: opening a panel
+          // and finding the site had put nothing in it is a real answer
+          // about the page, and better than anything below would say.
+          const missingHere = result.ok === false
+            && /is not a function on any manifest/.test(String(result.error || ""))
+            && !(chased && chased.emptyPanel);
+          if (missingHere) {
+            ruleTried = `${friendlyToolName(manifestCall.name)} is not on this page`;
+            plannedTool = manifestCall;
+          } else {
           respond({
             ...result, ok: result.ok !== false,
             plannedBy: cameFromPage ? "page" : "manifest", toolCall: manifestCall,
@@ -7536,6 +7590,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             },
           });
           return;
+          }
         }
 
         // Any site, no model: match the instruction against the page's own

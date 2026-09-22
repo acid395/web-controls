@@ -1482,6 +1482,53 @@ for (const b of budgets) {
   }
 }
 
+// "select huc-8 subbasin" picked HUC-08, saw nothing happen, struck it off,
+// picked HUC-06 instead and reported HUC-06 as the answer. Two faults met
+// there: a radio pick reported no state of its own, so "already selected"
+// and "the click never landed" were indistinguishable; and the words the
+// failed step was named after were struck off the outstanding list anyway,
+// so by the time a different control was pressed there was nothing left
+// outstanding and the loop declared the job done on the wrong basin. The
+// request was answered by setting the page to something it did not ask for.
+{
+  const hucHtml = (checked) => `<!doctype html><html><body>
+    <fieldset><legend>Group by</legend>
+      <label><input type="radio" name="g" value="huc8"${checked === "huc8" ? " checked" : ""}> HUC-08 subbasin</label>
+      <label><input type="radio" name="g" value="huc6"${checked === "huc6" ? " checked" : ""}> HUC-06 basin</label>
+    </fieldset></body></html>`;
+  for (const start of ["huc6", "huc8"]) {
+    const hp = loadPage(hucHtml(start), { url: "https://waterdata.usgs.gov/state/" });
+    if (!hp) continue;
+    const bgh = loadBackground({ page: hp });
+    bgh.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      const r = await bgh.__ask({ type: "smartAsk", instruction: "select huc-8 subbasin" });
+      const on = [...hp.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check(`starting from ${start}, the basin asked for is the one selected`,
+        on && on.value, "huc8");
+      ensure(`and starting from ${start} the card does not name a different one`,
+        !/huc-06|huc06/i.test(String((r.display || {}).title || "")), (r.display || {}).title);
+    });
+  }
+}
+
+// A radio pick reports its own before and after, so a caller can tell the
+// two apart rather than guessing.
+{
+  const rp = loadPage(`<!doctype html><html><body>
+    <label><input type="radio" name="g" value="a" checked> Alpha</label>
+    <label><input type="radio" name="g" value="b"> Beta</label></body></html>`,
+    { url: "https://example.gov/" });
+  if (rp) {
+    const onAlready = rp.GENERIC.pickRadio("g", "Alpha");
+    check("picking the one already selected reports no change", onAlready.itChanged, false);
+    check("and says it is selected", onAlready.now, true);
+    const moved = rp.GENERIC.pickRadio("g", "Beta");
+    check("picking another reports the change", moved.itChanged, true);
+    check("and keeps the page's own spelling", moved.control, "Beta");
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

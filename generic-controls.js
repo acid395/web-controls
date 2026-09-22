@@ -271,8 +271,19 @@
       radios.find((r) => labelOf(r) === want) ||
       radios.find((r) => labelOf(r).includes(want));
     if (!hit) throw new Error(`pickRadio: "${valueOrLabel}" not in [${radios.map((r) => r.value)}]`);
-    if (!hit.checked) realClick(hit);
-    return hit.value;
+    // Its own before and after, not a bare value. Without them a caller
+    // cannot tell "this was already the selected one" from "the click never
+    // landed", and it has to guess - which is how "select huc-8 subbasin"
+    // ended up selecting HUC-06: HUC-08 was already on, the pick reported
+    // nothing, that read as a dead end, and the loop moved to the next
+    // radio in the group and reported the wrong basin as the answer.
+    const was = !!hit.checked;
+    if (!was) realClick(hit);
+    const now = !!hit.checked;
+    // Reported as the page writes it. labelOf is the normalised form used
+    // for comparing, and a card headed "huc-08 subbasin" is the page's own
+    // control in somebody else's spelling.
+    return { control: rawLabelOf(hit) || hit.value, value: hit.value, was, now, itChanged: was !== now };
   };
 
   // Clicks the first button, link, or role=button whose text or aria-label
