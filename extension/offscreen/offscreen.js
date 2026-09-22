@@ -112,12 +112,19 @@ function firstJsonObject(text) {
 /* @testable-end */
 
 let enginePromise = null;
+// The last thing the loader said, so status can report progress rather than a
+// bare "not ready" through a multi-gigabyte download.
+let lastProgress = null;
 let engineReady = false; // a Promise can't be asked "are you resolved yet?" directly - tracked separately so llmStatus can answer synchronously instead of waiting on the engine.
 
 function getEngine(onProgress) {
   if (!enginePromise) {
     enginePromise = CreateMLCEngine(MODEL_ID, {
       initProgressCallback: (report) => {
+        // Kept, not just forwarded: the panel may not be open when this
+        // arrives, and "still downloading, 41%" is the answer to why the
+        // model did not plan.
+        lastProgress = String((report && report.text) || "").slice(0, 120);
         if (onProgress) onProgress(report);
       },
     }).then((engine) => {
@@ -152,7 +159,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "llmStatus") {
-    sendResponse({ ready: engineReady, hasGpu: "gpu" in navigator });
+    // Ready or not is no longer enough to act on. The model is the planner
+    // now, so when it is not used the first question is why - never started,
+    // still downloading, or a machine that cannot run it at all. Those want
+    // three different responses and used to look identical from outside.
+    sendResponse({
+      ready: engineReady,
+      hasGpu: "gpu" in navigator,
+      loading: !!enginePromise && !engineReady,
+      started: !!enginePromise,
+      progress: lastProgress || null,
+      model: MODEL_ID,
+    });
     return; // synchronous, no need to keep the channel open
   }
 

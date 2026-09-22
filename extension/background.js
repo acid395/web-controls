@@ -5458,6 +5458,17 @@ async function runDiagnostics() {
     if (!r.result.available) throw new Error("no modelContext API in this browser (expected outside Edge 147+)");
     return `${r.result.tools.length} tools · ${r.result.readFrom || "none readable"}`;
   }, { optional: true });
+  // The planner itself. Every other row here described the page; the thing
+  // that now decides what to do on it went unmentioned, so "why didn't the
+  // model run" meant opening the offscreen document's own console.
+  await step("local model", async () => {
+    const st = await modelStatus({ maxAgeMs: 0 });
+    if (!st) return "not answering - the offscreen document may not be up yet";
+    if (!st.hasGpu) throw new Error("no WebGPU on this machine, so the model cannot run at all");
+    if (st.ready) return `ready · ${st.model || "loaded"}`;
+    if (st.loading) return `still loading · ${st.progress || "no progress reported yet"}`;
+    return "not started - it loads on first use, or when this panel is opened";
+  }, { optional: true });
   await step("agency API", async () => {
     const res = await fetch("https://api.weather.gov/points/44.98,-93.26", { headers: { Accept: "application/geo+json" } });
     if (!res.ok) throw new Error(`NWS returned ${res.status}`);
