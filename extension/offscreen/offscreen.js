@@ -121,8 +121,16 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     // straight off the wait, and none of it costs the model an option -
     // which is the thing that must not be traded, since a control it cannot
     // see is one it cannot choose.
-    const opts = (c.options || []).length
-      ? ` [${c.options.map((o) => String(o.text || o.value).slice(0, 14)).slice(0, 3).join("|")}]` : "";
+    // Three options out of fifty told the model almost nothing: a state
+    // dropdown showed Alabama, Alaska, Arizona and no sign that the other
+    // forty-seven were in there, so "select wyoming" had no reason to pick
+    // it. More of them, and the count either way, so a list is recognisable
+    // as the place a value lives even when the value itself is not shown.
+    const all = c.options || [];
+    const shown = all.slice(0, 8).map((o) => String(o.text || o.value).slice(0, 14));
+    const opts = all.length
+      ? ` [${shown.join("|")}${all.length > shown.length ? ` +${all.length - shown.length} more` : ""}]`
+      : "";
     const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
     const label = collides.has(i) ? String(c.label || "").slice(0, 52) : short[i];
     return `- ${label}${what}${state}${opts}`;

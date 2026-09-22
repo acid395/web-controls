@@ -2472,6 +2472,63 @@ for (const b of budgets) {
   }
 }
 
+// "select alaska" pressed Skip to main content, then Select Ada County, and
+// set the page to a county nobody had asked about. Both were flagged on the
+// card as named by nothing in the request and both were pressed anyway - the
+// flag was a disclosure and not a brake. And the dropdown holding Alaska was
+// never picked, because naming the value rather than the list is the natural
+// thing to say and nothing resolved it.
+{
+  const STATES = { Alabama: "AL", Alaska: "AK", Arizona: "AZ", Wyoming: "WY" };
+  const dropHtml = `<!doctype html><html><body>
+    <a href="#m">Skip to main content</a>
+    <label for="st">State</label>
+    <select id="st">${Object.entries(STATES)
+      .map(([n, v]) => `<option value="${v}">${n}</option>`).join("")}</select>
+    <a id="ada" href="#ada">Select Ada County</a>
+    </body></html>`;
+  const shapes = [
+    ["the value alone, as a selection", () => ({ name: "Alaska", do: "select", value: "Alaska" }), "AK", 0],
+    ["the value alone, as a press", () => ({ name: "Alaska", do: "click" }), "AK", 0],
+    ["the list and the value", () => ({ name: "State", do: "select", value: "Alaska" }), "AK", 0],
+    // The harm: a control the request names nothing of, then a different
+    // one. Insisting on the same one is judgment; moving between them is
+    // wandering, and it is what set the page to Ada County.
+    ["wandering between unnamed controls", (t) => (t === 1
+      ? { name: "Skip to main content", do: "click" }
+      : { name: "Select Ada County", do: "click" }), "AL", 0],
+  ];
+  for (const [what, reply, wantState, wantAda] of shapes) {
+    const dp2 = loadPage(dropHtml, { url: "https://waterdata.usgs.gov/state/" });
+    if (!dp2) continue;
+    let ada = 0;
+    dp2.document.getElementById("ada").addEventListener("click", () => { ada++; });
+    const bgd4 = loadBackground({ page: dp2 });
+    let turns = 0;
+    bgd4.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") { turns++; return { ok: true, step: reply(turns), raw: "{}" }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgd4.__ask({ type: "smartAsk", instruction: "model: select alaska" });
+      check(`${what}: the dropdown ends on ${wantState}`,
+        dp2.document.getElementById("st").value, wantState);
+      check(`${what}: the county link is pressed ${wantAda}x`, ada, wantAda);
+    });
+  }
+
+  // A long list has to look like the place a value lives, even when the
+  // value is not among the few shown. Three of fifty told the model nothing.
+  const build = loadOffscreenHelper("buildStepPrompt");
+  if (build) {
+    const many = Array.from({ length: 50 }, (_, i) => ({ text: `Option ${i}`, value: String(i) }));
+    const text = build({ goal: "x", controls: [{ label: "State", kind: "select", options: many }] });
+    ensure("a dropdown says how many more it holds", /\+\d+ more/.test(text),
+      text.split("Controls on the page:")[1].split("Steps already")[0].trim());
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

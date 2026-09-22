@@ -4723,6 +4723,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
   // out is one clause by construction, so the caller says so outright.
   const mayHaveMore = chain === null ? /,|\band\b|\bthen\b|\balso\b/i.test(goal) : chain;
   let nudged = false;
+  // One question before pressing something the request names no part of.
+  // "select alaska" pressed Skip to main content and then Select Ada County
+  // - each flagged on the card as named by nothing in the request, and each
+  // pressed regardless. The flag was a disclosure and not a brake, so a page
+  // ended up set to a county nobody asked for.
+  //
+  // A question, not a veto: a paraphrase legitimately lands on a control
+  // that shares no word with it, which is the model's whole advantage, so
+  // asking again and then doing as it says keeps that. It costs one turn,
+  // and only where the request names nothing of what is about to be pressed.
+  let queried = null;
   // Whether anything the request actually names has been done yet. A step
   // can succeed without being the step that was asked for: "click view
   // tabular data" clicked Related links, which is the disclosure holding
@@ -4921,6 +4932,22 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         if (part.length > 1) several = part.slice(0, 4).map((c) => c.label);
       }
     }
+    // The value, where the model named that instead of the control holding
+    // it. Asked to "select alaska" the natural thing to say is "Alaska", and
+    // that is an option on a dropdown rather than a control in its own
+    // right - so the reference is resolved against the options too, and the
+    // action becomes the selection it obviously meant. One list only: a
+    // value that appears in two dropdowns is a reference that did not land.
+    let optionWanted = null;
+    if (!target && wantedName) {
+      const holders = controls.filter((c) => (c.options || []).some(
+        (o) => flatLabel(o.text || o.value) === wantedName));
+      if (holders.length === 1) {
+        target = holders[0];
+        const hit = (target.options || []).find((o) => flatLabel(o.text || o.value) === wantedName);
+        optionWanted = hit ? (hit.text || hit.value) : null;
+      }
+    }
     if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
     if (!target) {
       const asked = wantedName ? `"${String(s.name || s.label || s.control).slice(0, 40)}"`
@@ -5018,7 +5045,33 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       continue;
     }
 
-    const call = actionToCall(act, target, s);
+    const namesIt = optionWanted
+      || goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase()));
+    if (!namesIt && goalWords.length) {
+      const asked40 = String(target.label).slice(0, 40);
+      if (queried === null) {
+        queried = label;
+        note = `Nothing in the request names "${asked40}".`
+          + " If what you want is a value inside a list, name that value."
+          + ` If "${asked40}" really is the one, ask for it again.`;
+        continue;
+      }
+      // Insisting on the same one is a judgment worth honouring. Moving on
+      // to a different control the request also names nothing of is not
+      // judgment, it is wandering - and "select alaska" wandered from Skip
+      // to main content to Select Ada County and set the page to a county
+      // nobody had asked about.
+      if (queried !== label) {
+        return giveUp("the model moved between controls the request does not name");
+      }
+    }
+
+    // Naming an option is asking for it to be chosen, whatever verb came
+    // with it - "click Alaska" and "select Alaska" mean the same thing about
+    // a dropdown.
+    const call = optionWanted
+      ? actionToCall("select", target, { ...s, value: optionWanted })
+      : actionToCall(act, target, s);
     if (!call) {
       history.push({ did: `${act} ${target.label}`, outcome: "that control cannot do that" });
       continue;
@@ -5033,7 +5086,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // called "30 days", and both were reported as plain successes. A wrong
     // action nobody is told about is the failure this project keeps meeting;
     // said out loud it is something a person can judge.
-    const shares = goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase()));
+    const shares = namesIt;
     // A control that already holds the state the request asked for is the
     // request carried out, not a step that failed. "click gage height" on a
     // page where gage height was already on changed nothing, which read as
