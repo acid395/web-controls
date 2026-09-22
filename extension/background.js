@@ -4498,6 +4498,18 @@ function splitIntoSteps(instruction) {
 // zero - so every budget expressed in seconds has to be sized against the
 // real figure, and a fixed forty-five seconds a part means the second part
 // of a two-part instruction cannot finish even once.
+// The id is what the engine loads; this is what a person reading a card
+// needs to see. Switching model is a choice somebody makes to get a slower
+// machine to answer, and they cannot tell whether it took effect unless the
+// answer says which model gave it.
+function modelName(id) {
+  const s = String(id || "");
+  if (/Llama-3\.2-3B/i.test(s)) return "Llama 3.2 3B";
+  if (/Qwen2\.5-1\.5B/i.test(s)) return "Qwen2.5 1.5B";
+  if (/Llama-3\.2-1B/i.test(s)) return "Llama 3.2 1B";
+  return s.replace(/-q4f16.*$/i, "").replace(/-MLC$/i, "") || "the local model";
+}
+
 let lastTurnMs = 0;
 let modelStatusCache = { at: 0, value: null };
 let warmedOnce = false;
@@ -6503,12 +6515,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!forceBaseline) {
           const status = await modelStatus();
           if (!status || !status.ready) {
+            // Named, and with its progress where there is any. "The local
+            // model is still loading" gave no way to tell whether a model
+            // just chosen in the settings was the one loading, or how far
+            // off it was - and a 1GB download with no figure beside it is
+            // indistinguishable from something stuck.
+            const which = modelName(status && status.model);
             modelSkipped = !status ? "the local model is not answering"
               : status.hasGpu === false
                 ? "this browser has no WebGPU, so the local model cannot run here"
               : status.loading || status.started
-                ? `the local model is still loading${status.progress ? ` - ${status.progress}` : ""}`
-              : "the local model has not started yet";
+                ? `${which} is still loading${status.progress ? ` - ${status.progress}` : ""}`
+                  + " - this answer came from the page's own controls"
+              : `${which} has not started yet`;
           }
           if (status && status.ready) {
             modelTried = true;
@@ -6653,7 +6672,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     tone: h.ok === false ? "alert" : h.unrelated ? "warn"
                       : (h.changed || h.satisfied) ? "ok" : "warn",
                   })),
-                  source: "local model",
+                  source: modelName(status && status.model),
                 },
               });
               return;

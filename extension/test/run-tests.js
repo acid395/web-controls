@@ -1759,6 +1759,63 @@ for (const b of budgets) {
   }
 }
 
+// Switching model is something somebody does to get a slow machine to
+// answer, and "the local model is still loading" gave them no way to tell
+// whether the model they had just chosen was the one loading, or how far off
+// it was. A 1GB download with no figure beside it is indistinguishable from
+// something stuck - and an answer that arrived while it loaded looked like
+// the new model's work when it came from the page's own controls.
+{
+  const nameCases = [
+    ["Qwen2.5-1.5B-Instruct-q4f16_1-MLC", "Qwen2.5 1.5B"],
+    ["Llama-3.2-3B-Instruct-q4f16_1-MLC", "Llama 3.2 3B"],
+    ["Llama-3.2-1B-Instruct-q4f16_1-MLC", "Llama 3.2 1B"],
+  ];
+  const np = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="y2"> Select data to graph on second y-axis</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (np) {
+    const bgn2 = loadBackground({ page: np });
+    for (const [id, want] of nameCases) check(`${id} reads as ${want}`, bgn2.modelName(id), want);
+  }
+  for (const [id, want] of [nameCases[0]]) {
+    const lp = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="y2"> Select data to graph on second y-axis</label>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!lp) continue;
+    const bgl2 = loadBackground({ page: lp });
+    bgl2.__model = (m) => (m.type === "llmStatus"
+      ? { ready: false, hasGpu: true, loading: true, started: true,
+          progress: "fetching param cache 62%", model: id }
+      : undefined);
+    runAsync(async () => {
+      const r = await bgl2.__ask({ type: "smartAsk",
+        instruction: "click select data to graph on second y-axis" });
+      const note = String((r.display || {}).note || "");
+      ensure(`a card says which model is loading (${want})`, note.includes(want), note);
+      ensure("and how far along it is", /62%/.test(note), note);
+      ensure("and that this answer did not come from it",
+        /page's own controls/.test(note), note);
+    });
+    const rp2 = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="y2"> Select data to graph on second y-axis</label>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!rp2) continue;
+    const bgr2 = loadBackground({ page: rp2 });
+    bgr2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: id };
+      if (m.type === "llmStep") return { ok: true, step: { n: 0, do: "check", on: true } };
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgr2.__ask({ type: "smartAsk",
+        instruction: "click select data to graph on second y-axis" });
+      check(`and an answer it did plan is credited to it (${want})`,
+        (r.display || {}).source, want);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
