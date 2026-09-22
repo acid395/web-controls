@@ -1049,6 +1049,235 @@ if (shared) {
   });
 }
 
+// A later part failing does not undo an earlier part that worked. Reporting
+// the whole run as failed sent this to the keyword scorer, which began the
+// instruction again from the top - so "click related links and click
+// revisions" clicked Related links, failed on revisions, and clicked Related
+// links a second time. Acting twice is worse than not finishing.
+const partial = loadPage(`<!doctype html><html><body>
+  <a id="a" href="#a">Related links</a><a id="b" href="#b">Revisions</a></body></html>`,
+  { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (partial) {
+  let clicks = 0;
+  partial.document.getElementById("a").addEventListener("click", () => { clicks++; });
+  const bgp = loadBackground({ page: partial });
+  bgp.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      const i = m.controls.findIndex((c) => /related links/i.test(c.label));
+      if (/related/i.test(m.goal) && i >= 0) return { ok: true, step: { n: i, do: "click" } };
+      return { ok: false, error: "the model stopped answering" };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bgp.__ask({ type: "smartAsk", instruction: "click related links and click revisions" });
+    check("a half-done sequence is not started again from the top", clicks, 1);
+    check("and it is still reported as the model's work", r.plannedBy, "model");
+    ensure("with the part that did not finish named",
+      /did not finish/.test(String((r.display || {}).subtitle || "")), (r.display || {}).subtitle);
+  });
+}
+
+// An answer from one part of a compound instruction used to be written into
+// a history row and then dropped, so the instruction ran and returned no
+// answer at all - and a compound question, where no part changes anything,
+// failed the "did anything happen" test and was quietly asked again below.
+const answerPart = loadPage(`<!doctype html><html><body>
+  <a id="b" href="#b">Revisions</a><p>Discharge 412 cfs</p></body></html>`,
+  { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (answerPart) {
+  const bgq = loadBackground({ page: answerPart });
+  bgq.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      const i = m.controls.findIndex((c) => /revisions/i.test(c.label));
+      if (/revisions/i.test(m.goal) && i >= 0) return { ok: true, step: { n: i, do: "click" } };
+      return { ok: true, step: { do: "finish", answer: "412 cfs" } };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bgq.__ask({ type: "smartAsk", instruction: "click revisions then read the discharge" });
+    check("an answer from a later part survives", r.answer, "412 cfs");
+  });
+}
+
+// Not every compound instruction splits: "click Learn More, compare the last
+// two weeks and summarize the difference" has no splitting verb in it, so the
+// model has to chain inside one run. The prompt used to say the job was done
+// as soon as the page changed, and the loop ended on the first success, so
+// the reading and the summary were never reached.
+const chain = loadPage(`<!doctype html><html><body>
+  <a id="a" href="#a">Learn More</a><p>Week 1: 40%. Week 2: 55%.</p></body></html>`,
+  { url: "https://www.drought.gov/" });
+if (chain) {
+  const bgc = loadBackground({ page: chain });
+  bgc.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      const n = (m.history || []).length;
+      if (!n) return { ok: true, step: { n: m.controls.findIndex((c) => /learn more/i.test(c.label)), do: "click" } };
+      if (n === 1) return { ok: true, step: { do: "read" } };
+      return { ok: true, step: { do: "finish", answer: "drought rose from 40% to 55%" } };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bgc.__ask({ type: "smartAsk",
+      instruction: "click learn more, compare the last two weeks and summarize the difference" });
+    check("acting then reading then answering runs as one chain", r.answer, "drought rose from 40% to 55%");
+  });
+}
+
+// Each of these used to burn the whole run. The loop used "note" itself as
+// the "have I said this already" flag, and note is cleared on every valid
+// action - so the check for a control number out of range could never fire.
+const strikes = [
+  { name: "a control number that is not on the list", step: { n: 99, do: "click" }, turns: 2 },
+  { name: "an action that is not an action", step: { do: "teleport" }, turns: 2 },
+];
+for (const c of strikes) {
+  const sp = loadPage("<!doctype html><html><body><button>Go</button></body></html>",
+    { url: "https://example.gov/" });
+  if (!sp) continue;
+  const bgs = loadBackground({ page: sp });
+  let turns = 0;
+  bgs.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") { turns++; return { ok: true, step: c.step }; }
+    return undefined;
+  };
+  runAsync(async () => {
+    await bgs.runModelAgent("GENERIC", "click go");
+    ensure(`${c.name} costs two turns, not the whole run`, turns <= c.turns, turns);
+  });
+}
+
+// readPage is the most expensive thing in a turn, and nothing can have
+// changed between two reads with no action between them.
+const reader = loadPage("<!doctype html><html><body><button>Go</button><p>412 cfs</p></body></html>",
+  { url: "https://example.gov/" });
+if (reader) {
+  const bgr = loadBackground({ page: reader });
+  let turns = 0;
+  bgr.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") { turns++; return { ok: true, step: { do: "read" } }; }
+    return undefined;
+  };
+  runAsync(async () => {
+    const out = await bgr.runModelAgent("GENERIC", "read everything");
+    ensure("a model that only ever reads is stopped", turns <= 3, turns);
+    check("and the page is read once, not once per turn",
+      out.history.filter((h) => h.did === "read the page").length, 1);
+  });
+}
+
+// A turn cannot outlast the request it belongs to. The deadline was checked
+// between turns while one generation was allowed two minutes, so a
+// forty-five second budget could run three times over.
+const slowModel = loadPage("<!doctype html><html><body><button>Go</button></body></html>",
+  { url: "https://example.gov/" });
+if (slowModel) {
+  const bgt = loadBackground({ page: slowModel });
+  bgt.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") return new Promise(() => {});   // never answers
+    return undefined;
+  };
+  runAsync(async () => {
+    const began = Date.now();
+    const out = await bgt.runModelAgent("GENERIC", "click go", { budgetMs: 6000 });
+    ensure("a generation that never returns cannot outlast the budget",
+      Date.now() - began < 20000, Date.now() - began);
+    ensure("and it is reported as running out of time", out.outOfTime === true, out);
+  });
+}
+
+// Hardware with no WebGPU cannot acquire it without a reload, and every
+// instruction was paying up to a second and a half to ask again.
+const noGpu = loadPage("<!doctype html><html><body><button>Go</button></body></html>",
+  { url: "https://example.gov/" });
+if (noGpu) {
+  const bgg = loadBackground({ page: noGpu });
+  let probes = 0;
+  bgg.__model = (m) => {
+    if (m.type === "llmStatus") { probes++; return { ready: false, hasGpu: false }; }
+    return undefined;
+  };
+  runAsync(async () => {
+    for (let i = 0; i < 4; i++) await bgg.__ask({ type: "smartAsk", instruction: "click go" });
+    check("a machine with no WebGPU is asked once, not once per instruction", probes, 1);
+  });
+}
+
+// The prompt told the model to stop as soon as the page changed - "if the
+// page changed, the job is done and the next action is finish" - which is
+// the opposite of chaining, and no loop fix reaches a model that has been
+// told to stop. A long answer was also cut in half: max_tokens is a ceiling,
+// not a cost, so fifty-six tokens saved nothing on an action decision and
+// truncated every real summary into JSON that parses to nothing.
+{
+  const buildStepPrompt = loadOffscreenHelper("buildStepPrompt");
+  const firstJsonObject = loadOffscreenHelper("firstJsonObject");
+  if (buildStepPrompt) {
+    const text = buildStepPrompt({
+      goal: "click learn more and summarize the change",
+      controls: [{ label: "Learn More", kind: "link" }],
+    });
+    ensure("the model is not told to stop at the first change",
+      !/the job is done and the next action is finish/i.test(text), text.slice(-260));
+    ensure("it is told to carry out the next part instead",
+      /another\s+part|next part/i.test(text), text.slice(-260));
+    ensure("and that a question is answered by reading, not pressing",
+      /question/i.test(text) && /not press/i.test(text), text.slice(-260));
+  }
+  if (firstJsonObject) {
+    const answer = "Drought coverage rose from 40% to 55% of the state over the two"
+      + " weeks, with the largest increase in the southwest.";
+    const whole = JSON.stringify({ do: "finish", answer });
+    ensure("a real summary still parses whole", (firstJsonObject(whole) || {}).answer === answer, whole.length);
+    ensure("and it needs more room than an action decision does",
+      whole.length > 56 * 2, whole.length);
+  }
+}
+
+// What a turn costs is the whole complaint: a 3B model over WebGPU is
+// seconds per turn, so a spare turn is visible to the person waiting. These
+// are budgets, not behaviour - if one rises, something is paying for a turn
+// it does not need.
+const budgets = [
+  { instruction: "click 30 days", turns: 2, why: "one clause, finished when it is done" },
+  { instruction: "click related links and click revisions", turns: 4, why: "two clauses, two each" },
+];
+for (const b of budgets) {
+  const bp = loadPage(`<!doctype html><html><body>
+    <a id="a" href="#a">Related links</a><a id="b" href="#b">Revisions</a>
+    <label><input type="checkbox" name="d30"> 30 days</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (!bp) continue;
+  const bgb = loadBackground({ page: bp });
+  let turns = 0;
+  bgb.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      turns++;
+      const g = String(m.goal).toLowerCase();
+      const i = m.controls.findIndex((c) => g.split(/\s+/).filter((w) => w.length > 3)
+        .some((w) => String(c.label || "").toLowerCase().includes(w)));
+      if (i < 0) return { ok: true, step: { do: "finish", answer: "nothing here does that" } };
+      return { ok: true, step: m.controls[i].type === "checkbox"
+        ? { n: i, do: "check", on: true } : { n: i, do: "click" } };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    await bgb.__ask({ type: "smartAsk", instruction: b.instruction });
+    ensure(`"${b.instruction}" costs ${b.turns} turns - ${b.why}`, turns <= b.turns, turns);
+  });
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

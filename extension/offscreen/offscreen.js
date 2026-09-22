@@ -102,8 +102,15 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     "Pick the control whose label matches what was asked. Use read when you",
     "need to see values before answering. Use finish when the request is",
     "carried out, or when nothing on this page can carry it out.",
-    "Never repeat a step that already worked - if the page changed, the job is",
-    "done and the next action is finish.",
+    // This used to read "if the page changed, the job is done and the next
+    // action is finish", which told the model to stop after one action -
+    // so a request with two halves only ever got its first half done. A
+    // request is not finished because something happened; it is finished
+    // when everything it asked for has happened.
+    "Do not repeat a step that already worked. If the request has another",
+    "part still to do, do that part next; finish only when all of it is done.",
+    "If the request is a question, read the page and finish with the answer.",
+    "Do not press controls to answer a question.",
     "Reply with one JSON object and nothing else.",
   ].filter(Boolean).join("\n");
 }
@@ -280,15 +287,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
         const prompt = buildStepPrompt(msg);
         chrome.runtime.sendMessage({ type: "llmGenerating" });
-        const INFERENCE_TIMEOUT_MS = 120000;
+        // Shorter than the two minutes the planning paths allow, because a
+        // step is one small JSON object and the caller only waits the length
+        // of its own request anyway. A generation left running past that
+        // point holds the engine, so the next step queues behind a decision
+        // nobody is waiting for any more.
+        const INFERENCE_TIMEOUT_MS = 45000;
         const reply = await Promise.race([
           engine.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             temperature: 0,
             // A decision is `{"n":14,"do":"check","on":true}` - about twenty
-            // tokens. A hundred and sixty was room to ramble, and decode is
-            // the half of a turn that scales with what you allow.
-            max_tokens: 56,
+            // tokens, and that is what it costs: this is a ceiling, not a
+            // budget, so an action turn decodes twenty tokens whatever the
+            // number here says. Fifty-six only ever bit on a finish that
+            // carried a real answer, cutting it mid-string - which parses to
+            // nothing, reads as an off-format reply, and made "summarize the
+            // difference" fail in a way that looked like the model refusing.
+            max_tokens: 128,
           }),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),

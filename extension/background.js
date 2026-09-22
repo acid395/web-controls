@@ -4525,6 +4525,20 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
   ]);
   // Only a definite answer is worth remembering. "Not loaded yet" changes.
   if (value && value.ready) modelStatusCache = { at: Date.now(), value };
+  // No WebGPU is not a "not yet" - it cannot become true without a reload,
+  // and every instruction was paying up to a second and a half to ask again
+  // on hardware that was never going to answer. Held for the session.
+  else if (value && value.hasGpu === false) {
+    modelStatusCache = { at: Date.now() + 86400000, value };
+  }
+  // A model still loading will finish, so this is held only long enough that
+  // retyping an instruction does not stall on the same probe twice.
+  // Stored as an object rather than null, because the cache check tests the
+  // stored value for truthiness - a null would never be treated as cached,
+  // which is the case that stalls hardest: no offscreen document at all.
+  else if (!value || !value.ready) {
+    modelStatusCache = { at: Date.now() - 2500, value: value || { ready: false, absent: true } };
+  }
   return value;
 }
 
@@ -4566,16 +4580,51 @@ function controlsForModel(inv, { max = 45 } = {}) {
   return kept;
 }
 
-async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000 } = {}) {
+async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000, deadlineAt = null, chain = null } = {}) {
   const history = [];
   let observation = null;
   let note = null;
-  let repeats = 0;
+  // Corrections issued. Every one of them costs a turn of a 3B model with no
+  // page progress to show for it, so there is a hard ceiling on how many
+  // times the loop will explain itself before reporting what it has.
+  // It used to use "note" itself as the flag - "have I said this already?" -
+  // but note is cleared on every valid action a few lines below, so the
+  // check for a control number out of range could never fire and a model
+  // picking control 99 every turn burned the entire run.
+  // One correction per malfunction, not two. The note is specific - "there
+  // is no control 99, choose between 0 and 44" - so a model that can act on
+  // it acts on it the first time, and a second explanation is a second
+  // multi-second turn buying the same chance again.
+  let strikes = 0;
+  const correct = (message) => { note = message; return ++strikes <= 1; };
+  // Separate from the strikes above: repeating something that worked is not
+  // the model misbehaving, it is the model having finished a step, so it
+  // gets exactly one nudge towards the next one before the run ends.
+  //
+  // Only where there is plausibly a next one. The nudge costs a turn, and it
+  // buys nothing for "click 30 days", which is finished the moment 30 days
+  // is clicked - a two-part instruction was paying it twice over, six turns
+  // of a 3B model to do two clicks. A clause the splitter has already cut
+  // out is one clause by construction, so the caller says so outright.
+  const mayHaveMore = chain === null ? /,|\band\b|\bthen\b|\balso\b/i.test(goal) : chain;
+  let nudged = !mayHaveMore;
+  // Stopping early with something done is not a failure. Reporting ok:false
+  // sends the caller to the keyword scorer, which starts the instruction
+  // again from the top - so anything already acted on gets acted on twice.
+  const giveUp = (why) => {
+    const moved = history.some((h) => h.changed);
+    return { ok: moved, error: moved ? null : why, history, steps: history.length, gaveUp: why };
+  };
   // A wall-clock limit as well as a turn limit. Six turns of a 3B model over
   // WebGPU, each with a page read, is comfortably a minute - and "still
   // running" with no end and no sign of progress is worse than a partial
   // answer. Whatever has been done by the deadline is reported as done.
-  const deadline = Date.now() + budgetMs;
+  const deadline = deadlineAt || (Date.now() + budgetMs);
+
+  // Fixed for the run: the goal does not change between turns, and this was
+  // being recomputed on every one of them.
+  const goalWords = meaningfulWords(goal)
+    .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
 
   let lastInv = null;
   for (let step = 0; step < maxSteps; step++) {
@@ -4608,22 +4657,40 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     lastInv = inv;
     const controls = controlsForModel(inv.result);
 
-    const asked = await askModelForStep({
-      goal,
-      controls: controls.map((c) => ({
-        label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
-      })),
-      history, observation, note,
-    });
-    if (!asked.ok) return { ok: false, error: asked.error, history, modelUnavailable: true };
+    // Raced against the run's own clock. The deadline was only checked
+    // between turns, while a single generation was allowed two minutes - so
+    // a forty-five second budget could take three times that and there was
+    // nothing in the loop that would stop it. A turn cannot outlast the
+    // request it belongs to.
+    const asked = await Promise.race([
+      askModelForStep({
+        goal,
+        controls: controls.map((c) => ({
+          label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
+        })),
+        history, observation, note,
+      }),
+      new Promise((r) => setTimeout(
+        () => r({ ok: false, timedOut: true, error: "the model did not answer in time" }),
+        Math.max(5000, deadline - Date.now()))),
+    ]);
+    if (!asked.ok) {
+      // Out of time with something already done is a partial result, not a
+      // failure - and reporting failure would send this to the scorer, which
+      // would start the instruction again from the top.
+      if (asked.timedOut) return { ...giveUp("the model did not answer in time"), outOfTime: true };
+      return { ok: false, error: asked.error, history, modelUnavailable: true };
+    }
 
     const s = asked.step || {};
     const act = String(s.do || "").toLowerCase();
     if (!AGENT_ACTIONS.has(act)) {
       // A model that answers off-format gets told once, then the loop ends.
       // Looping on a malformed reply burns a multi-second turn per attempt.
-      if (note) return { ok: false, error: `the model asked for "${s.do}", which is not an action here`, history };
-      note = `"${s.do}" is not one of the actions. Use click, check, select, type, read or finish.`;
+      if (!correct(`"${s.do}" is not one of the actions.`
+        + " Use click, check, select, type, read or finish.")) {
+        return giveUp(`the model kept asking for "${String(s.do).slice(0, 30)}", which is not an action here`);
+      }
       continue;
     }
     note = null;
@@ -4632,6 +4699,18 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       return { ok: true, answer: String(s.answer || "").slice(0, 600), history, steps: history.length };
     }
     if (act === "read") {
+      // Two reads with no action between them cannot differ - nothing has
+      // touched the page - so the second is a turn of the model plus a full
+      // page pass, which is the most expensive thing here, for a reading it
+      // already has. A model that answers "read" every turn spent the whole
+      // run doing it.
+      if ((history[history.length - 1] || {}).did === "read the page") {
+        if (!correct("You already read the page and its values are above."
+          + " Act on a control, or finish with an answer.")) {
+          return giveUp("the model only ever wanted to read the page");
+        }
+        continue;
+      }
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       observation = read.ok ? summariseForModel(read.result) : "could not read the page";
       history.push({ did: "read the page", outcome: read.ok ? "got its values" : "failed" });
@@ -4640,8 +4719,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
 
     const target = controls[Number(s.n)];
     if (!target) {
-      if (note) return { ok: false, error: `the model chose control ${s.n}, which is not on the list`, history };
-      note = `There is no control ${s.n}. Choose a number between 0 and ${controls.length - 1}.`;
+      if (!correct(`There is no control ${s.n}.`
+        + ` Choose a number between 0 and ${controls.length - 1}.`)) {
+        return giveUp(`the model kept choosing control ${s.n}, which is not on the list`);
+      }
       continue;
     }
 
@@ -4663,9 +4744,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // lesson the click path learned earlier.
     const label = String(target.label || "").trim().toLowerCase();
     if (!actionFits(act, target)) {
-      if (++repeats > 1) return { ok: true, answer: null, history, steps: history.length };
-      note = `"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind} - it cannot be`
-        + ` ${act}ed. Click it, or choose another control.`;
+      if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
+        + ` - it cannot be ${act}ed. Click it, or choose another control.`)) {
+        return giveUp("the model kept asking controls to do things they cannot do");
+      }
       continue;
     }
 
@@ -4677,14 +4759,25 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       || history.find((h) => h.label === target.label && h.changed);
     if (already) {
       if (already.changed) {
-        return { ok: true, answer: null, history, steps: history.length, repeated: true };
+        // One nudge before ending. Ending here outright was right for "click
+        // 30 days" and wrong for everything that has a second half: not
+        // every compound instruction splits - "click Learn More, compare the
+        // last two weeks and summarize the difference" has no splitting verb
+        // in it, so the model has to chain inside one run - and the first
+        // successful action ended the run before the rest was reached.
+        if (nudged) return { ok: true, answer: null, history, steps: history.length, repeated: true };
+        nudged = true;
+        note = `"${String(target.label).slice(0, 40)}" is already done and it worked.`
+          + " Do the next thing the request asks for, or finish with an answer.";
+        continue;
       }
       // Counted, not remembered in the note - which is cleared a few lines
       // above on every valid action, so the guard never tripped and the loop
       // ran its full six turns clicking one button.
-      if (++repeats > 1) return { ok: true, answer: null, history, steps: history.length };
-      note = `You already tried to ${act} "${String(target.label).slice(0, 40)}" and nothing changed.`
-        + " Choose a different control, or finish.";
+      if (!correct(`You already tried to ${act} "${String(target.label).slice(0, 40)}"`
+        + " and nothing changed. Choose a different control, or finish.")) {
+        return giveUp("the model kept going back to controls that did nothing");
+      }
       continue;
     }
 
@@ -4703,8 +4796,6 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // called "30 days", and both were reported as plain successes. A wrong
     // action nobody is told about is the failure this project keeps meeting;
     // said out loud it is something a person can judge.
-    const goalWords = meaningfulWords(goal)
-      .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
     const shares = goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase()));
     history.push({
       key: repeatKey,
@@ -6218,19 +6309,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const parts = splitIntoSteps(wanted);
             let agent;
             if (parts.length > 1 && parts.length <= 6) {
+              // One clock for the whole instruction rather than one per
+              // part. Four parts at thirty seconds each is two minutes of a
+              // panel saying "still running", which reads exactly like a
+              // hang - and the instruction is one request to the person who
+              // typed it, however many parts it turns out to have.
+              const together = Date.now() + 60000;
               const all = [];
+              const answers = [];
+              const flags = {};
               let failed = null;
               for (const part of parts) {
-                const one = await runModelAgent(route.global, part, { maxSteps: 4, budgetMs: 30000 })
+                const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false })
                   .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
-                for (const h of one.history || []) all.push({ ...h, did: `${h.did}` });
-                if (!one.ok) { failed = one.error; break; }
-                if (one.answer) all.push({ did: `answered: ${one.answer}`, outcome: "", ok: true });
+                for (const h of one.history || []) all.push(h);
+                if (one.outOfTime) flags.outOfTime = true;
+                if (one.ranOut) flags.ranOut = true;
+                // Carried, not flattened into a history row. The answer was
+                // being pushed in as text and then thrown away - so "click
+                // revisions and what is the discharge" ran both halves and
+                // returned no answer at all, and a compound question whose
+                // parts only answer failed the caller's "did anything
+                // happen" test and fell through to be asked again.
+                if (one.answer) answers.push(one.answer);
+                if (!one.ok) { failed = one.error || "the model got no further"; break; }
               }
-              agent = { ok: !failed, error: failed, history: all, steps: all.length,
-                answer: null, parts: parts.length };
+              // A later part failing does not undo an earlier part that
+              // worked. Reporting the whole run as failed sends this to the
+              // keyword scorer, which starts the instruction again from the
+              // beginning: "click related links and click revisions" clicked
+              // Related links, failed on revisions, and then clicked Related
+              // links a second time. Anything done or answered makes this
+              // the result, partial and labelled as partial.
+              const moved = all.some((h) => h.changed) || answers.length > 0;
+              agent = {
+                ok: !failed || moved,
+                error: failed && !moved ? failed : null,
+                history: all, steps: all.length,
+                answer: answers.length ? answers.join(" \u00b7 ") : null,
+                parts: parts.length, stoppedAt: failed || null, ...flags,
+              };
             } else {
-              agent = await runModelAgent(route.global, wanted).catch((e) => ({
+              // A question is answered by reading, not by pressing things,
+              // so it does not need the turns an action sequence needs. A
+              // pure data question was spending a full run clicking controls
+              // before the lookup paths below ever got a look at it.
+              agent = await runModelAgent(route.global, wanted,
+                { maxSteps: isCommand(wanted) ? 6 : 3 }).catch((e) => ({
                 ok: false, error: String((e && e.message) || e) }));
             }
             if (agent && agent.ok && (agent.answer || agent.history.some((h) => h.changed))) {
@@ -6250,6 +6375,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     agent.history.some((h) => h.unrelated)
                       ? "some steps acted on controls your words did not name" : null,
                     agent.outOfTime ? "ran out of time" : agent.ranOut ? "stopped at the step limit" : null,
+                    // Said, not swallowed. A run that stopped half way
+                    // through reported the half it did as a plain success.
+                    agent.stoppedAt ? `did not finish: ${String(agent.stoppedAt).slice(0, 70)}`
+                      : agent.gaveUp ? `stopped because ${String(agent.gaveUp).slice(0, 70)}` : null,
                   ].filter(Boolean).join(" \u00b7 "),
                   stats: [{ label: "steps", value: String(agent.history.length) }],
                   rows: agent.history.map((h) => ({
