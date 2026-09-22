@@ -2007,8 +2007,11 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
+      // Not a verbatim control name, or the page presses it instantly and
+      // the model is never asked - which is correct, and useless for
+      // testing what a card says about the model.
       const r = await bgsd.__ask({ type: "smartAsk",
-        instruction: "click learn about continuous data" });
+        instruction: "tell me about the continuous readings" });
       const note = String((r.display || {}).note || "");
       ensure(`${what} is quoted back rather than summarised as nothing`,
         wantInNote.test(note), note);
@@ -2308,6 +2311,57 @@ for (const b of budgets) {
       check("a correction gets a turn to be acted on",
         !!(bp3.document.querySelector('[name="sd"]') || {}).checked, true);
       ensure("and it took the two turns that needed", turns >= 2, turns);
+    });
+  }
+}
+
+// Pressing a link is most of what anyone asks these sites to do, and it was
+// the one thing the fast path would not do - because a tool descriptor
+// carries only a camelCase name, so an ordinary link and the accordion named
+// after a layer looked alike. "click learn about continuous data" therefore
+// waited thirty-two seconds for a decision the page answered in a third of a
+// second. The inventory records which is which.
+{
+  const pressHtml = `<!doctype html><html><body>
+    <a href="#a">Learn about Continuous data</a>
+    <button id="acc" aria-expanded="false" aria-controls="p">Flood Inundation</button>
+    <div id="p" hidden><label><input type="checkbox" id="fl"> INUNDATION</label></div>
+    <label><input type="checkbox" name="gh"> Gage height</label>
+    </body></html>`;
+  const shapes = [
+    ["a link named word for word", "click learn about continuous data", 0, "exact-match"],
+    ["a checkbox named word for word", "click gage height", 0, "exact-match"],
+    // The accordion is named after what is inside it, so pressing the header
+    // and calling the job done is exactly the wrong answer. It belongs to
+    // the loop that goes in.
+    ["a doorway wearing the same name", "click flood inundation", null, null],
+    ["phrasing that names nothing here", "show me something about continuous readings", null, null],
+  ];
+  for (const [what, instr, wantCalls, wantPlanner] of shapes) {
+    const pp = loadPage(pressHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!pp) continue;
+    pp.document.getElementById("acc").addEventListener("click", function () {
+      const pnl = pp.document.getElementById("p");
+      pnl.hidden = !pnl.hidden;
+      this.setAttribute("aria-expanded", String(!pnl.hidden));
+    });
+    const bgpp = loadBackground({ page: pp });
+    let calls = 0;
+    bgpp.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") { calls++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgpp.__ask({ type: "smartAsk", instruction: instr });
+      if (wantCalls === 0) {
+        check(`${what}: no decision is waited for`, calls, 0);
+        check(`${what}: the page answers it`, r.plannedBy, wantPlanner);
+      } else {
+        ensure(`${what}: still goes past the fast path`, r.plannedBy !== "exact-match", r.plannedBy);
+      }
     });
   }
 }
@@ -3580,9 +3634,14 @@ else {
   const bg = loadBackground({ page: headerHeavy });
   runAsync(async () => {
     const title = async (q) => ((await bg.__ask({ type: "smartAsk", instruction: q })).display || {}).title || "";
+    // Titled with the control's own name now, not the tool's. An instruction
+    // that names one control on the page word for word is pressed without
+    // waiting for a model decision, and that path reports the page's word
+    // for the thing rather than a humanised tool name. Same control, same
+    // press - the question here is whether it is reached at all.
     check("and reached by name", await title("click national hydrologic discussion"),
-      "click national hydrologic discussion");
-    check("as is another past it", await title("click archive"), "click archive");
+      "National Hydrologic Discussion");
+    check("as is another past it", await title("click archive"), "Archive");
     // The model's list stays short: agentTools ranks before it trims, which
     // is the cap that was supposed to be doing this work all along.
     const k = await bg.agentTools("GENERIC", "click national hydrologic discussion");

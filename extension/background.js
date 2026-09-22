@@ -7011,10 +7011,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const setsState = pick
               && /^(toggle|choose|select|set|pick|enable|disable|type|fill)[A-Z]/
                 .test(String(pick.tool.name || ""));
-            if (setsState && namedCoverage(`${pick.tool.name} ${pick.tool.label || ""}`, subject)
-                === subject.length) {
-              instant = pick;
+            const fullyNamed = pick
+              && namedCoverage(`${pick.tool.name} ${pick.tool.label || ""}`, subject)
+                === subject.length;
+            // A press, where the page says the thing it names is not a
+            // doorway. Excluding every click was what left "click learn
+            // about continuous data" waiting thirty-two seconds for a
+            // decision the page answered in a third of a second - and
+            // pressing a link is most of what anyone asks these sites to do.
+            //
+            // The distinction could not be made from the tool descriptors,
+            // which carry only a camelCase name; the inventory records it.
+            // An accordion named after a layer holds the layer, so "click
+            // flood inundation" is still the slower loop's work: it goes
+            // inside, and a shortcut that presses the header would report
+            // the job done having opened a panel.
+            let pressable = false;
+            if (fullyNamed && !setsState && /^click/i.test(String(pick.tool.name || ""))) {
+              const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+                .catch(() => ({ ok: false }));
+              const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|open|show|view|go\s+to)\s+/i;
+              const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+              const whole = flat(wanted);
+              const bare = flat(String(wanted).replace(LEAD, ""));
+              const named = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => {
+                if (c.disabled || c.hidden || c.confidence === "low") return false;
+                const l = flat(c.label);
+                return !!l && (l === bare || l === whole);
+              });
+              // Exactly one, and not a way in to something else.
+              pressable = named.length === 1 && !named[0].opensPanel;
             }
+            if (fullyNamed && (setsState || pressable)) instant = pick;
           }
         }
         if (instant) {
@@ -7067,7 +7095,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     ? (r.itChanged ? `${r.control}: ${r.was} \u2192 ${r.now}`
                       : `${r.control} was already ${r.now} - nothing to change`)
                     : moved ? "the page changed"
-                    : "ran - could not check whether the page changed",
+                    // Not "could not check". The page signature was compared
+                    // either side of the press and did not move, which is
+                    // evidence rather than the absence of it - a dead link
+                    // is a real outcome and saying so is the honest report.
+                    : "nothing on the page changed",
                   proved ? null : "so this may not have been the right control",
                 ].filter(Boolean).join(" \u00b7 "),
                 stats: [],
