@@ -1278,6 +1278,100 @@ for (const b of budgets) {
   });
 }
 
+// The model was shown the first forty-five controls of a hundred-and-eight
+// control page, so a link past the cutoff could not be chosen however
+// clearly it was named: "click view tabular data" picked the disclosure that
+// holds it, and "click gage height" had nothing to pick, so it spent every
+// turn it had. Hiding the right answer and then judging the choice is not a
+// fair test of a planner.
+{
+  let links = "";
+  for (let i = 0; i < 60; i++) links += `<a href="#n${i}">Gauge report ${i}</a>`;
+  links += `<a id="t" href="#t">View tabular data</a>`;
+  for (let i = 0; i < 47; i++) links += `<a href="#m${i}">Station note ${i}</a>`;
+  const big = loadPage(`<!doctype html><html><body>${links}</body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (big) {
+    const bgn = loadBackground({ page: big });
+    let shown = null;
+    bgn.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        if (!shown) shown = m.controls;
+        return { ok: true, step: { do: "finish", answer: "x" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgn.__ask({ type: "smartAsk", instruction: "click view tabular data" });
+      ensure("a control late on a long page is still offered to the model",
+        (shown || []).some((c) => /tabular/i.test(c.label || "")),
+        { shown: (shown || []).length });
+    });
+  }
+}
+
+// Opening the way to something is not the same as reaching it. "click view
+// tabular data" clicked Related links - the disclosure holding that link -
+// the page did change, and the part was declared finished having never
+// clicked the link.
+{
+  const held = loadPage(`<!doctype html><html><body>
+    <button id="rl" aria-expanded="false" aria-controls="panel">Related links</button>
+    <div id="panel" hidden><a id="t" href="#t">View tabular data</a></div>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (held) {
+    held.document.getElementById("rl").addEventListener("click", function () {
+      const pnl = held.document.getElementById("panel");
+      pnl.hidden = !pnl.hidden;
+      this.setAttribute("aria-expanded", String(!pnl.hidden));
+    });
+    const bgh = loadBackground({ page: held });
+    bgh.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        // a model that opens the disclosure first, then looks again
+        const t = m.controls.findIndex((c) => /tabular/i.test(c.label || ""));
+        if ((m.history || []).length) {
+          return t >= 0 ? { ok: true, step: { n: t, do: "click" } }
+            : { ok: true, step: { do: "finish", answer: "not here" } };
+        }
+        return { ok: true, step: { n: m.controls.findIndex((c) => /related links/i.test(c.label || "")), do: "click" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const out = await bgh.runModelAgent("GENERIC", "click view tabular data", { chain: false });
+      ensure("a run does not stop on the way in to what it was asked for",
+        out.history.some((h) => /tabular/i.test(h.did || "")), out.history.map((h) => h.did));
+    });
+  }
+}
+
+// A verified action on the control the request names, with no other clause
+// to get to, is finished - and the turn that would ask the model to confirm
+// it is a turn of a 3B model somebody is waiting through.
+{
+  const done1 = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="gh"> Gage height</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (done1) {
+    const bgd = loadBackground({ page: done1 });
+    let turns = 0;
+    bgd.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { turns++; return { ok: true, step: { n: 0, do: "check", on: true } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgd.__ask({ type: "smartAsk", instruction: "click gage height" });
+      check("one clause, one turn", turns, 1);
+      check("and it is reported with the time it took",
+        !!((r.display || {}).stats || []).find((x) => x.label === "took"), true);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

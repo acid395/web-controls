@@ -66,12 +66,17 @@ try {
 // made the 8B path unusable. Controls are numbered because a number is one
 // token and a name is many, and because a small model gets numbers right.
 function buildStepPrompt({ goal, controls = [], history = [], observation, note }) {
+  // Every line here is prefill on every turn, so a line is as short as it
+  // can be and still be decidable: the number, the name, what it is, and its
+  // state. "link" is left off because most controls are links and the model
+  // does not need telling; anything that is not a link says so.
   const list = controls.map((c, i) => {
     const kind = c.type || c.kind || "";
+    const what = !kind || kind === "link" || kind === "a" ? "" : ` <${kind}>`;
     const opts = (c.options || []).length
-      ? ` [${c.options.map((o) => o.text || o.value).slice(0, 8).join("|")}]` : "";
+      ? ` [${c.options.map((o) => String(o.text || o.value).slice(0, 22)).slice(0, 5).join("|")}]` : "";
     const state = typeof c.checked === "boolean" ? (c.checked ? " (on)" : " (off)") : "";
-    return `${i}. ${String(c.label || "").slice(0, 46)} <${kind}>${state}${opts}`;
+    return `${i}. ${String(c.label || "").slice(0, 40)}${what}${state}${opts}`;
   }).join("\n");
 
   const done = history.length
@@ -99,19 +104,23 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     '  {"do": "read"}                      to look at the page before deciding',
     '  {"do": "finish", "answer": "<answer or summary>"}',
     "",
-    "Pick the control whose label matches what was asked. Use read when you",
-    "need to see values before answering. Use finish when the request is",
-    "carried out, or when nothing on this page can carry it out.",
-    // This used to read "if the page changed, the job is done and the next
-    // action is finish", which told the model to stop after one action -
-    // so a request with two halves only ever got its first half done. A
-    // request is not finished because something happened; it is finished
-    // when everything it asked for has happened.
-    "Do not repeat a step that already worked. If the request has another",
-    "part still to do, do that part next; finish only when all of it is done.",
-    "If the request is a question, read the page and finish with the answer.",
-    "Do not press controls to answer a question.",
-    "Reply with one JSON object and nothing else.",
+    // These lines were a third of the prompt, and the prompt is prefill on
+    // every turn. Same rules, half the tokens - which is what paid for
+    // showing the model the whole page instead of the first half of it.
+    //
+    // The rule about not stopping early matters most. It used to read "if
+    // the page changed, the job is done and the next action is finish",
+    // which told the model to stop after one action, so a request with two
+    // halves only ever got its first half done. A request is finished when
+    // everything it asked for has happened, not when something has.
+    "Rules:",
+    "- Pick the control whose name matches the request.",
+    "- An action: act on a control now. Do not read first.",
+    "- A question: read, then finish with the answer. Do not press anything.",
+    "- Not listed? Click whatever holds it open and look again next turn.",
+    "- Never redo a step that worked. Another part still to do? Do that part.",
+    "- finish only once all of the request is done.",
+    "- One JSON object, nothing else.",
   ].filter(Boolean).join("\n");
 }
 /* @testable-end buildStepPrompt */

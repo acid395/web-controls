@@ -598,8 +598,31 @@ if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addList
 // model, never warms it on startup, and never reaches for it from Ask.
 const localModelBox = document.getElementById("localModelEnabled");
 chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
-  localModelBox.checked = localModelEnabled === true;
+  // Matches what the service worker actually does with this setting, which
+  // treats anything but an explicit false as on. The box read "=== true", so
+  // an unset setting showed the model switched off while it was planning
+  // every instruction.
+  localModelBox.checked = localModelEnabled !== false;
 });
+
+// Which model plans. Every step of an instruction is one turn of it, so this
+// is most of what waiting for an instruction is, and the choice belongs to
+// whoever is waiting rather than to a default nobody can reach.
+const modelChoice = document.getElementById("modelChoice");
+if (modelChoice) {
+  chrome.storage.local.get("llmModelId", ({ llmModelId }) => {
+    if (llmModelId) modelChoice.value = llmModelId;
+  });
+  modelChoice.addEventListener("change", () => {
+    chrome.storage.local.set({ llmModelId: modelChoice.value }, () => {
+      // The offscreen document keeps the weights it loaded, so it has to be
+      // let go of before another model can take its place.
+      chrome.runtime.sendMessage({ type: "llmSwitchModel" }).catch(() => {});
+      logEcho(`model set to ${modelChoice.options[modelChoice.selectedIndex].text}`
+        + " - it loads on the next instruction");
+    });
+  });
+}
 localModelBox.addEventListener("change", () => {
   chrome.storage.local.set({ localModelEnabled: localModelBox.checked }, () => {
     describeRoute(); // the model chip appears or disappears with the switch
