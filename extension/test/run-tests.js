@@ -2366,6 +2366,112 @@ for (const b of budgets) {
   }
 }
 
+// A 1.5B asked to click the NWPS User Guide replied {"name":"<button>"}. It
+// had copied the right shape from the wrong place: control lines ended
+// "<button>" and the template wrote its placeholder as "<control>", so the
+// two notations were the same one. Our formatting, not the model's fault.
+{
+  const build = loadOffscreenHelper("buildStepPrompt");
+  if (build) {
+    const text = build({ goal: "click nwps user guide", controls: [
+      { label: "About", kind: "button" },
+      { label: "NWPS User Guide", kind: "button" },
+      { label: "Gage height", kind: "checkbox", type: "checkbox", checked: false },
+    ] });
+    const list = text.split("Controls on the page:")[1].split("Steps already")[0];
+    ensure("a control's kind is not written the way a placeholder is",
+      !/<[a-z]+>/.test(list), list.trim());
+    ensure("and the template holds nothing that looks like a control",
+      !/<control>|<option>|<text>|<answer>/.test(text),
+      text.split("One action")[1].split("Rules:")[0]);
+  }
+
+  // And whatever the prompt says, a kind is not a name. A page full of
+  // buttons would otherwise have let "<button>" resolve to whichever came
+  // first - a confident wrong press built out of our own formatting.
+  const kw = loadPage(`<!doctype html><html><body>
+    <button id="a">About</button><button id="b">NWPS User Guide</button>
+    </body></html>`, { url: "https://water.noaa.gov/" });
+  if (kw) {
+    const pressed = [];
+    for (const el of kw.document.querySelectorAll("button")) {
+      el.addEventListener("click", () => { pressed.push(el.textContent); });
+    }
+    const bgkw = loadBackground({ page: kw });
+    bgkw.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") return { ok: true, step: { name: "<button>", do: "click" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgkw.__ask({ type: "smartAsk", instruction: "model: click nwps user guide" });
+      check("a kind word as a name presses nothing", pressed.length, 0);
+    });
+  }
+}
+
+// "click about and click nwps user guide" found About already open, closed
+// it, and then could not find the guide that had been inside. Clicking a
+// disclosure that is already open is the opposite of what the rest of the
+// request needs.
+{
+  for (const startOpen of [true, false]) {
+    const ap = loadPage(`<!doctype html><html><body>
+      <button id="about" aria-expanded="${startOpen}" aria-controls="m">About</button>
+      <div id="m"${startOpen ? "" : " hidden"}>
+        <a id="g" href="#g">NWPS User Guide</a><a href="#f">FAQ</a>
+      </div></body></html>`, { url: "https://water.noaa.gov/" });
+    if (!ap) continue;
+    ap.document.getElementById("about").addEventListener("click", function () {
+      const m = ap.document.getElementById("m");
+      m.hidden = !m.hidden;
+      this.setAttribute("aria-expanded", String(!m.hidden));
+    });
+    let guideClicks = 0;
+    ap.document.getElementById("g").addEventListener("click", () => { guideClicks++; });
+    const bgap = loadBackground({ page: ap });
+    bgap.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") {
+        const g = String(m.goal).toLowerCase();
+        const want = /guide/.test(g) ? "NWPS User Guide" : "About";
+        const there = m.controls.some((c) => String(c.label || "").toLowerCase() === want.toLowerCase());
+        return there ? { ok: true, step: { name: want, do: "click" }, raw: "{}" }
+          : { ok: true, step: { do: "finish", answer: "" }, raw: "{}" };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgap.__ask({ type: "smartAsk", instruction: "click about and click nwps user guide" });
+      check(`starting ${startOpen ? "open" : "shut"}, the guide is reached`, guideClicks, 1);
+      check(`starting ${startOpen ? "open" : "shut"}, About is left open`,
+        ap.document.getElementById("about").getAttribute("aria-expanded"), "true");
+    });
+  }
+  // Asked plainly to close one, it still closes it.
+  const cp2 = loadPage(`<!doctype html><html><body>
+    <button id="about" aria-expanded="true" aria-controls="m">About</button>
+    <div id="m"><a href="#g">NWPS User Guide</a></div></body></html>`,
+    { url: "https://water.noaa.gov/" });
+  if (cp2) {
+    cp2.document.getElementById("about").addEventListener("click", function () {
+      this.setAttribute("aria-expanded",
+        this.getAttribute("aria-expanded") === "true" ? "false" : "true");
+    });
+    const bgc3 = loadBackground({ page: cp2 });
+    bgc3.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") return { ok: true, step: { name: "About", do: "click" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgc3.__ask({ type: "smartAsk", instruction: "model: close about" });
+      check("closing one is still closing it",
+        cp2.document.getElementById("about").getAttribute("aria-expanded"), "false");
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

@@ -109,7 +109,12 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
   });
   const list = controls.map((c, i) => {
     const kind = c.type || c.kind || "";
-    const what = !kind || kind === "link" || kind === "a" ? "" : ` <${kind}>`;
+    // Parentheses, not angle brackets. The template below writes a
+    // placeholder as <control>, and a control line ended "<button>" - so a
+    // 1.5B asked to click the NWPS User Guide replied {"name":"<button>"}.
+    // It had copied the right shape from the wrong place, because the two
+    // notations were the same one.
+    const what = !kind || kind === "link" || kind === "a" ? "" : ` (${kind})`;
     // Measured on real hardware: one decision was 32.6s of a 33.2s request
     // with page work at zero, and at that prefill rate a token is about
     // forty milliseconds of somebody waiting. Every character cut here comes
@@ -145,11 +150,12 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     // did not exist - because counting a hundred numbered lines is not
     // something a model this size does reliably. It has no trouble saying
     // which one it means.
-    "One action. Copy the control's name exactly as listed:",
-    '  {"name":"<control>","do":"click"}  {"name":"<control>","do":"check","on":true}',
-    '  {"name":"<control>","do":"select","value":"<option>"}',
-    '  {"name":"<control>","do":"type","value":"<text>"}',
-    '  {"do":"read"}  {"do":"finish","answer":"<answer>"}',
+    // Nothing in a template that could be mistaken for something to copy.
+    "One action. Put a name from the list above where NAME is:",
+    '  {"name":"NAME","do":"click"}  {"name":"NAME","do":"check","on":true}',
+    '  {"name":"NAME","do":"select","value":"OPTION"}',
+    '  {"name":"NAME","do":"type","value":"TEXT"}',
+    '  {"do":"read"}  {"do":"finish","answer":"ANSWER"}',
     "",
     // These lines were a third of the prompt, and the prompt is prefill on
     // every turn. Same rules, half the tokens - which is what paid for

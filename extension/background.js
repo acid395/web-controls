@@ -4893,7 +4893,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // rather than the page's. That is a reasonable thing for a model to do
     // and a poor reason to fail.
     const NAMED_LEAD = /^(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|display)\s+/;
-    const rawName = flatLabel(s.name || s.label || s.control || s.target);
+    // A kind is not a name. When the two notations collided a model replied
+    // {"name":"<button>"}, and a page full of buttons would have let that
+    // resolve to whichever came first - a confident wrong press built out of
+    // our own formatting. Refused by name, so it cannot happen again however
+    // the prompt is written.
+    const KIND_WORD = /^(button|link|a|checkbox|radio|select|option|input|textarea|control|name|text)$/;
+    const namedRaw = String(s.name || s.label || s.control || s.target || "")
+      .replace(/^[<\[(]+|[>\])]+$/g, "");
+    const rawName = KIND_WORD.test(flatLabel(namedRaw)) ? "" : flatLabel(namedRaw);
     const wantedName = rawName.replace(NAMED_LEAD, "").trim() || rawName;
     let target = null;
     let several = null;
@@ -4990,6 +4998,23 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         + " and nothing changed. Choose a different control, or finish.")) {
         return giveUp("the model kept going back to controls that did nothing");
       }
+      continue;
+    }
+
+    // A disclosure that is already open does not need clicking, and clicking
+    // it shuts it - taking with it the thing the rest of the request was
+    // going to reach. "click about and click nwps user guide" found About
+    // already open, closed it, and then could not find the guide that had
+    // been inside. Asked plainly to close something, it still closes it.
+    if (act === "click" && target.opensPanel && target.expanded === true
+        && !/\b(close|collapse|hide|shut|dismiss)\b/i.test(goal)) {
+      history.push({
+        key: repeatKey, did: `"${String(target.label).slice(0, 40)}" was already open`,
+        outcome: "left open", ok: true, changed: false, satisfied: true, label: target.label,
+      });
+      note = `"${String(target.label).slice(0, 40)}" is already open, so it was left alone.`
+        + " What it holds is on the list now - do the next part of the request.";
+      observation = null;
       continue;
     }
 
