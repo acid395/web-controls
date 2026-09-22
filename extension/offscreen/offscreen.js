@@ -34,7 +34,31 @@ import { CreateMLCEngine } from "./vendor/web-llm.js";
 // prompts and works with this model, while llmPlan uses the native tools API
 // and needs MODEL_ID set back to Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC to work
 // at all. Ask uses the JSON path; llmPlan stays as a debug comparison.
-const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+// Switchable, because size is the whole of load time: this one is about 2GB,
+// Qwen2.5-1.5B about 1GB, Llama-3.2-1B about 700MB. The task is now "reply
+// with a number and one word", which is far less than a 3B model is for, so
+// a smaller one may well hold the format just as well and start in a third
+// of the time - and having both selectable is what makes that measurable
+// rather than a guess.
+//
+// The default stays at 3B for anyone who has already paid for the download;
+// switching costs a fresh one.
+const DEFAULT_MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+let MODEL_ID = DEFAULT_MODEL_ID;
+const KNOWN_MODELS = [
+  "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+  "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+  "Llama-3.2-1B-Instruct-q4f16_1-MLC",
+];
+try {
+  chrome.storage.local.get("llmModelId", ({ llmModelId }) => {
+    if (llmModelId && KNOWN_MODELS.includes(llmModelId) && llmModelId !== MODEL_ID) {
+      // Only before anything has loaded. Swapping under a live engine would
+      // leave the two disagreeing about which weights are in memory.
+      if (!enginePromise) MODEL_ID = llmModelId;
+    }
+  });
+} catch (e) { /* no storage in this context; the default stands */ }
 
 /* @testable-start buildStepPrompt */
 // The page, what has happened, and one question: what next. Kept small on
@@ -261,7 +285,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           engine.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             temperature: 0,
-            max_tokens: 160,
+            // A decision is `{"n":14,"do":"check","on":true}` - about twenty
+            // tokens. A hundred and sixty was room to ramble, and decode is
+            // the half of a turn that scales with what you allow.
+            max_tokens: 56,
           }),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),

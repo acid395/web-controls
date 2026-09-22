@@ -4523,8 +4523,32 @@ async function askModelForStep(payload) {
 // What the page can be told to do, in the order the model will see it. Hidden
 // controls are included with what opens them, because a layer behind a panel
 // is still a layer; disabled ones are not, because offering them is a lie.
-function controlsForModel(inv, { max = 80 } = {}) {
-  return ((inv && inv.controls) || []).filter((c) => String(c.label || "").trim() && !c.disabled).slice(0, max);
+// Fewer, without choosing for it. Fifty-two controls is about 657 tokens of
+// prefill on every turn, and prefill is most of what a turn costs - but
+// dropping the ones that look irrelevant to the instruction would put the
+// keyword scorer back in charge of the decision, which is the thing this
+// branch exists to stop.
+//
+// So the pruning is structural and instruction-blind: a control repeated
+// under the same name is one control, a cursor:pointer guess is not a known
+// control, and something hidden with no way to open it cannot be used. What
+// is left is every distinct thing the page can actually be told to do.
+function controlsForModel(inv, { max = 45 } = {}) {
+  const all = (inv && inv.controls) || [];
+  const seen = new Set();
+  const kept = [];
+  for (const c of all) {
+    const label = String(c.label || "").trim();
+    if (!label || c.disabled) continue;
+    if (c.confidence === "low") continue;            // a pointer cursor, not a control
+    if (c.hidden && !c.revealedBy) continue;         // hidden with no way in
+    const key = `${c.kind}:${c.type || ""}:${label.toLowerCase()}`;
+    if (seen.has(key)) continue;                     // the same thing twice over
+    seen.add(key);
+    kept.push(c);
+    if (kept.length >= max) break;
+  }
+  return kept;
 }
 
 async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
@@ -4533,9 +4557,20 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
   let note = null;
   let repeats = 0;
 
+  let lastInv = null;
   for (let step = 0; step < maxSteps; step++) {
-    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
+    // Reading the page again is worth it when the page moved, and pure cost
+    // when it did not. On drought.gov an inventory is about half a second,
+    // so three turns spent a second and a half re-reading a page nothing had
+    // touched - time that is not the model thinking.
+    const priorDidNothing = history.length
+      && history[history.length - 1].did !== "read the page"
+      && history[history.length - 1].changed === false;
+    const inv = (lastInv && priorDidNothing)
+      ? lastInv
+      : await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
     if (!inv.ok) return { ok: false, error: `could not read this page: ${inv.error || "no reason given"}`, history };
+    lastInv = inv;
     const controls = controlsForModel(inv.result);
 
     const asked = await askModelForStep({

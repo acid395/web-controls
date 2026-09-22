@@ -823,6 +823,29 @@ else {
   });
 }
 
+// What a turn costs is mostly prefill, and prefill is the control list. It
+// cannot be trimmed by relevance - that would hand the decision back to the
+// keyword scorer - so the trimming is structural and instruction-blind: the
+// same thing listed twice is one thing, a cursor:pointer guess is not a
+// known control, and something hidden with no way to open it cannot be used.
+const noisy = { url: "https://waterdata.usgs.gov/", controls: [
+  { kind: "a", label: "Home", selector: "#h1", confidence: "high" },
+  { kind: "a", label: "Home", selector: "#h2", confidence: "high" },        // the same, twice
+  { kind: "div", label: "Maybe clickable", selector: "#d", confidence: "low" },
+  { kind: "input", type: "checkbox", label: "Buried", selector: "#b", hidden: true, confidence: "high" },
+  { kind: "input", type: "checkbox", label: "Openable", selector: "#o", hidden: true,
+    revealedBy: "#t", confidence: "high" },
+  { kind: "button", label: "30 days", selector: "#d30", confidence: "high" },
+  { kind: "button", label: "Off", selector: "#x", disabled: true, confidence: "high" },
+] };
+const forModel = sb.controlsForModel(noisy).map((c) => c.label);
+check("a repeated control is listed once", forModel.filter((l) => l === "Home").length, 1);
+ensure("a cursor guess is not offered", !forModel.includes("Maybe clickable"), forModel);
+ensure("nor one hidden with no way in", !forModel.includes("Buried"), forModel);
+ensure("but one that can be opened is", forModel.includes("Openable"), forModel);
+ensure("and a disabled control is not", !forModel.includes("Off"), forModel);
+ensure("while the thing asked for survives", forModel.includes("30 days"), forModel);
+
 // A 3B model repeats. Asked to click 30 days it clicked 30 days, saw "the
 // page changed", and clicked it four more times and checked it for good
 // measure - six turns to do one thing once, live on a USGS page. The history
