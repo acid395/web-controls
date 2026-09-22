@@ -1372,6 +1372,43 @@ for (const b of budgets) {
   }
 }
 
+// A control already holding the state the request asked for is the request
+// carried out, not a step that failed. "click gage height" where gage height
+// was already on changed nothing, which read as the model getting nowhere -
+// so the run was discarded and the whole instruction went through the scorer
+// a second time, reaching the same answer thirty seconds later. pageCheck
+// reports a bare true and carries no before-and-after, so this is read from
+// the inventory the turn was built from.
+{
+  const already = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="gh" checked> Gage height</label>
+    <label><input type="checkbox" name="dis"> Discharge</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (already) {
+    const bga = loadBackground({ page: already });
+    let turns = 0;
+    bga.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        turns++;
+        return { ok: true, step: { n: m.controls.findIndex((c) => /gage height/i.test(c.label || "")),
+          do: "check", on: true } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bga.__ask({ type: "smartAsk", instruction: "click gage height" });
+      check("a request the page already satisfies is the model's answer", r.plannedBy, "model");
+      check("and is not run a second time to reach it", turns, 1);
+      ensure("the card says the page was already that way",
+        /already set that way/.test(String((r.display || {}).subtitle || "")), (r.display || {}).subtitle);
+      ensure("and the step is not shown as having done nothing",
+        ((r.display || {}).rows || []).some((x) => x.value === "already so" && x.tone === "ok"),
+        (r.display || {}).rows);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

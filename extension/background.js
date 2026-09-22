@@ -4639,7 +4639,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
   // having never clicked the link. Opening the way to something is not the
   // same as reaching it, and the difference is already known here, because
   // the card has to report it.
-  const reachedIt = () => history.some((h) => h.changed && !h.unrelated);
+  const reachedIt = () => history.some((h) => (h.changed || h.satisfied) && !h.unrelated);
   // Stopping early with something done is not a failure. Reporting ok:false
   // sends the caller to the keyword scorer, which starts the instruction
   // again from the top - so anything already acted on gets acted on twice.
@@ -4799,9 +4799,9 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // the same link - a different action, so the guard let it through.
     const repeatKey = `${act}|${label}`;
     const already = history.find((h) => h.key === repeatKey)
-      || history.find((h) => h.label === target.label && h.changed);
+      || history.find((h) => h.label === target.label && (h.changed || h.satisfied));
     if (already) {
-      if (already.changed) {
+      if (already.changed || already.satisfied) {
         // One nudge before ending. Ending here outright was right for "click
         // 30 days" and wrong for everything that has a second half: not
         // every compound instruction splits - "click Learn More, compare the
@@ -4844,14 +4844,35 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // action nobody is told about is the failure this project keeps meeting;
     // said out loud it is something a person can judge.
     const shares = goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase()));
+    // A control that already holds the state the request asked for is the
+    // request carried out, not a step that failed. "click gage height" on a
+    // page where gage height was already on changed nothing, which read as
+    // the model having got nowhere - so its work was thrown away and the
+    // whole instruction was run a second time through the scorer, which
+    // reached the same conclusion thirty seconds later. Nothing to change is
+    // the answer, and the first run already had it.
+    const wantedState = act === "check" ? (s.on === false ? false : true)
+      : act === "select" ? String(s.value || "") : null;
+    // Taken from what the page said before the action, because pageCheck
+    // reports a bare true and carries no before-and-after of its own - only
+    // the manifest tools do that. The inventory this turn was built from
+    // already holds the control's state, so no extra page pass is needed to
+    // know it: a box that was on when the request asked for it on means the
+    // page was already as asked, whatever the click then did.
+    const stateBefore = act === "check" ? target.checked
+      : act === "select" && typeof r.now !== "undefined" ? String(r.now) : undefined;
+    const satisfied = !moved && ran.ok !== false && wantedState !== null
+      && typeof stateBefore !== "undefined"
+      && String(stateBefore) === String(wantedState);
     history.push({
       key: repeatKey,
       unrelated: goalWords.length && !shares ? String(target.label).slice(0, 40) : undefined,
       did: `${act} "${String(target.label).slice(0, 40)}"`,
       outcome: ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
+        : satisfied ? `already ${wantedState}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}`
         : moved ? "the page changed" : "nothing visibly changed",
-      ok: ran.ok !== false, changed: moved, label: target.label,
+      ok: ran.ok !== false, changed: moved, satisfied, label: target.label,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
     // One clause, and the thing it named has been done and the page's own
@@ -4860,7 +4881,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // model to repeat itself and the guard above to stop it - two turns of a
     // 3B model to do one thing, and on this hardware a turn is fifteen
     // seconds of somebody waiting.
-    if (!mayHaveMore && moved && !history[history.length - 1].unrelated) {
+    if (!mayHaveMore && (moved || satisfied) && !history[history.length - 1].unrelated) {
       return { ok: true, answer: null, history, steps: history.length, tookMs: Date.now() - began };
     }
     // The page it acts on next is the page it just changed, so the reading is
@@ -6395,6 +6416,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // Which part it was still on. "ran out of time" on its own
                 // does not say what was left undone.
                 if (one.outOfTime) { flags.outOfTime = true; flags.ranOutOn = part; }
+                if ((one.history || []).some((h) => h.satisfied)) flags.satisfied = true;
                 flags.tookMs = (flags.tookMs || 0) + (one.tookMs || 0);
                 if (one.ranOut) flags.ranOut = true;
                 // Carried, not flattened into a history row. The answer was
@@ -6413,7 +6435,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               // Related links, failed on revisions, and then clicked Related
               // links a second time. Anything done or answered makes this
               // the result, partial and labelled as partial.
-              const moved = all.some((h) => h.changed) || answers.length > 0;
+              const moved = all.some((h) => h.changed || h.satisfied) || answers.length > 0;
               agent = {
                 ok: !failed || moved,
                 error: failed && !moved ? failed : null,
@@ -6430,7 +6452,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 { maxSteps: isCommand(wanted) ? 6 : 3 }).catch((e) => ({
                 ok: false, error: String((e && e.message) || e) }));
             }
-            if (agent && agent.ok && (agent.answer || agent.history.some((h) => h.changed))) {
+            // A step that found the page already as asked counts. Requiring
+            // a change meant "click gage height" on an already-on control
+            // was treated as the model getting nowhere, and the instruction
+            // ran a second time below to reach the same answer.
+            if (agent && agent.ok
+              && (agent.answer || agent.history.some((h) => h.changed || h.satisfied))) {
               const acted = agent.history.filter((h) => h.did !== "read the page");
               respond({
                 ok: true, plannedBy: "model", steps: agent.history, answer: agent.answer || undefined,
@@ -6446,6 +6473,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       + ` (${acted.length} on the page), decided by the local model`,
                     agent.history.some((h) => h.unrelated)
                       ? "some steps acted on controls your words did not name" : null,
+                    // Said in words, not left as a blank column. "Nothing to
+                    // change" is a real answer and the reason this run is
+                    // not reported as having failed.
+                    acted.length && acted.every((h) => h.satisfied)
+                      ? "the page was already set that way" : null,
                     agent.outOfTime
                       ? (agent.ranOutOn ? `ran out of time on "${String(agent.ranOutOn).slice(0, 40)}"`
                         : "ran out of time")
@@ -6471,11 +6503,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       : []),
                   ],
                   rows: agent.history.map((h) => ({
-                    name: String(h.did).slice(0, 50), value: h.ok === false ? "failed" : (h.changed ? "changed" : ""),
+                    name: String(h.did).slice(0, 50),
+                    value: h.ok === false ? "failed"
+                      : h.changed ? "changed" : h.satisfied ? "already so" : "",
                     meta: h.unrelated
                       ? `nothing in what you asked names "${h.unrelated}"`
                       : String(h.outcome || "").slice(0, 60),
-                    tone: h.ok === false ? "alert" : h.unrelated ? "warn" : h.changed ? "ok" : "warn",
+                    tone: h.ok === false ? "alert" : h.unrelated ? "warn"
+                      : (h.changed || h.satisfied) ? "ok" : "warn",
                   })),
                   source: "local model",
                 },
