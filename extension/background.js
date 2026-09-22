@@ -6392,11 +6392,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // down answered instead. The plan is the evidence of what the request
       // was understood to mean, and it was being lost with the failure.
       let plannedTool = null;
+      // Whether the model was asked at all, as distinct from whether it
+      // answered. Without it a card cannot say which of the two planners
+      // produced it, and the comparison the scorer is kept for needs that
+      // on every answer, not only the ones the model won.
+      let modelTried = false;
       const respond = (res) => {
         if (plannedTool && !res.toolCall && !res.plannedCall) res.toolCall = plannedTool;
         const display = cardFor(res);
         const why = [
           modelSkipped && res.plannedBy !== "model" && res.plannedBy !== "baseline" ? modelSkipped : null,
+          // The model was there and got nowhere, so this is the baseline
+          // answering. Worth saying outright: the two are meant to be
+          // compared, and an unlabelled answer counts for neither.
+          !modelSkipped && modelTried && res.plannedBy !== "model"
+            ? "the local model planned nothing here, so this is the keyword baseline" : null,
           res.ok === false && ruleTried ? ruleTried : null,
         ].filter(Boolean).join(" - ");
         if (display && why) display.note = display.note ? `${display.note} - ${why}` : why;
@@ -6447,6 +6457,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               : "the local model has not started yet";
           }
           if (status && status.ready) {
+            modelTried = true;
             // One part at a time, each with its own turn budget, so a
             // two-part instruction is two short runs rather than one long
             // one that may never reach the second half.
@@ -7351,7 +7362,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        if (route.global === "USGS") {
+        // The keyword rules are the baseline, not the main path. They lead
+        // only where a comparison was asked for with "baseline:", or where
+        // the model could not plan at all - no WebGPU, still loading, not
+        // answering - because a tool that does nothing is worse than a tool
+        // that falls back to rules. Where the model was available and got
+        // nowhere, what it falls back to is the page's own controls: the
+        // rules are the thing whose generality is being measured, so they
+        // cannot also be the thing that answers. Both of the wrong answers
+        // reported on 2026-09-22 - selectState on a page that had no such
+        // function, and HUC-06 selected in answer to a request for HUC-08 -
+        // came from rules running ahead of the page's own controls.
+        const rulesLead = forceBaseline || !!modelSkipped;
+        if (route.global === "USGS" && rulesLead) {
           const fast = forceModel ? null : planTool(wanted);
           if (fast) {
             const result = await invokeOnActiveTab(fast.fn, fast.args);
@@ -7386,9 +7409,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const askWords = meaningfulWords(wanted);
           const pageOwn = confidentPick(
             await unifiedTools(route.global, wanted, { acting: true }), wanted);
-          if (pageOwn && pageOwn.tool.name !== manifestCall.name
-              && namedCoverage(`${pageOwn.tool.name} ${pageOwn.tool.label || ""}`, askWords)
-                 > namedCoverage(manifestCall.name, askWords)) {
+          // Where the rules are not leading, a confident page-derived pick
+          // wins outright rather than having to out-name the rule. Where
+          // they are - baseline, or no model available - the old comparison
+          // stands, so the baseline behaves as it always did and is still
+          // worth measuring against.
+          const pageWins = pageOwn && pageOwn.tool.name !== manifestCall.name
+            && (!rulesLead
+              || namedCoverage(`${pageOwn.tool.name} ${pageOwn.tool.label || ""}`, askWords)
+                 > namedCoverage(manifestCall.name, askWords));
+          if (pageWins) {
             manifestCall = { name: pageOwn.tool.name, args: pageOwn.args };
             cameFromPage = true;
           }

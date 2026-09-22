@@ -1529,6 +1529,59 @@ for (const b of budgets) {
   }
 }
 
+// The keyword rules are the baseline, not the main path. They lead only
+// under "baseline:" or where the model cannot plan at all; where the model
+// was available and got nowhere, what it falls back to is the page's own
+// controls. Both wrong answers reported on 2026-09-22 came from rules
+// running ahead of the page: selectState on a page with no such function,
+// and HUC-06 selected in answer to a request for HUC-08.
+{
+  const ruleHtml = `<!doctype html><html><body>
+    <fieldset><legend>Group by</legend>
+      <label><input type="radio" name="g" value="huc8"> HUC-08 subbasin</label>
+      <label><input type="radio" name="g" value="huc6" checked> HUC-06 basin</label>
+    </fieldset></body></html>`;
+  const shapes = [
+    ["a model that plans nothing", { ready: true, hasGpu: true }, "select huc-8 subbasin",
+      /keyword baseline/],
+    ["no model at all", { ready: false, hasGpu: false }, "select huc-8 subbasin", /WebGPU/],
+  ];
+  for (const [what, status, instr, wantNote] of shapes) {
+    const rpg = loadPage(ruleHtml, { url: "https://waterdata.usgs.gov/state/" });
+    if (!rpg) continue;
+    const bgr = loadBackground({ page: rpg });
+    bgr.__model = (m) => {
+      if (m.type === "llmStatus") return status;
+      if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgr.__ask({ type: "smartAsk", instruction: instr });
+      const on = [...rpg.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check(`with ${what}, the page's own control still answers`, on && on.value, "huc8");
+      ensure(`and the card says which planner answered (${what})`,
+        wantNote.test(String((r.display || {}).note || "")), (r.display || {}).note);
+    });
+  }
+  // And the baseline is still reachable on purpose, unlabelled, so the two
+  // can be measured against each other on the same pages.
+  const bp = loadPage(ruleHtml, { url: "https://waterdata.usgs.gov/state/" });
+  if (bp) {
+    const bgb2 = loadBackground({ page: bp });
+    let asked = false;
+    bgb2.__model = (m) => {
+      if (m.type === "llmStatus") { asked = true; return { ready: true, hasGpu: true }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgb2.__ask({ type: "smartAsk", instruction: "baseline: select huc-8 subbasin" });
+      check("baseline: never consults the model", asked, false);
+      const on = [...bp.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check("and the baseline still works", on && on.value, "huc8");
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
