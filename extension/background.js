@@ -1312,6 +1312,60 @@ const US_CITIES = {
   "white plains": "ny", springfield_ma: "ma", cambridge: "ma", lowell: "ma", "new bedford": "ma",
 };
 
+// Words that are not misspellings of anywhere. The typo tolerance below
+// exists for "tallahasee", and it read "august" as one edit from "Augusta" -
+// so "make the date august 12 2026" typed Augusta into a search box and
+// reported it with a tick beside it. A month is a real word with a meaning
+// of its own, and so is a weekday; neither is somebody's failed attempt at
+// a place name.
+const NOT_A_PLACE = new Set([
+  "january", "february", "march", "april", "may", "june", "july", "august",
+  "september", "october", "november", "december",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "today", "yesterday", "tomorrow",
+]);
+
+const MONTH_NUM = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+  may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8,
+  september: 9, sep: 9, sept: 9, october: 10, oct: 10, november: 11, nov: 11,
+  december: 12, dec: 12,
+};
+
+// The date a request is asking for, as the value a date field wants. Written
+// out, slashed, or already in the form an input uses.
+function isoDateFrom(text) {
+  const t = String(text || "").toLowerCase();
+  const iso = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  const named = t.match(/\b([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/);
+  if (named && MONTH_NUM[named[1]]) {
+    return `${named[3]}-${pad(MONTH_NUM[named[1]])}-${pad(named[2])}`;
+  }
+  const dayFirst = t.match(/\b(\d{1,2})\s+([a-z]{3,9})\.?,?\s+(\d{4})\b/);
+  if (dayFirst && MONTH_NUM[dayFirst[2]]) {
+    return `${dayFirst[3]}-${pad(MONTH_NUM[dayFirst[2]])}-${pad(dayFirst[1])}`;
+  }
+  const slashed = t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
+  if (slashed) {
+    const y = slashed[3].length === 2 ? `20${slashed[3]}` : slashed[3];
+    return `${y}-${pad(slashed[1])}-${pad(slashed[2])}`;
+  }
+  return null;
+}
+
+// A request about a date, which is not a request about a place however much
+// "august" resembles one. Month-and-number, or a written-out date.
+function looksLikeDate(text) {
+  const t = String(text || "").toLowerCase();
+  const month = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/.test(t);
+  return (month && /\d/.test(t))
+    || /\b\d{4}-\d{2}-\d{2}\b/.test(t)
+    || /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(t);
+}
+
 function findCityInText(text) {
   const t = (text || "").toLowerCase();
   // Longest first: "kansas city" must beat "kansas", "new york city" beat "new york".
@@ -1326,9 +1380,15 @@ function findCityInText(text) {
   // Same typo tolerance states and parameters already had - city names are
   // long and easy to misspell ("tallahasee"), and without this the city is
   // lost, which loses the state with it and sinks the whole question.
+  // Typo tolerance, but not against a word that means something else. A
+  // date is not a misspelt place, and the correction was confident enough
+  // to act on.
+  if (looksLikeDate(t)) return null;
   for (const name of names) {
     const hit = fuzzyMatchedText(t, name);
-    if (hit) return { city: name, code: US_CITIES[name], matched: hit, corrected: name };
+    if (hit && !NOT_A_PLACE.has(String(hit).toLowerCase())) {
+      return { city: name, code: US_CITIES[name], matched: hit, corrected: name };
+    }
   }
   return null;
 }
@@ -4317,6 +4377,11 @@ function viewForBox(box) {
 function redirectToPlace(instruction, routeGlobal, leftovers) {
   if (!leftovers.length) return null;
   const text = leftovers.join(" ");
+  // A date is not a destination. Searching for the nearest thing that looks
+  // like a place is the wrong answer to "make the date august 12 2026", and
+  // typing it into somebody's search box is a real action taken on a real
+  // page on the strength of a guess.
+  if (looksLikeDate(instruction) || looksLikeDate(text)) return null;
   const state = findStateInText(text);
   const city = findCityInText(text);
   if (!state && !city) return null;
@@ -6726,6 +6791,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
         // available or could not finish, and under "baseline:" on request.
+        // A date asked for, and a field on the page that takes one. This is
+        // as unambiguous as an instruction gets - there is nothing to
+        // interpret - and it was going nowhere: the model planned nothing
+        // for it, and the scorer searched for the nearest thing resembling a
+        // place, which for "august" is Augusta.
+        const wantDate = looksLikeDate(wanted) ? isoDateFrom(wanted) : null;
+        if (wantDate && !forceBaseline && !forceModel) {
+          const dinv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+            .catch(() => ({ ok: false }));
+          const fields = ((dinv.ok && dinv.result && dinv.result.controls) || [])
+            .filter((c) => !c.disabled && !c.hidden
+              && (String(c.type || "").toLowerCase() === "date" || c.dateLike));
+          // One field takes it. Two and it is ambiguous - a start and an end
+          // are not the same date, and choosing between them is a guess.
+          if (fields.length === 1) {
+            const f = fields[0];
+            const call = { name: "pageFill", args: { selector: f.selector, text: wantDate } };
+            const ran = await runVerified(route.global, call);
+            if (ran.ok !== false) {
+              respond({
+                ...ran, ok: true, plannedBy: "date-field", toolCall: call,
+                display: {
+                  title: String(f.label || "Date").slice(0, 60),
+                  subtitle: `${f.label || "date"} set to ${wantDate}`,
+                  stats: [], rows: [], source: "this page",
+                },
+              });
+              return;
+            }
+          } else if (fields.length > 1) {
+            respond({
+              ok: false, plannedBy: "date-field",
+              error: `this page has ${fields.length} fields that take a date - say which`,
+              display: {
+                title: "which date?",
+                subtitle: `${fields.length} fields on this page take a date`,
+                stats: [],
+                rows: fields.slice(0, 6).map((f) => ({
+                  name: String(f.label || "date").slice(0, 50), value: "", meta: "", tone: "warn",
+                })),
+                source: "this page",
+              },
+            });
+            return;
+          }
+          // No date field here, so saying so is the answer. Searching for
+          // something that resembles a place is not.
+        }
+
         // Instant where there is nothing to be intelligent about. One
         // decision of the 3B measured 32.6 seconds on real hardware, and the
         // page's own controls answered the same instruction correctly in

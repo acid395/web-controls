@@ -1909,6 +1909,72 @@ for (const b of budgets) {
   }
 }
 
+// "make the date august 12 2026" typed Augusta into a search box and
+// reported it with a tick beside it. The typo tolerance that exists for
+// "tallahasee" read "august" as one edit from "Augusta", the place-redirect
+// took that as a destination, and a real action was taken on a real page on
+// the strength of it. A month is a word with a meaning of its own, not
+// somebody's failed attempt at a place name.
+{
+  const dp2 = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://water.noaa.gov/" });
+  if (dp2) {
+    const bgdt = loadBackground({ page: dp2 });
+    check("august is not a city", bgdt.findCityInText("august 12 2026"), null);
+    ensure("augusta still is, when it is actually named",
+      (bgdt.findCityInText("flooding in augusta") || {}).city === "augusta",
+      bgdt.findCityInText("flooding in augusta"));
+    // The tolerance this was protecting has to survive: city names are long
+    // and easy to misspell, and losing the city loses the state with it.
+    ensure("and a real misspelling is still corrected",
+      (bgdt.findCityInText("rain in tallahasee") || {}).city === "tallahassee",
+      bgdt.findCityInText("rain in tallahasee"));
+    for (const [text, want] of [
+      ["august 12 2026", "2026-08-12"], ["aug 12, 2026", "2026-08-12"],
+      ["12 august 2026", "2026-08-12"], ["8/12/2026", "2026-08-12"],
+      ["2026-08-12", "2026-08-12"], ["next tuesday", null],
+    ]) check(`"${text}" reads as ${want}`, bgdt.isoDateFrom(text), want);
+  }
+
+  const shapes = [
+    ["one date field",
+      '<input type="search" id="s" placeholder="Search"><label for="d">Date</label><input type="date" id="d">',
+      "date-field"],
+    ["no date field", '<input type="search" id="s" placeholder="Search">', null],
+    ["two date fields",
+      '<label for="a">Start date</label><input type="date" id="a"><label for="b">End date</label><input type="date" id="b">',
+      "date-field"],
+  ];
+  for (const [what, body, wantPath] of shapes) {
+    const dpg = loadPage(`<!doctype html><html><body>${body}</body></html>`,
+      { url: "https://water.noaa.gov/" });
+    if (!dpg) continue;
+    const bgd3 = loadBackground({ page: dpg });
+    bgd3.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      const r = await bgd3.__ask({ type: "smartAsk", instruction: "make the date august 12 2026" });
+      const sb = dpg.document.getElementById("s");
+      // The thing that must never happen again, whatever else does.
+      if (sb) check(`${what}: nothing is typed into the search box`, sb.value, "");
+      if (wantPath) check(`${what}: handled as a date`, r.plannedBy, wantPath);
+      if (what === "one date field") {
+        check("the field is set to the date asked for",
+          dpg.document.getElementById("d").value, "2026-08-12");
+      }
+      if (what === "two date fields") {
+        // A start and an end are not the same date, so choosing between
+        // them is a guess, and it asks instead.
+        ensure("two fields that take a date is a question, not a coin toss",
+          r.ok === false && /say which/.test(String(r.error || "")), r.error);
+      }
+      if (what === "no date field") {
+        ensure("with no date field it says so rather than searching",
+          !/augusta/i.test(JSON.stringify(r.display || {})), r.display);
+      }
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
