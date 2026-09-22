@@ -1409,6 +1409,79 @@ for (const b of budgets) {
   }
 }
 
+// "select alaska" answered "waitFor: timed out after 8000ms" and stopped
+// there. A site rule had fired, failed, and reported its own failure as the
+// result - while the dropdown the instruction named was sitting on the page
+// for the paths below it to find. A guess that does not work falls through.
+{
+  const ruled = loadPage(`<!doctype html><html><body>
+    <label for="s">State</label>
+    <select id="s"><option>Alabama</option><option>Alaska</option></select>
+    </body></html>`, { url: "https://waterdata.usgs.gov/state/" });
+  if (ruled) {
+    const bgf = loadBackground({ page: ruled });
+    bgf.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      const r = await bgf.__ask({ type: "smartAsk", instruction: "select alaska" });
+      ensure("a site rule that fails is not the last word", r.ok !== false, r.error);
+      check("the page's own controls still answer", ruled.document.getElementById("s").value, "Alaska");
+    });
+  }
+}
+
+// A card saying "answered by fast-path" and nothing else looks like the
+// planner was never built, when what happened may be that the weights were
+// still loading - which is worth waiting for, and worth being told.
+{
+  const loadingPage = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="gh"> Gage height</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (loadingPage) {
+    const bgl = loadBackground({ page: loadingPage });
+    bgl.__model = (m) => (m.type === "llmStatus"
+      ? { ready: false, hasGpu: true, loading: true, progress: "fetching weights 41%" } : undefined);
+    runAsync(async () => {
+      const r = await bgl.__ask({ type: "smartAsk", instruction: "click gage height" });
+      ensure("a card not planned by the model says why",
+        /still loading/.test(String((r.display || {}).note || "")), (r.display || {}).note);
+    });
+    const noGpuPage = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="gh"> Gage height</label></body></html>`,
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (noGpuPage) {
+      const bgw = loadBackground({ page: noGpuPage });
+      bgw.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        const r = await bgw.__ask({ type: "smartAsk", instruction: "click gage height" });
+        ensure("and names WebGPU when that is the reason",
+          /WebGPU/.test(String((r.display || {}).note || "")), (r.display || {}).note);
+      });
+    }
+  }
+}
+
+// A <select>'s own text is every option run together, which names nothing -
+// and it was what the model was shown in place of a dropdown it could have
+// recognised, and what the card called it: "choose alabamaalaskaarizona".
+{
+  const S = ["Alabama", "Alaska", "Arizona", "California"];
+  const opts = S.map((x) => `<option>${x}</option>`).join("");
+  const named = [
+    ["bare", `<select id="state">${opts}</select>`, "state"],
+    ["a name attribute", `<select name="state_cd">${opts}</select>`, "state cd"],
+    ["a real label", `<label for="s">Choose a state</label><select id="s">${opts}</select>`, "Choose a state"],
+    ["text beside it", `<div>State<select id="t">${opts}</select></div>`, "State"],
+  ];
+  for (const [what, html, want] of named) {
+    const sp = loadPage(`<!doctype html><html><body>${html}</body></html>`,
+      { url: "https://waterdata.usgs.gov/state/" });
+    if (!sp) continue;
+    const found = sp.GENERIC.inventory({ includeHidden: true }).controls
+      .find((c) => (c.options || []).length === 4);
+    check(`a select with ${what} is called something`, found && found.label, want);
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
@@ -1573,8 +1646,14 @@ else {
   ensure("a select inside a div of the same text survives",
     found.some((c) => c.kind === "select" && (c.options || []).length === 4),
     found.map((c) => `${c.kind}:${(c.label || "").slice(0, 24)}`));
+  // Counted by what it is rather than by its text, because a select is no
+  // longer named after its own options - that string named nothing and was
+  // shown to the model in place of a dropdown it could have recognised.
   check("and the wrapper is not offered as a second control",
-    found.filter((c) => /topographic/i.test(c.label || "")).length, 1);
+    found.filter((c) => (c.options || []).length === 4).length, 1);
+  ensure("a select is not named after everything inside it",
+    !/topographic/i.test(found.map((c) => c.label || "").join(" ")),
+    found.map((c) => c.label));
 }
 
 // The word naming the kind of control need not be on it. That select is

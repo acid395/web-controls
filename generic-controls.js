@@ -119,6 +119,23 @@
     }
     const wrap = el.closest("label");
     if (wrap) return clean(shortText(wrap));
+    // A <select>'s own text is every option run together - "AlabamaAlaska
+    // ArizonaArkansasCalifornia..." - which is not a name for anything. It
+    // was becoming the label, so the card for "select alaska" read "choose
+    // alabamaalaskaarizona", and worse, the model was shown that string in
+    // place of a dropdown it could have recognised. Its options are already
+    // reported separately, so the name has to come from around it: the row
+    // it sits in with its own text taken out, then the author's own
+    // shorthand, and only then a generic word, which at least says what
+    // kind of thing it is.
+    if ((el.tagName || "").toLowerCase() === "select") {
+      const own = clean(el.textContent);
+      const around = clean(rowText(el));
+      const outside = own && around.includes(own) ? clean(around.split(own).join(" ")) : around;
+      const shorthand = clean(el.name || el.id || "")
+        .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+      return clean(el.placeholder || el.title || outside || shorthand) || "dropdown";
+    }
     return clean(el.placeholder || el.title || rowText(el) || el.name || shortText(el) || "");
   };
 

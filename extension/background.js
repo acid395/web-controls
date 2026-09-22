@@ -6349,8 +6349,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             catch (e) { return "this page"; } })(),
         };
       };
+      // Why an answer did not come from the model, where it did not. A card
+      // reading "answered by fast-path" and nothing else looks like the
+      // planner was never built, when what happened may be that the weights
+      // were still loading - which is worth waiting for, and worth saying.
+      let modelSkipped = null;
+      // A site rule that fired and failed is worth mentioning once nothing
+      // else has worked either, because "nothing matched" and "a rule for
+      // this page broke" are different things to go and look at.
+      let ruleTried = null;
       const respond = (res) => {
         const display = cardFor(res);
+        const why = [
+          modelSkipped && res.plannedBy !== "model" && res.plannedBy !== "baseline" ? modelSkipped : null,
+          res.ok === false && ruleTried ? ruleTried : null,
+        ].filter(Boolean).join(" - ");
+        if (display && why) display.note = display.note ? `${display.note} - ${why}` : why;
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
         recordAsk(askId, msg.instruction, {
           status: res.ok === false ? "error" : "done",
@@ -6389,6 +6403,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // available or could not finish, and under "baseline:" on request.
         if (!forceBaseline) {
           const status = await modelStatus();
+          if (!status || !status.ready) {
+            modelSkipped = !status ? "the local model is not answering"
+              : status.hasGpu === false
+                ? "this browser has no WebGPU, so the local model cannot run here"
+              : status.loading || status.started
+                ? `the local model is still loading${status.progress ? ` - ${status.progress}` : ""}`
+              : "the local model has not started yet";
+          }
           if (status && status.ready) {
             // One part at a time, each with its own turn budget, so a
             // two-part instruction is two short runs rather than one long
@@ -7298,8 +7320,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const fast = forceModel ? null : planTool(wanted);
           if (fast) {
             const result = await invokeOnActiveTab(fast.fn, fast.args);
-            respond({ ...result, plannedBy: "fast-path", plannedCall: fast });
-            return;
+            // A rule that fired and then failed is not an answer. It was the
+            // last word - "select alaska" reported "waitFor: timed out after
+            // 8000ms" and stopped there - while the control the instruction
+            // named may well have been sitting on the page for the paths
+            // below to find. A guess that does not work falls through; only
+            // one that works answers.
+            if (result && result.ok !== false && !result.error) {
+              respond({ ...result, plannedBy: "fast-path", plannedCall: fast });
+              return;
+            }
+            ruleTried = `a rule for this site tried ${fast.fn} and it did not work`
+              + `${result && result.error ? `: ${String(result.error).slice(0, 60)}` : ""}`;
           }
         }
 
