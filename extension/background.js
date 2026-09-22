@@ -4762,7 +4762,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // so three turns spent a second and a half re-reading a page nothing had
     // touched - time that is not the model thinking.
     if (Date.now() > deadline) {
-      return { ok: true, answer: null, history, steps: history.length, ranOut: true, outOfTime: true };
+      return { ok: true, answer: null, history, steps: history.length, ranOut: true,
+        outOfTime: true, said: lastSaid };
     }
     // Which turn, and what it just did. The panel showed "still running" and
     // nothing else for the length of the whole run, so a minute of work was
@@ -4785,7 +4786,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       ? lastInv
       : await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
     const readMs = Date.now() - readAt;
-    if (!inv.ok) return { ok: false, error: `could not read this page: ${inv.error || "no reason given"}`, history };
+    if (!inv.ok) {
+      return { ok: false, error: `could not read this page: ${inv.error || "no reason given"}`,
+        history, said: lastSaid };
+    }
     lastInv = inv;
     const controls = controlsForModel(inv.result);
 
@@ -4912,7 +4916,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         // It is also wrong while the only thing that has worked was a way in
         // rather than the thing asked for.
         if (nudged || (reachedIt() && !mayHaveMore)) {
-          return { ok: true, answer: null, history, steps: history.length, repeated: true, tookMs: Date.now() - began };
+          return { ok: true, answer: null, history, steps: history.length, repeated: true,
+            tookMs: Date.now() - began, said: lastSaid };
         }
         nudged = true;
         note = `"${String(target.label).slice(0, 40)}" is already done and it worked.`
@@ -4987,14 +4992,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // 3B model to do one thing, and on this hardware a turn is fifteen
     // seconds of somebody waiting.
     if (!mayHaveMore && (moved || satisfied) && !history[history.length - 1].unrelated) {
-      return { ok: true, answer: null, history, steps: history.length, tookMs: Date.now() - began };
+      return { ok: true, answer: null, history, steps: history.length,
+        tookMs: Date.now() - began, said: lastSaid };
     }
     // The page it acts on next is the page it just changed, so the reading is
     // taken fresh rather than carried over.
     observation = null;
   }
   return { ok: true, answer: null, history, steps: history.length, ranOut: true,
-    tookMs: Date.now() - began };
+    tookMs: Date.now() - began, said: lastSaid };
 }
 
 // One action, one tool call. The model says what it wants done; which tool

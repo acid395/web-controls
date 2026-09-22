@@ -2016,6 +2016,45 @@ for (const b of budgets) {
   }
 }
 
+// The reply was carried on four of the loop's nine exits, and not on the
+// two that happen most - the model saying it is finished, and the steps
+// running out - so the first live run after shipping the diagnostic showed
+// no reply at all. A diagnostic that reports on some paths is worse than
+// none, because its silence reads as evidence.
+{
+  const exits = [
+    ["a finish with nothing in it", { ok: true, step: { do: "finish", answer: "" }, raw: '{"do":"finish","answer":""}' }],
+    ["a control number off the end", { ok: true, step: { n: 77, do: "click" }, raw: '{"n":77,"do":"click"}' }],
+    ["prose instead of an object", { ok: false, error: "model did not return usable JSON: Sure! I will enable it." }],
+    ["nothing but reads", { ok: true, step: { do: "read" }, raw: '{"do":"read"}' }],
+  ];
+  for (const [what, reply] of exits) {
+    const ep2 = loadPage(`<!doctype html><html><body>
+      <a href="#a">Precipitation Frequency Estimates</a>
+      <label><input type="checkbox" name="pe"> Display estimated precipitation on hover</label>
+      </body></html>`, { url: "https://water.noaa.gov/" });
+    if (!ep2) continue;
+    const bgex = loadBackground({ page: ep2 });
+    bgex.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") return reply;
+      return undefined;
+    };
+    runAsync(async () => {
+      // Phrased so it names no control word for word, or the fast path
+      // answers and the model is never asked - which is correct behaviour
+      // and useless for testing this.
+      const out = await bgex.runModelAgent("GENERIC", "show the rain layer", { maxSteps: 3 });
+      ensure(`${what} leaves the reply on the way out`, !!out.said, out);
+      const r = await bgex.__ask({ type: "smartAsk", instruction: "show the rain layer" });
+      ensure(`${what} reaches the card`,
+        /it replied:/.test(String((r.display || {}).note || "")), (r.display || {}).note);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
