@@ -73,10 +73,16 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
   const list = controls.map((c, i) => {
     const kind = c.type || c.kind || "";
     const what = !kind || kind === "link" || kind === "a" ? "" : ` <${kind}>`;
+    // Measured on real hardware: one decision was 32.6s of a 33.2s request
+    // with page work at zero, and at that prefill rate a token is about
+    // forty milliseconds of somebody waiting. Every character cut here comes
+    // straight off the wait, and none of it costs the model an option -
+    // which is the thing that must not be traded, since a control it cannot
+    // see is one it cannot choose.
     const opts = (c.options || []).length
-      ? ` [${c.options.map((o) => String(o.text || o.value).slice(0, 22)).slice(0, 5).join("|")}]` : "";
-    const state = typeof c.checked === "boolean" ? (c.checked ? " (on)" : " (off)") : "";
-    return `${i}. ${String(c.label || "").slice(0, 40)}${what}${state}${opts}`;
+      ? ` [${c.options.map((o) => String(o.text || o.value).slice(0, 14)).slice(0, 3).join("|")}]` : "";
+    const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
+    return `${i}. ${String(c.label || "").slice(0, 30)}${what}${state}${opts}`;
   }).join("\n");
 
   const done = history.length
@@ -84,7 +90,7 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     : "nothing yet";
 
   return [
-    "You are operating a web page to carry out a request. Reply with JSON only.",
+    "Operate this web page. Reply with one JSON object only.",
     "",
     `Request: ${goal}`,
     "",
@@ -96,13 +102,10 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     observation ? `\nWhat the page shows now:\n${String(observation).slice(0, 1200)}` : "",
     note ? `\nNote: ${note}` : "",
     "",
-    "Choose ONE next action:",
-    '  {"n": <control number>, "do": "click"}',
-    '  {"n": <control number>, "do": "check", "on": true}',
-    '  {"n": <control number>, "do": "select", "value": "<option text>"}',
-    '  {"n": <control number>, "do": "type", "value": "<text>"}',
-    '  {"do": "read"}                      to look at the page before deciding',
-    '  {"do": "finish", "answer": "<answer or summary>"}',
+    "One action, by number:",
+    '  {"n":N,"do":"click"}  {"n":N,"do":"check","on":true}',
+    '  {"n":N,"do":"select","value":"<option>"}  {"n":N,"do":"type","value":"<text>"}',
+    '  {"do":"read"}  {"do":"finish","answer":"<answer>"}',
     "",
     // These lines were a third of the prompt, and the prompt is prefill on
     // every turn. Same rules, half the tokens - which is what paid for
@@ -115,12 +118,13 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     // everything it asked for has happened, not when something has.
     "Rules:",
     "- Pick the control whose name matches the request.",
-    "- An action: act on a control now. Do not read first.",
-    "- A question: read, then finish with the answer. Do not press anything.",
-    "- Not listed? Click whatever holds it open and look again next turn.",
-    "- Never redo a step that worked. Another part still to do? Do that part.",
-    "- finish only once all of the request is done.",
-    "- One JSON object, nothing else.",
+    // Both halves of this earned their place: the model was spending a turn
+    // reading a page it was about to change, and pressing controls to
+    // answer questions. Shortened, not dropped.
+    "- Action: act now, do not read first. Question: read, do not press.",
+    "- Not listed? Click what holds it open, look again next turn.",
+    "- Never redo a step that worked; do the next part still outstanding.",
+    "- finish only once all of it is done.",
   ].filter(Boolean).join("\n");
 }
 /* @testable-end buildStepPrompt */

@@ -1709,6 +1709,56 @@ for (const b of budgets) {
   }
 }
 
+// Measured on real hardware: one decision was 32.6s of a 33.2s request,
+// with page work at zero. Every budget expressed in seconds has to be sized
+// against that - a fixed forty-five seconds a part let the first part finish
+// and left the second unable to complete a single decision - and a turn
+// there is no room for is not worth starting, since it spends the time
+// anyway and reports nothing for it.
+{
+  const slow = loadPage(`<!doctype html><html><body>
+    <a href="#a">1 year</a>
+    <label><input type="checkbox" name="py"> Select data for same time span in prior year</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (slow) {
+    const bgsl = loadBackground({ page: slow });
+    let turns = 0;
+    bgsl.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        turns++;
+        // slow enough that a fixed budget could not fit two of them
+        return new Promise((r) => setTimeout(() => r({ ok: true, step: { do: "read" } }), 300));
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const out = await bgsl.runModelAgent("GENERIC", "click 1 year", { budgetMs: 400 });
+      ensure("a turn there is no room for is not begun", turns <= 2, turns);
+      ensure("and the run says it ran out rather than reporting nothing",
+        out.outOfTime === true || out.ranOut === true, out);
+      ensure("with what it did manage kept", Array.isArray(out.history), out.history);
+    });
+  }
+  // The hint only appears where the measurement justifies it.
+  const quick = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="gh"> Gage height</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (quick) {
+    const bgq2 = loadBackground({ page: quick });
+    bgq2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") return { ok: true, step: { n: 0, do: "check", on: true } };
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgq2.__ask({ type: "smartAsk", instruction: "click gage height" });
+      ensure("a quick model is not told to swap itself out",
+        !/smaller model/.test(String((r.display || {}).note || "")), (r.display || {}).note);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

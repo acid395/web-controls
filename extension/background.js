@@ -4493,6 +4493,12 @@ function splitIntoSteps(instruction) {
 // document and a message round trip - a cost worth paying once rather than
 // on every keystroke-driven retry. Short-lived on purpose: a model that
 // finishes loading a moment later should be picked up without a reload.
+// What one decision costs on this machine, measured rather than assumed. A
+// turn was 32.6s of a 33.2s request on real hardware, with page work at
+// zero - so every budget expressed in seconds has to be sized against the
+// real figure, and a fixed forty-five seconds a part means the second part
+// of a two-part instruction cannot finish even once.
+let lastTurnMs = 0;
 let modelStatusCache = { at: 0, value: null };
 let warmedOnce = false;
 async function modelStatus({ maxAgeMs = 4000 } = {}) {
@@ -4697,6 +4703,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     lastInv = inv;
     const controls = controlsForModel(inv.result);
 
+    // No room for a decision that costs what the last one cost, so this
+    // does not start one. Beginning a turn that cannot finish spends the
+    // time anyway and reports nothing for it.
+    if (lastTurnMs && history.length && deadline - Date.now() < lastTurnMs * 0.8) {
+      return { ...giveUp("there was not time left for another decision"), outOfTime: true };
+    }
     // Raced against the run's own clock. The deadline was only checked
     // between turns, while a single generation was allowed two minutes - so
     // a forty-five second budget could take three times that and there was
@@ -4724,6 +4736,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     }
 
     const thoughtMs = Date.now() - thoughtAt;
+    if (asked.ok) lastTurnMs = lastTurnMs ? Math.round(lastTurnMs * 0.4 + thoughtMs * 0.6) : thoughtMs;
     const s = asked.step || {};
     const act = String(s.do || "").toLowerCase();
     if (!AGENT_ACTIONS.has(act)) {
@@ -6425,6 +6438,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const respond = (res) => {
         if (plannedTool && !res.toolCall && !res.plannedCall) res.toolCall = plannedTool;
         const display = cardFor(res);
+        // When one decision costs this much, no amount of work in here is
+        // the answer and saying so is more use than another card that only
+        // reports the wait. Measured, with the figure quoted, because the
+        // suggestion is only worth making on hardware where it is true.
+        if (display && lastTurnMs > 12000 && res.plannedBy === "model") {
+          const hint = `one decision takes about ${Math.round(lastTurnMs / 1000)}s on this machine`
+            + " - a smaller model in the panel's settings is two to four times quicker";
+          display.note = display.note ? `${display.note} - ${hint}` : hint;
+        }
         const took = Date.now() - askBegan;
         if (display && took > 1500) {
           display.stats = [...(display.stats || [])];
@@ -6504,7 +6526,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               // budget and part two got two turns and "ran out of time"
               // without doing anything. It scales with the parts now, and is
               // still capped, because a request has to end.
-              const together = Date.now() + Math.min(45000 * parts.length, 150000);
+              // Sized against what a turn costs here, not against a guess.
+              // At thirty-two seconds a turn, forty-five seconds a part let
+              // the first part finish and left the second unable to complete
+              // a single decision - which is exactly what "ran out of time
+              // on select data for same time span in prior year" was.
+              const perPart = Math.max(45000, Math.round(lastTurnMs * 2.5) || 0);
+              const together = Date.now() + Math.min(perPart * parts.length, 240000);
               const all = [];
               const answers = [];
               const flags = {};
