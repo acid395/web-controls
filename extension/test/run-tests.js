@@ -823,6 +823,34 @@ else {
   });
 }
 
+// A 3B model repeats. Asked to click 30 days it clicked 30 days, saw "the
+// page changed", and clicked it four more times and checked it for good
+// measure - six turns to do one thing once, live on a USGS page. The history
+// is already in the prompt and "do not repeat yourself" in there does not
+// hold, so the loop enforces it: repeating something that worked means the
+// job is done, and repeating something that did nothing means this control
+// is not the answer.
+const repeater = loadPage(`<!doctype html><html><body>
+  <button id="d30">30 days</button><button id="d1y">1 year</button>
+  </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+if (repeater) {
+  const bg = loadBackground({ page: repeater });
+  let turns = 0;
+  bg.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") {
+      turns++;
+      return { ok: true, step: { n: m.controls.findIndex((c) => /30 days/.test(c.label)), do: "click" } };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const out = await bg.runModelAgent("GENERIC", "click 30 day");
+    ensure("a model that repeats itself is stopped early", turns <= 3, turns);
+    check("and the same control is acted on once", out.history.length, 1);
+  });
+}
+
 // A model that answers off-format is told once, then the loop stops. Looping
 // on a malformed reply costs a multi-second turn each time round.
 const offFormat = loadPage("<!doctype html><html><body><button>Go</button></body></html>",

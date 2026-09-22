@@ -78,6 +78,8 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     "Pick the control whose label matches what was asked. Use read when you",
     "need to see values before answering. Use finish when the request is",
     "carried out, or when nothing on this page can carry it out.",
+    "Never repeat a step that already worked - if the page changed, the job is",
+    "done and the next action is finish.",
     "Reply with one JSON object and nothing else.",
   ].filter(Boolean).join("\n");
 }

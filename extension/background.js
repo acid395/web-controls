@@ -4531,6 +4531,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
   const history = [];
   let observation = null;
   let note = null;
+  let repeats = 0;
 
   for (let step = 0; step < maxSteps; step++) {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
@@ -4574,6 +4575,29 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
       continue;
     }
 
+    // It already did this. A 3B model repeats: asked to click 30 days it
+    // clicked 30 days, saw "the page changed", and then clicked it four more
+    // times and checked it for good measure - six turns to do one thing once.
+    // The history is in the prompt and saying "do not repeat yourself" in
+    // there does not hold, so the loop enforces it.
+    //
+    // Repeating something that worked means the job is done. Repeating
+    // something that did nothing means this control is not the answer, and
+    // the next-best one deserves the turn.
+    const already = history.find((h) => h.key === `${act}|${target.selector}`);
+    if (already) {
+      if (already.changed) {
+        return { ok: true, answer: null, history, steps: history.length, repeated: true };
+      }
+      // Counted, not remembered in the note - which is cleared a few lines
+      // above on every valid action, so the guard never tripped and the loop
+      // ran its full six turns clicking one button.
+      if (++repeats > 1) return { ok: true, answer: null, history, steps: history.length };
+      note = `You already tried to ${act} "${String(target.label).slice(0, 40)}" and nothing changed.`
+        + " Choose a different control, or finish.";
+      continue;
+    }
+
     const call = actionToCall(act, target, s);
     if (!call) {
       history.push({ did: `${act} ${target.label}`, outcome: "that control cannot do that" });
@@ -4583,6 +4607,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6 } = {}) {
     const r = (ran && ran.result) || {};
     const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
     history.push({
+      key: `${act}|${target.selector}`,
       did: `${act} "${String(target.label).slice(0, 40)}"`,
       outcome: ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}`
