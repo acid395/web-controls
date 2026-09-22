@@ -50,15 +50,29 @@ const KNOWN_MODELS = [
   "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
   "Llama-3.2-1B-Instruct-q4f16_1-MLC",
 ];
-try {
-  chrome.storage.local.get("llmModelId", ({ llmModelId }) => {
-    if (llmModelId && KNOWN_MODELS.includes(llmModelId) && llmModelId !== MODEL_ID) {
-      // Only before anything has loaded. Swapping under a live engine would
-      // leave the two disagreeing about which weights are in memory.
-      if (!enginePromise) MODEL_ID = llmModelId;
-    }
-  });
-} catch (e) { /* no storage in this context; the default stands */ }
+// Read as a promise, and waited for before any engine is built. It used to
+// be a callback that set MODEL_ID whenever it happened to arrive - while
+// getEngine read MODEL_ID synchronously, and the service worker warms the
+// model almost as soon as the document exists. So the default won the race
+// and loaded, and choosing a smaller model in the panel changed nothing: a
+// card still came back saying Llama 3.2 3B, thirty-five seconds a decision,
+// after somebody had switched precisely to avoid that.
+let modelChoice = null;
+function chosenModelId() {
+  if (!modelChoice) {
+    modelChoice = new Promise((resolve) => {
+      try {
+        chrome.storage.local.get("llmModelId", ({ llmModelId }) => {
+          resolve(llmModelId && KNOWN_MODELS.includes(llmModelId) ? llmModelId : DEFAULT_MODEL_ID);
+        });
+      } catch (e) { resolve(DEFAULT_MODEL_ID); }
+    }).then((id) => { MODEL_ID = id; return id; });
+  }
+  return modelChoice;
+}
+// Settled early too, so llmStatus reports the model that is going to load
+// rather than the one that would have.
+try { chosenModelId(); } catch (e) { /* no storage here; the default stands */ }
 
 /* @testable-start buildStepPrompt */
 // The page, what has happened, and one question: what next. Kept small on
@@ -187,7 +201,10 @@ let engineReady = false; // a Promise can't be asked "are you resolved yet?" dir
 
 function getEngine(onProgress) {
   if (!enginePromise) {
-    enginePromise = CreateMLCEngine(MODEL_ID, {
+    // The choice first, then the engine. Building one before knowing which
+    // model was asked for is how the wrong weights get two gigabytes of
+    // download and every decision after it.
+    enginePromise = chosenModelId().then((id) => CreateMLCEngine(id, {
       initProgressCallback: (report) => {
         // Kept, not just forwarded: the panel may not be open when this
         // arrives, and "still downloading, 41%" is the answer to why the
@@ -195,7 +212,7 @@ function getEngine(onProgress) {
         lastProgress = String((report && report.text) || "").slice(0, 120);
         if (onProgress) onProgress(report);
       },
-    }).then((engine) => {
+    })).then((engine) => {
       engineReady = true;
       return engine;
     });

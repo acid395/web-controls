@@ -2172,6 +2172,85 @@ for (const b of budgets) {
   }
 }
 
+// Asked to "enable snow depth", a 3B replied {"name":"Enable Snow Depth"}.
+// It had found the right control and handed back the instruction's wording
+// rather than the page's - a reasonable thing for a model to do, and a poor
+// reason to fail the whole request.
+{
+  const nameShapes = [
+    ["the request's verb glued on", { name: "Enable Snow Depth", do: "check", on: true }, true],
+    ["the page's own wording", { name: "Snow Depth", do: "check", on: true }, true],
+    ["a name for something else", { name: "Tsunami Warnings", do: "check", on: true }, false],
+  ];
+  for (const [what, reply, shouldAct] of nameShapes) {
+    const vp = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="sd"> Snow Depth</label>
+      <label><input type="checkbox" name="pe"> Precipitation</label>
+      </body></html>`, { url: "https://water.noaa.gov/" });
+    if (!vp) continue;
+    const bgv = loadBackground({ page: vp });
+    bgv.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") return { ok: true, step: reply, raw: JSON.stringify(reply) };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgv.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+      check(`${what}: the control ends ${shouldAct ? "on" : "untouched"}`,
+        !!(vp.document.querySelector('[name="sd"]') || {}).checked, shouldAct);
+      check(`${what}: nothing else is pressed`,
+        !!(vp.document.querySelector('[name="pe"]') || {}).checked, false);
+    });
+  }
+
+  // A reference that fits two different controls did not land, and choosing
+  // between them is the confident wrong action this exists to avoid. Two
+  // controls under one identical label are not this case - those are folded
+  // into one before the model ever sees them, as the same thing twice over.
+  const amb = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="a"> Snow Depth</label>
+    <label><input type="checkbox" name="b"> Water Depth</label>
+    </body></html>`, { url: "https://water.noaa.gov/" });
+  if (amb) {
+    const bga2 = loadBackground({ page: amb });
+    bga2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") {
+        return { ok: true, step: { name: "Depth", do: "check", on: true },
+          raw: '{"name":"Depth"}' };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bga2.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+      check("a name that fits two controls presses neither",
+        [...amb.document.querySelectorAll("input")].filter((x) => x.checked).length, 0);
+      ensure("and says that is what happened",
+        /more than one control/i.test(`${r.error || ""} ${(r.display || {}).note || ""}`),
+        `${r.error} | ${(r.display || {}).note}`);
+    });
+  }
+}
+
+// The model chosen in the panel has to be the one that loads. The choice was
+// read through an async storage callback while getEngine read the id
+// synchronously, and the service worker warms the model as soon as the
+// document exists - so the default won the race and a card still came back
+// saying Llama 3.2 3B, 35s a decision, after somebody had switched
+// specifically to avoid that. Checked at the source, since building an
+// engine needs a GPU this harness does not have.
+{
+  const src = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
+  ensure("the engine is built only once the chosen model is known",
+    /enginePromise\s*=\s*chosenModelId\(\)\s*\.then\(/.test(src),
+    src.slice(src.indexOf("function getEngine"), src.indexOf("function getEngine") + 200));
+  ensure("and the choice is a promise, not a callback that may arrive late",
+    /function chosenModelId\(\)/.test(src) && /modelChoice\s*=\s*new Promise/.test(src), true);
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

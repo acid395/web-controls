@@ -4880,26 +4880,48 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // land, and guessing between them is how a confident wrong action gets
     // made, only with the model's name on it this time.
     const flatLabel = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const wantedName = flatLabel(s.name || s.label || s.control || s.target);
+    // The verb the request was phrased with, taken back off. Asked to
+    // "enable snow depth", a 3B replied {"name":"Enable Snow Depth"} - it had
+    // found the right control and handed back the instruction's wording
+    // rather than the page's. That is a reasonable thing for a model to do
+    // and a poor reason to fail.
+    const NAMED_LEAD = /^(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|display)\s+/;
+    const rawName = flatLabel(s.name || s.label || s.control || s.target);
+    const wantedName = rawName.replace(NAMED_LEAD, "").trim() || rawName;
     let target = null;
+    let several = null;
     if (wantedName) {
-      const exact = controls.filter((c) => flatLabel(c.label) === wantedName);
-      if (exact.length === 1) target = exact[0];
-      if (!target) {
+      for (const candidate of [rawName, wantedName]) {
+        if (target || !candidate) continue;
+        const exact = controls.filter((c) => flatLabel(c.label) === candidate);
+        if (exact.length === 1) { target = exact[0]; break; }
         const part = controls.filter((c) => {
           const l = flatLabel(c.label);
-          return l.includes(wantedName) || wantedName.includes(l);
+          return l && (l.includes(candidate) || candidate.includes(l));
         });
-        if (part.length === 1) target = part[0];
+        if (part.length === 1) { target = part[0]; break; }
+        // Recorded rather than resolved. Two controls answering to one name
+        // is a reference that did not land, and picking between them is the
+        // confident wrong action this whole project exists to avoid.
+        if (part.length > 1) several = part.slice(0, 4).map((c) => c.label);
       }
     }
     if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
     if (!target) {
       const asked = wantedName ? `"${String(s.name || s.label || s.control).slice(0, 40)}"`
         : `control ${s.n}`;
-      if (!correct(`There is no ${asked} on this page.`
-        + " Reply with the name of one of the controls listed above, exactly as written.")) {
-        return giveUp(`the model asked for ${asked}, which is not on this page`);
+      // Which of the two it was. "Nothing here is called that" and "several
+      // things are" want different next moves from the model, and saying
+      // only that it failed tells it nothing it can act on.
+      const why = several
+        ? `More than one control answers to ${asked}: ${several.join(", ")}.`
+          + " Name one of them exactly."
+        : `There is no ${asked} on this page.`
+          + " Reply with the name of one of the controls listed above, exactly as written.";
+      if (!correct(why)) {
+        return giveUp(several
+          ? `the model asked for ${asked}, which names more than one control here`
+          : `the model asked for ${asked}, which is not on this page`);
       }
       continue;
     }
@@ -6791,6 +6813,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // on every answer, not only the ones the model won.
       let modelTried = false;
       let modelSaid = null;
+      // Why the run stopped, in its own words. The loop works out something
+      // specific - that a name fits more than one control, that it kept
+      // choosing one that is not there - and a generic "did not find a way
+      // to do that" in its place throws away the only part worth reading.
+      let modelGaveUp = null;
       // Every card, not only the ones the model planned. "A simple task took
       // almost four minutes" is the report that matters most and the hardest
       // to act on, because it does not say which of the paths spent it.
@@ -7223,6 +7250,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // what to change - the prompt, or the model - and it was being
             // discarded at exactly the moment it mattered.
             modelSaid = (agent && agent.said) || null;
+            modelGaveUp = (agent && (agent.gaveUp || agent.error)) || null;
             // A model that is present but got nowhere is not a reason to
             // refuse: the scorer below is a worse planner and a better
             // fallback, and saying nothing would be worse than either.
@@ -8740,10 +8768,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (modelTried) {
           respond({
             ok: false, plannedBy: "model",
-            error: "the local model did not find a way to do that on this page",
+            error: modelGaveUp || "the local model did not find a way to do that on this page",
             display: {
               title: "the model got nowhere",
-              subtitle: "it was asked and did not reach a control that does this",
+              subtitle: modelGaveUp || "it was asked and did not reach a control that does this",
               stats: [], rows: [],
               note: modelSaid ? `it replied: ${String(modelSaid).slice(0, 140)}` : undefined,
               source: modelName((await modelStatus()) && (await modelStatus()).model),
