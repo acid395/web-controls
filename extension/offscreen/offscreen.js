@@ -70,6 +70,21 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
   // can be and still be decidable: the number, the name, what it is, and its
   // state. "link" is left off because most controls are links and the model
   // does not need telling; anything that is not a link says so.
+  // Cut to a length that still tells them apart. Truncating blindly turned
+  // "Display estimated precipitation on hover" and "Display estimated
+  // precipitation by county" into the same line - and the model answers by
+  // number, so it was being asked to choose between two things it could not
+  // distinguish. Where a short form collides, the ones that collide keep
+  // their length; everything else pays the shorter price.
+  const SHORT = 26;
+  const short = controls.map((c) => String(c.label || "").slice(0, SHORT));
+  const collides = new Set();
+  const firstAt = new Map();
+  short.forEach((t, i) => {
+    const k = t.toLowerCase();
+    if (firstAt.has(k)) { collides.add(i); collides.add(firstAt.get(k)); }
+    else firstAt.set(k, i);
+  });
   const list = controls.map((c, i) => {
     const kind = c.type || c.kind || "";
     const what = !kind || kind === "link" || kind === "a" ? "" : ` <${kind}>`;
@@ -82,7 +97,8 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     const opts = (c.options || []).length
       ? ` [${c.options.map((o) => String(o.text || o.value).slice(0, 14)).slice(0, 3).join("|")}]` : "";
     const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
-    return `${i}. ${String(c.label || "").slice(0, 30)}${what}${state}${opts}`;
+    const label = collides.has(i) ? String(c.label || "").slice(0, 52) : short[i];
+    return `${i}. ${label}${what}${state}${opts}`;
   }).join("\n");
 
   const done = history.length

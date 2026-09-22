@@ -5107,6 +5107,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       && !(stateCommand && c.tag === "a" && c.kind === "a"));
     const countNow = all.length;
 
+
     const plan = planGenericTool(instruction, { ...inv.result, controls });
     // An ambiguous plan is not an empty one. Live on water.noaa.gov the loop
     // went straight to door-hunting on its first move, because "Flood
@@ -5164,6 +5165,20 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     }
 
     const target = (plan.matched && plan.matched[0]) || ambiguousPick || {};
+    // Named after some part of what was asked, or it does not get pressed.
+    // The scorer always has a best candidate - it ranks, it does not judge
+    // whether the winner is worth pressing - so an instruction for a control
+    // this page does not have still got the top of the list pressed. A
+    // command for something that was not there ran anyway.
+    //
+    // A door is exempt, because it is reached through the branch above and
+    // is judged on being named after the request already; this is about
+    // pressing a control as though it were the answer.
+    const subjectWords = subjectOf(meaningfulWords(instruction));
+    if (subjectWords.length && target.label
+        && namedCoverage(target.label, subjectWords) === 0) {
+      break;
+    }
     if (target.selector) actedOn.add(target.selector);
     const ran = await runVerified(routeGlobal, call);
     forgetPageTools();
@@ -5257,7 +5272,13 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     // off and the next one tried instead. Strictly bounded: two dead ends,
     // then stop, because pressing a page one control at a time in the hope
     // of stumbling onto the right one is its own kind of wrong.
-    if (++deadEnds > 2) break;
+    // One dead end, then stop. It allowed three, so a request could cost
+    // three real presses on somebody's page while hunting for the control
+    // that worked - "enable precipitation estimate" pressed Precipitation
+    // Frequency Estimates, then Probable Maximum Precipitation, before
+    // reaching the checkbox. The first press failing is information; the
+    // third is just pressing things.
+    if (++deadEnds > 1) break;
   }
 
   const acted = steps.filter((st) => st.did !== "opened");

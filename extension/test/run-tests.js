@@ -2055,6 +2055,74 @@ for (const b of budgets) {
   }
 }
 
+// A command for something this page does not have was still getting the
+// top of the list pressed, because the scorer always has a best candidate -
+// it ranks, it does not judge whether the winner is worth pressing. Somebody
+// typed an instruction for a control that was not there and it ran anyway.
+{
+  const bare2 = loadPage(`<!doctype html><html><body>
+    <a href="#a">Streamflow conditions</a>
+    <a href="#b">Water quality data</a>
+    <label><input type="checkbox" name="g"> Show gauges</label>
+    </body></html>`, { url: "https://water.noaa.gov/" });
+  if (bare2) {
+    let pressed = 0;
+    for (const el of bare2.document.querySelectorAll("a,button,input")) {
+      el.addEventListener("click", () => { pressed++; });
+    }
+    const bgb3 = loadBackground({ page: bare2 });
+    bgb3.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      for (const instr of ["enable snow depth", "click the tsunami warning panel"]) {
+        pressed = 0;
+        await bgb3.__ask({ type: "smartAsk", instruction: instr });
+        check(`"${instr}" presses nothing, because nothing here is named that`, pressed, 0);
+      }
+      // And a control that IS named is still reached, or the guard has
+      // simply turned the tool off.
+      pressed = 0;
+      await bgb3.__ask({ type: "smartAsk", instruction: "show gauges" });
+      check("a control the page does have is still acted on", pressed, 1);
+      check("and it is the right one",
+        !!(bare2.document.querySelector('[name="g"]') || {}).checked, true);
+    });
+  }
+}
+
+// Truncating labels blindly turned "Display estimated precipitation on
+// hover" and "Display estimated precipitation by county" into the same line.
+// The model answers by number, so it was being asked to choose between two
+// things it could not tell apart - and whichever it picked, the report would
+// name the other one just as plausibly.
+{
+  const build = loadOffscreenHelper("buildStepPrompt");
+  if (build) {
+    const text = build({ goal: "x", controls: [
+      { label: "Display estimated precipitation on hover" },
+      { label: "Display estimated precipitation by county" },
+      { label: "Gage height" },
+    ] });
+    const lines = text.split("Controls on the page:")[1].split("Steps already")[0]
+      .trim().split("\n").map((l) => l.trim()).filter(Boolean);
+    ensure("two controls sharing a long prefix stay distinguishable",
+      lines[0] !== lines[1].replace(/^1\./, "0."), lines);
+    ensure("and each keeps enough of its name to tell which is which",
+      /hover/.test(lines[0]) && /county/.test(lines[1]), lines);
+    // The short form is still used where nothing collides, since the list is
+    // most of the prompt and the prompt is the wait.
+    // Distinct within the first few characters, as real labels are - the
+    // earlier fixture put the differing digit past the cut, so every line
+    // legitimately collided and every line kept its full length.
+    const many = build({ goal: "x", controls: Array.from({ length: 40 }, (_, i) => ({
+      label: `${i} gauge on the lower river reach near the town bridge`,
+    })) });
+    const listLines = many.split("Controls on the page:")[1].split("Steps already")[0]
+      .trim().split("\n");
+    ensure("distinct labels are still cut short",
+      listLines.every((l) => l.length < 40), listLines.slice(0, 3));
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
