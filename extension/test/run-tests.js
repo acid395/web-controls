@@ -2251,6 +2251,67 @@ for (const b of budgets) {
     /function chosenModelId\(\)/.test(src) && /modelChoice\s*=\s*new Promise/.test(src), true);
 }
 
+// Two switches to a smaller model appeared to do nothing: the cards kept
+// saying Llama 3.2 3B and thirty-odd seconds a decision. A setting somebody
+// cannot confirm took effect is worse than no setting, because a choice that
+// is not applying looks exactly like a model that is simply slow.
+{
+  const ms = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://water.noaa.gov/" });
+  if (ms) {
+    const bgms = loadBackground({ page: ms });
+    bgms.__model = (m) => (m.type === "llmStatus"
+      ? { ready: false, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" } : undefined);
+    runAsync(async () => {
+      for (const [cmd, want] of [
+        ["use qwen", "Qwen2.5 1.5B"], ["use 1b", "Llama 3.2 1B"], ["use 3b", "Llama 3.2 3B"],
+      ]) {
+        const r = await bgms.__ask({ type: "smartAsk", instruction: cmd });
+        check(`"${cmd}" stores ${want}`, (r.display || {}).title, want);
+        const stored = await bgms.chrome.storage.local.get("llmModelId");
+        ensure(`"${cmd}" is written down, not just reported`,
+          /Qwen2|Llama-3/.test(String(stored.llmModelId || "")), stored);
+      }
+      const bad = await bgms.__ask({ type: "smartAsk", instruction: "use banana" });
+      check("an unknown model is refused rather than guessed at", bad.ok, false);
+      ensure("and it says which ones there are",
+        /use qwen/.test(String((bad.display || {}).subtitle || "")), bad.display);
+    });
+  }
+}
+
+// A flat forty-five seconds is under two turns at thirty seconds each, so
+// the first reply that needed correcting left no room to act on the
+// correction: "enable snow depth" was given one chance to be right first
+// time and reported "the model did not answer in time" when it was not.
+{
+  const bp3 = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="sd"> Snow Depth</label></body></html>`,
+    { url: "https://water.noaa.gov/" });
+  if (bp3) {
+    const bgbp = loadBackground({ page: bp3 });
+    let turns = 0;
+    bgbp.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") {
+        turns++;
+        // first a name that is not there, then the right one - exactly the
+        // shape of a correction that has to fit inside the budget
+        return turns === 1
+          ? { ok: true, step: { name: "Snowpack", do: "check", on: true }, raw: "{}" }
+          : { ok: true, step: { name: "Snow Depth", do: "check", on: true }, raw: "{}" };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgbp.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+      check("a correction gets a turn to be acted on",
+        !!(bp3.document.querySelector('[name="sd"]') || {}).checked, true);
+      ensure("and it took the two turns that needed", turns >= 2, turns);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

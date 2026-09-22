@@ -4743,7 +4743,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
   // WebGPU, each with a page read, is comfortably a minute - and "still
   // running" with no end and no sign of progress is worse than a partial
   // answer. Whatever has been done by the deadline is reported as done.
-  const deadline = deadlineAt || (Date.now() + budgetMs);
+  // Sized against what a turn actually costs here. A flat forty-five
+  // seconds is under two turns at thirty seconds each, so the first reply
+  // that needed correcting - naming a control by the wording of the request
+  // rather than the page's - left no room to act on the correction, and the
+  // run ended "the model did not answer in time" having been given one
+  // chance to be right first time.
+  const deadline = deadlineAt
+    || (Date.now() + Math.max(budgetMs, Math.round(lastTurnMs * 3) || 0));
   // How long a turn actually took, reported rather than guessed at. "it took
   // two or three minutes" is not something anyone can act on, and where the
   // time goes - reading the page, the model deciding, carrying the action
@@ -6038,6 +6045,22 @@ async function runDiagnostics() {
     if (st.ready) return `ready · ${st.model || "loaded"}`;
     if (st.loading) return `still loading · ${st.progress || "no progress reported yet"}`;
     return "not started - it loads on first use, or when this panel is opened";
+  }, { optional: true });
+  // Which model was asked for, beside which one is loaded. Two switches to a
+  // smaller model appeared to do nothing and there was no way to see that
+  // from here - the panel reported what had loaded and never what had been
+  // chosen, so a setting that was not taking effect looked exactly like a
+  // model that was simply slow.
+  await step("model chosen", async () => {
+    const { llmModelId } = await chrome.storage.local.get("llmModelId");
+    if (!llmModelId) return "none set - using the default, Llama 3.2 3B";
+    const st = await modelStatus({ maxAgeMs: 0 });
+    const loaded = st && st.model;
+    if (loaded && loaded !== llmModelId) {
+      throw new Error(`${modelName(llmModelId)} was chosen but ${modelName(loaded)} is loaded`
+        + " - reload the extension, or say \"use qwen\" again");
+    }
+    return `${modelName(llmModelId)}${loaded ? " · loaded" : " · loads on next use"}`;
   }, { optional: true });
   await step("agency API", async () => {
     const res = await fetch("https://api.weather.gov/points/44.98,-93.26", { headers: { Accept: "application/geo+json" } });
@@ -7433,6 +7456,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
 
         // The self-test, before anything that could fail on its own.
+        // "use qwen", "use 1b", "use 3b". The panel has a picker, but a
+        // setting somebody cannot confirm took effect is worse than none:
+        // two switches to a smaller model appeared to do nothing, and the
+        // cards kept saying Llama 3.2 3B and thirty-odd seconds a decision.
+        // This says what it stored and what is loaded now, and the next
+        // instruction loads the one that was asked for.
+        const useModel = wanted.match(/^\s*use\s+(?:the\s+)?([a-z0-9. ]+?)\s*(?:model)?\s*$/i);
+        if (useModel) {
+          const want = useModel[1].toLowerCase().replace(/[^a-z0-9]/g, "");
+          const pick = /qwen|1\.?5/.test(want) ? "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"
+            : /^(llama)?1b$/.test(want) || /1b/.test(want) ? "Llama-3.2-1B-Instruct-q4f16_1-MLC"
+            : /3b/.test(want) ? "Llama-3.2-3B-Instruct-q4f16_1-MLC" : null;
+          if (!pick) {
+            respond({ ok: false, error: `no model called "${useModel[1]}"`,
+              display: { title: "which model?", subtitle: "try: use qwen, use 1b, use 3b",
+                stats: [], rows: [], source: "settings" } });
+            return;
+          }
+          await chrome.storage.local.set({ llmModelId: pick });
+          await releaseOffscreenModel();
+          const now = await modelStatus();
+          respond({ ok: true, plannedBy: "settings",
+            display: {
+              title: modelName(pick),
+              subtitle: `stored - it loads on the next instruction`,
+              stats: [], rows: [
+                { name: "asked for", value: modelName(pick), meta: pick, tone: "ok" },
+                { name: "loaded now", value: modelName(now && now.model), meta:
+                  now && now.ready ? "ready" : (now && now.loading ? "loading" : "not started"),
+                  tone: (now && now.model) === pick ? "ok" : "warn" },
+              ],
+              note: "ask again in a moment - the weights download once per model",
+              source: "settings",
+            } });
+          return;
+        }
+
         if (/^\s*(diagnose|diagnostics?|debug|self ?test|why (is it |isn.t it )?(not )?working)\b/i.test(wanted)) {
           respond(await runDiagnostics());
           return;
