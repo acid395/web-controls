@@ -5095,9 +5095,18 @@ else {
       const forced = await ask("model: select 30 day precipitation");
       // The local model is on by default now, so the answer here is about it
       // loading or not answering rather than about it being switched off.
+      // plannedBy is the settled signal: a forced request is attributed to
+      // the model whether or not it could answer, because asking for it by
+      // name and being handed the page's answer on an ordinary-looking card
+      // is worse than no answer when checking is the point. The wording of
+      // the reason varies - not started, still loading, no WebGPU - and
+      // matching on the wording alone missed one of them.
       ensure("model: is recognised as a request for the model",
-        /still loading|not answering|no WebGPU|webllm/i.test(
-          `${(forced.display || {}).title || ""} ${forced.error || ""} ${forced.plannedBy || ""}`), forced);
+        forced.plannedBy === "model"
+          || /still loading|not answering|not started|no WebGPU|webllm/i.test(
+            `${(forced.display || {}).title || ""} ${forced.error || ""}`), forced);
+      ensure("and it does not quietly answer from somewhere else",
+        forced.plannedBy === "model", forced.plannedBy);
       // The same question without the prefix is answered without it.
       const unforced = await ask("select 30 day precipitation");
       ensure("and the prefix is what makes the difference",

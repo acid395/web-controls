@@ -7020,6 +7020,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   + " - this answer came from the page's own controls"
               : `${which} has not started yet`;
           }
+          // Asked for the model by name and it cannot answer: say so. Quietly
+          // handing the request to the page defeats the only purpose the
+          // prefix has, which is to see what the model does with something -
+          // and an answer from somewhere else, on a card that looks like any
+          // other, is worse than no answer when checking is the whole point.
+          if (forceModel && !(status && status.ready)) {
+            respond({
+              ok: false, plannedBy: "model",
+              error: modelSkipped || "the local model is not ready",
+              display: {
+                title: "the model cannot answer yet",
+                subtitle: String(modelSkipped || "it is not ready"),
+                stats: [], rows: [],
+                note: "drop the \"model:\" prefix to let the page's own controls answer instead",
+                source: modelName(status && status.model),
+              },
+            });
+            return;
+          }
           if (status && status.ready) {
             modelTried = true;
             // One part at a time, each with its own turn budget, so a
