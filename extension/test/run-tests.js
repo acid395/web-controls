@@ -1975,6 +1975,47 @@ for (const b of budgets) {
   }
 }
 
+// Every card that said "the local model planned nothing here" threw away
+// what the model had actually replied - so a model answering in prose, one
+// choosing a control that is not on the list, and one genuinely saying it
+// was finished all looked identical from outside. Three problems with three
+// different answers - a parser, a prompt, a bigger model - and no way to
+// tell which you had. It made "the model does not work" both unarguable and
+// undiagnosable, which is how a session goes by fixing everything else.
+{
+  const saidCases = [
+    ["prose instead of JSON",
+      { ok: false, error: "model did not return usable JSON: I would click the Gage height box" },
+      /usable JSON/],
+    ["finished without doing anything",
+      { ok: true, step: { do: "finish", answer: "" }, raw: '{"do":"finish"}' }, /do.*finish/],
+    ["a control that is not on the list",
+      { ok: true, step: { n: 99, do: "click" }, raw: '{"n":99,"do":"click"}' }, /99/],
+  ];
+  for (const [what, reply, wantInNote] of saidCases) {
+    const sp3 = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="gh"> Gage height</label>
+      <a href="#a">Learn about Continuous data</a></body></html>`,
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!sp3) continue;
+    const bgsd = loadBackground({ page: sp3 });
+    bgsd.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") return reply;
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgsd.__ask({ type: "smartAsk",
+        instruction: "click learn about continuous data" });
+      const note = String((r.display || {}).note || "");
+      ensure(`${what} is quoted back rather than summarised as nothing`,
+        wantInNote.test(note), note);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

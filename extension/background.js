@@ -4704,6 +4704,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
   // multi-second turn buying the same chance again.
   let strikes = 0;
   const correct = (message) => { note = message; return ++strikes <= 1; };
+  // What it actually replied, kept. Every card that said "the local model
+  // planned nothing here" threw this away, so there was no way to tell a
+  // model that answered in prose from one that chose a control out of range
+  // from one that genuinely said it was finished - three different problems
+  // with three different answers, and all of them looked the same from
+  // outside. Which made "the model does not work" unarguable and
+  // undiagnosable at once.
+  let lastSaid = null;
   // Separate from the strikes above: repeating something that worked is not
   // the model misbehaving, it is the model having finished a step, so it
   // gets exactly one nudge towards the next one before the run ends.
@@ -4728,7 +4736,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
   // again from the top - so anything already acted on gets acted on twice.
   const giveUp = (why) => {
     const moved = history.some((h) => h.changed);
-    return { ok: moved, error: moved ? null : why, history, steps: history.length, gaveUp: why };
+    return { ok: moved, error: moved ? null : why, history, steps: history.length,
+      gaveUp: why, said: lastSaid };
   };
   // A wall-clock limit as well as a turn limit. Six turns of a 3B model over
   // WebGPU, each with a page read, is comfortably a minute - and "still
@@ -4804,12 +4813,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         () => r({ ok: false, timedOut: true, error: "the model did not answer in time" }),
         Math.max(5000, deadline - Date.now()))),
     ]);
+    if (asked.raw) lastSaid = String(asked.raw).slice(0, 200);
     if (!asked.ok) {
       // Out of time with something already done is a partial result, not a
       // failure - and reporting failure would send this to the scorer, which
       // would start the instruction again from the top.
       if (asked.timedOut) return { ...giveUp("the model did not answer in time"), outOfTime: true };
-      return { ok: false, error: asked.error, history, modelUnavailable: true };
+      return { ok: false, error: asked.error, history, modelUnavailable: true,
+        said: lastSaid || String(asked.error || "").slice(0, 200) };
     }
 
     const thoughtMs = Date.now() - thoughtAt;
@@ -4829,7 +4840,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
 
     if (act === "finish") {
       return { ok: true, answer: String(s.answer || "").slice(0, 600), history,
-        steps: history.length, tookMs: Date.now() - began };
+        steps: history.length, tookMs: Date.now() - began, said: lastSaid };
     }
     if (act === "read") {
       // Two reads with no action between them cannot differ - nothing has
@@ -6722,6 +6733,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // produced it, and the comparison the scorer is kept for needs that
       // on every answer, not only the ones the model won.
       let modelTried = false;
+      let modelSaid = null;
       // Every card, not only the ones the model planned. "A simple task took
       // almost four minutes" is the report that matters most and the hardest
       // to act on, because it does not say which of the paths spent it.
@@ -6751,7 +6763,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // answering. Worth saying outright: the two are meant to be
           // compared, and an unlabelled answer counts for neither.
           !modelSkipped && modelTried && res.plannedBy !== "model"
-            ? "the local model planned nothing here, so this is the keyword baseline" : null,
+            ? "the local model planned nothing here, so this is the keyword baseline"
+              + (modelSaid ? ` - it replied: ${String(modelSaid).slice(0, 120)}` : "")
+            : null,
           res.ok === false && ruleTried ? ruleTried : null,
         ].filter(Boolean).join(" - ");
         if (display && why) display.note = display.note ? `${display.note} - ${why}` : why;
@@ -7015,6 +7029,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 if (one.outOfTime) { flags.outOfTime = true; flags.ranOutOn = part; }
                 if ((one.history || []).some((h) => h.satisfied)) flags.satisfied = true;
                 flags.tookMs = (flags.tookMs || 0) + (one.tookMs || 0);
+                if (one.said) flags.said = one.said;
                 if (one.ranOut) flags.ranOut = true;
                 // Carried, not flattened into a history row. The answer was
                 // being pushed in as text and then thrown away - so "click
@@ -7127,6 +7142,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               });
               return;
             }
+            // Kept for the card below, which is the only place anyone can
+            // read it. A reply that could not be used is the evidence for
+            // what to change - the prompt, or the model - and it was being
+            // discarded at exactly the moment it mattered.
+            modelSaid = (agent && agent.said) || null;
             // A model that is present but got nowhere is not a reason to
             // refuse: the scorer below is a worse planner and a better
             // fallback, and saying nothing would be worse than either.
