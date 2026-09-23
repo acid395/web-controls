@@ -4226,18 +4226,30 @@ function closeName(said, label) {
   const b = String(label || "").split(" ").filter(Boolean);
   if (!a.length || a.length !== b.length) return false;
   let slips = 0;
+  let differed = false;
   for (let i = 0; i < a.length; i++) {
     if (a[i] === b[i]) continue;
-    // A digit is exact or it is a different thing: 7 days and 30 days are
-    // not each other misspelt.
-    if (/\d/.test(a[i]) || /\d/.test(b[i])) return false;
+    differed = true;
+    // A figure is compared as a figure. "huc-8" and "HUC-08" are the same
+    // number written two ways, and holding digits to the letter made the
+    // request name nothing on a page that plainly carried it - the same
+    // string-for-number mistake as comparing "8" with "08" elsewhere. Still
+    // exact in value, so 7 days and 30 days remain different things.
+    if (/\d/.test(a[i]) || /\d/.test(b[i])) {
+      if (/^\d+$/.test(a[i]) && /^\d+$/.test(b[i]) && Number(a[i]) === Number(b[i])) continue;
+      // 8 and 08 differ as text and not as figures, so the phrases differ
+      // while nothing was misspelt - which the slip count alone cannot see.
+      return false;
+    }
     const room = Math.min(a[i].length, b[i].length) <= 4 ? 1 : 2;
     const d = editDistance(a[i], b[i]);
     if (d > room) return false;
     slips += d;
   }
   // A whole phrase of near-misses is not a typo, it is a different phrase.
-  return slips > 0 && slips <= 3;
+  // Counted on having differed at all rather than on the edits, since "huc 8"
+  // and "huc 08" are not the same text and required no correcting.
+  return differed && slips <= 3;
 }
 
 function looksLikeMisspelledVerb(word) {
@@ -5642,6 +5654,48 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       ok: ran.ok !== false, changed: moved, satisfied, label: target.label, why,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
+    // Opening a chooser is half of choosing. The model named the dropdown -
+    // {"why":"selecting Alaska","name":"Select a state","do":"click"} - which
+    // is right, and clicking one only opens it, so the run needed a second
+    // decision to pick Alaska and had no time left for one. A person clicks
+    // the dropdown and then the value; the value is in the request already.
+    //
+    // Only what the request itself names, and only one of them: this is
+    // reading the words that were typed, not choosing on their behalf.
+    if (r.opened === true) {
+      const after = await readInventory();
+      if (after.ok) {
+        const fresh = controlsForModel(after.result);
+        const saidFlat = flatLabel(goal);
+        const inside = fresh.filter((c) => {
+          if (controls.some((old) => old.selector === c.selector)) return false;
+          const l = flatLabel(c.label);
+          if (!l || l.length < 3) return false;
+          return new RegExp(`\\b${l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(saidFlat);
+        });
+        if (inside.length === 1) {
+          const pick = inside[0];
+          const chose = await runVerified(routeGlobal,
+            { name: "pageClick", args: { selector: pick.selector } });
+          if (chose.ok !== false) {
+            history.push({
+              key: `click|${flatLabel(pick.label)}`,
+              did: `chose "${String(pick.label).slice(0, 40)}"`,
+              outcome: "from the list that opened", ok: true, changed: true,
+              label: pick.label, why,
+            });
+            if (!mayHaveMore) {
+              return { ok: true, answer: null, history, steps: history.length,
+                tookMs: Date.now() - began, said: lastSaid };
+            }
+            lastInv = null;
+            observation = null;
+            continue;
+          }
+        }
+      }
+    }
+
     // One clause, and the thing it named has been done and the page's own
     // before and after says so: there is nothing left to decide, so the turn
     // that would ask is not spent. That turn was being spent only for the

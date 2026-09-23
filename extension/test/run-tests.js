@@ -1563,10 +1563,16 @@ for (const b of budgets) {
     // The request does not name either radio word for word - "huc 8
     // subbasin" against "HUC-08 subbasin" - so there is nothing certain to
     // act on and no decision to act on either.
-    ["a model that plans nothing", { ready: true, hasGpu: true }, "select huc-8 subbasin",
+    // Names nothing here at all. "huc-8 subbasin" used to serve as the
+    // unplaceable example and no longer is one: it reaches HUC-08 subbasin
+    // without a decision, because a figure written two ways is one figure.
+    ["a model that plans nothing", { ready: true, hasGpu: true }, "group by watershed order",
       /could not place|clearly does/, null],
-    ["no model at all", { ready: false, hasGpu: false }, "select huc-8 subbasin",
-      /WebGPU/, "huc8"],
+    // Answered by the page outright now, so there is no model to explain the
+    // absence of - which is the right card, and the note is about why the
+    // model did not answer when something else had to.
+    ["no model at all", { ready: false, hasGpu: false }, "group by watershed order",
+      /WebGPU/, null],
   ];
   for (const [what, status, instr, wantNote, wantRadio] of shapes) {
     const rpg = loadPage(ruleHtml, { url: "https://waterdata.usgs.gov/state/" });
@@ -2760,7 +2766,7 @@ for (const b of budgets) {
     </body></html>`;
   const cases = [
     // Names neither radio word for word, and the model could not place it.
-    ["phrasing the model cannot place", "select huc-8 subbasin", true,
+    ["phrasing the model cannot place", "group by watershed order", true,
       { radio: "huc6", snow: false }],
     // Names a control exactly, so there is nothing to decide either way.
     ["a control named word for word", "click snow depth", false,
