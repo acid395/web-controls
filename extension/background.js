@@ -4692,6 +4692,34 @@ async function askModelForStep(payload) {
 // turn it had. Hiding the right answer and then judging the choice is not a
 // fair test of a planner. The tokens come back out of what each line costs,
 // not out of how many lines there are.
+// Site furniture: the things every federal page carries and nobody ever
+// means. Pagination, social accounts, the skip link, the cookie notice.
+// Offering them as candidate actions is not neutral - a model choosing from
+// a hundred and twenty options anchors on a shared word, and "click last
+// month of data" landed on "Last page, page 42" because the page carries
+// forty pagination controls all wearing the word last.
+//
+// Structural, not instruction-dependent: these are excluded because of what
+// they are, not because of what was asked, so the same list is offered
+// whatever the request. That distinction is the whole difference between
+// tidying the page and letting the scorer choose.
+function isSiteFurniture(c) {
+  const label = String(c.label || "").toLowerCase();
+  // goesTo is where the nearest enclosing link points, which the inventory
+  // already works out; there is no href field on these records, so the
+  // first version of this check silently never fired.
+  const href = String(c.goesTo || c.href || "").toLowerCase();
+  if (/^(skip to|here.s how you know)/.test(label)) return true;
+  if (/facebook|twitter\.com|\bx\.com|instagram|youtube|linkedin|flickr|tumblr/.test(href)) {
+    return true;
+  }
+  // Pagination reads the same on every site that has it.
+  if (/^(first|last|next|previous|prev)\b.*\bpage\b/.test(label)) return true;
+  if (/^page \d+$/.test(label) || /^\d+$/.test(label.trim())) return true;
+  if (/^go to (the )?(first|last|next|previous) page$/.test(label)) return true;
+  return false;
+}
+
 function controlsForModel(inv, { max = 120 } = {}) {
   const all = (inv && inv.controls) || [];
   const seen = new Set();
@@ -4701,6 +4729,7 @@ function controlsForModel(inv, { max = 120 } = {}) {
     if (!label || c.disabled) continue;
     if (c.confidence === "low") continue;            // a pointer cursor, not a control
     if (c.hidden && !c.revealedBy) continue;         // hidden with no way in
+    if (isSiteFurniture(c)) continue;                // chrome, never the answer
     const key = `${c.kind}:${c.type || ""}:${label.toLowerCase()}`;
     if (seen.has(key)) continue;                     // the same thing twice over
     seen.add(key);
@@ -5209,9 +5238,33 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       });
       if (inWords.length === 1) optionWanted = inWords[0].text || inWords[0].value;
     }
+    // A word most of the page's controls wear is not evidence that this one
+    // is the right control. "click last month of data" landed on "Last page,
+    // page 42" because that page carries dozens of controls saying last, and
+    // matching any single word counted as naming. Month appears on nothing,
+    // data on a handful; those carry information, last does not.
+    //
+    // Worked out from the page rather than from a list of stop words, so it
+    // adapts: a word is distinctive here if few controls here use it. Where
+    // the request has distinctive words, the pick has to answer to one of
+    // them; where it has none, any match is all there is to go on.
+    const labelsHere = controls.map((c) => String(c.label || "").toLowerCase());
+    const spreadOf = (w) => labelsHere.filter((l) => wordMatchesText(w, l)).length;
+    const tooCommon = Math.max(3, Math.round(labelsHere.length * 0.06));
+    const telling = goalWords.filter((w) => {
+      const n = spreadOf(w);
+      return n > 0 && n <= tooCommon;
+    });
+    // No fallback to the common words. Falling back to them was the bug in
+    // miniature: "click last month of data" has month, which is on nothing,
+    // and last, which is on everything, so falling back meant last decided
+    // it after all. Where a request offers nothing distinctive there is no
+    // positive evidence, and the question below is the right response to
+    // that rather than a shrug.
+    const matchWords = telling;
     const namesIt = !!optionWanted
       || (numbersAgree
-        && goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase())));
+        && matchWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase())));
     // A contradicted number is not a judgment call. "30 days" answered with
     // "7 days" is wrong in a way no amount of insisting makes right, so this
     // is refused outright rather than questioned once and then honoured -
@@ -5246,10 +5299,16 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       // asked, said it again, and we navigated away from the page the
       // request was about. A checkbox pressed in error is a tick to undo; a
       // link to somewhere else is the end of the thing being worked on.
-      const href = String(target.href || "");
-      if (href && !/^#|^javascript:|^\(js\)$/i.test(href)) {
-        return giveUp(`"${String(target.label).slice(0, 40)}" leaves this page, and nothing`
-          + " in the request names it");
+      // Any link, not only one with a real URL behind it. A fragment or a
+      // handler is how a single-page app navigates, so "it is only a #" is
+      // no comfort - the page is gone either way. A switch insisted on is
+      // a tick to undo and is still honoured, which is what keeps a genuine
+      // paraphrase working: "show me the water level" lands on a checkbox
+      // called Graph Gage height and shares not one word with it.
+      const isLink = String(target.tag || target.kind || "").toLowerCase() === "a";
+      if (isLink) {
+        return giveUp(`"${String(target.label).slice(0, 40)}" is a link away from here,`
+          + " and nothing in the request names it");
       }
     }
 

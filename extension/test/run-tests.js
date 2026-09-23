@@ -3007,6 +3007,95 @@ for (const b of budgets) {
   }
 }
 
+// "click last month of data" landed on "Last page, page 42". Fixing that one
+// phrase would have been a rule about the word last; the general shape is
+// that a model choosing from a hundred and twenty options anchors on a
+// shared word, and the page was offering it forty pagination controls all
+// wearing one.
+{
+  const furnitureHtml = `<!doctype html><html><body>
+    <a href="#main">Skip to main content</a>
+    <a href="https://facebook.com/x">Our Facebook</a>
+    <a href="#p1">Page 1</a><a href="#p2">Page 2</a>
+    <a href="#pl">Last page, page 42</a>
+    <label><input type="checkbox" name="d30"> 30 days</label>
+    <a href="/summary">Water Year Summary</a>
+    </body></html>`;
+  const fp = loadPage(furnitureHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (fp) {
+    const bgf = loadBackground({ page: fp });
+    const inv = fp.GENERIC.inventory({ includeHidden: true });
+    const offered = bgf.controlsForModel(inv.result || inv).map((c) => String(c.label || ""));
+    ensure("pagination is not offered as something to do",
+      !offered.some((l) => /page \d|last page/i.test(l)), offered);
+    ensure("nor the skip link", !offered.some((l) => /^skip to/i.test(l)), offered);
+    ensure("nor a social account", !offered.some((l) => /facebook/i.test(l)), offered);
+    // And the page's own content survives, which is the point of doing this
+    // structurally rather than by relevance to the request.
+    ensure("while the page's real controls remain",
+      offered.some((l) => /30 days/i.test(l)) && offered.some((l) => /water year summary/i.test(l)),
+      offered);
+  }
+
+  // A word most of the page's controls wear is not evidence that this one is
+  // the right control. Worked out from the page, not from a list of stop
+  // words, so it adapts to whatever the page repeats.
+  {
+    let rows = "";
+    for (let i = 1; i <= 12; i++) rows += `<a href="#r${i}">Last reading ${i}</a>`;
+    const cw = loadPage(`<!doctype html><html><body>${rows}
+      <label><input type="checkbox" name="d30"> 30 days</label></body></html>`,
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (cw) {
+      let pressed = 0;
+      for (const a of cw.document.querySelectorAll("a")) {
+        a.addEventListener("click", () => { pressed++; });
+      }
+      const bgcw = loadBackground({ page: cw });
+      bgcw.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") return { ok: true, step: { name: "Last reading 3", do: "click" }, raw: "{}" };
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgcw.__ask({ type: "smartAsk", instruction: "model: click last month of data" });
+        check("a word the page wears everywhere does not make a pick related", pressed, 0);
+      });
+    }
+  }
+
+  // Insisting is judgment and judgment is honoured - but only where being
+  // wrong is reversible. A switch is a tick to undo; a link is the page
+  // gone, fragment or not, because that is how a single-page app navigates.
+  {
+    const both = `<label><input type="checkbox" name="sw"> Graph Gage height, feet</label>
+      <a href="#home">WDFN Home</a>`;
+    for (const [what, pick, wantPresses, wantOn] of [
+      ["a switch", "Graph Gage height, feet", 0, true],
+      ["a link", "WDFN Home", 0, false],
+    ]) {
+      const ip = loadPage(`<!doctype html><html><body>${both}</body></html>`,
+        { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+      if (!ip) continue;
+      let navs = 0;
+      ip.document.querySelector("a").addEventListener("click", () => { navs++; });
+      const bgi = loadBackground({ page: ip });
+      bgi.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") return { ok: true, step: { name: pick, do: "click" }, raw: "{}" };
+        return undefined;
+      };
+      runAsync(async () => {
+        // Names neither control, so both are picks the request does not name.
+        await bgi.__ask({ type: "smartAsk", instruction: "model: show me the water level" });
+        check(`insisting on ${what}: links followed`, navs, wantPresses);
+        check(`insisting on ${what}: switch set`,
+          !!(ip.document.querySelector('[name="sw"]') || {}).checked, wantOn);
+      });
+    }
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
