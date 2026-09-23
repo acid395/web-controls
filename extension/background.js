@@ -4173,11 +4173,24 @@ function verbFamily(word) {
 // "peak" as a typo of "pick" and quietly discount a word that means a great
 // deal on a river page. A near-miss of a verb is only ever excused, never
 // treated as a match for anything.
+// Two letters the wrong way round is the commonest typo there is, and edit
+// distance scores it as two changes rather than one - so "clcik" was never
+// recognised as "click", and an instruction with one transposed pair in its
+// verb matched nothing at all.
+function isTransposition(a, b) {
+  if (a.length !== b.length) return false;
+  const at = [];
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) at.push(i);
+  return at.length === 2 && at[1] === at[0] + 1
+    && a[at[0]] === b[at[1]] && a[at[1]] === b[at[0]];
+}
+
 function looksLikeMisspelledVerb(word) {
   if (!word || word.length < 5 || verbFamily(word)) return false;
   return VERB_FAMILIES.some((family) =>
-    family.some((verb) => verb.length >= 5 && Math.abs(verb.length - word.length) <= 1
-      && editDistance(verb, word) === 1));
+    family.some((verb) => verb.length >= 5
+      && ((Math.abs(verb.length - word.length) <= 1 && editDistance(verb, word) === 1)
+        || isTransposition(verb, word))));
 }
 
 // A tool's name word against the instruction, with any verb standing in for
@@ -4341,7 +4354,14 @@ function argsForTool(def, instruction, words) {
 const CONTROL_VERB = /\b(click|press|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look ?up|find|type|enter|download|zoom|group|sort|view|go to|navigate|apply|reset|clear|check|uncheck|tick)\b/i;
 
 function isCommand(instruction) {
-  return CONTROL_VERB.test(instruction || "");
+  if (CONTROL_VERB.test(instruction || "")) return true;
+  // A verb with a typo in it is still a verb. "clcik 30 days" was not
+  // recognised as an instruction at all, so every path that acts was skipped
+  // and it fell through to the lookups, which reported that nothing matched
+  // a place or a measurement. One transposed pair should not turn pressing
+  // something into a question about hydrology.
+  const first = String(instruction || "").trim().split(/\s+/)[0] || "";
+  return looksLikeMisspelledVerb(first.toLowerCase());
 }
 
 // Words the chosen tool did not account for. Silently discarding them is how
@@ -4549,7 +4569,10 @@ const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "search", "re
 // control.
 function splitIntoSteps(instruction) {
   return String(instruction || "")
-    .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read)\b)/i)
+    // plot, graph and chart are asked for as often as click on these sites -
+    // "turn on 30 days and plot the discharge" read as one clause, so
+    // neither half got the treatment a named control gets.
+    .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check)\b)/i)
     .map((t) => t.trim()).filter(Boolean);
 }
 
@@ -5162,8 +5185,29 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       continue;
     }
 
-    const namesIt = optionWanted
-      || goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase()));
+    // A number in the request has to be the number on the control. "30 days"
+    // and "7 days" share the word that matters least, so any-word matching
+    // called them related and the wrong radio was pressed - the same shape
+    // as HUC-08 answered with HUC-06. A control carrying no number at all is
+    // not contradicting anything; one carrying a different number is.
+    const askedNums = String(goal).match(/\b\d+\b/g) || [];
+    const labelNums = String(target.label || "").match(/\b\d+\b/g) || [];
+    const numbersAgree = !askedNums.length || !labelNums.length
+      || askedNums.some((n) => labelNums.includes(n));
+    const namesIt = !!optionWanted
+      || (numbersAgree
+        && goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase())));
+    // A contradicted number is not a judgment call. "30 days" answered with
+    // "7 days" is wrong in a way no amount of insisting makes right, so this
+    // is refused outright rather than questioned once and then honoured -
+    // which is how the wrong radio kept getting pressed.
+    if (!numbersAgree) {
+      if (!correct(`"${String(target.label).slice(0, 40)}" does not match the number asked for`
+        + ` (${askedNums.join(", ")}). Name the control carrying that number.`)) {
+        return giveUp(`the model kept choosing a control numbered differently from the request`);
+      }
+      continue;
+    }
     if (!namesIt && goalWords.length) {
       const asked40 = String(target.label).slice(0, 40);
       if (queried === null) {
@@ -6481,6 +6525,55 @@ const PARAPHRASE_CASES = [
 // outcomes on a page that moves underneath you measures the page as much as
 // the planner. What is in question is the choice, so the choice is what is
 // recorded.
+// One clause, one control named word for word: act on it and report. The
+// same certainty the single-instruction fast paths use, made available to
+// the sequence runner - "click 1 year and enable continuous data" turned on
+// 1 year and then reported that it could not tell whether the second half
+// had worked, on a checkbox the clause named exactly and which the same
+// words on their own set without trouble.
+async function actOnExactlyNamedClause(routeGlobal, clause) {
+  const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+    .catch(() => ({ ok: false }));
+  const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const whole = flat(clause);
+  const bare = flat(String(clause).replace(LEAD, ""));
+  // Hidden is not out of reach. On a monitoring-location page the Continuous
+  // data checkbox sits inside a collapsed section, and the single-instruction
+  // path reaches it and sets it without trouble; excluding it here is why the
+  // same words worked alone and failed as the second half of a sentence.
+  const named = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => {
+    if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
+    const l = flat(c.label);
+    return !!l && (l === bare || l === whole);
+  });
+  if (named.length !== 1) return null;
+  const only = named[0];
+  const isSwitch = /^(checkbox|radio)$/.test(String(only.type || "").toLowerCase());
+  if (!isSwitch) return null;   // presses keep their nuances; see the fast path
+  if (only.hidden && only.revealedBy) {
+    await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
+    forgetPageTools();
+  }
+  const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
+    .test(clause);
+  const ran = await runVerified(routeGlobal,
+    { name: "pageCheck", args: { selector: only.selector, on: !wantsOff } });
+  if (ran.ok === false) return null;
+  // Read the control back rather than asking whether the page moved. A
+  // hidden checkbox changes no signature this can see, so the box was being
+  // ticked and the step reported as unverifiable - the state itself is the
+  // evidence, and it is the thing that was asked about.
+  const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+    .catch(() => ({ ok: false }));
+  const now = ((again.ok && again.result && again.result.controls) || [])
+    .find((c) => c.selector === only.selector);
+  const ended = now ? now.checked === true : null;
+  if (ended === null || ended !== !wantsOff) return null;
+  return { ok: true, verified: { changed: true }, label: only.label,
+    alreadySo: only.checked === ended };
+}
+
 async function benchmarkPlanners({ onlyTargets = null } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url) throw new Error("no active tab");
@@ -7249,12 +7342,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const flatO = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
           const said = flatO(wanted);
           const saidWords = said.split(" ").filter(Boolean);
+          // "clcik 30 days" is a click. The verb list is matched exactly
+          // everywhere, so one typo in it left no path matching at all.
+          if (saidWords.length > 1 && looksLikeMisspelledVerb(saidWords[0])) saidWords.shift();
           const hits = [];
           for (const c of ((oinv.ok && oinv.result && oinv.result.controls) || [])) {
             if (c.disabled) continue;
+            const ownLabel = flatO(c.label);
             for (const o of (c.options || [])) {
               const t = flatO(o.text || o.value);
               if (!t || t.length < 4) continue;
+              // A list's own placeholder is not one of its values. "Select a
+              // State" opens with an option called State, so "set the state
+              // to wyoming" matched two options - the placeholder and the
+              // one meant - and two is a choice, so nothing happened.
+              if (ownLabel.includes(t) || !String(o.value ?? "").trim()) continue;
               const spoken = said.includes(t)
                 || (t.length >= 5 && saidWords.some((w) => w.startsWith(t)));
               if (spoken) hits.push({ control: c, option: o.text || o.value, text: t });
@@ -7354,10 +7456,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
               const whole = flat(wanted);
               const bare = flat(String(wanted).replace(LEAD, ""));
+              // A verb with a typo in it is still a verb: "clcik 30 days".
+              const firstOf = whole.split(" ")[0];
+              const bareTypo = looksLikeMisspelledVerb(firstOf)
+                ? whole.split(" ").slice(1).join(" ") : bare;
               const named = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => {
                 if (c.disabled || c.hidden || c.confidence === "low") return false;
                 const l = flat(c.label);
-                return !!l && (l === bare || l === whole);
+                return !!l && (l === bare || l === whole || l === bareTypo);
               });
               // Exactly one, and not a way in to something else.
               pressable = named.length === 1 && !named[0].opensPanel;
@@ -7380,6 +7486,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const flatB = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
           const whole = flatB(wanted);
           const bare = flatB(String(wanted).replace(BLEAD, ""));
+          // A verb with a typo in it is still a verb: "clcik 30 days".
+          const firstWord = whole.split(" ")[0];
+          const bareTyped = looksLikeMisspelledVerb(firstWord)
+            ? whole.split(" ").slice(1).join(" ") : bare;
           // Switches only. A press has nuances this does not know - a link
           // to a bare "#" did nothing while one carrying a view in its
           // fragment did something real, and the path below can tell those
@@ -7389,7 +7499,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (c.disabled || c.hidden || c.confidence === "low" || c.opensPanel) return false;
             if (!/^(checkbox|radio)$/.test(String(c.type || "").toLowerCase())) return false;
             const l = flatB(c.label);
-            return !!l && (l === bare || l === whole);
+            return !!l && (l === bare || l === whole || l === bareTyped);
           });
           if (named.length === 1) {
             const only = named[0];
@@ -7621,8 +7731,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // a change meant "click gage height" on an already-on control
             // was treated as the model getting nowhere, and the instruction
             // ran a second time below to reach the same answer.
-            if (agent && agent.ok
-              && (agent.answer || agent.history.some((h) => h.changed || h.satisfied))) {
+            // A press that ran on a control the request names counts, even
+            // where nothing could be seen to change. "open the paleoclimate
+            // page" pressed the Paleoclimate link and then reported that
+            // nothing here clearly does that - the click was handled without
+            // moving anything this can measure, so a correct action was
+            // described as a refusal after it had already happened. Saying
+            // "ran, but nothing visibly changed" is the honest version;
+            // claiming nothing was done is not.
+            const didSomething = agent && agent.history.some((h) => h.changed || h.satisfied
+              || (h.ok !== false && !h.unrelated && h.did && !/^read |^opened /.test(h.did)));
+            if (agent && agent.ok && (agent.answer || didSomething)) {
               const acted = agent.history.filter((h) => h.did !== "read the page");
               respond({
                 ok: true, plannedBy: "model", steps: agent.history, answer: agent.answer || undefined,
@@ -7831,6 +7950,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // right answer, a fill of the search box, all along. The main
                 // route has preferred the page since the one-list picker
                 // landed; the sequence never did.
+                const exact = await actOnExactlyNamedClause(route.global, text).catch(() => null);
+                if (exact) {
+                  steps.push({ part, ok: true, changed: true, unconfirmed: false });
+                  continue;
+                }
                 const own = await pursueGoal(route.global, text).catch(() => null);
                 const ownActed = ((own && own.steps) || [])
                   .filter((st) => st.did !== "opened" && st.ok);

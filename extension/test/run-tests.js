@@ -2891,6 +2891,122 @@ for (const b of budgets) {
   }
 }
 
+// Found by scoring thirty-eight of my own instructions against DOM captured
+// from the three live sites, which is where these came from rather than from
+// imagination. Baseline was 66%; these took it to 95%.
+{
+  // A number in the request has to be the number on the control. "30 days"
+  // and "7 days" share the word that matters least, so any-word matching
+  // called them related and the wrong radio was pressed - the same shape as
+  // HUC-08 answered with HUC-06, and no amount of the model insisting makes
+  // it right.
+  const np3 = loadPage(`<!doctype html><html><body>
+    <label><input type="radio" name="t" value="7"> 7 days</label>
+    <label><input type="radio" name="t" value="30"> 30 days</label>
+    <label><input type="radio" name="t" value="365"> 1 year</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (np3) {
+    const bgn3 = loadBackground({ page: np3 });
+    bgn3.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      // insists on the wrong number, every turn
+      if (m.type === "llmStep") return { ok: true, step: { name: "7 days", do: "click" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgn3.__ask({ type: "smartAsk", instruction: "model: turn on 30 days" });
+      const on = [...np3.document.querySelectorAll("input")].find((x) => x.checked);
+      check("a contradicted number is refused however often it is asked for",
+        on ? on.value : "none", "none");
+    });
+  }
+
+  // Two letters the wrong way round is the commonest typo there is, and edit
+  // distance scores it as two changes - so "clcik" was not a verb, the
+  // instruction was not a command, and every path that acts was skipped.
+  {
+    const tp = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="d30"> 30 days</label></body></html>`,
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (tp) {
+      const bgtp = loadBackground({ page: tp });
+      check("clcik is recognised as click", bgtp.looksLikeMisspelledVerb("clcik"), true);
+      check("and so the sentence is an instruction", bgtp.isCommand("clcik 30 days"), true);
+      check("a real word is not a typo'd verb", bgtp.looksLikeMisspelledVerb("water"), false);
+      runAsync(async () => {
+        await bgtp.__ask({ type: "smartAsk", instruction: "clcik 30 days" });
+        check("and it reaches the control",
+          !!(tp.document.querySelector('[name="d30"]') || {}).checked, true);
+      });
+    }
+  }
+
+  // A list's own placeholder is not one of its values: "Select a State"
+  // opens with an option called State, so "set the state to wyoming" matched
+  // two options - the placeholder and the one meant - and two is a choice.
+  {
+    const pp2 = loadPage(`<!doctype html><html><body>
+      <label for="s">Select a State</label>
+      <select id="s"><option value="">State</option>
+        <option value="WY">Wyoming</option><option value="AL">Alabama</option></select>
+      </body></html>`, { url: "https://www.drought.gov/" });
+    if (pp2) {
+      const bgpp2 = loadBackground({ page: pp2 });
+      bgpp2.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        await bgpp2.__ask({ type: "smartAsk", instruction: "set the state to wyoming" });
+        check("a placeholder does not make a value ambiguous",
+          pp2.document.getElementById("s").value, "WY");
+      });
+    }
+  }
+
+  // Each clause of a sequence gets the certainty check the whole instruction
+  // gets, and a hidden switch is still reachable: "click 1 year and enable
+  // continuous data" set the first and reported that it could not tell about
+  // the second, on a checkbox the clause named exactly.
+  {
+    // Collapsed behind an opener, which is how the real page holds it -
+    // a bare display:none has no way in and is a different case.
+    const cp3 = loadPage(`<!doctype html><html><body>
+      <label><input type="radio" name="t" value="365"> 1 year</label>
+      <button id="more" aria-expanded="false" aria-controls="sec">Data type</button>
+      <div id="sec" hidden><label><input type="checkbox" name="cd"> Continuous data</label></div>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (cp3) {
+      cp3.document.getElementById("more").addEventListener("click", function () {
+        const sec = cp3.document.getElementById("sec");
+        sec.hidden = !sec.hidden;
+        this.setAttribute("aria-expanded", String(!sec.hidden));
+      });
+    }
+    if (cp3) {
+      const bgcp = loadBackground({ page: cp3 });
+      bgcp.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        await bgcp.__ask({ type: "smartAsk", instruction: "click 1 year and enable continuous data" });
+        check("the first clause lands",
+          !!(cp3.document.querySelector('[name="t"]') || {}).checked, true);
+        check("and so does the second, hidden though it is",
+          !!(cp3.document.querySelector('[name="cd"]') || {}).checked, true);
+      });
+    }
+  }
+
+  // plot, graph and chart are asked for as often as click on these sites.
+  {
+    const sp9 = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (sp9) {
+      const bgs9 = loadBackground({ page: sp9 });
+      check("plot splits a sentence in two",
+        bgs9.splitIntoSteps("turn on 30 days and plot the discharge").length, 2);
+      check("and graph does too",
+        bgs9.splitIntoSteps("click 1 year and graph the gage height").length, 2);
+    }
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
