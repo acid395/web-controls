@@ -1531,12 +1531,16 @@ for (const b of budgets) {
   }
 }
 
-// The keyword rules are the baseline, not the main path. They lead only
-// under "baseline:" or where the model cannot plan at all; where the model
-// was available and got nowhere, what it falls back to is the page's own
-// controls. Both wrong answers reported on 2026-09-22 came from rules
-// running ahead of the page: selectState on a page with no such function,
-// and HUC-06 selected in answer to a request for HUC-08.
+// The keyword rules are the baseline, not the main path, and the scorer does
+// not act on what the model could not work out. It ranks words against
+// labels; it does not understand a request, so on phrasing the model could
+// not place it will still find a best candidate and press it - which is
+// where every wrong action on a real page came from: HUC-06 for HUC-08,
+// Ada County for Alaska, Augusta for a date in August.
+//
+// So with a model available and unable to place the request, the answer is
+// that nothing here clearly does that. Without a model at all the scorer
+// still works, or the tool would be dead on a machine with no WebGPU.
 {
   const ruleHtml = `<!doctype html><html><body>
     <fieldset><legend>Group by</legend>
@@ -1544,11 +1548,15 @@ for (const b of budgets) {
       <label><input type="radio" name="g" value="huc6" checked> HUC-06 basin</label>
     </fieldset></body></html>`;
   const shapes = [
+    // The request does not name either radio word for word - "huc 8
+    // subbasin" against "HUC-08 subbasin" - so there is nothing certain to
+    // act on and no decision to act on either.
     ["a model that plans nothing", { ready: true, hasGpu: true }, "select huc-8 subbasin",
-      /keyword baseline/],
-    ["no model at all", { ready: false, hasGpu: false }, "select huc-8 subbasin", /WebGPU/],
+      /could not place|clearly does/, null],
+    ["no model at all", { ready: false, hasGpu: false }, "select huc-8 subbasin",
+      /WebGPU/, "huc8"],
   ];
-  for (const [what, status, instr, wantNote] of shapes) {
+  for (const [what, status, instr, wantNote, wantRadio] of shapes) {
     const rpg = loadPage(ruleHtml, { url: "https://waterdata.usgs.gov/state/" });
     if (!rpg) continue;
     const bgr = loadBackground({ page: rpg });
@@ -1560,9 +1568,17 @@ for (const b of budgets) {
     runAsync(async () => {
       const r = await bgr.__ask({ type: "smartAsk", instruction: instr });
       const on = [...rpg.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
-      check(`with ${what}, the page's own control still answers`, on && on.value, "huc8");
-      ensure(`and the card says which planner answered (${what})`,
-        wantNote.test(String((r.display || {}).note || "")), (r.display || {}).note);
+      if (wantRadio) {
+        check(`with ${what}, the page's own control still answers`, on && on.value, wantRadio);
+      } else {
+        // The important half: it does not press the next best thing. HUC-06
+        // is what the scorer used to choose here, and choosing it was worse
+        // than doing nothing.
+        check(`with ${what}, nothing is pressed`, on && on.value, "huc6");
+      }
+      ensure(`and the card says why (${what})`,
+        wantNote.test(`${(r.display || {}).note || ""} ${(r.display || {}).subtitle || ""}`),
+        `${(r.display || {}).note} | ${(r.display || {}).subtitle}`);
     });
   }
   // And the baseline is still reachable on purpose, unlabelled, so the two
@@ -1610,7 +1626,12 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
-      const r = await bgs2.__ask({ type: "smartAsk", instruction: "click location id - ascending" });
+      // Through the model deliberately: what is under test is that the
+      // model's own "click" on a radio reaches the state, which was the bug.
+      // Unprefixed, the same words name that radio exactly and the page
+      // answers without a decision - checked separately below.
+      const r = await bgs2.__ask({ type: "smartAsk",
+        instruction: "model: click location id - ascending" });
       check(`clicking a radio from ${start} is the model's own answer`, r.plannedBy, "model");
       check(`and costs one turn from ${start}`, turns, 1);
       const on = [...sp2.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
@@ -1792,7 +1813,10 @@ for (const b of budgets) {
       : undefined);
     runAsync(async () => {
       const r = await bgl2.__ask({ type: "smartAsk",
-        instruction: "click select data to graph on second y-axis" });
+        // Phrased loosely on purpose: naming a control word for word is
+        // answered by the page without a decision, and what is under test
+        // here is what a card says when the model was not the one to answer.
+        instruction: "turn on the second y axis data please" });
       const note = String((r.display || {}).note || "");
       ensure(`a card says which model is loading (${want})`, note.includes(want), note);
       ensure("and how far along it is", /62%/.test(note), note);
@@ -1811,7 +1835,10 @@ for (const b of budgets) {
     };
     runAsync(async () => {
       const r = await bgr2.__ask({ type: "smartAsk",
-        instruction: "click select data to graph on second y-axis" });
+        // Phrased loosely on purpose: naming a control word for word is
+        // answered by the page without a decision, and what is under test
+        // here is what a card says when the model was not the one to answer.
+        instruction: "turn on the second y axis data please" });
       check(`and an answer it did plan is credited to it (${want})`,
         (r.display || {}).source, want);
     });
@@ -2700,6 +2727,84 @@ for (const b of budgets) {
     runAsync(async () => {
       await bgtl.__ask({ type: "smartAsk", instruction: "change map to satellite" });
       ensure("a value two lists both offer is not guessed at", calls >= 1, calls);
+    });
+  }
+}
+
+// The scorer does not act on what the model could not work out. It ranks
+// words against labels rather than understanding a request, so on phrasing
+// the model could not place it will still find a best candidate and press
+// it - which is where every wrong action on a real page came from. Narrow:
+// only where the model was actually asked, only for instructions that act,
+// never under "baseline:", and never ahead of the paths that act on what
+// the request names word for word.
+{
+  const refuseHtml = `<!doctype html><html><body>
+    <fieldset><legend>Group by</legend>
+      <label><input type="radio" name="g" value="huc8"> HUC-08 subbasin</label>
+      <label><input type="radio" name="g" value="huc6" checked> HUC-06 basin</label>
+    </fieldset>
+    <label><input type="checkbox" name="sd"> Snow Depth</label>
+    </body></html>`;
+  const cases = [
+    // Names neither radio word for word, and the model could not place it.
+    ["phrasing the model cannot place", "select huc-8 subbasin", true,
+      { radio: "huc6", snow: false }],
+    // Names a control exactly, so there is nothing to decide either way.
+    ["a control named word for word", "click snow depth", false,
+      { radio: "huc6", snow: true }],
+    // Two clauses, both named exactly: the instant paths take one clause
+    // only, so this must still go through rather than be refused.
+    ["two clauses, both named", "click snow depth and click huc-08 subbasin", false,
+      { radio: "huc8", snow: true }],
+  ];
+  for (const [what, instr, wantRefusal, want] of cases) {
+    const rf = loadPage(refuseHtml, { url: "https://waterdata.usgs.gov/state/" });
+    if (!rf) continue;
+    const bgrf = loadBackground({ page: rf });
+    bgrf.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" }, raw: '{"do":"finish"}' };
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgrf.__ask({ type: "smartAsk", instruction: instr });
+      const on = [...rf.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check(`${what}: the radio ends on ${want.radio}`, on && on.value, want.radio);
+      check(`${what}: snow depth ends ${want.snow}`,
+        !!(rf.document.querySelector('[name="sd"]') || {}).checked, want.snow);
+      if (wantRefusal) {
+        ensure(`${what}: it says nothing here clearly does that`,
+          /clearly does|could not place/.test(
+            `${(r.display || {}).title || ""} ${(r.display || {}).subtitle || ""}`),
+          r.display);
+        ensure(`${what}: and offers the baseline for comparison`,
+          /baseline:/.test(String((r.display || {}).note || "")), (r.display || {}).note);
+      }
+    });
+  }
+
+  // Without a model at all the scorer still answers, or the tool is dead on
+  // a machine with no WebGPU.
+  const noGpu2 = loadPage(refuseHtml, { url: "https://waterdata.usgs.gov/state/" });
+  if (noGpu2) {
+    const bgng = loadBackground({ page: noGpu2 });
+    bgng.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bgng.__ask({ type: "smartAsk", instruction: "select huc-8 subbasin" });
+      const on = [...noGpu2.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check("with no model at all the scorer still acts", on && on.value, "huc8");
+    });
+  }
+  // And "baseline:" still runs it on purpose, which is what it is kept for.
+  const bl2 = loadPage(refuseHtml, { url: "https://waterdata.usgs.gov/state/" });
+  if (bl2) {
+    const bgbl = loadBackground({ page: bl2 });
+    bgbl.__model = (m) => (m.type === "llmStatus" ? { ready: true, hasGpu: true } : undefined);
+    runAsync(async () => {
+      await bgbl.__ask({ type: "smartAsk", instruction: "baseline: select huc-8 subbasin" });
+      const on = [...bl2.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      check("baseline: still runs the scorer on purpose", on && on.value, "huc8");
     });
   }
 }

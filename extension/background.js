@@ -7271,6 +7271,68 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (fullyNamed && (setsState || pressable)) instant = pick;
           }
         }
+        // The tool descriptors differ by route - a NOAA page offers its
+        // manifest's tools where a USGS one offers the page's own - so
+        // "click gage height" was instant on one site and cost a decision on
+        // the other, for the same checkbox named the same way. The page
+        // itself does not vary like that, so where the descriptors miss, the
+        // inventory is asked the same question: is exactly one control named
+        // this, and is it a real control rather than a way in to one.
+        if (!instant && !forceBaseline && !forceModel && isCommand(wanted)
+            && splitIntoSteps(wanted).length === 1) {
+          const binv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+            .catch(() => ({ ok: false }));
+          const BLEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
+          const flatB = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+          const whole = flatB(wanted);
+          const bare = flatB(String(wanted).replace(BLEAD, ""));
+          // Switches only. A press has nuances this does not know - a link
+          // to a bare "#" did nothing while one carrying a view in its
+          // fragment did something real, and the path below can tell those
+          // apart - and pressing here and handing on would press it twice.
+          // A checkbox or radio has its own state, which settles it.
+          const named = ((binv.ok && binv.result && binv.result.controls) || []).filter((c) => {
+            if (c.disabled || c.hidden || c.confidence === "low" || c.opensPanel) return false;
+            if (!/^(checkbox|radio)$/.test(String(c.type || "").toLowerCase())) return false;
+            const l = flatB(c.label);
+            return !!l && (l === bare || l === whole);
+          });
+          if (named.length === 1) {
+            const only = named[0];
+            const isSw = true;
+            const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
+              .test(wanted);
+            const call = isSw
+              ? { name: "pageCheck", args: { selector: only.selector, on: !wantsOff } }
+              : { name: "pageClick", args: { selector: only.selector } };
+            const ran = await runVerified(route.global, call);
+            const rr = (ran && ran.result) || {};
+            const moved = rr.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+            const wasOn = only.checked === true;
+            const settled = isSw ? (moved || wasOn === !wantsOff) : moved;
+            if (ran.ok !== false && settled && rr.opened !== true) {
+              respond({
+                ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
+                display: {
+                  title: String(only.label || "").slice(0, 60),
+                  subtitle: isSw
+                    ? (moved ? `${only.label}: ${wasOn} \u2192 ${!wantsOff}`
+                      : `${only.label} was already ${!wantsOff} - nothing to change`)
+                    : "the page changed",
+                  stats: [], rows: [{
+                    name: String(only.label || "").slice(0, 50),
+                    value: moved ? "changed" : "already so", meta: call.name, tone: "ok",
+                  }],
+                  note: "your words named one control on this page exactly, so this did not"
+                    + " wait for the model",
+                  source: "this page",
+                },
+              });
+              return;
+            }
+          }
+        }
+
         if (instant) {
           const ran = await runVerified(route.global, { name: instant.tool.name, args: instant.args });
           const r = (ran && ran.result) || {};
@@ -7532,10 +7594,68 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // discarded at exactly the moment it mattered.
             modelSaid = (agent && agent.said) || null;
             modelGaveUp = (agent && (agent.gaveUp || agent.error)) || null;
-            // A model that is present but got nowhere is not a reason to
-            // refuse: the scorer below is a worse planner and a better
-            // fallback, and saying nothing would be worse than either.
+            // A model that was asked and got nowhere does not hand the job
+            // to the scorer. See below.
           }
+        }
+
+        // The scorer does not act on what the model could not work out.
+        //
+        // It ranks words against labels; it does not understand a request,
+        // so on phrasing the model could not place it will still find a best
+        // candidate and press it. That is where every wrong action on a real
+        // page came from - HUC-06 for HUC-08, Ada County for Alaska, Augusta
+        // for a date in August - and it is the behaviour this project was
+        // asked to stop behaving like. An instruction the model was given
+        // and could not place is one nothing here clearly does, and saying
+        // so is the answer.
+        //
+        // Narrow on purpose. Only where the model was actually asked, so a
+        // machine without WebGPU still has a working tool. Only for
+        // instructions that act, so questions still reach the lookups. Never
+        // under "baseline:", which exists to run the scorer on the same
+        // pages and measure it. And never before the instant paths above,
+        // which do not guess: they act on what the request names word for
+        // word, or not at all.
+        // Unless the request names something on the page word for word. The
+        // instant paths above only take single-clause instructions, so
+        // "click A and click B" - both named exactly - would otherwise be
+        // refused for want of a model decision, when there is nothing here
+        // to decide either. Certainty is certainty whether it arrives in one
+        // clause or two.
+        let namesSomethingExactly = false;
+        if (modelTried && isCommand(wanted) && !forceBaseline) {
+          const ninv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+            .catch(() => ({ ok: false }));
+          const NLEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
+          const flatN = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+          const labels = new Set(((ninv.ok && ninv.result && ninv.result.controls) || [])
+            .filter((c) => !c.disabled).map((c) => flatN(c.label)).filter(Boolean));
+          namesSomethingExactly = splitIntoSteps(wanted).some((part) => {
+            const whole = flatN(part);
+            const bare = flatN(String(part).replace(NLEAD, ""));
+            return labels.has(whole) || labels.has(bare);
+          });
+        }
+        if (modelTried && isCommand(wanted) && !forceBaseline && !namesSomethingExactly) {
+          respond({
+            ok: false, plannedBy: "model",
+            error: "nothing on this page clearly does that",
+            display: {
+              title: "nothing here clearly does that",
+              subtitle: modelGaveUp
+                || "the local model was asked and could not place this request"
+                  + " against the controls on this page",
+              stats: [], rows: [],
+              note: [
+                modelSaid ? `it replied: ${String(modelSaid).slice(0, 120)}` : null,
+                "the keyword baseline could press its best guess, and used to -"
+                  + " say \"baseline: " + String(wanted).slice(0, 40) + "\" to see what it would do",
+              ].filter(Boolean).join(" \u00b7 "),
+              source: "this page",
+            },
+          });
+          return;
         }
 
         const dataCall = forceModel ? null : planDataTool(wanted, route);
