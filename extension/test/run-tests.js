@@ -3268,6 +3268,88 @@ for (const b of budgets) {
   }
 }
 
+// "hide graph details and show legnd" pressed both and did the opposite of
+// each, and the card said "false -> false" and "changed" on the same line.
+// Two general faults: a label that names an action rather than a state, and
+// a page signature trusted over the control's own before and after.
+{
+  const toggleHtml = (details, legend) => `<!doctype html><html><body>
+    <button id="d" aria-expanded="${details}" aria-controls="dp">Hide graph details</button>
+    <div id="dp"${details ? "" : " hidden"}>details</div>
+    <button id="l" aria-expanded="${legend}" aria-controls="lp">Show legend</button>
+    <div id="lp"${legend ? "" : " hidden"}>legend</div>
+    </body></html>`;
+  // Whichever way round the page starts, the end state is what was asked
+  // for: details hidden, legend shown. A toggle already that way is left
+  // alone, because pressing it would reverse it.
+  for (const [what, details, legend] of [
+    ["needing both pressed", true, false],
+    ["already as asked", false, true],
+  ]) {
+    const tp2 = loadPage(toggleHtml(details, legend),
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!tp2) continue;
+    for (const id of ["d", "l"]) {
+      tp2.document.getElementById(id).addEventListener("click", function () {
+        this.setAttribute("aria-expanded",
+          this.getAttribute("aria-expanded") === "true" ? "false" : "true");
+      });
+    }
+    const bgt2 = loadBackground({ page: tp2 });
+    bgt2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        const g = String(m.goal).toLowerCase();
+        const want = /legend|legnd/.test(g) ? "Show legend" : "Hide graph details";
+        const c = m.controls.find((x) => String(x.label || "") === want);
+        return c ? { ok: true, step: { name: c.label, do: "click" }, raw: "{}" }
+          : { ok: true, step: { do: "finish", answer: "" }, raw: "{}" };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgt2.__ask({ type: "smartAsk",
+        instruction: "hide graph details and show legnd" });
+      const at = (id) => tp2.document.getElementById(id).getAttribute("aria-expanded");
+      check(`${what}: graph details end hidden`, at("d"), "false");
+      check(`${what}: the legend ends shown`, at("l"), "true");
+      // And the card does not contradict itself: nothing reads "changed"
+      // beside a before and after that are the same.
+      for (const row of ((r.display || {}).rows || [])) {
+        const same = /^(\w+) -> \1$/.test(String(row.meta || ""));
+        ensure(`${what}: "${row.meta}" is not called changed`,
+          !(same && row.value === "changed"), row);
+      }
+    });
+  }
+
+  // The control's own before and after beats the page signature, which moves
+  // for all sorts of reasons - a re-render, a timestamp, a lazy image.
+  {
+    const sg = loadPage(`<!doctype html><html><body>
+      <button id="t" aria-pressed="false">Toggle</button>
+      <div id="noise">quiet</div></body></html>`, { url: "https://example.gov/" });
+    if (sg) {
+      // The press changes something unrelated and leaves the control alone.
+      sg.document.getElementById("t").addEventListener("click", () => {
+        sg.document.getElementById("noise").textContent = `noisy ${Date.now()}`;
+      });
+      const bgsg = loadBackground({ page: sg });
+      bgsg.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") return { ok: true, step: { name: "Toggle", do: "click" }, raw: "{}" };
+        return undefined;
+      };
+      runAsync(async () => {
+        const r = await bgsg.__ask({ type: "smartAsk", instruction: "model: click toggle" });
+        const rows = (r.display || {}).rows || [];
+        ensure("a control that did not move is not reported as changed",
+          !rows.some((x) => x.value === "changed"), rows);
+      });
+    }
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

@@ -5267,6 +5267,32 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       continue;
     }
 
+    // A toggle whose label names an action rather than a state: "Show
+    // legend", "Hide graph details". aria-expanded says which way it
+    // currently is, and pressing one already the asked-for way reverses it -
+    // so "hide graph details and show legnd" pressed both and did the
+    // opposite of each. What is asked for is in the request; the label is
+    // just what the button calls itself.
+    if (act === "click" && typeof target.expanded === "boolean") {
+      const wantShown = /\b(show|open|expand|reveal|display|unhide)\b/i.test(goal)
+        && !/\b(hide|close|collapse|shut|dismiss)\b/i.test(goal);
+      const wantHidden = /\b(hide|close|collapse|shut|dismiss)\b/i.test(goal);
+      const asked = wantShown ? true : wantHidden ? false : null;
+      if (asked !== null && target.expanded === asked) {
+        history.push({
+          key: repeatKey,
+          did: `"${String(target.label).slice(0, 40)}" was already ${asked ? "shown" : "hidden"}`,
+          outcome: "left as it was", ok: true, changed: false, satisfied: true,
+          label: target.label, why,
+        });
+        note = `"${String(target.label).slice(0, 40)}" is already`
+          + ` ${asked ? "shown" : "hidden"}, so it was left alone.`
+          + " Do the next part of the request, or finish.";
+        observation = null;
+        continue;
+      }
+    }
+
     // A disclosure that is already open does not need clicking, and clicking
     // it shuts it - taking with it the thing the rest of the request was
     // going to reach. "click about and click nwps user guide" found About
@@ -5416,7 +5442,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     }
     const ran = await runVerified(routeGlobal, call);
     const r = (ran && ran.result) || {};
-    const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+    // Where the control reports its own before and after, that settles it.
+    // A page signature moves for all sorts of reasons - a re-render, a
+    // timestamp, a lazy image - so "false -> false" and "changed" appeared
+    // on the same line of the same card, which is the card contradicting
+    // itself about the only thing it is there to report.
+    const moved = typeof r.itChanged === "boolean"
+      ? r.itChanged
+      : !!(ran && ran.verified && ran.verified.changed);
     // Whether what it acted on has anything to do with what was asked. Not a
     // veto - the decision is the model's, and a control can be the right one
     // under a name that shares no words. But "view related graphs" became a
