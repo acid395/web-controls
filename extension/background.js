@@ -4971,6 +4971,37 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         if (called.length === 1) { target = called[0]; valueIsTheControl = true; }
       }
     }
+    // Still nothing, but the page may be holding it behind something. Asked
+    // to "change map to topographical" the model replied
+    // {"name":"Topographic","do":"click"} - the right option, mapped from
+    // the right word - and on water.noaa.gov the basemap list lives inside
+    // the Layers panel, so nothing visible was called that and a correct
+    // answer was refused. The model is not going to guess the name of a
+    // door it cannot see; the page already records which one opens what.
+    if (!target && wantedName) {
+      const everything = (inv.result && inv.result.controls) || [];
+      const behind = everything.filter((c) => !c.disabled && c.revealedBy
+        && (flatLabel(c.label) === wantedName
+          || (c.options || []).some((o) => flatLabel(o.text || o.value) === wantedName)));
+      if (behind.length === 1) {
+        const door = behind[0];
+        const opened = await invokeOnActiveTab("openDisclosure", [door.revealedBy])
+          .catch(() => null);
+        forgetPageTools();
+        history.push({
+          did: `opened "${String(door.revealedByLabel || "what holds it").slice(0, 40)}"`,
+          outcome: opened && opened.ok ? `revealed ${(opened.result || {}).appeared || 0}` : "would not open",
+          ok: !!(opened && opened.ok), changed: !!(opened && opened.ok), label: door.revealedByLabel,
+        });
+        // The next turn reads the page again and finds it in the open. No
+        // model call is spent on the door itself.
+        note = `"${String(s.name || "").slice(0, 40)}" was behind`
+          + ` "${String(door.revealedByLabel || "a panel").slice(0, 40)}", which is now open.`
+          + " Ask for it again.";
+        observation = null;
+        continue;
+      }
+    }
     if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
     if (!target) {
       const asked = wantedName ? `"${String(s.name || s.label || s.control).slice(0, 40)}"`
@@ -7106,6 +7137,71 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // own name accounting for every subject word in the request. Loose
         // phrasing fails the last of those, which is exactly the case the
         // model exists for.
+        // A value named in the request, and one place on the page that holds
+        // it. "change map to topographical" cost forty seconds of model time
+        // and then fell to the scorer, which could do it all along - and it
+        // is not a hard instruction: exactly one option anywhere on the page
+        // is called Topographic, so there is nothing to decide.
+        //
+        // Deliberately strict. The option's own name has to appear in the
+        // request, or be the start of a word in it - topographic inside
+        // topographical - and it has to be the only option on the page that
+        // does. Two candidates is a choice, and a choice is the model's.
+        let instantOption = null;
+        if (!forceBaseline && !forceModel && isCommand(wanted)
+            && splitIntoSteps(wanted).length === 1) {
+          const oinv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+            .catch(() => ({ ok: false }));
+          const flatO = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+          const said = flatO(wanted);
+          const saidWords = said.split(" ").filter(Boolean);
+          const hits = [];
+          for (const c of ((oinv.ok && oinv.result && oinv.result.controls) || [])) {
+            if (c.disabled) continue;
+            for (const o of (c.options || [])) {
+              const t = flatO(o.text || o.value);
+              if (!t || t.length < 4) continue;
+              const spoken = said.includes(t)
+                || (t.length >= 5 && saidWords.some((w) => w.startsWith(t)));
+              if (spoken) hits.push({ control: c, option: o.text || o.value, text: t });
+            }
+          }
+          const distinct = [...new Set(hits.map((h) => h.text))];
+          if (distinct.length === 1) {
+            const holders = [...new Set(hits.map((h) => h.control.selector))];
+            if (holders.length === 1) instantOption = hits[0];
+          }
+        }
+        if (instantOption) {
+          // Behind a panel is still on the page - open the way in first, the
+          // same as the slower loop would.
+          if (instantOption.control.hidden && instantOption.control.revealedBy) {
+            await invokeOnActiveTab("openDisclosure", [instantOption.control.revealedBy])
+              .catch(() => null);
+            forgetPageTools();
+          }
+          const call = { name: "pageSelectOption",
+            args: { selector: instantOption.control.selector, value: instantOption.option } };
+          const ran = await runVerified(route.global, call);
+          const rr = (ran && ran.result) || {};
+          const moved = rr.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+          if (ran.ok !== false && (moved || String(rr.now || "") === String(instantOption.option))) {
+            respond({
+              ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
+              display: {
+                title: String(instantOption.option).slice(0, 60),
+                subtitle: `${instantOption.control.label || "the list"} set to ${instantOption.option}`,
+                stats: [], rows: [],
+                note: `one list on this page offers "${instantOption.option}", so this did not`
+                  + " wait for the model",
+                source: "this page",
+              },
+            });
+            return;
+          }
+          // It did not take. The slower paths know other ways in.
+        }
+
         let instant = null;
         if (!forceBaseline && !forceModel && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {

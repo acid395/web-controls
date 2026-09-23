@@ -2640,6 +2640,70 @@ for (const b of budgets) {
   }
 }
 
+// "change map to topographical" cost forty seconds of model time and then
+// fell to the scorer, which could do it all along - and it is not a hard
+// instruction. Exactly one option anywhere on the page is called
+// Topographic, so there is nothing to decide, and the model should not be
+// woken to decide it. Behind a panel counts as on the page.
+{
+  const mapHtml = `<!doctype html><html><body>
+    <button id="layers" aria-expanded="false" aria-controls="lp">Layers</button>
+    <div id="lp" hidden>
+      <label for="bm">Basemap</label>
+      <select id="bm"><option>Streets</option><option>Topographic</option><option>Satellite</option></select>
+    </div></body></html>`;
+  const cases = [
+    // The option's own name inside a longer word - topographic in
+    // topographical - which is the whole reason the exact-name path missed it.
+    ["a value named loosely", "change map to topographical", 0, "Topographic"],
+    ["a value named exactly", "change map to satellite", 0, "Satellite"],
+    // Two options would be a choice, and a choice belongs to the model.
+    ["phrasing that names no value", "show me something interesting", null, "Streets"],
+  ];
+  for (const [what, instr, wantCalls, wantValue] of cases) {
+    const mp2 = loadPage(mapHtml, { url: "https://water.noaa.gov/" });
+    if (!mp2) continue;
+    mp2.document.getElementById("layers").addEventListener("click", function () {
+      const pnl = mp2.document.getElementById("lp");
+      pnl.hidden = !pnl.hidden;
+      this.setAttribute("aria-expanded", String(!pnl.hidden));
+    });
+    const bgm2 = loadBackground({ page: mp2 });
+    let calls = 0;
+    bgm2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") { calls++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgm2.__ask({ type: "smartAsk", instruction: instr });
+      check(`${what}: the basemap ends on ${wantValue}`,
+        mp2.document.getElementById("bm").value, wantValue);
+      if (wantCalls === 0) check(`${what}: no decision is waited for`, calls, 0);
+    });
+  }
+
+  // Two lists offering the same value is a choice, so it goes to the model
+  // rather than being guessed at.
+  const twoLists = loadPage(`<!doctype html><html><body>
+    <select id="a"><option>Streets</option><option>Satellite</option></select>
+    <select id="b"><option>Roads</option><option>Satellite</option></select>
+    </body></html>`, { url: "https://water.noaa.gov/" });
+  if (twoLists) {
+    const bgtl = loadBackground({ page: twoLists });
+    let calls = 0;
+    bgtl.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { calls++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgtl.__ask({ type: "smartAsk", instruction: "change map to satellite" });
+      ensure("a value two lists both offer is not guessed at", calls >= 1, calls);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
@@ -5541,8 +5605,15 @@ else {
       // "Applied", the page-match phrasing, and broke the day the unified
       // picker started choosing the dropdown directly - a better outcome
       // failing a test written around the old one.
+      // Judged on the outcome rather than a title, since the title is
+      // whichever rung got there: the fast path names the value it set, the
+      // slower ones name the tool they used. Matching a title kept breaking
+      // as better paths won, which is the mistake the note above describes
+      // and this is the second time it has caught one.
       ensure("against a real control",
-        /Applied|done|choose|click|select/i.test((cmd.display || {}).title || ""), cmd.display);
+        /Applied|done|choose|click|select/i.test((cmd.display || {}).title || "")
+          || /set to|\u2192|->|already/i.test((cmd.display || {}).subtitle || ""),
+        cmd.display);
       const caps = await ask("what can I do here");
       ensure("capabilities answer", caps.ok === true, caps.error || caps);
       ensure("and count the page's controls", caps.pageControls > 0, caps.pageControls);
