@@ -77,6 +77,13 @@ const CASES = [
   ["usgs", "click 1 year and enable continuous data", { on: /^continuous data$/i }],
   ["usgs", "turn on 30 days and plot the discharge", { on: /graph discharge/i }],
   ["usgs", "click about this location", { on: /about this location/i }],
+  // A span said in words rather than in the page's units.
+  ["usgs", "click a month", { on: /^30 days$/i }],
+  ["usgs", "show the past week", { on: /^7 days$/i }],
+  ["usgs", "i want a full year", { on: /^1 year$/i }],
+  ["usgs", "show me four weeks", { on: /^30 days$/i }],
+  ["usgs", "give me twelve months", { on: /^1 year$/i }],
+  ["usgs", "show me 90 days", { refuse: true }],
   ["usgs", "click the hydrograph exporter", { refuse: true }],
   ["usgs", "enable the tidal predictions layer", { refuse: true }],
   ["noaa", "click rivers at a glance", { clicked: /rivers-at-a-glance/i }],

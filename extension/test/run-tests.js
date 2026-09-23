@@ -3096,6 +3096,90 @@ for (const b of budgets) {
   }
 }
 
+// "click a month" could not be placed by a 1.5B - it answered "Explore USGS
+// Water Data" - and there was nothing to place: the page has a control
+// called 30 days and a month is thirty days. The narrow fix is a synonym
+// saying so. The shape of it is that a span said in words and a span written
+// in a label are the same thing, and converting both and comparing is
+// arithmetic rather than a table - it works for any phrasing, on any page
+// carrying a duration, with nothing written per site.
+{
+  const sp10 = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (sp10) {
+    const bg10 = loadBackground({ page: sp10 });
+    for (const [phrase, days] of [
+      ["click a month", 30], ["show me 4 weeks", 28], ["the past week", 7],
+      ["i want a full year", 365], ["twelve months", 360], ["30 days", 30],
+      ["30-day precipitation", 30], ["annual summary", 365], ["monthly", 30],
+      ["show me the gage height", null], ["water quality", null],
+    ]) check(`"${phrase}" reads as ${days} days`, bg10.daysInPhrase(phrase), days);
+    // Four weeks and a month are not the same number of days and are plainly
+    // the same request.
+    check("28 days and a month are the same span", bg10.sameSpan(28, 30), true);
+    check("a week and a month are not", bg10.sameSpan(7, 30), false);
+    check("a year and a month are not", bg10.sameSpan(365, 30), false);
+  }
+
+  const spanHtml = `<!doctype html><html><body>
+    <label><input type="radio" name="t" value="7"> 7 days</label>
+    <label><input type="radio" name="t" value="30"> 30 days</label>
+    <label><input type="radio" name="t" value="365"> 1 year</label>
+    <a href="/wy">Water Year Summary</a>
+    </body></html>`;
+  const spans = [
+    ["a month in words", "click a month", "30", 0],
+    ["a bare unit", "show the past week", "7", 0],
+    ["no number at all", "i want a full year", "365", 0],
+    ["a different unit for the same span", "show me four weeks", "30", 0],
+  ];
+  for (const [what, instr, wantValue, wantCalls] of spans) {
+    const sp11 = loadPage(spanHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!sp11) continue;
+    const bg11 = loadBackground({ page: sp11 });
+    let calls = 0;
+    bg11.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { calls++; return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bg11.__ask({ type: "smartAsk", instruction: instr });
+      const on = [...sp11.document.querySelectorAll("input")].find((x) => x.checked);
+      check(`${what}: the span asked for is set`, on && on.value, wantValue);
+      check(`${what}: without a decision`, calls, wantCalls);
+    });
+  }
+
+  // A control named word for word beats a span read out of the same words:
+  // "water year summary" is a link on the page, not a request for a year.
+  const sp12 = loadPage(spanHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (sp12) {
+    let followed = 0;
+    sp12.document.querySelector("a").addEventListener("click", () => { followed++; });
+    const bg12 = loadBackground({ page: sp12 });
+    bg12.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bg12.__ask({ type: "smartAsk", instruction: "click water year summary" });
+      check("a name beats a span read out of it", followed, 1);
+      const on = [...sp12.document.querySelectorAll("input")].find((x) => x.checked);
+      check("and no time span is set instead", on ? on.value : "none", "none");
+    });
+  }
+
+  // A question that mentions a span is asking, not asking for.
+  const sp13 = loadPage(spanHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (sp13) {
+    const bg13 = loadBackground({ page: sp13 });
+    bg13.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bg13.__ask({ type: "smartAsk", instruction: "how many days of data are there" });
+      const on = [...sp13.document.querySelectorAll("input")].find((x) => x.checked);
+      check("a question about a span does not set one", on ? on.value : "none", "none");
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

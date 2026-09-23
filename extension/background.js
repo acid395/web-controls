@@ -4703,6 +4703,42 @@ async function askModelForStep(payload) {
 // they are, not because of what was asked, so the same list is offered
 // whatever the request. That distinction is the whole difference between
 // tidying the page and letting the scorer choose.
+// How long a phrase is, in days, wherever it says one. "a month", "last
+// month", "4 weeks" and "30 days" are the same span said four ways, and a
+// control called "30 days" is the same span written a fifth. Converting both
+// sides and comparing is arithmetic, not a synonym table: it works on any
+// page carrying a duration, for any phrasing of one, with nothing written
+// per site.
+const SPAN_DAYS = { day: 1, week: 7, fortnight: 14, month: 30, quarter: 91, year: 365 };
+const SPAN_WORD_NUM = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12,
+};
+function daysInPhrase(text) {
+  const t = String(text || "").toLowerCase();
+  // "30-day" and "30 day" alike, and a bare "annual" or "monthly".
+  const m = t.match(/\b(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve)[\s-]*(day|week|fortnight|month|quarter|year)s?\b/);
+  if (m) {
+    const n = /^\d+$/.test(m[1]) ? Number(m[1]) : SPAN_WORD_NUM[m[1]];
+    if (n && SPAN_DAYS[m[2]]) return n * SPAN_DAYS[m[2]];
+  }
+  // A span with no number in front of it: "the past week", "a full year",
+  // "this month". One of whatever unit is named.
+  const bare = t.match(/\b(?:the\s+)?(?:past|last|previous|this|full|whole|entire|coming|next)\s+(day|week|fortnight|month|quarter|year)\b/);
+  if (bare) return SPAN_DAYS[bare[1]];
+  if (/\bannual(ly)?\b|\byearly\b/.test(t)) return 365;
+  if (/\bmonthly\b/.test(t)) return 30;
+  if (/\bweekly\b/.test(t)) return 7;
+  if (/\bdaily\b/.test(t)) return 1;
+  return null;
+}
+// Within a tenth of each other is the same span: four weeks and a month are
+// not the same number of days and are plainly the same request.
+function sameSpan(a, b) {
+  if (!a || !b) return false;
+  return Math.abs(a - b) <= Math.max(1, Math.round(Math.max(a, b) * 0.12));
+}
+
 function isSiteFurniture(c) {
   const label = String(c.label || "").toLowerCase();
   // goesTo is where the nearest enclosing link points, which the inventory
@@ -7615,6 +7651,62 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   note: "your words named one control on this page exactly, so this did not"
                     + " wait for the model",
                   source: "this page",
+                },
+              });
+              return;
+            }
+          }
+        }
+
+        // A span asked for, and one control on the page offering it. "click a
+        // month" could not be placed by a 1.5B - it answered "Explore USGS
+        // Water Data" - and there is nothing to place: the page has a
+        // control called 30 days and a month is thirty days. Any phrasing of
+        // any span, on any page carrying one, with nothing written per site.
+        // Not gated on there being an imperative verb. "i want a full year"
+        // asks for something as plainly as "click 1 year" does, and the verb
+        // list does not have want in it - nor should it, since the list is
+        // for recognising presses. What disqualifies a span here is being a
+        // question: "how many days of data are there" is asking, not asking
+        // for.
+        const looksAsking = /^\s*(what|how|why|when|where|which|who|is|are|was|were|does|do|did|can|could|should|would)\b/i
+          .test(wanted) || /\?\s*$/.test(wanted);
+        const askedDays = (!forceBaseline && !forceModel && !looksAsking
+          && splitIntoSteps(wanted).length === 1) ? daysInPhrase(wanted) : null;
+        if (askedDays) {
+          const dinv2 = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+            .catch(() => ({ ok: false }));
+          const spans = ((dinv2.ok && dinv2.result && dinv2.result.controls) || [])
+            .filter((c) => !c.disabled && c.confidence !== "low" && !c.opensPanel
+              && sameSpan(askedDays, daysInPhrase(c.label)));
+          // One only. A page offering both "30 days" and "Monthly summary"
+          // is asking which was meant, and that is a question for the model.
+          if (spans.length === 1) {
+            const only = spans[0];
+            if (only.hidden && only.revealedBy) {
+              await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
+              forgetPageTools();
+            }
+            const isSw = /^(checkbox|radio)$/.test(String(only.type || "").toLowerCase());
+            const call = isSw
+              ? { name: "pageCheck", args: { selector: only.selector, on: true } }
+              : { name: "pageClick", args: { selector: only.selector } };
+            const ran = await runVerified(route.global, call);
+            const back = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+              .catch(() => ({ ok: false }));
+            const now = ((back.ok && back.result && back.result.controls) || [])
+              .find((c) => c.selector === only.selector);
+            const settled = isSw ? (now && now.checked === true)
+              : !!(ran && ran.ok !== false);
+            if (settled) {
+              respond({
+                ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
+                display: {
+                  title: String(only.label || "").slice(0, 60),
+                  subtitle: `${only.label} is the ${askedDays === 1 ? "day" : `${askedDays} days`} asked for`,
+                  stats: [], rows: [], source: "this page",
+                  note: "one control on this page covers that span, so this did not wait"
+                    + " for the model",
                 },
               });
               return;
