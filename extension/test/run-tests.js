@@ -3429,6 +3429,99 @@ for (const b of budgets) {
   }
 }
 
+// A custom dropdown keeps its choices out of the document until it is
+// opened: a native select lists them, a button with a listbox does not. So
+// "select alaska" named Alaska exactly, correctly, and Alaska did not exist
+// yet. Opening it and looking again is what a person does and the only way
+// those choices can be seen at all.
+{
+  const comboHtml = `<!doctype html><html><body>
+    <button id="combo" role="combobox" aria-expanded="false" aria-controls="lb">Select a state</button>
+    <ul id="lb" role="listbox" hidden></ul>
+    <label><input type="checkbox" name="other"> Something else</label>
+    </body></html>`;
+  const wire = (pg) => {
+    pg.document.getElementById("combo").addEventListener("click", function () {
+      const lb = pg.document.getElementById("lb");
+      if (this.getAttribute("aria-expanded") === "true") {
+        lb.hidden = true; lb.innerHTML = "";
+        this.setAttribute("aria-expanded", "false");
+        return;
+      }
+      lb.hidden = false;
+      lb.innerHTML = ["Alabama", "Alaska", "Arizona"]
+        .map((n) => `<li role="option" tabindex="0">${n}</li>`).join("");
+      for (const li of lb.querySelectorAll("li")) {
+        li.addEventListener("click", () => {
+          pg.document.getElementById("combo").textContent = li.textContent;
+          lb.hidden = true; lb.innerHTML = "";
+          pg.document.getElementById("combo").setAttribute("aria-expanded", "false");
+        });
+      }
+      this.setAttribute("aria-expanded", "true");
+    });
+  };
+  const cbp = loadPage(comboHtml, { url: "https://waterdata.usgs.gov/state/" });
+  if (cbp) {
+    wire(cbp);
+    const bgcb = loadBackground({ page: cbp });
+    let turns = 0;
+    bgcb.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      // What the live model said, every turn: the value, as a selection.
+      if (m.type === "llmStep") { turns++; return { ok: true, step: { name: "Alaska", do: "select" }, raw: "{}" }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgcb.__ask({ type: "smartAsk", instruction: "model: select alaska" });
+      check("a dropdown that must be opened first is opened and chosen from",
+        cbp.document.getElementById("combo").textContent, "Alaska");
+      ensure("and it does not take many turns to do it", turns <= 3, turns);
+      check("and the chooser is left closed behind it",
+        cbp.document.getElementById("combo").getAttribute("aria-expanded"), "false");
+    });
+  }
+
+  // An option in a listbox is chosen by clicking it - there is no select to
+  // set - and refusing "select Alaska" for being the wrong verb left the
+  // right control untouched inside the chooser just opened for it.
+  const op = loadPage(`<!doctype html><html><body>
+    <ul role="listbox" aria-label="States">
+      <li role="option" tabindex="0">Alabama</li>
+      <li role="option" tabindex="0">Alaska</li></ul></body></html>`,
+    { url: "https://waterdata.usgs.gov/state/" });
+  if (op) {
+    let chose = null;
+    for (const li of op.document.querySelectorAll("li")) {
+      li.addEventListener("click", () => { chose = li.textContent; });
+    }
+    const bgop = loadBackground({ page: op });
+    bgop.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") return { ok: true, step: { name: "Alaska", do: "select" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgop.__ask({ type: "smartAsk", instruction: "model: select alaska" });
+      check("an option is chosen by pressing it, whatever verb was used", chose, "Alaska");
+    });
+  }
+
+  // And a listbox is not named after everything inside it, which is the
+  // select's own bug in different markup.
+  const lbp = loadPage(`<!doctype html><html><body>
+    <ul id="a" role="listbox" aria-label="States"><li role="option">Alabama</li><li role="option">Alaska</li></ul>
+    <ul id="b" role="listbox"><li role="option">Red</li><li role="option">Blue</li></ul>
+    </body></html>`, { url: "https://x.gov/" });
+  if (lbp) {
+    const boxes = lbp.GENERIC.inventory({ includeHidden: true }).controls
+      .filter((c) => c.kind === "listbox").map((c) => String(c.label || ""));
+    ensure("a listbox is not named after its choices",
+      !boxes.some((l) => /alabamaalaska|redblue/i.test(l)), boxes);
+    check("and takes the name it was given", boxes[0], "States");
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

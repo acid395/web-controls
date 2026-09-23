@@ -128,6 +128,19 @@
     // it sits in with its own text taken out, then the author's own
     // shorthand, and only then a generic word, which at least says what
     // kind of thing it is.
+    // A listbox is a select built by hand, and it reads the same way: its
+    // text is every choice run together, which names nothing. Same fix, and
+    // it belongs beside the select's because it is the same mistake in
+    // different markup - a container taking its children's words for its own.
+    const role = (el.getAttribute && el.getAttribute("role")) || "";
+    if (/^(listbox|menu|radiogroup|tablist)$/i.test(role)) {
+      const near = clean(el.getAttribute("aria-label") || el.title || el.id || "");
+      const around = clean(rowText(el));
+      const own = clean(shortText(el));
+      const outside = own && around.includes(own) ? clean(around.split(own).join(" ")) : around;
+      return clean(near || outside)
+        || role.toLowerCase().replace("listbox", "list of choices");
+    }
     if ((el.tagName || "").toLowerCase() === "select") {
       const own = clean(el.textContent);
       const around = clean(rowText(el));

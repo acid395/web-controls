@@ -4823,6 +4823,9 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
   // asking again and then doing as it says keeps that. It costs one turn,
   // and only where the request names nothing of what is about to be pressed.
   let queried = null;
+  // Choosers this run has already opened, so looking inside one is tried
+  // once and not forever.
+  const openedChoosers = new Set();
   // Whether anything the request actually names has been done yet. A step
   // can succeed without being the step that was asked for: "click view
   // tabular data" clicked Related links, which is the disclosure holding
@@ -5176,6 +5179,50 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         note = `"${String(s.name || "").slice(0, 40)}" was behind`
           + ` "${String(door.revealedByLabel || "a panel").slice(0, 40)}", which is now open.`
           + " Ask for it again.";
+        lastInv = null;
+        observation = null;
+        continue;
+      }
+    }
+    // Nothing answers to that name, and a closed chooser may be holding the
+    // answer. A custom dropdown keeps its choices out of the document until
+    // it is opened - a native select lists them, one built from a button and
+    // a listbox does not - so "select alaska" named Alaska correctly and
+    // Alaska did not exist yet. Opening it and looking again is what a
+    // person does, and it is the only way those choices can be seen at all.
+    if (!target && wantedName) {
+      // A chooser, not any collapsed thing. opensPanel is true of every
+      // accordion on the page, so this was opening three arbitrary panels
+      // whenever a name did not resolve - pressing things on somebody's page
+      // on the strength of not having found something, which is the harm
+      // this whole design keeps removing. A panel holding a named control is
+      // already handled above, by name, through what the page says opens it.
+      const closed = controls.filter((c) => !openedChoosers.has(c.selector)
+        && c.expanded === false
+        && /^(combobox|listbox)$/.test(String(c.kind || "").toLowerCase()));
+      if (closed.length && openedChoosers.size < 2) {
+        const chooser = closed[0];
+        openedChoosers.add(chooser.selector);
+        // Through runVerified, like every other action: pageClick is the
+        // tool's name and click is the page's, and calling the wrong one
+        // quietly did nothing at all - the chooser was never opened and the
+        // next turn looked at the same closed page.
+        const opened = await runVerified(routeGlobal,
+          { name: "pageClick", args: { selector: chooser.selector } }).catch(() => null);
+        forgetPageTools();
+        history.push({
+          did: `opened "${String(chooser.label || "a chooser").slice(0, 40)}" to look inside`,
+          outcome: opened && opened.ok !== false ? "open" : "would not open",
+          ok: !!(opened && opened.ok !== false), changed: false, label: chooser.label,
+        });
+        note = `"${String(s.name || "").slice(0, 40)}" was not on the page, so`
+          + ` "${String(chooser.label || "a chooser").slice(0, 40)}" was opened.`
+          + " What it holds is on the list now - ask again.";
+        // Read the page again next turn. The loop reuses the last reading
+        // when the previous step changed nothing visible, and opening a
+        // chooser is precisely the case where nothing looks different and
+        // everything is - the choices only exist now.
+        lastInv = null;
         observation = null;
         continue;
       }
@@ -5223,8 +5270,16 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // the original verb here rejected both - "change map to satellite"
     // resolved onto a Satellite button and was then refused for asking a
     // button to select something.
+    // An option in a listbox is chosen by clicking it - there is no select
+    // to set, because a custom dropdown is a button and a list of items. The
+    // model naturally says "select Alaska", and refusing that for being the
+    // wrong verb left the right control, found inside the chooser we had
+    // just opened for it, untouched.
+    const ariaOption = String(target.kind || "").toLowerCase() === "option"
+      && !/^(select|option)$/.test(String(target.tag || "").toLowerCase());
     const switchTarget = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
-    if (!optionWanted && !valueIsTheControl && !switchTarget && !actionFits(act, target)) {
+    if (!optionWanted && !valueIsTheControl && !switchTarget && !ariaOption
+        && !actionFits(act, target)) {
       if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
         + ` - it cannot be ${act}ed. Click it, or choose another control.`)) {
         return giveUp("the model kept asking controls to do things they cannot do");
@@ -5425,7 +5480,9 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
       .test(goal);
     const isSwitch = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
-    const call = isSwitch && !optionWanted
+    const call = ariaOption
+      ? actionToCall("click", target, s)
+      : isSwitch && !optionWanted
       ? actionToCall("check", target, { ...s, on: !wantsOff })
       : optionWanted
       ? actionToCall("select", target, { ...s, value: optionWanted })
