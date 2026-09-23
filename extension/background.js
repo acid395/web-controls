@@ -4556,7 +4556,8 @@ function planManifestTool(instruction, routeGlobal) {
  * the decision is the model's; the scorer stays behind "baseline:" so the
  * two can be compared on the same pages rather than quietly blended.
  */
-const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "search", "read", "finish"]);
+const AGENT_ACTIONS = new Set(
+  ["click", "check", "select", "type", "search", "find", "read", "finish"]);
 
 // "Click A and click B" is two requests. The splitter already existed for the
 // keyword path and sat below the model path, so the model never saw the
@@ -4936,6 +4937,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     const thoughtMs = Date.now() - thoughtAt;
     if (asked.ok) lastTurnMs = lastTurnMs ? Math.round(lastTurnMs * 0.4 + thoughtMs * 0.6) : thoughtMs;
     const s = asked.step || {};
+    // What it says the request means. This is the only window onto whether a
+    // choice was reasoning or word-matching, and it is the thing worth
+    // reading on a card that went wrong.
+    const why = String(s.why || s.reason || s.because || "").trim().slice(0, 90);
     const act = String(s.do || "").toLowerCase();
     if (!AGENT_ACTIONS.has(act)) {
       // A model that answers off-format gets told once, then the loop ends.
@@ -5004,6 +5009,35 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         return { ok: true, answer: null, history, steps: history.length,
           tookMs: Date.now() - began, said: lastSaid };
       }
+      observation = null;
+      continue;
+    }
+
+    // The model narrowing the list itself. A hundred and twenty controls is
+    // a lot to choose from, and the alternative - us deciding which are
+    // relevant before showing them - is the scorer choosing wearing the
+    // model's name. This way it says what it is looking for and gets back
+    // what answers to that, which is retrieval it directed.
+    if (act === "find") {
+      const words = String(s.words ?? s.value ?? s.query ?? "").toLowerCase()
+        .split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+      const hits = words.length
+        ? controls.filter((c) => {
+          const l = String(c.label || "").toLowerCase();
+          return words.some((w) => l.includes(w))
+            || (c.options || []).some((o) => words.some(
+              (w) => String(o.text || o.value).toLowerCase().includes(w)));
+        }).slice(0, 12)
+        : [];
+      history.push({
+        did: `looked for "${String(s.words ?? s.value ?? "").slice(0, 40)}"`,
+        outcome: hits.length ? `${hits.length} on this page` : "nothing like it here",
+        ok: true, changed: false,
+      });
+      note = hits.length
+        ? `Controls matching that: ${hits.map((c) => `"${String(c.label).slice(0, 40)}"`).join(", ")}.`
+          + " Name one of them, or look for something else."
+        : "Nothing on this page answers to that. Try other words, or finish.";
       observation = null;
       continue;
     }
@@ -5423,7 +5457,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         : satisfied ? `already ${wantedState}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}`
         : moved ? "the page changed" : "nothing visibly changed",
-      ok: ran.ok !== false, changed: moved, satisfied, label: target.label,
+      ok: ran.ok !== false, changed: moved, satisfied, label: target.label, why,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
     // One clause, and the thing it named has been done and the page's own
@@ -7967,9 +8001,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     name: String(h.did).slice(0, 50),
                     value: h.ok === false ? "failed"
                       : h.changed ? "changed" : h.satisfied ? "already so" : "",
-                    meta: h.unrelated
-                      ? `nothing in what you asked names "${h.unrelated}"`
-                      : String(h.outcome || "").slice(0, 60),
+                    // Its own reason first, where it gave one: "a month is 30
+                    // days" says more about whether a choice was thought
+                    // through than any outcome line can.
+                    meta: [
+                      h.why ? `"${h.why}"` : null,
+                      h.unrelated ? `nothing in what you asked names "${h.unrelated}"` : null,
+                      h.why ? null : String(h.outcome || "").slice(0, 60),
+                    ].filter(Boolean).join(" \u00b7 ").slice(0, 110),
                     tone: h.ok === false ? "alert" : h.unrelated ? "warn"
                       : (h.changed || h.satisfied) ? "ok" : "warn",
                   })),

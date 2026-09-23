@@ -3180,6 +3180,94 @@ for (const b of budgets) {
   }
 }
 
+// The first rule the model was given read "pick the control whose name
+// matches the request" - an instruction to do surface word-matching, which
+// is what the scorer does and what the model is here to improve on. Asked
+// for "last month of data" it duly found a control wearing the word last,
+// which was a pagination link. The prompt now asks it to work out what is
+// meant first, gives it room to say so, and lets it narrow a long list
+// itself rather than having us decide what is relevant on its behalf.
+{
+  const build = loadOffscreenHelper("buildStepPrompt");
+  if (build) {
+    const text = build({ goal: "click a month", controls: [{ label: "30 days" }] });
+    ensure("it is not told to match names",
+      !/pick the control whose name matches/i.test(text), text.slice(-400));
+    ensure("it is told to work out what is meant",
+      /work out what the request means/i.test(text), text.slice(-400));
+    ensure("and warned off matching on a shared word",
+      /not choose a control merely because a word/i.test(text), text.slice(-400));
+    ensure("it is given room to say why", /"why"/.test(text), text.slice(-400));
+    ensure("and a way to narrow a long list itself",
+      /"do":"find"/.test(text), text.slice(-400));
+  }
+
+  // find: the model says what it is looking for and gets back what answers
+  // to that. Retrieval it directed, rather than us filtering on its behalf.
+  {
+    let many = "";
+    for (let i = 1; i <= 30; i++) many += `<a href="#n${i}">Station note ${i}</a>`;
+    const fp2 = loadPage(`<!doctype html><html><body>${many}
+      <label><input type="radio" name="t" value="7"> 7 days</label>
+      <label><input type="radio" name="t" value="30"> 30 days</label>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (fp2) {
+      const bgf2 = loadBackground({ page: fp2 });
+      let turn = 0;
+      const notes = [];
+      bgf2.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") {
+          turn++;
+          if (m.note) notes.push(m.note);
+          if (turn === 1) {
+            return { ok: true, step: { why: "a month is thirty days", do: "find", words: "days" }, raw: "{}" };
+          }
+          return { ok: true, step: { why: "30 days is the month", name: "30 days", do: "click" }, raw: "{}" };
+        }
+        return undefined;
+      };
+      runAsync(async () => {
+        const r = await bgf2.__ask({ type: "smartAsk", instruction: "model: click a month" });
+        ensure("find hands back the controls that answer to the words",
+          /30 days/.test(notes[0] || "") && /7 days/.test(notes[0] || ""), notes[0]);
+        check("and the choice that follows lands",
+          !!(fp2.document.querySelector('[value="30"]') || {}).checked, true);
+        // Its own words, on the card, because that is the only window onto
+        // whether a choice was reasoning or word-matching.
+        ensure("the reason it gave is reported",
+          ((r.display || {}).rows || []).some((x) => /thirty days|is the month/i.test(String(x.meta || ""))),
+          (r.display || {}).rows);
+      });
+    }
+  }
+
+  // Asking for something the page has nothing like gets told so, rather than
+  // a list of whatever shared a letter.
+  {
+    const fp3 = loadPage(`<!doctype html><html><body>
+      <label><input type="radio" name="t" value="7"> 7 days</label></body></html>`,
+      { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (fp3) {
+      const bgf3 = loadBackground({ page: fp3 });
+      const notes = [];
+      bgf3.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") {
+          if (m.note) notes.push(m.note);
+          return { ok: true, step: { do: "find", words: "tidal predictions" }, raw: "{}" };
+        }
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgf3.runModelAgent("GENERIC", "enable tidal predictions", { maxSteps: 3 });
+        ensure("looking for what is not there says so",
+          /nothing on this page answers/i.test(notes[0] || ""), notes[0]);
+      });
+    }
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

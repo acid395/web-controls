@@ -168,6 +168,10 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     // found and submitted, so the model does not have to name it or know
     // that Enter is what a search widget listens for.
     '  {"do":"search","value":"WORDS"}  to put words into this page\u2019s search',
+    // The model narrowing the list itself, rather than us deciding for it
+    // what is relevant. On a page of a hundred and twenty controls it can
+    // say what it is looking for and get back the few that might be it.
+    '  {"do":"find","words":"WHAT YOU ARE LOOKING FOR"}  to list matching controls',
     '  {"do":"read"}  {"do":"finish","answer":"ANSWER"}',
     "",
     // These lines were a third of the prompt, and the prompt is prefill on
@@ -180,7 +184,16 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     // halves only ever got its first half done. A request is finished when
     // everything it asked for has happened, not when something has.
     "Rules:",
-    "- Pick the control whose name matches the request.",
+    // This used to read "pick the control whose name matches the request",
+    // which is an instruction to do surface word-matching - the very thing
+    // the scorer does and the model is here to improve on. Asked for "last
+    // month of data" it duly found a control wearing the word last, which
+    // was a pagination link. Work out what is meant, then find what does it.
+    "- Work out what the request means, then choose the control that does",
+    "  it. The right control often shares no word with the request: a month",
+    "  is 30 days, water level is gage height, flow is discharge.",
+    "- Do not choose a control merely because a word in it appears in the",
+    "  request.",
     // Both halves of this earned their place: the model was spending a turn
     // reading a page it was about to change, and pressing controls to
     // answer questions. Shortened, not dropped.
@@ -189,6 +202,12 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     "- Looking something up on this site? Use search.",
     "- Never redo a step that worked; do the next part still outstanding.",
     "- finish only once all of it is done.",
+    // A small model that names a control straight away anchors on whatever
+    // word it saw first. One short phrase of thinking, before the choice,
+    // costs a few tokens of decode and is the cheapest accuracy there is.
+    "",
+    "Put one short phrase in \"why\" saying what the request means, then the",
+    "action. Example: {\"why\":\"a month is 30 days\",\"name\":\"30 days\",\"do\":\"click\"}",
   ].filter(Boolean).join("\n");
 }
 /* @testable-end buildStepPrompt */
@@ -407,7 +426,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // carried a real answer, cutting it mid-string - which parses to
             // nothing, reads as an off-format reply, and made "summarize the
             // difference" fail in a way that looked like the model refusing.
-            max_tokens: 128,
+            // Room for a phrase of reasoning before the object. Still a
+            // ceiling rather than a budget: a short answer costs what it
+            // costs, and this only binds on one that rambles.
+            max_tokens: 192,
           }),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),
