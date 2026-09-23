@@ -4939,6 +4939,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // action becomes the selection it obviously meant. One list only: a
     // value that appears in two dropdowns is a reference that did not land.
     let optionWanted = null;
+    let valueIsTheControl = false;
     if (!target && wantedName) {
       const holders = controls.filter((c) => (c.options || []).some(
         (o) => flatLabel(o.text || o.value) === wantedName));
@@ -4946,6 +4947,28 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         target = holders[0];
         const hit = (target.options || []).find((o) => flatLabel(o.text || o.value) === wantedName);
         optionWanted = hit ? (hit.text || hit.value) : null;
+      }
+    }
+    // The value, where the model named a control that cannot hold it. Asked
+    // to "change map to satellite" it replied {"name":"Map","do":"select",
+    // "value":"Satellite"} - the right intention exactly, and "Map" is a
+    // button, so selecting anything on it is impossible and the whole
+    // request died on the naming. If precisely one list holds that value, or
+    // precisely one control is called it, that is where the value goes.
+    // One only: a value in two places is a reference that did not land.
+    const wantedValue = flatLabel(s.value);
+    if (!optionWanted && wantedValue && (!target || !actionFits(act, target))) {
+      const holders = controls.filter((c) => (c.options || []).some(
+        (o) => flatLabel(o.text || o.value) === wantedValue));
+      if (holders.length === 1) {
+        target = holders[0];
+        const hit = (target.options || []).find((o) => flatLabel(o.text || o.value) === wantedValue);
+        optionWanted = hit ? (hit.text || hit.value) : null;
+      } else {
+        // Or a control of its own wearing that name - a basemap is as often
+        // a row of buttons as a dropdown.
+        const called = controls.filter((c) => flatLabel(c.label) === wantedValue);
+        if (called.length === 1) { target = called[0]; valueIsTheControl = true; }
       }
     }
     if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
@@ -4985,7 +5008,13 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // stable thing about a control; the selector is not, which is the same
     // lesson the click path learned earlier.
     const label = String(target.label || "").trim().toLowerCase();
-    if (!actionFits(act, target)) {
+    // The verb the model reached for, unless the reference resolved to
+    // something that settles the action by itself: a value inside a list is
+    // selected, and a control wearing the value's name is pressed. Judging
+    // the original verb here rejected both - "change map to satellite"
+    // resolved onto a Satellite button and was then refused for asking a
+    // button to select something.
+    if (!optionWanted && !valueIsTheControl && !actionFits(act, target)) {
       if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
         + ` - it cannot be ${act}ed. Click it, or choose another control.`)) {
         return giveUp("the model kept asking controls to do things they cannot do");
@@ -5071,6 +5100,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // a dropdown.
     const call = optionWanted
       ? actionToCall("select", target, { ...s, value: optionWanted })
+      // A control named after the value is pressed, whatever verb the model
+      // reached for - asking to "select Satellite" where Satellite is a
+      // button means press it.
+      : valueIsTheControl ? actionToCall(
+        /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase()) ? "check" : "click",
+        target, s)
       : actionToCall(act, target, s);
     if (!call) {
       history.push({ did: `${act} ${target.label}`, outcome: "that control cannot do that" });
@@ -8369,8 +8404,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Not where the attempt learned something anyway: opening a panel
           // and finding the site had put nothing in it is a real answer
           // about the page, and better than anything below would say.
+          // A hand-written rule that could not run, or that waited for
+          // something this page never showed it, is not an answer. "select
+          // alaska" reported "waitFor: timed out after 8000ms" as the result
+          // while a dropdown called Select a state sat on the page - and the
+          // rules are the baseline now, so one of them failing is a reason
+          // to let the page's own controls try, not a verdict.
           const missingHere = result.ok === false
-            && /is not a function on any manifest/.test(String(result.error || ""))
+            && /is not a function on any manifest|waitFor: timed out/.test(String(result.error || ""))
             && !(chased && chased.emptyPanel);
           if (missingHere) {
             ruleTried = `${friendlyToolName(manifestCall.name)} is not on this page`;

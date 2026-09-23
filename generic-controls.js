@@ -183,6 +183,14 @@
     if (!el) return "";
     let out = "";
     for (const node of el.childNodes) {
+      // A comment is not text. textContent on a comment node returns what is
+      // inside the markers, so a Vue app's scaffolding - <!--teleport
+      // start-->, <!--v-if-->, <!--[--> - was being read as part of the
+      // label beside it. A state dropdown on waterdata.usgs.gov came out as
+      // "[][]Select a stateteleport startv-ifteleport end", which no model
+      // and no scorer could recognise as "Select a state", so the one
+      // control that could answer "select alaska" was invisible to both.
+      if (node.nodeType === 8) continue;
       out += node.nodeType === 3 ? (node.nodeValue || "") : (node.textContent || "");
       if (out.length > 200) break;
     }

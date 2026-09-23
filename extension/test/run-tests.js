@@ -2529,6 +2529,75 @@ for (const b of budgets) {
   }
 }
 
+// A Vue app leaves comment markers around what it renders, and textContent
+// on a comment node returns what is inside the markers - so a state
+// dropdown on waterdata.usgs.gov came out labelled
+// "[][]Select a stateteleport startv-ifteleport end". No model and no
+// scorer could see "Select a state" in that, so the one control that could
+// answer "select alaska" was invisible to both planners at once.
+{
+  const vp2 = loadPage(`<!doctype html><html><body>
+    <div class="field">
+      <!--[--><!--[-->Select a state<!--teleport start--><!--v-if--><!--teleport end-->
+      <select id="st"><option value="AL">Alabama</option><option value="AK">Alaska</option></select>
+    </div></body></html>`, { url: "https://waterdata.usgs.gov/state/" });
+  if (vp2) {
+    const found = vp2.GENERIC.inventory({ includeHidden: true }).controls
+      .find((c) => (c.options || []).length === 2);
+    check("a framework's own scaffolding is not part of the label",
+      found && found.label, "Select a state");
+    const bgv2 = loadBackground({ page: vp2 });
+    bgv2.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bgv2.__ask({ type: "smartAsk", instruction: "select alaska" });
+      check("and the dropdown behind it can be reached",
+        vp2.document.getElementById("st").value, "AK");
+    });
+  }
+}
+
+// "change map to satellite" was answered {"name":"Map","do":"select",
+// "value":"Satellite"} - the right intention exactly. "Map" is a button, so
+// selecting anything on it is impossible, and the request died on the
+// naming rather than on the thinking. A value goes where the value lives,
+// whatever the model called the thing holding it.
+{
+  const shapes = [
+    ["a dropdown", `<button id="m">Map</button>
+       <label for="bm">Basemap</label>
+       <select id="bm"><option>Streets</option><option>Satellite</option></select>`],
+    ["a row of buttons", `<button id="m">Map</button>
+       <button id="s">Satellite</button><button id="t">Terrain</button>`],
+    ["a set of radios", `<button id="m">Map</button>
+       <label><input type="radio" name="bm" value="streets" checked> Streets</label>
+       <label><input type="radio" name="bm" value="sat"> Satellite</label>`],
+  ];
+  for (const [what, body] of shapes) {
+    const bmp = loadPage(`<!doctype html><html><body>${body}</body></html>`,
+      { url: "https://water.noaa.gov/" });
+    if (!bmp) continue;
+    let pressed = 0;
+    const sbtn = bmp.document.getElementById("s");
+    if (sbtn) sbtn.addEventListener("click", () => { pressed++; });
+    const bgbm2 = loadBackground({ page: bmp });
+    bgbm2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") {
+        return { ok: true, step: { name: "Map", do: "select", value: "Satellite" }, raw: "{}" };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgbm2.__ask({ type: "smartAsk", instruction: "model: change map to satellite" });
+      const sel = bmp.document.getElementById("bm");
+      const radio = [...bmp.document.querySelectorAll("input[type=radio]")].find((x) => x.checked);
+      const got = sel ? sel.value : (radio ? radio.value : (pressed ? "pressed" : "nothing"));
+      ensure(`satellite is reached when the basemap is ${what}`,
+        ["Satellite", "sat", "pressed"].includes(got), got);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
