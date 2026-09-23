@@ -761,8 +761,20 @@ else {
 
     // And when the worker never answers, the way out appears on its own.
     runAsync(async () => {
-      await new Promise((r) => setTimeout(r, 4500));
-      const row = w.document.getElementById("enableRow");
+      // Waited for rather than slept through. A fixed 4.5s was fine when the
+      // suite was small and fails as a matter of course now it is not: the
+      // panel's own fallback fires on a timer, and a loaded machine runs
+      // that timer late. Polling to a deadline tests the behaviour instead
+      // of the machine's spare capacity, and a suite that is red for that
+      // reason hides the failures worth seeing.
+      const until = Date.now() + 15000;
+      let row = null;
+      for (;;) {
+        row = w.document.getElementById("enableRow");
+        if (row && /show/.test(row.className)) break;
+        if (Date.now() > until) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
       ensure("a worker that never answers still leaves a way out",
         !!(row && /show/.test(row.className)), row && row.className);
       ensure("and the badge says so rather than checking for ever",
@@ -3345,6 +3357,73 @@ for (const b of budgets) {
         const rows = (r.display || {}).rows || [];
         ensure("a control that did not move is not reported as changed",
           !rows.some((x) => x.value === "changed"), rows);
+      });
+    }
+  }
+}
+
+// Whether something moved is settled by the control that was pressed, where
+// it reports its own before and after. The rule was written five separate
+// times as `itChanged === true || verified.changed`, and that || is the bug:
+// it lets the page overrule the control about the control. Page signatures
+// shift for a re-render, a clock, an image arriving late.
+{
+  const mv = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://example.gov/" });
+  if (mv) {
+    const bgmv = loadBackground({ page: mv });
+    check("a control saying it did not move did not move",
+      bgmv.didItMove({ result: { itChanged: false }, verified: { changed: true } }), false);
+    check("a control saying it moved did",
+      bgmv.didItMove({ result: { itChanged: true }, verified: { changed: false } }), true);
+    check("with no state of its own, the page stands in",
+      bgmv.didItMove({ result: {}, verified: { changed: true } }), true);
+    check("and a quiet page means nothing happened",
+      bgmv.didItMove({ result: {}, verified: { changed: false } }), false);
+  }
+
+  // One read of the page per request. Five paths each asked it to list its
+  // controls before anything had been done, so a single instruction walked a
+  // hundred and fifty of them four or six times over.
+  {
+    const rp2 = loadPage(`<!doctype html><html><body>
+      <label><input type="radio" name="t" value="30"> 30 days</label>
+      <label><input type="radio" name="t" value="7"> 7 days</label>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (rp2) {
+      const bgrp = loadBackground({ page: rp2 });
+      let reads = 0;
+      const real = bgrp.invokeOnActiveTab;
+      bgrp.invokeOnActiveTab = (fn, args) => {
+        if (fn === "inventory") reads++;
+        return real(fn, args);
+      };
+      bgrp.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        await bgrp.__ask({ type: "smartAsk", instruction: "click 30 days" });
+        ensure("one instruction does not walk the page over and over", reads <= 2, reads);
+        check("and it still lands", !!(rp2.document.querySelector('[value="30"]') || {}).checked, true);
+      });
+    }
+  }
+
+  // Acting on the page throws the read away: after that it describes a page
+  // that no longer exists, which is the only way a cache like this can lie.
+  {
+    const ip2 = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="a"> Alpha</label></body></html>`,
+      { url: "https://example.gov/" });
+    if (ip2) {
+      const bgip = loadBackground({ page: ip2 });
+      runAsync(async () => {
+        const before = await bgip.readInventory();
+        const alpha = before.result.controls.find((c) => /alpha/i.test(String(c.label || "")));
+        check("the read shows it off", alpha && alpha.checked, false);
+        await bgip.runVerified("GENERIC",
+          { name: "pageCheck", args: { selector: alpha.selector, on: true } });
+        const after = await bgip.readInventory();
+        const now = after.result.controls.find((c) => c.selector === alpha.selector);
+        check("and a fresh read after acting shows it on", now && now.checked, true);
       });
     }
   }

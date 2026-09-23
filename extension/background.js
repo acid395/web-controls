@@ -5598,8 +5598,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   const stateCommand = STATE_COMMAND.test(instruction);
 
   for (let step = 0; step < maxSteps; step++) {
-    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-      .catch(() => ({ ok: false }));
+    const inv = await readInventory();
     if (!inv.ok) break;
     const all = (inv.result && inv.result.controls) || [];
     // A link is never the answer to "enable". water.noaa.gov repeats its
@@ -5691,7 +5690,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     const ran = await runVerified(routeGlobal, call);
     forgetPageTools();
     const r = (ran && ran.result) || {};
-    const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+    const moved = didItMove(ran);
     // Proof, as distinct from motion. Asked to enable something, only that
     // control's own before and after shows it happened - a click that opened
     // a panel moved the page and proved nothing about the layer inside it.
@@ -5799,7 +5798,24 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   };
 }
 
+// Did the thing that was pressed actually move? Where the control reports
+// its own before and after, that settles it and the page signature does not
+// get a vote: signatures shift for reasons that have nothing to do with the
+// press - a re-render, a clock, an image arriving late - and a control that
+// says "false -> false" did not change however much else did. Only where
+// there is no state of its own does the page at large stand in for it.
+//
+// Written once because it was written five times, each as
+// `itChanged === true || verified.changed`, and that || is the bug: it lets
+// the page overrule the control about the control.
+function didItMove(ran) {
+  const r = (ran && ran.result) || {};
+  if (typeof r.itChanged === "boolean") return r.itChanged;
+  return !!(ran && ran.verified && ran.verified.changed);
+}
+
 async function runVerified(routeGlobal, toolCall) {
+  forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   const result = await executeToolCall(routeGlobal, toolCall);
   if (!before.ok || result.ok === false) return result;
@@ -6056,7 +6072,27 @@ function stateFromSite(url, title) {
 const TOOLS_CACHE = new Map();
 const TOOLS_TTL_MS = 8000;
 
+// One read of the page per request, shared by everything that needs it.
+// Five separate paths each asked the page to list its controls - the span
+// check, the option check, the two naming checks, the sequence runner - so a
+// single instruction walked a hundred and fifty controls four or six times
+// over before anything happened. Nothing had changed between those reads by
+// construction: they all run before the first action.
+//
+// Thrown away the moment the page is acted on, and at the start of every
+// request, because after that it is a description of a page that no longer
+// exists - which is the only way a cache like this can lie.
+let pageRead = null;
+function forgetInventory() { pageRead = null; }
+async function readInventory() {
+  if (pageRead) return pageRead;
+  pageRead = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+    .catch(() => ({ ok: false }));
+  return pageRead;
+}
+
 function forgetPageTools(tabId) {
+  forgetInventory();
   if (tabId === undefined) TOOLS_CACHE.clear();
   else TOOLS_CACHE.delete(tabId);
 }
@@ -6720,8 +6756,7 @@ const PARAPHRASE_CASES = [
 // had worked, on a checkbox the clause named exactly and which the same
 // words on their own set without trouble.
 async function actOnExactlyNamedClause(routeGlobal, clause) {
-  const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-    .catch(() => ({ ok: false }));
+  const inv = await readInventory();
   const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const whole = flat(clause);
@@ -6752,8 +6787,7 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
   // hidden checkbox changes no signature this can see, so the box was being
   // ticked and the step reported as unverifiable - the state itself is the
   // evidence, and it is the thing that was asked about.
-  const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-    .catch(() => ({ ok: false }));
+  const again = await readInventory();
   const now = ((again.ok && again.result && again.result.controls) || [])
     .find((c) => c.selector === only.selector);
   const ended = now ? now.checked === true : null;
@@ -7383,6 +7417,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           hint: res.hint,
         });
         sendResponse({ ...res, display });
+        // The running line is taken down by whoever put it up. It was left
+        // to be overwritten by the next progress message or by a redraw,
+        // so an instruction that finished its work on the page could leave
+        // "step 2 of 4" sitting there - the panel saying it was still going
+        // about something already done.
+        try { chrome.runtime.sendMessage({ type: "agentProgress", done: true }); }
+        catch (e) { /* nobody listening */ }
       };
       const stopKeepAlive = keepAlive();
       try {
@@ -7417,8 +7458,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // place, which for "august" is Augusta.
         const wantDate = looksLikeDate(wanted) ? isoDateFrom(wanted) : null;
         if (wantDate && !forceBaseline && !forceModel) {
-          const dinv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-            .catch(() => ({ ok: false }));
+          const dinv = await readInventory();
           const fields = ((dinv.ok && dinv.result && dinv.result.controls) || [])
             .filter((c) => !c.disabled && !c.hidden
               && (String(c.type || "").toLowerCase() === "date" || c.dateLike));
@@ -7491,8 +7531,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const askedSearch = String(wanted)
           .match(/^\s*(?:please\s+)?(?:search|find|look\s*up|search\s+for)\s+(?:for\s+)?(.+?)\s*$/i);
         if (askedSearch && !forceBaseline && !forceModel && splitIntoSteps(wanted).length === 1) {
-          const sinv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-            .catch(() => ({ ok: false }));
+          const sinv = await readInventory();
           const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []));
           const words = askedSearch[1].trim();
           if (box && words) {
@@ -7525,8 +7564,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         let instantOption = null;
         if (!forceBaseline && !forceModel && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
-          const oinv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-            .catch(() => ({ ok: false }));
+          const oinv = await readInventory();
           const flatO = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
           const said = flatO(wanted);
           const saidWords = said.split(" ").filter(Boolean);
@@ -7568,7 +7606,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             args: { selector: instantOption.control.selector, value: instantOption.option } };
           const ran = await runVerified(route.global, call);
           const rr = (ran && ran.result) || {};
-          const moved = rr.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+          const moved = didItMove(ran);
           if (ran.ok !== false && (moved || String(rr.now || "") === String(instantOption.option))) {
             respond({
               ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
@@ -7638,8 +7676,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // the job done having opened a panel.
             let pressable = false;
             if (fullyNamed && !setsState && /^click/i.test(String(pick.tool.name || ""))) {
-              const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-                .catch(() => ({ ok: false }));
+              const inv = await readInventory();
               const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|open|show|view|go\s+to)\s+/i;
               const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
               const whole = flat(wanted);
@@ -7668,8 +7705,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // this, and is it a real control rather than a way in to one.
         if (!instant && !forceBaseline && !forceModel && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
-          const binv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-            .catch(() => ({ ok: false }));
+          const binv = await readInventory();
           const BLEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
           const flatB = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
           const whole = flatB(wanted);
@@ -7699,7 +7735,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               : { name: "pageClick", args: { selector: only.selector } };
             const ran = await runVerified(route.global, call);
             const rr = (ran && ran.result) || {};
-            const moved = rr.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+            const moved = didItMove(ran);
             const wasOn = only.checked === true;
             const settled = isSw ? (moved || wasOn === !wantsOff) : moved;
             if (ran.ok !== false && settled && rr.opened !== true) {
@@ -7741,8 +7777,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const askedDays = (!forceBaseline && !forceModel && !looksAsking
           && splitIntoSteps(wanted).length === 1) ? daysInPhrase(wanted) : null;
         if (askedDays) {
-          const dinv2 = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-            .catch(() => ({ ok: false }));
+          const dinv2 = await readInventory();
           const spans = ((dinv2.ok && dinv2.result && dinv2.result.controls) || [])
             .filter((c) => !c.disabled && c.confidence !== "low" && !c.opensPanel
               && sameSpan(askedDays, daysInPhrase(c.label)));
@@ -7759,8 +7794,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               ? { name: "pageCheck", args: { selector: only.selector, on: true } }
               : { name: "pageClick", args: { selector: only.selector } };
             const ran = await runVerified(route.global, call);
-            const back = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-              .catch(() => ({ ok: false }));
+            const back = await readInventory();
             const now = ((back.ok && back.result && back.result.controls) || [])
               .find((c) => c.selector === only.selector);
             const settled = isSw ? (now && now.checked === true)
@@ -7787,7 +7821,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Reported, never guessed at - the same standard every other path
           // is held to. A tool that ran without being able to prove anything
           // says so rather than claiming success.
-          const moved = r.itChanged === true || !!(ran && ran.verified && ran.verified.changed);
+          const moved = didItMove(ran);
           // Proof, or it does not get to answer. A fast path that reports
           // "ran - could not check whether the page changed" would be
           // standing in front of the loop that opens the disclosure and
@@ -8087,8 +8121,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // clause or two.
         let namesSomethingExactly = false;
         if (modelTried && isCommand(wanted) && !forceBaseline) {
-          const ninv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-            .catch(() => ({ ok: false }));
+          const ninv = await readInventory();
           const NLEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
           const flatN = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
           const labels = new Set(((ninv.ok && ninv.result && ninv.result.controls) || [])
@@ -8626,8 +8659,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }
             }
             if (rr.how === "click" && rr.itChanged === false) {
-              const fresh = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
-                .catch(() => ({ ok: false }));
+              const fresh = await readInventory();
               if (fresh.ok) {
                 forgetPageTools();
                 // Without the door in the list. Derived tools keep their

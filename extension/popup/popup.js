@@ -610,7 +610,12 @@ if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addList
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
   // Which step, not just that something is happening. "Still running" for a
   // minute reads the same as a hang.
-  if (msg.type === "agentProgress") setStatus(msg.text);
+  // done arrives with the answer, so the line comes down at the moment the
+  // work stops rather than whenever something else happens to redraw.
+  if (msg.type === "agentProgress") {
+    if (msg.done) clearStatus();
+    else if (msg.text) setStatus(msg.text);
+  }
 });
 
 // Reflects and sets the opt-in. Off means background.js never downloads the
