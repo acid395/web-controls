@@ -4901,7 +4901,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         history, said: lastSaid };
     }
     lastInv = inv;
-    const controls = controlsForModel(inv.result);
+    let controls = controlsForModel(inv.result);
 
     // No room for a decision that costs what the last one cost, so this
     // does not start one. Beginning a turn that cannot finish spends the
@@ -5095,41 +5095,54 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       .replace(/^[<\[(]+|[>\])]+$/g, "");
     const rawName = KIND_WORD.test(flatLabel(namedRaw)) ? "" : flatLabel(namedRaw);
     const wantedName = rawName.replace(NAMED_LEAD, "").trim() || rawName;
-    let target = null;
-    let several = null;
-    if (wantedName) {
-      for (const candidate of [rawName, wantedName]) {
-        if (target || !candidate) continue;
-        const exact = controls.filter((c) => flatLabel(c.label) === candidate);
-        if (exact.length === 1) { target = exact[0]; break; }
-        const part = controls.filter((c) => {
-          const l = flatLabel(c.label);
-          return l && (l.includes(candidate) || candidate.includes(l));
-        });
-        if (part.length === 1) { target = part[0]; break; }
-        // Recorded rather than resolved. Two controls answering to one name
-        // is a reference that did not land, and picking between them is the
-        // confident wrong action this whole project exists to avoid.
-        if (part.length > 1) several = part.slice(0, 4).map((c) => c.label);
+    // Written as something that can be run again. After opening a chooser or
+    // a panel the model's answer has not changed - only our view of the page
+    // has - so asking it a second time buys nothing and costs a decision,
+    // which on this hardware is thirteen seconds and was the difference
+    // between finding Alaska and running out of time to look.
+    const resolveIn = (list) => {
+      let found = null;
+      let many = null;
+      if (wantedName) {
+        for (const candidate of [rawName, wantedName]) {
+          if (found || !candidate) continue;
+          const exact = list.filter((c) => flatLabel(c.label) === candidate);
+          if (exact.length === 1) { found = exact[0]; break; }
+          const part = list.filter((c) => {
+            const l = flatLabel(c.label);
+            return l && (l.includes(candidate) || candidate.includes(l));
+          });
+          if (part.length === 1) { found = part[0]; break; }
+          // Recorded rather than resolved. Two controls answering to one
+          // name is a reference that did not land, and picking between them
+          // is the confident wrong action this project exists to avoid.
+          if (part.length > 1) many = part.slice(0, 4).map((c) => c.label);
+        }
       }
-    }
+      let opt = null;
+      if (!found && wantedName) {
+        const holders = list.filter((c) => (c.options || []).some(
+          (o) => flatLabel(o.text || o.value) === wantedName));
+        if (holders.length === 1) {
+          found = holders[0];
+          const hit = (found.options || []).find(
+            (o) => flatLabel(o.text || o.value) === wantedName);
+          opt = hit ? (hit.text || hit.value) : null;
+        }
+      }
+      return { found, opt, many };
+    };
+    const first = resolveIn(controls);
+    let target = first.found;
+    let several = first.many;
     // The value, where the model named that instead of the control holding
     // it. Asked to "select alaska" the natural thing to say is "Alaska", and
     // that is an option on a dropdown rather than a control in its own
     // right - so the reference is resolved against the options too, and the
     // action becomes the selection it obviously meant. One list only: a
     // value that appears in two dropdowns is a reference that did not land.
-    let optionWanted = null;
+    let optionWanted = first.opt;
     let valueIsTheControl = false;
-    if (!target && wantedName) {
-      const holders = controls.filter((c) => (c.options || []).some(
-        (o) => flatLabel(o.text || o.value) === wantedName));
-      if (holders.length === 1) {
-        target = holders[0];
-        const hit = (target.options || []).find((o) => flatLabel(o.text || o.value) === wantedName);
-        optionWanted = hit ? (hit.text || hit.value) : null;
-      }
-    }
     // The value, where the model named a control that cannot hold it. Asked
     // to "change map to satellite" it replied {"name":"Map","do":"select",
     // "value":"Satellite"} - the right intention exactly, and "Map" is a
@@ -5176,12 +5189,25 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         });
         // The next turn reads the page again and finds it in the open. No
         // model call is spent on the door itself.
-        note = `"${String(s.name || "").slice(0, 40)}" was behind`
-          + ` "${String(door.revealedByLabel || "a panel").slice(0, 40)}", which is now open.`
-          + " Ask for it again.";
-        lastInv = null;
-        observation = null;
-        continue;
+        const afterDoor = await readInventory();
+        if (afterDoor.ok) {
+          controls = controlsForModel(afterDoor.result);
+          lastInv = afterDoor;
+          const again = resolveIn(controls);
+          if (again.found) {
+            target = again.found;
+            optionWanted = again.opt;
+            several = again.many;
+          }
+        }
+        if (!target) {
+          note = `"${String(s.name || "").slice(0, 40)}" was behind`
+            + ` "${String(door.revealedByLabel || "a panel").slice(0, 40)}", which is now open.`
+            + " Ask for it again.";
+          lastInv = null;
+          observation = null;
+          continue;
+        }
       }
     }
     // Nothing answers to that name, and a closed chooser may be holding the
@@ -5215,16 +5241,28 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
           outcome: opened && opened.ok !== false ? "open" : "would not open",
           ok: !!(opened && opened.ok !== false), changed: false, label: chooser.label,
         });
-        note = `"${String(s.name || "").slice(0, 40)}" was not on the page, so`
-          + ` "${String(chooser.label || "a chooser").slice(0, 40)}" was opened.`
-          + " What it holds is on the list now - ask again.";
-        // Read the page again next turn. The loop reuses the last reading
-        // when the previous step changed nothing visible, and opening a
-        // chooser is precisely the case where nothing looks different and
-        // everything is - the choices only exist now.
-        lastInv = null;
-        observation = null;
-        continue;
+        // Look again now. The model has already said what it wants; only
+        // the page has changed, so another decision would ask it the same
+        // question and be given the same answer thirteen seconds later.
+        const after = await readInventory();
+        if (after.ok) {
+          controls = controlsForModel(after.result);
+          lastInv = after;
+          const again = resolveIn(controls);
+          if (again.found) {
+            target = again.found;
+            optionWanted = again.opt;
+            several = again.many;
+          }
+        }
+        if (!target) {
+          note = `"${String(s.name || "").slice(0, 40)}" was not on the page, so`
+            + ` "${String(chooser.label || "a chooser").slice(0, 40)}" was opened.`
+            + " What it holds is on the list now - ask again.";
+          lastInv = null;
+          observation = null;
+          continue;
+        }
       }
     }
     if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
