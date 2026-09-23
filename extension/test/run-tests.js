@@ -2598,6 +2598,48 @@ for (const b of budgets) {
   }
 }
 
+// "click limit by boudnary and click only snow water equivalent" left both
+// boxes the opposite of what was asked, and for two different reasons at
+// once. The model answered {"do":"check","on":false} for a box the request
+// wanted on - it had echoed the state printed beside the control - and we
+// obeyed it, reporting "already false" with a tick. Then it pressed a box
+// that was already ticked, which unticked it, because a plain click on a
+// checkbox toggles. Which way a switch is meant to go is in the request; the
+// model's job is which control, not which direction.
+{
+  const sweHtml = `<!doctype html><html><body>
+    <label><input type="checkbox" name="lb"> Limit by boundary</label>
+    <label><input type="checkbox" name="swe" checked> Snow Water Equivalent</label>
+    </body></html>`;
+  const cases = [
+    ["the model echoes the shown state back", "click limit by boudnary and click only snow water equivalent",
+      (g) => (/limit|boudnary|boundary/.test(g)
+        ? { name: "Limit by boundary", do: "check", on: false }
+        : { name: "Snow Water Equivalent", do: "click" }),
+      { lb: true, swe: true }],
+    ["a request that plainly says off", "uncheck snow water equivalent",
+      () => ({ name: "Snow Water Equivalent", do: "click" }), { lb: false, swe: false }],
+    ["a press on one already on", "click snow water equivalent",
+      () => ({ name: "Snow Water Equivalent", do: "click" }), { lb: false, swe: true }],
+  ];
+  for (const [what, instruction, reply, want] of cases) {
+    const sp5 = loadPage(sweHtml, { url: "https://water.noaa.gov/" });
+    if (!sp5) continue;
+    const bgs5 = loadBackground({ page: sp5 });
+    bgs5.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") return { ok: true, step: reply(String(m.goal).toLowerCase()), raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgs5.__ask({ type: "smartAsk", instruction });
+      const st = (n) => !!(sp5.document.querySelector(`[name="${n}"]`) || {}).checked;
+      check(`${what}: limit by boundary ends ${want.lb}`, st("lb"), want.lb);
+      check(`${what}: snow water equivalent ends ${want.swe}`, st("swe"), want.swe);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

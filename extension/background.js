@@ -5014,7 +5014,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // the original verb here rejected both - "change map to satellite"
     // resolved onto a Satellite button and was then refused for asking a
     // button to select something.
-    if (!optionWanted && !valueIsTheControl && !actionFits(act, target)) {
+    const switchTarget = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
+    if (!optionWanted && !valueIsTheControl && !switchTarget && !actionFits(act, target)) {
       if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
         + ` - it cannot be ${act}ed. Click it, or choose another control.`)) {
         return giveUp("the model kept asking controls to do things they cannot do");
@@ -5098,7 +5099,23 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // Naming an option is asking for it to be chosen, whatever verb came
     // with it - "click Alaska" and "select Alaska" mean the same thing about
     // a dropdown.
-    const call = optionWanted
+    // Which way a switch is meant to go is in the request, not in the
+    // model's reply. Two things went wrong at once on "click limit by
+    // boundary and click only snow water equivalent": the model answered
+    // {"do":"check","on":false} for a box the request wanted on - it had
+    // echoed the state shown beside the control - and we obeyed, reporting
+    // "already false" as a success. Then it pressed a box that was already
+    // ticked, which unticked it, because a plain click on a checkbox
+    // toggles. Both left the page the opposite of what was asked.
+    //
+    // So the model picks the control and the request decides the state. A
+    // request that plainly says to turn something off still turns it off.
+    const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
+      .test(goal);
+    const isSwitch = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
+    const call = isSwitch && !optionWanted
+      ? actionToCall("check", target, { ...s, on: !wantsOff })
+      : optionWanted
       ? actionToCall("select", target, { ...s, value: optionWanted })
       // A control named after the value is pressed, whatever verb the model
       // reached for - asking to "select Satellite" where Satellite is a
