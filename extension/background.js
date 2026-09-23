@@ -5194,6 +5194,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     const labelNums = String(target.label || "").match(/\b\d+\b/g) || [];
     const numbersAgree = !askedNums.length || !labelNums.length
       || askedNums.some((n) => labelNums.includes(n));
+    // The model named a list and the request named the value. Asked to
+    // "select alaska" it replied {"name":"Select a state","do":"click"} -
+    // the right control exactly - and clicking a dropdown does nothing, so
+    // a correct answer produced no change and then ran out of time. The
+    // model's job is which control; the value is in the words already.
+    if (!optionWanted && (target.options || []).length) {
+      const saidFlat = flatLabel(goal);
+      const inWords = (target.options || []).filter((o) => {
+        const t = flatLabel(o.text || o.value);
+        return t && t.length >= 3 && String(o.value ?? "").trim()
+          && !flatLabel(target.label).includes(t)
+          && new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(saidFlat);
+      });
+      if (inWords.length === 1) optionWanted = inWords[0].text || inWords[0].value;
+    }
     const namesIt = !!optionWanted
       || (numbersAgree
         && goalWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase())));
@@ -5224,6 +5239,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       // nobody had asked about.
       if (queried !== label) {
         return giveUp("the model moved between controls the request does not name");
+      }
+      // Insisting is judgment, and judgment is honoured - except where being
+      // wrong costs the page. "click deep to h2o level" meant depth to water
+      // level; the model could not place it, settled on WDFN Home, was
+      // asked, said it again, and we navigated away from the page the
+      // request was about. A checkbox pressed in error is a tick to undo; a
+      // link to somewhere else is the end of the thing being worked on.
+      const href = String(target.href || "");
+      if (href && !/^#|^javascript:|^\(js\)$/i.test(href)) {
+        return giveUp(`"${String(target.label).slice(0, 40)}" leaves this page, and nothing`
+          + " in the request names it");
       }
     }
 
