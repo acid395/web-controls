@@ -163,6 +163,11 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     '  {"name":"NAME","do":"click"}  {"name":"NAME","do":"check","on":true}',
     '  {"name":"NAME","do":"select","value":"OPTION"}',
     '  {"name":"NAME","do":"type","value":"TEXT"}',
+    // Searching is its own action because typing is not searching: fill
+    // leaves the words sitting in the box. The page's own search box is
+    // found and submitted, so the model does not have to name it or know
+    // that Enter is what a search widget listens for.
+    '  {"do":"search","value":"WORDS"}  to put words into this page\u2019s search',
     '  {"do":"read"}  {"do":"finish","answer":"ANSWER"}',
     "",
     // These lines were a third of the prompt, and the prompt is prefill on
@@ -181,6 +186,7 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     // answer questions. Shortened, not dropped.
     "- Action: act now, do not read first. Question: read, do not press.",
     "- Not listed? Click what holds it open, look again next turn.",
+    "- Looking something up on this site? Use search.",
     "- Never redo a step that worked; do the next part still outstanding.",
     "- finish only once all of it is done.",
   ].filter(Boolean).join("\n");

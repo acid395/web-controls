@@ -4536,7 +4536,7 @@ function planManifestTool(instruction, routeGlobal) {
  * the decision is the model's; the scorer stays behind "baseline:" so the
  * two can be compared on the same pages rather than quietly blended.
  */
-const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "read", "finish"]);
+const AGENT_ACTIONS = new Set(["click", "check", "select", "type", "search", "read", "finish"]);
 
 // "Click A and click B" is two requests. The splitter already existed for the
 // keyword path and sat below the model path, so the model never saw the
@@ -4864,6 +4864,62 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       return { ok: true, answer: String(s.answer || "").slice(0, 600), history,
         steps: history.length, tookMs: Date.now() - began, said: lastSaid };
     }
+    // Typing is not searching. fill() leaves the words in the box and the
+    // value did change, so a verification check calls it a success - a search
+    // that looks performed and was not. The page's own box is found and
+    // submitted, which is machinery that already existed and that the model
+    // had no way to reach: asked to "search how to survive a drought" it
+    // pressed a link called Public Health, because typing and pressing were
+    // the only two things it had been offered.
+    if (act === "search") {
+      const box = findSearchBox(controls);
+      if (!box) {
+        if (!correct("This page has no search box. Act on a control, or finish.")) {
+          return giveUp("this page has nothing to search with");
+        }
+        continue;
+      }
+      const words = String(s.value ?? s.query ?? s.text ?? "").trim();
+      if (!words) {
+        if (!correct('Say what to search for: {"do":"search","value":"..."}')) {
+          return giveUp("the model asked to search for nothing");
+        }
+        continue;
+      }
+      // Searching the same words twice is the same search. The repeat guard
+      // below keys on a control's label and never saw this branch, so a
+      // model that answered "search" every turn searched six times.
+      if (history.some((h) => h.key === `search|${words.toLowerCase()}`)) {
+        return { ok: true, answer: null, history, steps: history.length, repeated: true,
+          tookMs: Date.now() - began, said: lastSaid };
+      }
+      if (box.hidden && box.revealedBy) {
+        await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
+        forgetPageTools();
+      }
+      const filled = await runVerified(routeGlobal,
+        { name: "pageFill", args: { selector: box.selector, text: words } });
+      const sent = filled.ok === false ? filled
+        : await runVerified(routeGlobal, { name: "pageSubmit", args: { selector: box.selector } });
+      const went = !!(sent && sent.ok !== false);
+      history.push({
+        key: `search|${words.toLowerCase()}`,
+        did: `searched for "${words.slice(0, 40)}"`,
+        outcome: went ? `in ${box.label || "the search box"}` : `failed: ${String(sent.error || "").slice(0, 50)}`,
+        ok: went, changed: went, label: box.label,
+      });
+      if (!went) return giveUp("the page's search would not run");
+      // One clause asking for a search, and the search ran: there is nothing
+      // left to decide, and the turn that would ask is a turn of somebody's
+      // waiting.
+      if (!mayHaveMore) {
+        return { ok: true, answer: null, history, steps: history.length,
+          tookMs: Date.now() - began, said: lastSaid };
+      }
+      observation = null;
+      continue;
+    }
+
     if (act === "read") {
       // Two reads with no action between them cannot differ - nothing has
       // touched the page - so the second is a turn of the model plus a full
@@ -7147,6 +7203,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // request, or be the start of a word in it - topographic inside
         // topographical - and it has to be the only option on the page that
         // does. Two candidates is a choice, and a choice is the model's.
+        // "search X" on a page with one search box is not a decision either.
+        // It cost forty-five seconds and a wrong press before: the model was
+        // offered typing and pressing and nothing that meant searching, so
+        // it pressed a link called Public Health.
+        const askedSearch = String(wanted)
+          .match(/^\s*(?:please\s+)?(?:search|find|look\s*up|search\s+for)\s+(?:for\s+)?(.+?)\s*$/i);
+        if (askedSearch && !forceBaseline && !forceModel && splitIntoSteps(wanted).length === 1) {
+          const sinv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+            .catch(() => ({ ok: false }));
+          const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []));
+          const words = askedSearch[1].trim();
+          if (box && words) {
+            if (box.hidden && box.revealedBy) {
+              await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
+              forgetPageTools();
+            }
+            const filled = await runVerified(route.global,
+              { name: "pageFill", args: { selector: box.selector, text: words } });
+            const sent = filled.ok === false ? filled
+              : await runVerified(route.global,
+                { name: "pageSubmit", args: { selector: box.selector } });
+            if (sent && sent.ok !== false) {
+              respond({
+                ...sent, ok: true, plannedBy: "exact-match",
+                toolCall: { name: "pageSubmit", args: { selector: box.selector } },
+                display: {
+                  title: `searched for "${words.slice(0, 40)}"`,
+                  subtitle: `put into ${box.label || "this page's search"} and submitted`,
+                  stats: [], rows: [],
+                  note: "this page has a search box, so this did not wait for the model",
+                  source: "this page",
+                },
+              });
+              return;
+            }
+          }
+        }
+
         let instantOption = null;
         if (!forceBaseline && !forceModel && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {

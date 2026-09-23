@@ -2809,6 +2809,88 @@ for (const b of budgets) {
   }
 }
 
+// "search how to survive a drought" spent forty-five seconds and pressed a
+// link called Public Health. The model had been offered typing and pressing
+// and nothing that meant searching - and typing is not searching, because
+// fill leaves the words sitting in the box while the value did change, so a
+// verification check calls it a success. The box-finding and the submitting
+// both already existed; the model simply had no word for the thing.
+{
+  const searchHtml = `<!doctype html><html><body>
+    <a href="#ph">Public Health</a>
+    <form id="f"><input type="search" id="q" placeholder="Search"><button type="submit">Go</button></form>
+    </body></html>`;
+  const cases = [
+    ["a plain search", "search how to survive a drought", null, 0, "how to survive a drought"],
+    ["worded as find", "find drought outlook", null, 0, "drought outlook"],
+    ["through the model", "model: search how to survive a drought",
+      { do: "search", value: "how to survive a drought" }, 1, "how to survive a drought"],
+  ];
+  for (const [what, instr, reply, wantCalls, wantWords] of cases) {
+    const sp6 = loadPage(searchHtml, { url: "https://www.drought.gov/" });
+    if (!sp6) continue;
+    let submitted = 0;
+    sp6.document.getElementById("f").addEventListener("submit", (e) => {
+      e.preventDefault(); submitted++;
+    });
+    let pressedLink = 0;
+    sp6.document.querySelector('a[href="#ph"]').addEventListener("click", () => { pressedLink++; });
+    const bgs6 = loadBackground({ page: sp6 });
+    let calls = 0;
+    bgs6.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") { calls++; return { ok: true, step: reply || { do: "finish", answer: "" }, raw: "{}" }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgs6.__ask({ type: "smartAsk", instruction: instr });
+      check(`${what}: the words go in the box`,
+        sp6.document.getElementById("q").value, wantWords);
+      // Typing alone is the failure this exists to stop.
+      check(`${what}: and the search is actually run`, submitted, 1);
+      check(`${what}: and no link is pressed instead`, pressedLink, 0);
+      check(`${what}: decisions spent`, calls, wantCalls);
+    });
+  }
+
+  // Searching the same words twice is the same search - the repeat guard
+  // keys on a control's label and never saw this branch, so a model that
+  // answered "search" every turn searched six times.
+  const sp7 = loadPage(searchHtml, { url: "https://www.drought.gov/" });
+  if (sp7) {
+    let submits = 0;
+    sp7.document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); submits++; });
+    const bgs7 = loadBackground({ page: sp7 });
+    bgs7.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") return { ok: true, step: { do: "search", value: "drought" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgs7.runModelAgent("GENERIC", "look into drought and then read it", { maxSteps: 6 });
+      check("the same search is not run over and over", submits, 1);
+    });
+  }
+
+  // A page with nothing to search with says so rather than pressing about.
+  const sp8 = loadPage(`<!doctype html><html><body><a href="#ph">Public Health</a></body></html>`,
+    { url: "https://www.drought.gov/" });
+  if (sp8) {
+    let pressed = 0;
+    sp8.document.querySelector("a").addEventListener("click", () => { pressed++; });
+    const bgs8 = loadBackground({ page: sp8 });
+    bgs8.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") return { ok: true, step: { do: "search", value: "drought" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgs8.__ask({ type: "smartAsk", instruction: "model: search how to survive a drought" });
+      check("a page with no search box presses nothing", pressed, 0);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
