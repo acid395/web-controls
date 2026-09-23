@@ -3522,6 +3522,83 @@ for (const b of budgets) {
   }
 }
 
+// "click gage hgith and click monitoring locatin with dischargae" names
+// controls on the page in the sense that matters, and cost three model
+// decisions and fifty-one seconds because none of them matched a label
+// character for character. People type like this.
+//
+// Word by word rather than by overall likeness, because likeness alone
+// cannot tell "gage hgith" from "gage height" (27% apart) without also
+// letting "7 days" match "30 days" (29%).
+{
+  const cn = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://x.gov/" });
+  if (cn) {
+    const bgcn = loadBackground({ page: cn });
+    const cases = [
+      // typed badly, meant plainly
+      ["dischargae", "discharge", true],
+      ["monitoring locatin", "monitoring location", true],
+      ["boudnary", "boundary", true],
+      ["30 dyas", "30 days", true],
+      ["revisoins", "revisions", true],
+      // different things, which is the harder half
+      ["7 days", "30 days", false],
+      ["1 year", "7 days", false],
+      ["discharge", "recharge", false],
+      ["alaska", "alabama", false],
+      ["log", "linear", false],
+      ["gage height", "graph gage height feet", false],
+      // and an exact match is not a near one
+      ["snow depth", "snow depth", false],
+    ];
+    for (const [said, label, want] of cases) {
+      check(`"${said}" ${want ? "is" : "is not"} a slip for "${label}"`,
+        bgcn.closeName(said, label), want);
+    }
+  }
+
+  // A number is never a typo of another number, which is what keeps 7 days
+  // and 30 days apart while gage hgith and gage height come together.
+  {
+    const tp3 = loadPage(`<!doctype html><html><body>
+      <label><input type="radio" name="t" value="7"> 7 days</label>
+      <label><input type="radio" name="t" value="30"> 30 days</label>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (tp3) {
+      const bgtp3 = loadBackground({ page: tp3 });
+      let calls = 0;
+      bgtp3.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") { calls++; return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" }; }
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgtp3.__ask({ type: "smartAsk", instruction: "click 30 dyas" });
+        const on = [...tp3.document.querySelectorAll("input")].find((x) => x.checked);
+        check("a typed span reaches the control it meant", on && on.value, "30");
+        check("and costs no decision", calls, 0);
+      });
+    }
+  }
+
+  // And it does not reach for a control that merely looks similar.
+  {
+    const tp4 = loadPage(`<!doctype html><html><body>
+      <label><input type="radio" name="t" value="7"> 7 days</label>
+      </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (tp4) {
+      const bgtp4 = loadBackground({ page: tp4 });
+      bgtp4.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        await bgtp4.__ask({ type: "smartAsk", instruction: "click 30 days" });
+        const on = [...tp4.document.querySelectorAll("input")].find((x) => x.checked);
+        check("asking for 30 days does not settle for 7", on ? on.value : "none", "none");
+      });
+    }
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

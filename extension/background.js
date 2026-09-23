@@ -3053,6 +3053,15 @@ function findSearchBox(controls) {
   return boxes.slice().sort((a, b) => rank(b) - rank(a))[0];
 }
 
+// Numbers compared as numbers. "huc-8" and "HUC-08" are the same figure
+// written two ways, and comparing the text of them threw away the control
+// the request named - the fix for one wrong answer becoming another.
+function figuresAgree(asked, have) {
+  if (!asked.length || !have.length) return true;
+  const n = have.map(Number);
+  return asked.map(Number).some((x) => n.includes(x));
+}
+
 function planGenericTool(instruction, inventory) {
   const controls = (inventory && inventory.controls) || [];
   if (!controls.length) return null;
@@ -3067,9 +3076,25 @@ function planGenericTool(instruction, inventory) {
   const used = new Set();
   let remaining = [...allWords];
 
+  // A number in the request has to be the number on the control. "click 30
+  // days" on a page offering only 7 days settled for 7 days, scoring on the
+  // word they share - which is the word that matters least - and then said
+  // "nothing on this page matched: 30" beside having done it. A control
+  // carrying no number contradicts nothing; one carrying a different number
+  // is a different control, and no amount of shared wording changes that.
+  //
+  // Here rather than in each caller, because this is the planner behind all
+  // of them: the same mistake had already been fixed twice elsewhere.
+  const askedFigures = String(instruction).match(/\b\d+\b/g) || [];
+  const contradictsFigure = (c) => {
+    if (!askedFigures.length) return false;
+    const has = String(c.label || "").match(/\b\d+\b/g) || [];
+    return has.length > 0 && !figuresAgree(askedFigures, has);
+  };
+
   while (remaining.length) {
     const scored = controls
-      .filter((c) => !used.has(c.selector))
+      .filter((c) => !used.has(c.selector) && !contradictsFigure(c))
       .map((c) => ({ control: c,
         score: scoreControl(c, remaining, remaining.join(" "),
           { wantsText, wantsState: STATE_COMMAND.test(instruction) }) }))
@@ -4183,6 +4208,36 @@ function isTransposition(a, b) {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) at.push(i);
   return at.length === 2 && at[1] === at[0] + 1
     && a[at[0]] === b[at[1]] && a[at[1]] === b[at[0]];
+}
+
+// Whether a request names a control, allowing for the way people type.
+// "click gage hgith and click monitoring locatin with dischargae" names two
+// controls exactly, in the sense that matters, and cost three model
+// decisions and fifty-one seconds because none of them matched a label
+// character for character.
+//
+// Word by word rather than by overall likeness, because likeness alone
+// cannot tell "gage hgith" from "gage height" (27% apart) without also
+// letting "7 days" match "30 days" (29%). Same number of words, digits
+// identical - a number is never a typo of another number, which is what
+// separates those two cases - and every other word within a letter or two.
+function closeName(said, label) {
+  const a = String(said || "").split(" ").filter(Boolean);
+  const b = String(label || "").split(" ").filter(Boolean);
+  if (!a.length || a.length !== b.length) return false;
+  let slips = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === b[i]) continue;
+    // A digit is exact or it is a different thing: 7 days and 30 days are
+    // not each other misspelt.
+    if (/\d/.test(a[i]) || /\d/.test(b[i])) return false;
+    const room = Math.min(a[i].length, b[i].length) <= 4 ? 1 : 2;
+    const d = editDistance(a[i], b[i]);
+    if (d > room) return false;
+    slips += d;
+  }
+  // A whole phrase of near-misses is not a typo, it is a different phrase.
+  return slips > 0 && slips <= 3;
 }
 
 function looksLikeMisspelledVerb(word) {
@@ -5410,8 +5465,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // not contradicting anything; one carrying a different number is.
     const askedNums = String(goal).match(/\b\d+\b/g) || [];
     const labelNums = String(target.label || "").match(/\b\d+\b/g) || [];
-    const numbersAgree = !askedNums.length || !labelNums.length
-      || askedNums.some((n) => labelNums.includes(n));
+    const numbersAgree = figuresAgree(askedNums, labelNums);
     // The model named a list and the request named the value. Asked to
     // "select alaska" it replied {"name":"Select a state","do":"click"} -
     // the right control exactly - and clicking a dropdown does nothing, so
@@ -5781,6 +5835,14 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
         && namedCoverage(target.label, subjectWords) === 0) {
       break;
     }
+    // A number in the request has to be the number on the control. This was
+    // written for the model and not for here, so with no model available
+    // "click 30 days" settled for 7 days - the scorer matching on the word
+    // they share, which is the word that matters least. A control carrying
+    // no number contradicts nothing; one carrying a different number does.
+    const wantNums = String(instruction).match(/\b\d+\b/g) || [];
+    const haveNums = String(target.label || "").match(/\b\d+\b/g) || [];
+    if (!figuresAgree(wantNums, haveNums)) break;
     if (target.selector) actedOn.add(target.selector);
     const ran = await runVerified(routeGlobal, call);
     forgetPageTools();
@@ -6863,7 +6925,7 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
   const named = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => {
     if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
     const l = flat(c.label);
-    return !!l && (l === bare || l === whole);
+    return !!l && (l === bare || l === whole || closeName(bare, l));
   });
   if (named.length !== 1) return null;
   const only = named[0];
@@ -7783,7 +7845,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const named = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => {
                 if (c.disabled || c.hidden || c.confidence === "low") return false;
                 const l = flat(c.label);
-                return !!l && (l === bare || l === whole || l === bareTypo);
+                return !!l && (l === bare || l === whole || l === bareTypo
+                  || closeName(bare, l) || closeName(bareTypo, l));
               });
               // Exactly one, and not a way in to something else.
               pressable = named.length === 1 && !named[0].opensPanel;
@@ -7818,7 +7881,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (c.disabled || c.hidden || c.confidence === "low" || c.opensPanel) return false;
             if (!/^(checkbox|radio)$/.test(String(c.type || "").toLowerCase())) return false;
             const l = flatB(c.label);
-            return !!l && (l === bare || l === whole || l === bareTyped);
+            return !!l && (l === bare || l === whole || l === bareTyped
+              || closeName(bare, l) || closeName(bareTyped, l));
           });
           if (named.length === 1) {
             const only = named[0];
@@ -8224,7 +8288,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           namesSomethingExactly = splitIntoSteps(wanted).some((part) => {
             const whole = flatN(part);
             const bare = flatN(String(part).replace(NLEAD, ""));
-            return labels.has(whole) || labels.has(bare);
+            return labels.has(whole) || labels.has(bare)
+              || [...labels].some((l) => closeName(bare, l));
           });
         }
         if (modelTried && isCommand(wanted) && !forceBaseline && !namesSomethingExactly) {
