@@ -3815,6 +3815,81 @@ for (const b of budgets) {
   }
 }
 
+// Which rung answers what, pinned.
+//
+// The request handler has twenty-one paths that can answer, and six of them
+// answer anything on a page anyone has tested. Every fix made this week was
+// an insertion into that chain, and an insertion changes precedence for
+// everything below it - which is why fixing one thing kept breaking
+// another. The ordering was implicit and nobody, including me, could say
+// what it was without running it.
+//
+// So it is written down and enforced. A change that moves a request from one
+// rung to another fails here and has to be argued for, rather than being
+// discovered three cards later on somebody's live page.
+{
+  const rungs = [
+    // Settings and the self-test come first: asking a planner how to change
+    // planners is absurd, and diagnose is what you type when nothing works.
+    ["settings before anything", "use 3b", "settings"],
+    // Then the page, where the request names something on it beyond doubt -
+    // a control, a value, a span, or any of those typed badly.
+    ["a control named exactly", "click 30 days", "exact-match"],
+    ["a span said in words", "click a month", "exact-match"],
+    ["a control named badly", "click 30 dyas", "exact-match"],
+    ["a value in a list", "select alaska", "exact-match"],
+    // Then the model, for anything needing judgment.
+    ["phrasing that needs reading", "show me the water level", "model"],
+    ["a request the page cannot meet", "enable the tidal predictions layer", "model"],
+    // A link named exactly still goes the slower way: the fast path takes
+    // switches only, because a press has nuances - a fragment that carries a
+    // view does something, a bare "#" does not - that the loop below knows
+    // and it does not. Written down as a known cost rather than left to be
+    // rediscovered.
+    // Either of the page's own rungs. Which one depends on how crowded the
+    // page is - on a small one the derived tools name it outright, on a
+    // four-hundred-kilobyte one the slower loop finds it - and what is being
+    // pinned is that the page answers it rather than the model.
+    ["a link named exactly", "click revisions", ["exact-match", "one-list"]],
+    ["two clauses", "click 1 year and enable continuous data", "sequence"],
+  ];
+  // A small page carrying one of each kind, rather than the captured
+  // snapshots: those are four hundred kilobytes apiece and parsing them nine
+  // times made the suite slow enough to fail its own timing tests. What is
+  // being pinned is which rung answers, and that does not need a real page.
+  const bench = `<!doctype html><html><body>
+    <label><input type="radio" name="t" value="7"> 7 days</label>
+    <label><input type="radio" name="t" value="30"> 30 days</label>
+    <label><input type="checkbox" name="cd"> Continuous data</label>
+    <label for="st">Select a State</label>
+    <select id="st"><option value="">State</option>
+      <option value="AL">Alabama</option><option value="AK">Alaska</option></select>
+    <a href="/revisions">Revisions</a>
+    </body></html>`;
+  for (const [what, instruction, rung] of rungs) {
+    const pg = loadPage(bench, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!pg) continue;
+    const bgp = loadBackground({ page: pg });
+    bgp.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmEmbed") return { ok: false, error: "none in the harness" };
+      // A model that declines, so what is measured is which rung the request
+      // reaches rather than how clever the stand-in is.
+      if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgp.__ask({ type: "smartAsk", instruction });
+      const got = String(r.plannedBy);
+      if (Array.isArray(rung)) {
+        ensure(`${what}: "${instruction}" is answered by the page`, rung.includes(got), got);
+      } else {
+        check(`${what}: "${instruction}" is answered by ${rung}`, got, rung);
+      }
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

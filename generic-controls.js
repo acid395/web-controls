@@ -688,7 +688,15 @@
         revealedBy: opener ? cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
       };
-      if (tag === "select") rec.options = [...el.options].map((o) => ({ value: o.value, text: o.text.trim() }));
+      // Which one is chosen, not only what is on offer. Without it nothing
+      // can tell whether a selection took, and a list that had just been set
+      // to Alaska could not say so - the work done and then disowned. The
+      // model sees it too, which is how it knows a list is already right.
+      if (tag === "select") {
+        rec.options = [...el.options].map((o) => ({
+          value: o.value, text: o.text.trim(), selected: !!o.selected,
+        }));
+      }
 
       // A custom segmented control. water.noaa.gov offers its basemaps as a
       // div whose four children read Topographic, Satellite, Dark and Light,

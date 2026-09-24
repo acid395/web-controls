@@ -7955,7 +7955,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const ran = await runVerified(route.global, call);
           const rr = (ran && ran.result) || {};
           const moved = didItMove(ran);
-          if (ran.ok !== false && (moved || String(rr.now || "") === String(instantOption.option))) {
+          // Read the list back rather than asking whether the page moved.
+          // setSelect reports no before-and-after of its own and a select
+          // changing value shifts no signature this can see, so "select
+          // alaska" set the list to Alaska and then disowned it - the work
+          // done, the result thrown away, and a thirteen-second decision
+          // spent asking a model to do what had already happened.
+          const reread = await readInventory();
+          const nowIs = ((reread.ok && reread.result && reread.result.controls) || [])
+            .find((c) => c.selector === instantOption.control.selector);
+          const holdsIt = nowIs && (nowIs.options || []).some(
+            (o) => String(o.text || o.value) === String(instantOption.option) && o.selected);
+          const settledOn = holdsIt
+            || String(rr.now || "") === String(instantOption.option)
+            || moved;
+          if (ran.ok !== false && settledOn) {
             respond({
               ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
               display: {
