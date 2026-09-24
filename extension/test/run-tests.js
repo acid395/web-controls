@@ -784,6 +784,102 @@ else {
   }
 }
 
+// Pressing Ask once did nothing visible, so it got pressed twice. Two causes,
+// both here, and both only showing on a slow ask - which is why a plain
+// command looked fine and a model run did not.
+//
+// The click handler writes "working on ..." synchronously and calls
+// restoreHistory(), which fetches the log and rebuilds it in a callback that
+// lands a moment later, starting with box.textContent = "". So the line was
+// deleted immediately after being written. And the storage listener that
+// should have drawn the ask filtered on `e.status !== "running"`, discarding
+// the entry recorded before the work starts - the one thing that exists to
+// say the click registered. Thirty seconds of blank panel reads as a button
+// that did not take.
+//
+// Driven synchronously, with the callbacks held in a queue this test flushes
+// by hand. Nothing here waits on a timer: the suite runs its end-to-end
+// checks concurrently and is measurably sensitive to one more pending task -
+// an empty runAsync at this point in the file is enough to turn five model
+// tests red - so a test of the panel has no business adding one.
+if (typeof require === "undefined") skip("pressing Ask once", "no require");
+else {
+  let J = null;
+  try { J = require("jsdom"); } catch (e) { /* skipped below */ }
+  if (!J) skip("pressing Ask once", "jsdom not installed");
+  else {
+    const fsx = require("fs"), pathx = require("path");
+    const dir = pathx.join(__dirname, "..", "popup");
+    const dom = new J.JSDOM(fsx.readFileSync(pathx.join(dir, "popup.html"), "utf8"), {
+      runScripts: "outside-only",
+      virtualConsole: new J.VirtualConsole(),
+      url: "chrome-extension://test/popup/popup.html",
+    });
+    const w = dom.window;
+    let history = [];
+    const pending = [];                       // callbacks the real chrome would defer
+    const flush = () => { while (pending.length) pending.shift()(); };
+    const storageListeners = [];
+    const fire = () => { for (const fn of storageListeners) fn({ askHistory: { newValue: history } }, "local"); };
+    w.chrome = {
+      runtime: {
+        lastError: null,
+        getURL: (x) => x,
+        onMessage: { addListener: () => {} },
+        sendMessage: (m, cb) => {
+          if (m.type === "askHistory") {
+            // Deferred, exactly as the real one is. The bug lives in the gap
+            // between the click returning and this landing.
+            pending.push(() => cb && cb({ ok: true, history: history.slice() }));
+            return;
+          }
+          if (m.type === "smartAsk") {
+            // What background.js does first: record it running, before any
+            // of the slow work.
+            pending.push(() => {
+              history = [{ id: "a1", instruction: m.instruction, status: "running", at: Date.now() }];
+              fire();
+            });
+          }
+          if (cb) pending.push(() => cb(undefined));
+        },
+      },
+      storage: {
+        local: { get: (k, cb) => cb && cb({}), set: (o, cb) => cb && cb() },
+        onChanged: { addListener: (fn) => storageListeners.push(fn) },
+      },
+      tabs: { query: (q, cb) => cb && cb([{ id: 1, url: "https://water.noaa.gov/", active: true }]) },
+      permissions: { request: (o, cb) => cb && cb(true) },
+    };
+    try { w.eval(fsx.readFileSync(pathx.join(dir, "popup.js"), "utf8")); } catch (e) { /* covered above */ }
+    pending.length = 0;                       // whatever load did, this is a fresh panel
+
+    const logText = () => (w.document.getElementById("log") || {}).textContent || "";
+    w.document.getElementById("smartInstruction").value = "click any data and then click hide map";
+    w.document.getElementById("smartAsk").click();
+    ensure("one press says something at once",
+      !!w.document.getElementById("modelStatus"), "no status line");
+    flush(); flush();                         // the log rebuild, then the storage broadcast
+    const line = w.document.getElementById("modelStatus");
+    ensure("and it is still there once the log has redrawn", !!line, logText().slice(0, 120));
+    ensure("and it names what is being worked on",
+      /click any data/.test((line || {}).textContent || ""), (line || {}).textContent);
+    flush();
+    ensure("and the running ask is drawn, not filtered out",
+      /still running/.test(logText()), logText().slice(0, 160));
+
+    // When it finishes the line comes down on its own. Nobody was taking it
+    // down: the panel ignores smartAsk's response by design, so "working
+    // on ..." sat there under the finished card.
+    history = [{ id: "a1", instruction: "click any data and then click hide map", status: "done",
+      at: Date.now(), display: { title: "done", stats: [], rows: [] } }];
+    fire(); flush();
+    ensure("and it comes down when the ask is over",
+      !w.document.getElementById("modelStatus"),
+      (w.document.getElementById("modelStatus") || {}).textContent);
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

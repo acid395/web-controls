@@ -220,6 +220,18 @@ function renderEntry(entry, { collapsed = false } = {}) {
 }
 
 let renderedIds = new Set();
+// What is on screen right now, as id -> status. renderedIds alone could not
+// answer "has this changed?", only "have I ever seen it", and a running ask
+// becoming a finished one is exactly a change worth redrawing for.
+let drawnAt = new Map();
+// The status line lives inside the log box, which restoreHistory empties to
+// rebuild. Kept here so the rebuild can put it back.
+let statusText = null;
+// Who put the status line up. A line about an ask in flight has to come down
+// when nothing is in flight - nobody was taking it down, because the popup
+// deliberately ignores smartAsk's response, so "working on ..." sat there
+// under a finished card. A model download is not an ask and stays.
+let statusOwner = null;
 
 // Past instructions, newest first, for up-arrow recall.
 let recallList = [];
@@ -231,6 +243,7 @@ function restoreHistory() {
     const box = logEl();
     box.textContent = "";
     renderedIds = new Set();
+    drawnAt = new Map();
     recallList = res.history.map((h) => h.instruction).filter(Boolean).reverse();
     recallAt = -1;
 
@@ -239,13 +252,22 @@ function restoreHistory() {
       empty.appendChild(el("div", null, "Nothing asked yet."));
       empty.appendChild(el("div", null, "Try one of the examples above, or describe what you want in your own words."));
       box.appendChild(empty);
+      if (statusText) setStatus(statusText, statusOwner);
       return;
     }
     const last = res.history.length - 1;
     res.history.forEach((entry, i) => {
       renderEntry(entry, { collapsed: i !== last });
+      drawnAt.set(entry.id, entry.status);
       if (entry.status !== "running") renderedIds.add(entry.id);
     });
+    // Put the running line back. It is written synchronously by the click
+    // handler and this callback lands a few milliseconds later, so clearing
+    // the box was deleting it every time: the panel went blank the instant
+    // after it said "working on ...", which is why a slow ask looked like a
+    // click that had not registered.
+    if (statusOwner === "ask" && !res.history.some((h) => h.status === "running")) clearStatus();
+    else if (statusText) setStatus(statusText, statusOwner);
     box.scrollTop = box.scrollHeight;
   });
 }
@@ -255,8 +277,14 @@ function restoreHistory() {
 if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.askHistory) return;
   const next = changes.askHistory.newValue || [];
-  const unseen = next.filter((e) => e.status !== "running" && !renderedIds.has(e.id));
-  if (!unseen.length) return;
+  // "running" was filtered out here, so the entry recorded before the work
+  // starts - the whole point of recording it - never reached the screen. A
+  // model ask then showed nothing for thirty seconds and the natural read of
+  // that is that the button did not take, so it got pressed again. Anything
+  // whose status differs from what is drawn is worth drawing, and an ask
+  // that has just begun differs from not being there at all.
+  const changed = next.some((e) => drawnAt.get(e.id) !== e.status);
+  if (!changed) return;
   restoreHistory();
 });
 
@@ -266,6 +294,7 @@ on("clearLog", "click", () => {
   chrome.runtime.sendMessage({ type: "clearHistory" }, () => {
     logEl().textContent = "";
     renderedIds = new Set();
+    drawnAt = new Map();
   });
 });
 
@@ -590,7 +619,9 @@ on("showContext", "click", () => {
 // message, which stacked "model is thinking..." on top of the running entry
 // and left the two overlapping mid-sentence. Progress during a multi-gigabyte
 // download arrives many times a second, so appending was never right.
-function setStatus(text) {
+function setStatus(text, owner = "ask") {
+  statusText = text;
+  statusOwner = owner;
   let node = document.getElementById("modelStatus");
   if (!node) {
     node = el("div", "running", "");
@@ -601,12 +632,14 @@ function setStatus(text) {
   node.textContent = text;
 }
 function clearStatus() {
+  statusText = null;
+  statusOwner = null;
   const node = document.getElementById("modelStatus");
   if (node) node.remove();
 }
 
 if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "llmProgress") setStatus("model loading - " + msg.text);
+  if (msg.type === "llmProgress") setStatus("model loading - " + msg.text, "load");
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
   // Which step, not just that something is happening. "Still running" for a
   // minute reads the same as a hang.

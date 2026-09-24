@@ -1457,7 +1457,14 @@
    * first, with a ceiling so a page that mutates constantly (a live clock, a
    * ticker) cannot hang the caller.
    * ========================================================================== */
-  function settle({ quiet = 220, timeout = 2500 } = {}) {
+  // Both spellings accepted. The two callers below asked for quietMs/timeoutMs
+  // while this read quiet/timeout, so every one of them silently got the
+  // defaults - a reveal that meant to wait 120ms waited 220, and nothing
+  // anywhere said so. Taking either name means no caller can get it wrong,
+  // which matters more here than picking a winner.
+  function settle({ quiet, timeout, quietMs, timeoutMs } = {}) {
+    quiet = quiet != null ? quiet : (quietMs != null ? quietMs : 220);
+    timeout = timeout != null ? timeout : (timeoutMs != null ? timeoutMs : 2500);
     return new Promise((resolve) => {
       let lastChange = Date.now();
       let mutations = 0;
