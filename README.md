@@ -16,6 +16,10 @@ Two parts live here:
   their own by pasting into DevTools. The extension bundles these as its
   per-site knowledge.
 
+**Trying it out and reporting back?** [FEEDBACK.md](FEEDBACK.md) says what to
+install, what to type, what is already known to be broken, and what makes a
+report useful.
+
 ## Try it in five minutes
 
 ```
@@ -45,7 +49,7 @@ public USGS, NOAA and NWS APIs.
 ## Run the tests
 
 ```
-node extension/test/run-tests.js          # 113 tests, no network needed
+node extension/test/run-tests.js          # 1216 tests, no network needed
 node extension/test/run-tests.js --live   # also calls the real agency APIs
 ```
 
