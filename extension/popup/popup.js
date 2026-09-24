@@ -639,7 +639,11 @@ function clearStatus() {
 }
 
 if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "llmProgress") setStatus("model loading - " + msg.text, "load");
+  if (msg.type === "llmProgress") {
+    setStatus("model loading - " + msg.text, "load");
+    const ms = document.getElementById("modelState");
+    if (ms) ms.textContent = msg.text;
+  }
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
   // Which step, not just that something is happening. "Still running" for a
   // minute reads the same as a hang.
@@ -666,17 +670,57 @@ chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
 // is most of what waiting for an instruction is, and the choice belongs to
 // whoever is waiting rather than to a default nobody can reach.
 const modelChoice = document.getElementById("modelChoice");
+const modelState = document.getElementById("modelState");
+
+// What is actually loaded, next to what is chosen. A picker you cannot
+// confirm is worse than none: two switches to a smaller model looked like
+// they had done nothing, because nothing on screen ever mentioned the model
+// again until a card came back naming the old one.
+function showModelState() {
+  if (!modelState) return;
+  chrome.runtime.sendMessage({ type: "llmStatus" }, (res) => {
+    if (chrome.runtime.lastError || !res) { modelState.textContent = ""; return; }
+    const want = modelChoice ? modelChoice.value : null;
+    const have = res.model || null;
+    const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
+    modelState.textContent = !have ? "nothing loaded yet - the next instruction loads it"
+      : res.loading ? `loading ${name(have)}...`
+      : have === want ? `${name(have)} is loaded and answering`
+      : `${name(have)} is still loaded - ${name(want)} loads on the next instruction`;
+  });
+}
+
 if (modelChoice) {
+  // Built from the one list, so the panel cannot offer something the
+  // offscreen document will refuse.
+  for (const m of (globalThis.WC_MODELS || [])) {
+    const o = document.createElement("option");
+    o.value = m.id;
+    o.textContent = `${m.name} - ${WC_MODEL_SIZE(m)}, ${m.note}`;
+    modelChoice.appendChild(o);
+  }
   chrome.storage.local.get("llmModelId", ({ llmModelId }) => {
-    if (llmModelId) modelChoice.value = llmModelId;
+    if (llmModelId && (globalThis.WC_MODEL_IDS || []).includes(llmModelId)) {
+      modelChoice.value = llmModelId;
+    } else {
+      modelChoice.value = globalThis.WC_DEFAULT_MODEL || modelChoice.value;
+    }
+    showModelState();
   });
   modelChoice.addEventListener("change", () => {
+    const chosen = modelChoice.options[modelChoice.selectedIndex].text;
+    modelState.textContent = `switching to ${chosen.split(" - ")[0]}...`;
     chrome.storage.local.set({ llmModelId: modelChoice.value }, () => {
       // The offscreen document keeps the weights it loaded, so it has to be
-      // let go of before another model can take its place.
-      chrome.runtime.sendMessage({ type: "llmSwitchModel" }).catch(() => {});
-      logEcho(`model set to ${modelChoice.options[modelChoice.selectedIndex].text}`
-        + " - it loads on the next instruction");
+      // let go of before another model can take its place. Then it is warmed
+      // straight away rather than on the next instruction: a 5GB download
+      // that starts silently the next time somebody asks something looks
+      // exactly like an instruction that hung.
+      chrome.runtime.sendMessage({ type: "llmSwitchModel", warm: true }, () => {
+        void chrome.runtime.lastError;
+        showModelState();
+      });
+      logEcho(`model set to ${chosen} - loading now, watch the line under the picker`);
     });
   });
 }

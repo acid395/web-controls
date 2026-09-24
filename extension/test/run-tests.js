@@ -880,6 +880,121 @@ else {
   }
 }
 
+// "select data and select gis data and select shp" clicked Data, was told a
+// link cannot be selected, and gave up on the other two thirds. Every
+// exception to the fits-the-control rule had been added one phrasing at a
+// time, and a plain link called "GIS Data" fitted none of them - so the verb,
+// which is the person's word for what they want, was overruling the markup,
+// which is only how it is done. Anything pressable is pressed now. A press is
+// verified, so a wrong guess reads as "nothing changed" rather than a
+// confident claim; typing into a button still has no sensible reading.
+{
+  const dl = `<!doctype html><html><body>
+    <a id="d" href="#d">Data</a>
+    <a id="g" href="#g">GIS Data</a>
+    <a id="s" href="#s">SHP</a>
+    <input id="q" type="text" placeholder="Search">
+    <label><input type="checkbox" id="c"> Current conditions</label>
+    </body></html>`;
+  for (const [what, verb, name, extra, wantPressed] of [
+    ["selecting a link presses it", "select", "GIS Data", {}, "g"],
+    ["choosing a link presses it", "choose", "SHP", {}, "s"],
+    ["checking a link presses it", "check", "Data", { on: true }, "d"],
+    // No press expresses "turn this link off", and typing into a link is not
+    // a thing at all. Both still come back rather than being guessed at.
+    ["unchecking a link is still refused", "check", "Data", { on: false }, null],
+    ["typing into a link is still refused", "type", "Data", { value: "x" }, null],
+  ]) {
+    const page = loadPage(dl, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!page) continue;
+    const pressed = [];
+    for (const id of ["d", "g", "s"]) {
+      page.document.getElementById(id).addEventListener("click", () => {
+        pressed.push(id);
+        page.document.body.appendChild(page.document.createElement("hr"));  // a real change
+      });
+    }
+    const bgd = loadBackground({ page });
+    let turns = 0;
+    bgd.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        turns++;
+        if (turns > 3) return { ok: true, step: { do: "finish", answer: "" } };
+        return { ok: true, step: { name, do: verb, ...extra } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgd.__ask({ type: "smartAsk", instruction: `model: ${verb} ${name.toLowerCase()}` });
+      if (wantPressed) check(`${what}: ${name} is pressed`, pressed[0], wantPressed);
+      else check(`${what}: nothing is pressed`, pressed.length, 0);
+    });
+  }
+}
+
+// The model list lived in four places: the offscreen document's acceptance
+// check, the panel's HTML, the "use 3b" aliases and the display names. Adding
+// one meant finding all four, and missing the acceptance check made the
+// picker silently do nothing - an id it did not recognise fell back to the
+// default without a word. One list now, and these checks are what keep it one.
+if (typeof require === "undefined") skip("the model list", "no require");
+else {
+  const fsx = require("fs"), pathx = require("path");
+  const EXTDIR = pathx.join(__dirname, "..");
+  require(pathx.join(EXTDIR, "lib", "models.js"));
+  const MODELS = globalThis.WC_MODELS;
+
+  ensure("there is more than one model to choose from", MODELS.length >= 4, MODELS.length);
+  ensure("exactly one is the default",
+    MODELS.filter((m) => m.default).length === 1, MODELS.filter((m) => m.default).length);
+
+  // The one that cannot be caught by reading the code: an id that is not a
+  // real WebLLM model loads fine in every test here and fails only on a real
+  // GPU, at the moment somebody is waiting for it.
+  const vendor = pathx.join(EXTDIR, "offscreen", "vendor", "web-llm.js");
+  if (!fsx.existsSync(vendor)) skip("every model id is one WebLLM knows", "no vendored web-llm");
+  else {
+    const lib = fsx.readFileSync(vendor, "utf8");
+    for (const m of MODELS) {
+      ensure(`WebLLM has ${m.name}`, lib.includes(`"${m.id}"`), m.id);
+    }
+  }
+
+  // The panel must not carry its own copy. A hardcoded option is how the two
+  // lists came apart the first time.
+  const html = fsx.readFileSync(pathx.join(EXTDIR, "popup", "popup.html"), "utf8");
+  ensure("the panel lists no models of its own",
+    !/<option[^>]+value="[^"]*-MLC"/.test(html), "a hardcoded <option> is back");
+  ensure("and it loads the one list", /lib\/models\.js/.test(html), "no models.js script tag");
+
+  // Every registered model is reachable by the words someone would type, and
+  // "1b" must not swallow "1.5b" by sitting inside it.
+  for (const [words, want] of [
+    ["8b", "Llama-3.1-8B-Instruct-q4f16_1-MLC"],
+    ["7b", "Qwen2.5-7B-Instruct-q4f16_1-MLC"],
+    ["3b", "Llama-3.2-3B-Instruct-q4f16_1-MLC"],
+    ["1b", "Llama-3.2-1B-Instruct-q4f16_1-MLC"],
+    ["1.5b", "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"],
+    ["qwen", "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"],
+    ["the 8b", "Llama-3.1-8B-Instruct-q4f16_1-MLC"],
+  ]) {
+    const got = globalThis.WC_MODEL_BY_WORDS(words);
+    check(`"use ${words}" names one model`, got && got.id, want);
+  }
+  ensure("and words naming none say so", !globalThis.WC_MODEL_BY_WORDS("a linear scale"), "matched");
+  for (const m of MODELS) {
+    ensure(`every model is reachable: ${m.name}`,
+      (globalThis.WC_MODEL_BY_WORDS(m.aliases[0]) || {}).id === m.id, m.aliases[0]);
+    ensure(`and has a name to read: ${m.id}`,
+      globalThis.WC_MODEL_NAME(m.id) === m.name, globalThis.WC_MODEL_NAME(m.id));
+  }
+  // An id nobody registered still reads as something, rather than as the raw
+  // string with its quantisation suffix hanging off it.
+  check("an unregistered id is still legible",
+    globalThis.WC_MODEL_NAME("Phi-3-mini-4k-instruct-q4f16_1-MLC"), "Phi 3 mini 4k instruct");
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

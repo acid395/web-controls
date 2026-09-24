@@ -45,11 +45,16 @@ if (previous === version && changed !== head) {
 
 // 3. Everything the extension loads, present. A missing file here is an
 //    extension that installs and then does nothing.
+// lib/ is read rather than listed, the way page/ already was. It was listed,
+// and lib/models.js was added without anyone touching this file - so the
+// build was a working extension here and one whose service worker throws on
+// its first line once installed.
 const RUNTIME = [
-  "manifest.json", "background.js", "content/bridge.js", "lib/env-vocab.js",
+  "manifest.json", "background.js", "content/bridge.js",
   "offscreen/offscreen.html", "offscreen/offscreen.js", "offscreen/vendor/web-llm.js",
   "popup/popup.html", "popup/popup.js", "README.md",
   ...fs.readdirSync(path.join(EXT, "page")).map((f) => "page/" + f),
+  ...fs.readdirSync(path.join(EXT, "lib")).map((f) => "lib/" + f),
 ];
 const missing = RUNTIME.filter((f) => !fs.existsSync(path.join(EXT, f)));
 if (missing.length) fail("missing files: " + missing.join(", "));
@@ -64,6 +69,25 @@ const referenced = [
 ].filter(Boolean);
 const dangling = referenced.filter((f) => !fs.existsSync(path.join(EXT, f)));
 if (dangling.length) fail("background.js references files that do not exist: " + dangling.join(", "));
+
+// Existing and being shipped are different questions, and only the second one
+// is the user's. lib/models.js existed, so the check above passed, and it was
+// left out of the copy - which is a service worker that throws on its first
+// line for everyone but the person who built it. Anything loaded by a script
+// tag counts too: the panel pulls in the model list that way.
+const panelHtml = fs.readFileSync(path.join(EXT, "popup", "popup.html"), "utf8");
+const offHtml = fs.readFileSync(path.join(EXT, "offscreen", "offscreen.html"), "utf8");
+const tagged = [
+  ...[...panelHtml.matchAll(/<script[^>]+src="([^"]+)"/g)]
+    .map((m) => path.posix.normalize(path.posix.join("popup", m[1]))),
+  ...[...offHtml.matchAll(/<script[^>]+src="([^"]+)"/g)]
+    .map((m) => path.posix.normalize(path.posix.join("offscreen", m[1]))),
+].filter((f) => !/^https?:/.test(f));
+const unshipped = [...new Set([...referenced, ...tagged])]
+  .filter((f) => fs.existsSync(path.join(EXT, f)) && !RUNTIME.includes(f));
+if (unshipped.length) {
+  fail("these are loaded at runtime but would not be packaged: " + unshipped.join(", "));
+}
 
 // 4. Every route's host has to be granted, or its tools are decorative.
 const routes = [...bg.matchAll(/test: \/\^https:\\\/\\\/([^/]+)/g)].map((m) => m[1].replace(/\\/g, ""));

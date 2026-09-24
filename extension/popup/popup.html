@@ -249,8 +249,9 @@
           A local model, roughly 1GB on first load, which needs WebGPU and
           saturates it while running. Everything else here works without it.
           Prefix any question with <code>model:</code> to put it to the model
-          directly, and type <code>use qwen</code>, <code>use 1b</code> or
-          <code>use 3b</code> in the ask box to change which one plans.
+          directly, and type <code>use 1b</code>, <code>use 3b</code>,
+          <code>use 7b</code> or <code>use 8b</code> in the ask box to change
+          which one plans.
         </div>
         <label class="switch">
           <input type="checkbox" id="localModelEnabled">
@@ -263,11 +264,11 @@
           on a GPU that could not hold it beside a heavy page. A smaller one
           answers sooner and picks the wrong control more often.
         </div>
-        <select id="modelChoice">
-          <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen2.5 1.5B - ~1GB, the default</option>
-          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B - ~700MB, quickest</option>
-          <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B - ~2GB, best at choosing, has crashed Chrome on smaller GPUs</option>
-        </select>
+        <!-- Filled from lib/models.js. Hardcoding them here meant the list
+             could disagree with the one the offscreen document accepts, and
+             when it did, choosing did nothing at all. -->
+        <select id="modelChoice"></select>
+        <div class="hint" id="modelState">checking what is loaded...</div>
       </div>
 
       <div class="tool-group">
@@ -294,6 +295,7 @@
     </div>
   </details>
 
+  <script src="../lib/models.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

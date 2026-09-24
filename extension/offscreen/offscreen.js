@@ -16,6 +16,7 @@
  * load time - there's no vendoring those into the extension package.
  */
 import { CreateMLCEngine } from "./vendor/web-llm.js";
+import "../lib/models.js";
 
 // WebLLM 0.2.85 only accepts ChatCompletionRequest.tools on Hermes-2-Pro and
 // Hermes-3 at 7-8B - its own error names them - so using the API meant an 8B
@@ -51,13 +52,12 @@ import { CreateMLCEngine } from "./vendor/web-llm.js";
 // worth it. The 1.5B is about a gigabyte and two to three times quicker;
 // the 3B is still one line away in the panel for anyone whose machine can
 // hold it.
-const DEFAULT_MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+// One list, in lib/models.js. This held its own copy, and an id the panel
+// offered but this did not recognise fell back to the default in silence -
+// so adding a model to the picker made the picker stop working.
+const DEFAULT_MODEL_ID = globalThis.WC_DEFAULT_MODEL;
 let MODEL_ID = DEFAULT_MODEL_ID;
-const KNOWN_MODELS = [
-  "Llama-3.2-3B-Instruct-q4f16_1-MLC",
-  "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
-  "Llama-3.2-1B-Instruct-q4f16_1-MLC",
-];
+const KNOWN_MODELS = globalThis.WC_MODEL_IDS;
 // Read as a promise, and waited for before any engine is built. It used to
 // be a callback that set MODEL_ID whenever it happened to arrive - while
 // getEngine read MODEL_ID synchronously, and the service worker warms the

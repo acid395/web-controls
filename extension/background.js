@@ -55,6 +55,7 @@
 // rather than an import), so extension/lib/env-vocab.js is a generated copy
 // (see scripts/build-bundles.js), with window.ENV_VOCAB's assignment
 // rewritten to globalThis.ENV_VOCAB since a service worker has no `window`.
+importScripts("lib/models.js");
 importScripts("lib/env-vocab.js");
 
 // Every ask and its result is logged to the service worker console, which is
@@ -4626,6 +4627,20 @@ function planManifestTool(instruction, routeGlobal) {
 const AGENT_ACTIONS = new Set(
   ["click", "check", "select", "type", "search", "find", "read", "finish"]);
 
+// The prompt names eight verbs and a 1.5B writes a ninth anyway - "choose",
+// "press", "toggle", "enter" - which are the same eight in other words. The
+// old path spent a turn telling it so and then ended the run over vocabulary,
+// which is the model being right and us discarding it. Folded in before the
+// check, so only a verb that means something genuinely different is refused.
+const ACTION_SYNONYMS = new Map(Object.entries({
+  choose: "select", pick: "select", set: "select",
+  press: "click", tap: "click", open: "click", follow: "click", activate: "click",
+  toggle: "check", enable: "check", tick: "check",
+  enter: "type", fill: "type", input: "type",
+  look: "read", view: "read", inspect: "read",
+  answer: "finish", done: "finish", stop: "finish",
+}));
+
 // "Click A and click B" is two requests. The splitter already existed for the
 // keyword path and sat below the model path, so the model never saw the
 // benefit: it got the whole sentence as one goal and had to chain it inside
@@ -4659,11 +4674,7 @@ function splitIntoSteps(instruction) {
 // machine to answer, and they cannot tell whether it took effect unless the
 // answer says which model gave it.
 function modelName(id) {
-  const s = String(id || "");
-  if (/Llama-3\.2-3B/i.test(s)) return "Llama 3.2 3B";
-  if (/Qwen2\.5-1\.5B/i.test(s)) return "Qwen2.5 1.5B";
-  if (/Llama-3\.2-1B/i.test(s)) return "Llama 3.2 1B";
-  return s.replace(/-q4f16.*$/i, "").replace(/-MLC$/i, "") || "the local model";
+  return globalThis.WC_MODEL_NAME(id);
 }
 
 let lastTurnMs = 0;
@@ -5081,7 +5092,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // choice was reasoning or word-matching, and it is the thing worth
     // reading on a card that went wrong.
     const why = String(s.why || s.reason || s.because || "").trim().slice(0, 90);
-    const act = String(s.do || "").toLowerCase();
+    let act = String(s.do || "").toLowerCase();
+    if (!AGENT_ACTIONS.has(act) && ACTION_SYNONYMS.has(act)) act = ACTION_SYNONYMS.get(act);
     if (!AGENT_ACTIONS.has(act)) {
       // A model that answers off-format gets told once, then the loop ends.
       // Looping on a malformed reply burns a multi-second turn per attempt.
@@ -5465,11 +5477,31 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     const switchTarget = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
     if (!optionWanted && !valueIsTheControl && !switchTarget && !ariaOption
         && !emptyChooser && !actionFits(act, target)) {
-      if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
+      // The verb says what the person wants; the markup says how it is done.
+      // Every exception above this line was added one at a time for one
+      // phrasing, and a plain link called "GIS Data" fitted none of them:
+      // "select data and select gis data and select shp" clicked Data, was
+      // told selecting a link is impossible, and gave up on the other two
+      // thirds of the request. "Select GIS Data" and "click GIS Data" are
+      // the same sentence when GIS Data is a link.
+      //
+      // So anything pressable is pressed rather than refused. This is safe
+      // in the way the old check-a-link bug was not: a press is verified, so
+      // a wrong guess comes back as "nothing changed" instead of a confident
+      // claim that it worked. Typing into a button has no such reading and
+      // is still refused, and so is turning a link off, which a press
+      // cannot express.
+      const pressInstead = /^(select|choose|pick)$/.test(act) ? !wantedValue
+        : act === "check" ? s.on !== false
+        : false;
+      if (pressInstead && actionFits("click", target)) {
+        act = "click";
+      } else if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
         + ` - it cannot be ${act}ed. Click it, or choose another control.`)) {
         return giveUp("the model kept asking controls to do things they cannot do");
+      } else {
+        continue;
       }
-      continue;
     }
 
     // Any action on a control that already moved, not just the same action.
@@ -7068,7 +7100,34 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
   if (named.length !== 1) return null;
   const only = named[0];
   const isSwitch = /^(checkbox|radio)$/.test(String(only.type || "").toLowerCase());
-  if (!isSwitch) return null;   // presses keep their nuances; see the fast path
+  if (!isSwitch) {
+    // Presses too. This returned null for anything that was not a switch, so
+    // a clause naming a link word for word fell through to a path that does
+    // not press: "select data and select gis data and select shp" pressed
+    // nothing at all, while each of its three thirds worked on its own. A
+    // sequence that can do less than its own clauses is the sequence being
+    // wrong, not the clause.
+    //
+    // The nuance the old comment guarded - a door pressed and the job called
+    // done - is handled above, where opensPanel controls are already dropped,
+    // and below, where a press that turns out to have opened something is
+    // handed back rather than claimed.
+    if (TEXT_INPUT_KINDS.has(String(only.type || "").toLowerCase())) return null;
+    if (only.hidden && only.revealedBy) {
+      await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
+      forgetPageTools();
+    }
+    const press = await runVerified(routeGlobal,
+      { name: "pageClick", args: { selector: only.selector } });
+    if (press.ok === false) return null;
+    if (press.result && press.result.opened === true) return null;
+    const moved = didItMove(press);
+    // Pressed either way. Whether the page visibly moved decides how it is
+    // reported, not whether it counts: plenty of these pages answer a click
+    // in a way no signature here can see, and calling that a failure was the
+    // other half of the same mistake.
+    return { ok: true, verified: { changed: moved }, label: only.label, unconfirmed: !moved };
+  }
   if (only.hidden && only.revealedBy) {
     await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
     forgetPageTools();
@@ -7385,7 +7444,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmSwitchModel") {
     (async () => {
       await releaseOffscreenModel();
-      sendResponse({ ok: true });
+      // Started now, not on the next instruction. Eight billion parameters
+      // is a five gigabyte download, and beginning it silently the next time
+      // somebody asks a question is indistinguishable from an instruction
+      // that hung - which is most of why switching looked broken.
+      if (msg.warm) warmModel().catch(() => {});
+      sendResponse({ ok: true, model: await chrome.storage.local.get("llmModelId")
+        .then((g) => g.llmModelId || null).catch(() => null) });
     })();
     return true;
   }
@@ -7810,10 +7875,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // instruction loads the one that was asked for.
         const useModel = wanted.match(/^\s*use\s+(?:the\s+)?([a-z0-9. ]+?)\s*(?:model)?\s*$/i);
         if (useModel) {
-          const want = useModel[1].toLowerCase().replace(/[^a-z0-9]/g, "");
-          const pick = /qwen|1\.?5/.test(want) ? "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"
-            : /^(llama)?1b$/.test(want) || /1b/.test(want) ? "Llama-3.2-1B-Instruct-q4f16_1-MLC"
-            : /3b/.test(want) ? "Llama-3.2-3B-Instruct-q4f16_1-MLC" : null;
+          const picked = globalThis.WC_MODEL_BY_WORDS(useModel[1]);
+          const pick = picked ? picked.id : null;
           // Only when it actually names one. "use a linear scale" is an
           // instruction about the page, and this was answering it with a
           // list of models - a settings command helping itself to anything
@@ -7823,7 +7886,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // fall through to the paths that act on the page
           } else if (!pick) {
             respond({ ok: false, error: `no model called "${useModel[1]}"`,
-              display: { title: "which model?", subtitle: "try: use qwen, use 1b, use 3b",
+              display: { title: "which model?",
+                subtitle: `try: ${globalThis.WC_MODELS.map((m) => `use ${m.aliases[0]}`).join(", ")}`,
                 stats: [], rows: [], source: "settings" } });
             return;
           } else {
@@ -8615,7 +8679,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // landed; the sequence never did.
                 const exact = await actOnExactlyNamedClause(route.global, text).catch(() => null);
                 if (exact) {
-                  steps.push({ part, ok: true, changed: true, unconfirmed: false });
+                  steps.push({ part, ok: true, changed: exact.verified.changed !== false,
+                    unconfirmed: !!exact.unconfirmed });
                   continue;
                 }
                 const own = await pursueGoal(route.global, text).catch(() => null);
