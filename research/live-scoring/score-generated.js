@@ -18,6 +18,7 @@ const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").tr
     if (fs.existsSync(f)) html[s] = fs.readFileSync(f, "utf8");
   }
   const tally = {};
+  const byRoute = {};
   const misses = [];
   for (const c of cases) {
     const page = loadPage(html[c.site], { url: PAGES[c.site] });
@@ -58,6 +59,14 @@ const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").tr
     tally[c.kind] = tally[c.kind] || { pass: 0, total: 0 };
     tally[c.kind].total++;
     if (ok) tally[c.kind].pass++;
+    // Which route carried it. Six of the eight pages have no site-specific
+    // code at all, and a score that does not say so invites the reading that
+    // this works because someone hand-wrote the sites it was measured on.
+    const route = (typeof bg.routeFor === "function"
+      ? (bg.routeFor(PAGES[c.site] || "") || {}).global : null) || "GENERIC";
+    byRoute[route] = byRoute[route] || { pass: 0, total: 0 };
+    byRoute[route].total++;
+    if (ok) byRoute[route].pass++;
     else misses.push(`[${c.site}/${c.kind}] "${c.instruction}" -> ${r.plannedBy || "-"} `
       + `| on=${JSON.stringify(nowOn.slice(0, 2))} clicked=${JSON.stringify(clicks.slice(0, 2))}`);
   }
@@ -66,6 +75,11 @@ const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").tr
   console.log(`\n${pass}/${total} = ${((pass / total) * 100).toFixed(0)}%\n`);
   for (const [k, v] of Object.entries(tally)) {
     console.log(`  ${k.padEnd(8)} ${String(v.pass).padStart(3)}/${String(v.total).padEnd(3)} ${((v.pass / v.total) * 100).toFixed(0)}%`);
+  }
+  console.log("\n  by route");
+  for (const [k, v] of Object.entries(byRoute)) {
+    console.log(`  ${k.padEnd(8)} ${String(v.pass).padStart(3)}/${String(v.total).padEnd(3)} ${((v.pass / v.total) * 100).toFixed(0)}%`
+      + (k === "GENERIC" ? "   no site-specific code" : "   hand-written manifest"));
   }
   console.log("");
   for (const m of misses.slice(0, 22)) console.log("  MISS " + m);

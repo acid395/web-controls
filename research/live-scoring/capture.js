@@ -3,10 +3,20 @@ const fs = require("fs");
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const OUT = "/private/tmp/claude-501/-Users-vincenthuang-hydro-harvester/c2d60a91-5920-44b6-96bc-dd2166f69279/scratchpad/pages";
 const PORT = 9334;
+// Two of these have hand-written manifests - usgs (SITE) and noaa (NOAA).
+// The other six have no site-specific code anywhere in this repo and go
+// through GENERIC, which reads whatever the page happens to offer. That
+// split is the point: a fix that only holds where someone wrote a manifest
+// is not a fix, it is a sixth manifest.
 const PAGES = {
   usgs: "https://waterdata.usgs.gov/monitoring-location/01646500/",
   noaa: "https://water.noaa.gov/",
   drought: "https://www.drought.gov/",
+  usgsstate: "https://waterdata.usgs.gov/nwis/rt",
+  quakes: "https://earthquake.usgs.gov/earthquakes/map/",
+  airnow: "https://www.airnow.gov/",
+  weather: "https://www.weather.gov/",
+  climate: "https://www.ncei.noaa.gov/access/monitoring/monthly-report/",
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {

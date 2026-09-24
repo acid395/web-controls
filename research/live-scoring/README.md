@@ -43,9 +43,23 @@ goes to the model rather than being guessed at.
     hand-written   42/44  95%
     generated      69/69  100%  (named 52, typed 4, span 3, absent 8, value 2)
 
-Eight pages: waterdata.usgs.gov (a monitoring location and a state page),
-water.noaa.gov, droughtmonitor.unl.edu, earthquake.usgs.gov, airnow.gov,
-weather.gov, climate.gov.
+The split that matters is by route, not by kind:
+
+    SITE      19/19  hand-written manifest
+    NOAA       8/8   hand-written manifest
+    GENERIC   42/42  no site-specific code anywhere in this repo
+
+Six of the eight pages - drought.gov, earthquake.usgs.gov, airnow.gov,
+weather.gov, ncei.noaa.gov and waterdata's nwis/rt - have nothing written for
+them. GENERIC reads their live DOM and derives the control list on the spot.
+The other two, a waterdata monitoring location and water.noaa.gov, have
+manifests, and they have them because those pages hold controls the DOM does
+not honestly describe: canvas-rendered maps, panels that apply a change
+through script rather than a form.
+
+Keeping the majority of the measurement on GENERIC is deliberate. A score
+taken mostly on manifested pages would say only that the manifests work,
+which was never in doubt and is not the claim.
 
 Read the 100% for what it is. The generated set asks only what it can mark,
 and every exclusion above - shared names, overlapping names - takes away a
