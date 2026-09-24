@@ -2418,6 +2418,51 @@ for (const b of budgets) {
   }
 }
 
+// airnow.gov carries both a link and a radio called "Interactive Map". The
+// switch path judged uniqueness only among switches, so the name looked
+// unambiguous: it found the radio already on and answered "nothing to
+// change" while the link nobody had ruled out was never pressed. A confident
+// wrong answer, which is worse than a slow one. A name two controls answer
+// to is ambiguous however the paths are divided up, so it belongs to the
+// model - and the count has to be taken across the whole page.
+{
+  const twoHtml = `<!doctype html><html><body>
+    <a href="#map">Interactive Map</a>
+    <label><input type="radio" name="v" value="map" checked> Interactive Map</label>
+    <label><input type="radio" name="v" value="tbl"> Table</label>
+    <label><input type="checkbox" name="o"> Ozone</label>
+    </body></html>`;
+  for (const [what, instr, shared] of [
+    ["a name two controls share", "click interactive map", true],
+    ["a name only one control has", "click ozone", false],
+  ]) {
+    const tp = loadPage(twoHtml, { url: "https://www.airnow.gov/" });
+    if (!tp) continue;
+    const bgt = loadBackground({ page: tp });
+    let asked = 0;
+    bgt.__model = (m) => {
+      if (m.type === "llmStatus") {
+        return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      }
+      if (m.type === "llmStep") { asked++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgt.__ask({ type: "smartAsk", instruction: instr });
+      if (shared) {
+        ensure(`${what}: the page does not answer it alone`,
+          r.plannedBy !== "exact-match", r.plannedBy);
+        ensure(`${what}: it reaches the model`, asked > 0, asked);
+        ensure(`${what}: no "nothing to change" over an unpressed link`,
+          !/nothing to change/i.test(JSON.stringify(r.display || "")), r.display);
+      } else {
+        check(`${what}: still answered straight off the page`, r.plannedBy, "exact-match");
+        check(`${what}: and nothing was waited for`, asked, 0);
+      }
+    });
+  }
+}
+
 // A 1.5B asked to click the NWPS User Guide replied {"name":"<button>"}. It
 // had copied the right shape from the wrong place: control lines ended
 // "<button>" and the template wrote its placeholder as "<control>", so the

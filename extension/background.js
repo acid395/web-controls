@@ -8082,14 +8082,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // fragment did something real, and the path below can tell those
           // apart - and pressing here and handing on would press it twice.
           // A checkbox or radio has its own state, which settles it.
-          const named = ((binv.ok && binv.result && binv.result.controls) || []).filter((c) => {
+          // Uniqueness judged across everything the page offers, not across
+          // the subset this path happens to handle. airnow carries both a
+          // link and a radio called "Interactive Map": counting only
+          // switches made the name look unambiguous, so the radio was found
+          // already on and the request answered "nothing to change" while
+          // the link nobody had ruled out sat there unclicked.
+          //
+          // A name two different controls answer to is ambiguous however the
+          // paths are divided up, and ambiguity is the model's to resolve.
+          const answersTo = (c) => {
             if (c.disabled || c.hidden || c.confidence === "low" || c.opensPanel) return false;
-            if (!/^(checkbox|radio)$/.test(String(c.type || "").toLowerCase())) return false;
             const l = flatB(c.label);
             return !!l && (l === bare || l === whole || l === bareTyped
               || closeName(bare, l) || closeName(bareTyped, l));
-          });
-          if (named.length === 1) {
+          };
+          const everyMatch = ((binv.ok && binv.result && binv.result.controls) || [])
+            .filter(answersTo);
+          const named = everyMatch.filter(
+            (c) => /^(checkbox|radio)$/.test(String(c.type || "").toLowerCase()));
+          if (named.length === 1 && everyMatch.length === 1) {
             const only = named[0];
             const isSw = true;
             const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
