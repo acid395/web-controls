@@ -2320,8 +2320,15 @@ for (const b of budgets) {
         ensure(`"${cmd}" is written down, not just reported`,
           /Qwen2|Llama-3/.test(String(stored.llmModelId || "")), stored);
       }
-      const bad = await bgms.__ask({ type: "smartAsk", instruction: "use banana" });
+      // Says "model" outright, because a phrase that merely starts with use
+      // is an instruction about the page - "use a linear scale" was being
+      // answered with a list of models.
+      const bad = await bgms.__ask({ type: "smartAsk", instruction: "use the banana model" });
       check("an unknown model is refused rather than guessed at", bad.ok, false);
+      // And a sentence about the page is left to the page.
+      const page1 = await bgms.__ask({ type: "smartAsk", instruction: "use a linear scale" });
+      ensure("a phrase that names no model is not a settings command",
+        !/which model/i.test(String((page1.display || {}).title || "")), page1.display);
       ensure("and it says which ones there are",
         /use qwen/.test(String((bad.display || {}).subtitle || "")), bad.display);
     });
@@ -3699,6 +3706,112 @@ for (const b of budgets) {
         check("and with no embedder it says so rather than guessing", none, null);
       });
     }
+  }
+}
+
+// "use 3b" spent thirty seconds asking the model how to change which model
+// to use, and then crashed. Two faults with one card.
+{
+  const sp14 = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (sp14) {
+    const bg14 = loadBackground({ page: sp14 });
+    let decisions = 0;
+    bg14.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { decisions++; return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      // Settings and the self-test answer before anything expensive. Asking
+      // a planner how to change which planner is used is absurd on its face,
+      // and "diagnose" is what somebody types when nothing works - it should
+      // not wait on the component it is meant to report on.
+      for (const cmd of ["use 3b", "use qwen", "diagnose"]) {
+        decisions = 0;
+        const r = await bg14.__ask({ type: "smartAsk", instruction: cmd });
+        check(`"${cmd}" needs no decision`, decisions, 0);
+        ensure(`"${cmd}" answers`, r.ok !== false || /model|check/i.test(
+          String((r.display || {}).title || "")), r.display);
+      }
+    });
+  }
+
+  // A run that throws still reports a history. Without one the next line
+  // asks an undefined for .some, and the panel blames the page for our own
+  // crash: "Cannot read properties of undefined (reading 'some')".
+  const cp5 = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="a"> Alpha</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (cp5) {
+    const bg15 = loadBackground({ page: cp5 });
+    bg15.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") throw new Error("the engine fell over");
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bg15.__ask({ type: "smartAsk", instruction: "model: turn on something vague" });
+      ensure("a planner that throws does not surface as a property error",
+        !/Cannot read properties/.test(`${r.error || ""} ${(r.display || {}).subtitle || ""}`),
+        `${r.error} | ${(r.display || {}).subtitle}`);
+    });
+  }
+}
+
+// Three ways a model can say the same true thing about a custom dropdown,
+// all of which used to fail. The last card was the worst of them: it
+// answered {"name":"Select a state","do":"select","value":"Alaska"} - the
+// control, the action and the value, every part correct - and was refused,
+// because a dropdown built from a button and a listbox has no options to
+// select until it is opened.
+{
+  const comboHtml = `<!doctype html><html><body>
+    <button id="combo" role="combobox" aria-expanded="false" aria-controls="lb">Select a state</button>
+    <ul id="lb" role="listbox" hidden></ul></body></html>`;
+  const wire = (pg) => {
+    pg.document.getElementById("combo").addEventListener("click", function () {
+      const lb = pg.document.getElementById("lb");
+      if (this.getAttribute("aria-expanded") === "true") {
+        lb.hidden = true; lb.innerHTML = ""; this.setAttribute("aria-expanded", "false"); return;
+      }
+      lb.hidden = false;
+      lb.innerHTML = ["Alabama", "Alaska", "Arizona"]
+        .map((n) => `<li role="option" tabindex="0">${n}</li>`).join("");
+      for (const li of lb.querySelectorAll("li")) {
+        li.addEventListener("click", () => {
+          pg.document.getElementById("combo").textContent = li.textContent;
+          lb.hidden = true; lb.innerHTML = "";
+          pg.document.getElementById("combo").setAttribute("aria-expanded", "false");
+        });
+      }
+      this.setAttribute("aria-expanded", "true");
+    });
+  };
+  const shapes = [
+    ["the control, the action and the value", { name: "Select a state", do: "select", value: "Alaska" }],
+    ["just the control, pressed", { name: "Select a state", do: "click" }],
+    ["just the value", { name: "Alaska", do: "select" }],
+  ];
+  for (const [what, reply] of shapes) {
+    const cp6 = loadPage(comboHtml, { url: "https://waterdata.usgs.gov/state/" });
+    if (!cp6) continue;
+    wire(cp6);
+    const bg16 = loadBackground({ page: cp6 });
+    bg16.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmEmbed") return { ok: false, error: "none here" };
+      if (m.type === "llmStep") return { ok: true, step: reply, raw: "{}" };
+      return undefined;
+    };
+    runAsync(async () => {
+      const out = await bg16.runModelAgent("GENERIC", "select alaska", { maxSteps: 4 });
+      check(`${what}: Alaska is chosen`,
+        cp6.document.getElementById("combo").textContent, "Alaska");
+      // Opening and choosing are one decision: the value is already known,
+      // so asking again would be paying to be told the same thing.
+      ensure(`${what}: within one decision`, out.history.length <= 2, out.history.map((h) => h.did));
+    });
   }
 }
 

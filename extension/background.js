@@ -5450,11 +5450,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // model naturally says "select Alaska", and refusing that for being the
     // wrong verb left the right control, found inside the chooser we had
     // just opened for it, untouched.
+    // A chooser with nothing in it yet. Asked to select Alaska the model
+    // answered {"name":"Select a state","do":"select","value":"Alaska"} -
+    // the control, the action and the value, all correct - and a custom
+    // dropdown has no options until it is opened, so selecting on it is
+    // impossible and the whole request died on that. Opening it is what
+    // selecting means here, and the value is picked from what appears.
+    const emptyChooser = /^(select|choose|pick)$/.test(act)
+      && !(target.options || []).length
+      && (String(target.kind || "").toLowerCase() === "combobox"
+        || target.expanded === false || target.opensPanel);
     const ariaOption = String(target.kind || "").toLowerCase() === "option"
       && !/^(select|option)$/.test(String(target.tag || "").toLowerCase());
     const switchTarget = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
     if (!optionWanted && !valueIsTheControl && !switchTarget && !ariaOption
-        && !actionFits(act, target)) {
+        && !emptyChooser && !actionFits(act, target)) {
       if (!correct(`"${String(target.label).slice(0, 40)}" is a ${target.type || target.kind}`
         + ` - it cannot be ${act}ed. Click it, or choose another control.`)) {
         return giveUp("the model kept asking controls to do things they cannot do");
@@ -5654,7 +5664,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
       .test(goal);
     const isSwitch = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
-    const call = ariaOption
+    const call = (ariaOption || emptyChooser)
       ? actionToCall("click", target, s)
       : isSwitch && !optionWanted
       ? actionToCall("check", target, { ...s, on: !wantsOff })
@@ -5736,7 +5746,11 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
       const after = await readInventory();
       if (after.ok) {
         const fresh = controlsForModel(after.result);
-        const saidFlat = flatLabel(goal);
+        // What the request said, and what the model said it wanted. Asked
+        // to select Alaska the value may be in either - "select alaska" has
+        // it, and so does {"value":"Alaska"} - and both are the words of the
+        // person or the planner rather than a guess of ours.
+        const saidFlat = `${flatLabel(goal)} ${flatLabel(s.value || "")}`.trim();
         const inside = fresh.filter((c) => {
           if (controls.some((old) => old.selector === c.selector)) return false;
           const l = flatLabel(c.label);
@@ -7780,6 +7794,59 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // something that resembles a place is not.
         }
 
+        // A self-test never needs a planner, and asking one first meant
+        // "diagnose" - the thing somebody types when nothing is working -
+        // waited on the very component it is meant to report on.
+        if (/^\s*(diagnose|diagnostics?|debug|self ?test|why (is it |isn.t it )?(not )?working)\b/i.test(wanted)) {
+          respond(await runDiagnostics());
+          return;
+        }
+
+        // "use qwen", "use 1b", "use 3b". The panel has a picker, but a
+        // setting somebody cannot confirm took effect is worse than none:
+        // two switches to a smaller model appeared to do nothing, and the
+        // cards kept saying Llama 3.2 3B and thirty-odd seconds a decision.
+        // This says what it stored and what is loaded now, and the next
+        // instruction loads the one that was asked for.
+        const useModel = wanted.match(/^\s*use\s+(?:the\s+)?([a-z0-9. ]+?)\s*(?:model)?\s*$/i);
+        if (useModel) {
+          const want = useModel[1].toLowerCase().replace(/[^a-z0-9]/g, "");
+          const pick = /qwen|1\.?5/.test(want) ? "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"
+            : /^(llama)?1b$/.test(want) || /1b/.test(want) ? "Llama-3.2-1B-Instruct-q4f16_1-MLC"
+            : /3b/.test(want) ? "Llama-3.2-3B-Instruct-q4f16_1-MLC" : null;
+          // Only when it actually names one. "use a linear scale" is an
+          // instruction about the page, and this was answering it with a
+          // list of models - a settings command helping itself to anything
+          // beginning with the word use. Where a model is not named, this
+          // is not a settings command and the page gets the sentence.
+          if (!pick && !/\bmodel\b/i.test(wanted)) {
+            // fall through to the paths that act on the page
+          } else if (!pick) {
+            respond({ ok: false, error: `no model called "${useModel[1]}"`,
+              display: { title: "which model?", subtitle: "try: use qwen, use 1b, use 3b",
+                stats: [], rows: [], source: "settings" } });
+            return;
+          } else {
+          await chrome.storage.local.set({ llmModelId: pick });
+          await releaseOffscreenModel();
+          const now = await modelStatus();
+          respond({ ok: true, plannedBy: "settings",
+            display: {
+              title: modelName(pick),
+              subtitle: `stored - it loads on the next instruction`,
+              stats: [], rows: [
+                { name: "asked for", value: modelName(pick), meta: pick, tone: "ok" },
+                { name: "loaded now", value: modelName(now && now.model), meta:
+                  now && now.ready ? "ready" : (now && now.loading ? "loading" : "not started"),
+                  tone: (now && now.model) === pick ? "ok" : "warn" },
+              ],
+              note: "ask again in a moment - the weights download once per model",
+              source: "settings",
+            } });
+          return;
+          }
+        }
+
         // Instant where there is nothing to be intelligent about. One
         // decision of the 3B measured 32.6 seconds on real hardware, and the
         // page's own controls answered the same instruction correctly in
@@ -8286,7 +8353,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               // before the lookup paths below ever got a look at it.
               agent = await runModelAgent(route.global, wanted,
                 { maxSteps: isCommand(wanted) ? 6 : 3 }).catch((e) => ({
-                ok: false, error: String((e && e.message) || e) }));
+                // history included. Without it the next line asks an
+                // undefined for .some and the panel reports "Cannot read
+                // properties of undefined" about our own crash, as though
+                // it were something the page had done.
+                ok: false, error: String((e && e.message) || e), history: [] }));
             }
             // A step that found the page already as asked counts. Requiring
             // a change meant "click gage height" on an already-on control
@@ -8300,7 +8371,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // described as a refusal after it had already happened. Saying
             // "ran, but nothing visibly changed" is the honest version;
             // claiming nothing was done is not.
-            const didSomething = agent && agent.history.some((h) => h.changed || h.satisfied
+            const didSomething = agent && (agent.history || []).some((h) => h.changed || h.satisfied
               || (h.ok !== false && !h.unrelated && h.did && !/^read |^opened /.test(h.did)));
             if (agent && agent.ok && (agent.answer || didSomething)) {
               const acted = agent.history.filter((h) => h.did !== "read the page");
@@ -8618,47 +8689,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const mcp = await invokeOnActiveTab("mcpTools", []).catch(() => ({ ok: false }));
 
         // The self-test, before anything that could fail on its own.
-        // "use qwen", "use 1b", "use 3b". The panel has a picker, but a
-        // setting somebody cannot confirm took effect is worse than none:
-        // two switches to a smaller model appeared to do nothing, and the
-        // cards kept saying Llama 3.2 3B and thirty-odd seconds a decision.
-        // This says what it stored and what is loaded now, and the next
-        // instruction loads the one that was asked for.
-        const useModel = wanted.match(/^\s*use\s+(?:the\s+)?([a-z0-9. ]+?)\s*(?:model)?\s*$/i);
-        if (useModel) {
-          const want = useModel[1].toLowerCase().replace(/[^a-z0-9]/g, "");
-          const pick = /qwen|1\.?5/.test(want) ? "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"
-            : /^(llama)?1b$/.test(want) || /1b/.test(want) ? "Llama-3.2-1B-Instruct-q4f16_1-MLC"
-            : /3b/.test(want) ? "Llama-3.2-3B-Instruct-q4f16_1-MLC" : null;
-          if (!pick) {
-            respond({ ok: false, error: `no model called "${useModel[1]}"`,
-              display: { title: "which model?", subtitle: "try: use qwen, use 1b, use 3b",
-                stats: [], rows: [], source: "settings" } });
-            return;
-          }
-          await chrome.storage.local.set({ llmModelId: pick });
-          await releaseOffscreenModel();
-          const now = await modelStatus();
-          respond({ ok: true, plannedBy: "settings",
-            display: {
-              title: modelName(pick),
-              subtitle: `stored - it loads on the next instruction`,
-              stats: [], rows: [
-                { name: "asked for", value: modelName(pick), meta: pick, tone: "ok" },
-                { name: "loaded now", value: modelName(now && now.model), meta:
-                  now && now.ready ? "ready" : (now && now.loading ? "loading" : "not started"),
-                  tone: (now && now.model) === pick ? "ok" : "warn" },
-              ],
-              note: "ask again in a moment - the weights download once per model",
-              source: "settings",
-            } });
-          return;
-        }
 
-        if (/^\s*(diagnose|diagnostics?|debug|self ?test|why (is it |isn.t it )?(not )?working)\b/i.test(wanted)) {
-          respond(await runDiagnostics());
-          return;
-        }
 
         // What this page offers for a given instruction, and why one control
         // won. Every failure so far has been diagnosed from the wording of a
