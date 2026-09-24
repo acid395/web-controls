@@ -4732,6 +4732,53 @@ async function releaseOffscreenModel() {
   } catch (e) { /* nothing loaded; the next instruction creates it */ }
 }
 
+// Ranking the page's controls by what the request means, rather than by the
+// words it happens to share with them.
+//
+// The labels of one page are embedded once and kept until the page is acted
+// on - a hundred and twenty short strings, and the request alongside them.
+// Everything about what counts as close lives here rather than in the
+// offscreen document, which only turns strings into vectors.
+let meaningCache = { key: null, labels: null, vectors: null };
+function forgetMeaning() { meaningCache = { key: null, labels: null, vectors: null }; }
+
+function cosine(a, b) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length && i < b.length; i++) {
+    dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i];
+  }
+  return (na && nb) ? dot / Math.sqrt(na * nb) : 0;
+}
+
+async function embedTexts(texts) {
+  await ensureOffscreenDocument();
+  const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmEmbed", texts })
+    .catch(() => null);
+  return res && res.ok ? res.vectors : null;
+}
+
+// The controls this request is most likely about, best first. Returns null
+// where meaning cannot be had at all - no WebGPU, the embedder not
+// downloaded - so the caller falls back to offering everything, which is
+// what it did before this existed.
+async function rankByMeaning(goal, controls) {
+  const labels = controls.map((c) => String(c.label || "").slice(0, 80));
+  if (!labels.length) return null;
+  const key = labels.join("\u0000");
+  if (meaningCache.key !== key) {
+    const vectors = await embedTexts(labels);
+    if (!vectors || vectors.length !== labels.length) return null;
+    meaningCache = { key, labels, vectors };
+  }
+  const asked = await embedTexts([String(goal || "").slice(0, 200)]);
+  if (!asked || !asked[0]) return null;
+  return controls
+    .map((c, i) => ({ control: c, score: cosine(asked[0], meaningCache.vectors[i]) }))
+    .sort((a, b) => b.score - a.score);
+}
+
 async function askModelForStep(payload) {
   await ensureOffscreenDocument();
   const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStep", ...payload });
@@ -4981,14 +5028,37 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
     // a forty-five second budget could take three times that and there was
     // nothing in the loop that would stop it. A turn cannot outlast the
     // request it belongs to.
+    // Narrowed by meaning, not by our opinion of the request. The model is
+    // given the dozen controls closest to what was asked, plus a line saying
+    // how many more there are and that "find" will look through them - so it
+    // can reject the whole shortlist, which is the difference between
+    // helping it choose and choosing for it.
+    //
+    // A floor, because a shortlist nothing scores well on is not a shortlist,
+    // it is a guess: if even the best match is weak the full list goes over
+    // as before. And only worth doing when there are enough controls for it
+    // to matter.
+    let offered = controls;
+    let narrowedFrom = 0;
+    if (controls.length > 18) {
+      const ranked = await rankByMeaning(goal, controls).catch(() => null);
+      if (ranked && ranked.length && ranked[0].score > 0.3) {
+        const keep = ranked.filter((r) => r.score > 0.2).slice(0, 12);
+        if (keep.length >= 3) {
+          offered = keep.map((r) => r.control);
+          narrowedFrom = controls.length;
+        }
+      }
+    }
+
     const thoughtAt = Date.now();
     const asked = await Promise.race([
       askModelForStep({
         goal,
-        controls: controls.map((c) => ({
+        controls: offered.map((c) => ({
           label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
         })),
-        history, observation, note,
+        history, observation, note, narrowedFrom,
       }),
       new Promise((r) => setTimeout(
         () => r({ ok: false, timedOut: true, error: "the model did not answer in time" }),
@@ -6294,7 +6364,7 @@ const TOOLS_TTL_MS = 8000;
 // request, because after that it is a description of a page that no longer
 // exists - which is the only way a cache like this can lie.
 let pageRead = null;
-function forgetInventory() { pageRead = null; }
+function forgetInventory() { pageRead = null; forgetMeaning(); }
 async function readInventory() {
   if (pageRead) return pageRead;
   pageRead = await invokeOnActiveTab("inventory", [{ includeHidden: true }])

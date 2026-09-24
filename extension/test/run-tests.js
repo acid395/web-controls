@@ -3605,6 +3605,103 @@ for (const b of budgets) {
   }
 }
 
+// Meaning, as distinct from judgment. A 1.5B asked to pick one of a hundred
+// and twenty controls is being handed a retrieval problem, which is what
+// small generative models are worst at - it anchors on a word it recognises
+// and answers "Last page, page 42" for "last month of data" - and it is also
+// where the waiting goes, since the control list is most of the prompt.
+//
+// An embedder is asked which labels mean what was asked; the model is asked
+// which of the survivors to act on. The stand-in here is bag-of-characters
+// cosine: enough to show the wiring narrows, ranks and falls back, not
+// enough to show that meaning works, which needs the real one in a browser.
+{
+  const bagOfChars = (t) => {
+    const v = new Array(27).fill(0);
+    for (const ch of String(t).toLowerCase()) {
+      const i = ch === " " ? 26 : ch.charCodeAt(0) - 97;
+      if (i >= 0 && i < 27) v[i] += 1;
+    }
+    return v;
+  };
+  let many = "";
+  for (let i = 1; i <= 40; i++) many += `<a href="#n${i}">Station note ${i}</a>`;
+  const mkPage = () => loadPage(`<!doctype html><html><body>${many}
+    <label><input type="checkbox" name="gh"> Gage height</label>
+    <label><input type="checkbox" name="dis"> Discharge</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+
+  for (const [what, hasEmbedder, mostShown] of [
+    ["with an embedder, the model gets a shortlist", true, 14],
+    ["without one, it gets everything as before", false, 1000],
+  ]) {
+    const ep = mkPage();
+    if (!ep) continue;
+    const bge = loadBackground({ page: ep });
+    let shown = null;
+    bge.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmEmbed") {
+        return hasEmbedder ? { ok: true, vectors: m.texts.map(bagOfChars) }
+          : { ok: false, error: "no embedder here" };
+      }
+      if (m.type === "llmStep") {
+        shown = m.controls.length;
+        return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bge.__ask({ type: "smartAsk", instruction: "model: show me the water level" });
+      ensure(what, shown !== null && shown <= mostShown, shown);
+      if (hasEmbedder) {
+        ensure("and rather fewer than the page carries", shown < 30, shown);
+      } else {
+        ensure("and nothing is hidden from it", shown > 30, shown);
+      }
+    });
+  }
+
+  // Rejecting the whole shortlist has to be available, or this is choosing
+  // for the model rather than helping it choose. The prompt says how many
+  // more there are and how to look through them.
+  {
+    const build = loadOffscreenHelper("buildStepPrompt");
+    if (build) {
+      const short = build({ goal: "x", narrowedFrom: 115,
+        controls: Array.from({ length: 12 }, (_, i) => ({ label: `Thing ${i}` })) });
+      ensure("a shortlist says it is one", /closest to that, of 115/.test(short), short.slice(0, 300));
+      ensure("and says how to see the rest", /"do":"find"/.test(short), short.slice(0, 300));
+      const full = build({ goal: "x", controls: [{ label: "Thing" }] });
+      ensure("a full list does not pretend to be a shortlist",
+        /Controls on the page:/.test(full), full.slice(0, 200));
+    }
+  }
+
+  // The ranking itself: closest first, and nothing at all where meaning
+  // cannot be had, so the caller falls back rather than guessing.
+  {
+    const rp3 = mkPage();
+    if (rp3) {
+      const bgr3 = loadBackground({ page: rp3 });
+      bgr3.__model = (m) => (m.type === "llmEmbed"
+        ? { ok: true, vectors: m.texts.map(bagOfChars) } : undefined);
+      runAsync(async () => {
+        const inv = await bgr3.readInventory();
+        const controls = bgr3.controlsForModel(inv.result);
+        const ranked = await bgr3.rankByMeaning("discharge", controls);
+        ensure("ranking puts the closest first",
+          ranked && /discharge/i.test(String(ranked[0].control.label || "")),
+          ranked && ranked.slice(0, 3).map((r) => r.control.label));
+        bgr3.__model = () => ({ ok: false, error: "no embedder" });
+        bgr3.forgetInventory();
+        const none = await bgr3.rankByMeaning("discharge", controls);
+        check("and with no embedder it says so rather than guessing", none, null);
+      });
+    }
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon

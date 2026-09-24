@@ -87,7 +87,7 @@ try { chosenModelId(); } catch (e) { /* no storage here; the default stands */ }
 // purpose - every token here is prefill on a 3B model, and prefill is what
 // made the 8B path unusable. Controls are numbered because a number is one
 // token and a name is many, and because a small model gets numbers right.
-function buildStepPrompt({ goal, controls = [], history = [], observation, note }) {
+function buildStepPrompt({ goal, controls = [], history = [], observation, note, narrowedFrom = 0 }) {
   // Every line here is prefill on every turn, so a line is as short as it
   // can be and still be decidable: the number, the name, what it is, and its
   // state. "link" is left off because most controls are links and the model
@@ -145,7 +145,12 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note 
     "",
     `Request: ${goal}`,
     "",
-    "Controls on the page:",
+    narrowedFrom
+      // Said plainly, so the model knows the list is a shortlist and that
+      // rejecting all of it is an available answer rather than a failure.
+      ? `The ${controls.length} controls closest to that, of ${narrowedFrom} on the page`
+        + ' (use {"do":"find","words":"..."} to look through the rest):'
+      : "Controls on the page:",
     list || "(none found)",
     "",
     "Steps already taken:",
@@ -268,6 +273,36 @@ function touchEngine() {
   }, IDLE_RELEASE_MS);
 }
 
+// Meaning, as distinct from judgment.
+//
+// A 1.5B asked to pick one of a hundred and twenty controls is being given a
+// retrieval problem, which is the thing small generative models are worst
+// at: it anchors on a word it recognises and answers "Last page, page 42"
+// for "last month of data". It is also where the waiting goes - the control
+// list is most of a 700-token prompt, and prompt is most of a decision.
+//
+// An embedder answers "which of these means what was asked" in milliseconds
+// and learned it rather than being told. A month near 30 days, water level
+// near gage height, how dry is the ground near soil moisture - every one of
+// those is a rule written by hand in this codebase this week, and none of
+// them should have had to be.
+//
+// Small on purpose: arctic-embed-s is tens of megabytes beside the 1.5B's
+// gigabyte, and this machine has already had Chrome fall over once.
+const EMBED_MODEL_ID = "snowflake-arctic-embed-s-q0f32-MLC";
+let embedPromise = null;
+let embedReady = false;
+function getEmbedder(onProgress) {
+  if (!embedPromise) {
+    embedPromise = CreateMLCEngine(EMBED_MODEL_ID, {
+      initProgressCallback: (report) => {
+        if (onProgress) onProgress(report);
+      },
+    }).then((engine) => { embedReady = true; return engine; });
+  }
+  return embedPromise;
+}
+
 function getEngine(onProgress) {
   touchEngine();
   if (!enginePromise) {
@@ -311,6 +346,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     })();
     return true; // async response
+  }
+
+  // Vectors for a list of short strings. Everything else about ranking -
+  // what to compare, what counts as close, what to do when nothing is -
+  // belongs in the service worker with the rest of the judgment.
+  if (msg.type === "llmEmbed") {
+    (async () => {
+      try {
+        if (!("gpu" in navigator)) throw new Error("no WebGPU here");
+        const texts = (msg.texts || []).map((t) => String(t || "").slice(0, 120));
+        if (!texts.length) { sendResponse({ ok: true, vectors: [] }); return; }
+        const engine = await getEmbedder((report) => {
+          chrome.runtime.sendMessage({
+            type: "llmProgress", text: `meaning model: ${(report && report.text) || ""}`.slice(0, 120),
+          }).catch(() => {});
+        });
+        const began = Date.now();
+        const out = await engine.embeddings.create({ input: texts });
+        sendResponse({
+          ok: true,
+          vectors: (out && out.data ? out.data : []).map((d) => d.embedding),
+          ms: Date.now() - began,
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === "llmEmbedStatus") {
+    sendResponse({ ready: embedReady, started: !!embedPromise, hasGpu: "gpu" in navigator });
+    return;
   }
 
   if (msg.type === "llmStatus") {
