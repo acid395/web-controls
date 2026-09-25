@@ -4901,7 +4901,39 @@ function controlsForModel(inv, { max = 120 } = {}) {
   return kept;
 }
 
-async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000, deadlineAt = null, chain = null } = {}) {
+// The same scaling on this side. The agent's own clock has to allow at least
+// one turn of whatever is loaded, or it stops the run before the model has
+// had a chance to answer once - and lastTurnMs cannot correct for it, because
+// lastTurnMs only learns from a turn that finished.
+// Which kind of slow, because the advice is opposite.
+//
+// The same 8B does a whole multi-step instruction in ten to thirty-five
+// seconds on a machine with a graphics card, and cannot finish one turn in
+// forty-five on a machine where Chrome fell back to its software renderer.
+// Telling the second one to choose a smaller model is useless: nothing is on
+// the GPU, so every model will crawl.
+function slowDecisionHint(ms, gpu) {
+  const secs = Math.round(ms / 1000);
+  if (gpu && gpu.software) {
+    return `one decision takes about ${secs}s because this is not running on the`
+      + ` graphics card - Chrome is using a software renderer${
+        gpu.describedAs ? ` (${gpu.describedAs})` : ""}, which is roughly ten times slower.`
+      + " Check chrome://gpu, and that hardware acceleration is on in Chrome's settings";
+  }
+  return `one decision takes about ${secs}s on this machine`
+    + " - a smaller model in the panel's settings is two to four times quicker";
+}
+
+function turnBudgetFor(modelId) {
+  const mb = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM(modelId)) || 0;
+  return mb >= 4000 ? 180000 : mb >= 2000 ? 90000 : 45000;
+}
+function turnBudgetMs() {
+  return turnBudgetFor((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL);
+}
+
+async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null, deadlineAt = null, chain = null } = {}) {
+  if (budgetMs === null) budgetMs = turnBudgetMs();
   const history = [];
   let observation = null;
   let note = null;
@@ -7041,6 +7073,24 @@ async function runDiagnostics() {
     if (st.loading) return `still loading · ${st.progress || "no progress reported yet"}`;
     return "not started - it loads on first use, or when this panel is opened";
   }, { optional: true });
+  // The adapter itself, not just that the API exists. This is the difference
+  // between a machine where an 8B does a whole instruction in half a minute
+  // and one where it cannot finish a single decision in forty-five seconds,
+  // and until now there was nothing anywhere that would tell the two apart.
+  await step("graphics card", async () => {
+    const st = await modelStatus({ maxAgeMs: 0 });
+    const gpu = st && st.gpu;
+    if (!gpu) return "not reported yet - ask once and check again";
+    if (!gpu.ok) throw new Error(gpu.why || "no usable WebGPU adapter");
+    if (gpu.software) {
+      throw new Error(
+        `Chrome is using a software renderer${gpu.describedAs ? ` (${gpu.describedAs})` : ""}`
+        + " - every model will be about ten times slower than on the graphics card."
+        + " Check chrome://gpu and that hardware acceleration is enabled in Chrome's settings");
+    }
+    return [gpu.describedAs || "hardware adapter",
+      gpu.maxBufferMB ? `max buffer ${gpu.maxBufferMB}MB` : null].filter(Boolean).join(" · ");
+  }, { optional: true });
   // Which model was asked for, beside which one is loaded. Two switches to a
   // smaller model appeared to do nothing and there was no way to see that
   // from here - the panel reported what had loaded and never what had been
@@ -7965,8 +8015,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // reports the wait. Measured, with the figure quoted, because the
         // suggestion is only worth making on hardware where it is true.
         if (display && lastTurnMs > 12000 && res.plannedBy === "model") {
-          const hint = `one decision takes about ${Math.round(lastTurnMs / 1000)}s on this machine`
-            + " - a smaller model in the panel's settings is two to four times quicker";
+          const hint = slowDecisionHint(lastTurnMs,
+            modelStatusCache.value && modelStatusCache.value.gpu);
           display.note = display.note ? `${display.note} - ${hint}` : hint;
         }
         const took = Date.now() - askBegan;
@@ -8596,8 +8646,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               // the first part finish and left the second unable to complete
               // a single decision - which is exactly what "ran out of time
               // on select data for same time span in prior year" was.
-              const perPart = Math.max(45000, Math.round(lastTurnMs * 2.5) || 0);
-              const together = Date.now() + Math.min(perPart * parts.length, 240000);
+              const perPart = Math.max(turnBudgetMs(), Math.round(lastTurnMs * 2.5) || 0);
+              // The overall cap scales too: four minutes was the whole of a
+              // four-part instruction when a turn cost ten seconds, and is
+              // less than two turns of an 8B.
+              const together = Date.now() + Math.min(perPart * parts.length, Math.max(240000, perPart * 3));
               const all = [];
               const answers = [];
               const flags = {};

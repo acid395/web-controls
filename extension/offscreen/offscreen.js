@@ -66,6 +66,62 @@ const KNOWN_MODELS = globalThis.WC_MODEL_IDS;
 // card still came back saying Llama 3.2 3B, thirty-five seconds a decision,
 // after somebody had switched precisely to avoid that.
 let modelChoice = null;
+// How long one decision is allowed, against what the model needs.
+//
+// A flat forty-five seconds was right when the default was a 1.5B and is
+// less than a single turn of an 8B on ordinary hardware - so once the
+// default changed, every turn timed out and the model never answered at all.
+// A card reading "the model did not answer in time" after exactly 45.3s is
+// this number, not the model: it had not finished its first sentence.
+//
+// The ceiling still matters. A generation left running holds the engine, so
+// the next step queues behind a decision nobody is waiting for any more.
+// What the GPU actually is, rather than whether the API exists.
+//
+// hasGpu has always been `"gpu" in navigator`, which says only that this
+// browser has the interface - not that requesting an adapter succeeds, and
+// not that the adapter is hardware. Chrome will quietly hand back a software
+// renderer, and a software renderer is roughly ten times slower: the same
+// 8B doing a whole multi-step instruction in ten to thirty-five seconds on
+// one machine, and failing to finish a single turn in forty-five on another,
+// is that difference and nothing else. Without this there was no way to tell
+// the two apart from a card, so "the model is slow" and "the model is not on
+// the GPU at all" looked identical.
+let gpuInfo = null;
+async function describeGpu() {
+  if (!("gpu" in navigator)) return { ok: false, why: "this browser has no WebGPU" };
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return { ok: false, why: "WebGPU is present but no adapter was granted" };
+    const info = adapter.info
+      || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : null) || {};
+    const described = [info.vendor, info.architecture, info.device, info.description]
+      .filter(Boolean).join(" ").trim();
+    const limits = adapter.limits || {};
+    const mb = (n) => (typeof n === "number" ? Math.round(n / (1024 * 1024)) : null);
+    return {
+      ok: true,
+      describedAs: described || null,
+      // Named outright. A fallback adapter runs, so nothing errors - it is
+      // just slow enough that every timeout here looks like the model's
+      // fault.
+      software: adapter.isFallbackAdapter === true
+        || /swiftshader|llvmpipe|software|basic render|microsoft basic/i.test(described),
+      maxBufferMB: mb(limits.maxBufferSize),
+      maxStorageMB: mb(limits.maxStorageBufferBindingSize),
+    };
+  } catch (e) {
+    return { ok: false, why: String((e && e.message) || e).slice(0, 160) };
+  }
+}
+// Asked once, early, so llmStatus can answer without becoming asynchronous.
+describeGpu().then((g) => { gpuInfo = g; }).catch(() => { gpuInfo = null; });
+
+function inferenceTimeoutMs() {
+  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
+  return mb >= 4000 ? 180000 : mb >= 2000 ? 90000 : 45000;
+}
+
 function chosenModelId() {
   if (!modelChoice) {
     modelChoice = new Promise((resolve) => {
@@ -442,6 +498,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       started: !!enginePromise,
       progress: lastProgress || null,
       model: MODEL_ID,
+      gpu: gpuInfo,
       // MODEL_ID already reads as the one that loaded, but not why. A card
       // saying Qwen2.5 1.5B when the panel says Llama 3.1 8B is a bug report
       // waiting to happen unless it also says the big one would not fit.
@@ -535,7 +592,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // of its own request anyway. A generation left running past that
         // point holds the engine, so the next step queues behind a decision
         // nobody is waiting for any more.
-        const INFERENCE_TIMEOUT_MS = 45000;
+        const INFERENCE_TIMEOUT_MS = inferenceTimeoutMs();
         const reply = await Promise.race([
           engine.chat.completions.create({
             messages: [{ role: "user", content: prompt }],

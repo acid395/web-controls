@@ -1318,6 +1318,78 @@ else {
     (bgb.__badge || "").length <= 4, bgb.__badge);
 }
 
+// "change the date to august 2026" came back "the model did not answer in
+// time" after 45.3 seconds, against a per-turn timeout of exactly 45. The
+// model had not failed to interpret anything - it had not finished its first
+// sentence. That number was chosen when the default was a 1.5B, and survived
+// the default becoming an 8B, so every turn timed out and the model never
+// answered at all.
+//
+// Whatever the numbers are, the invariant is the one thing worth pinning: the
+// clock has to allow at least one turn of whatever is loaded. A budget below
+// that cannot be corrected by experience either, because the adaptive part
+// only learns from a turn that finished.
+{
+  const bgt3 = loadBackground({});
+  const budget = bgt3.turnBudgetMs;
+  ensure("there is a turn budget at all", typeof budget === "function", typeof budget);
+  if (typeof budget === "function") {
+    // Nothing loaded yet: the default is what will load, so that is what the
+    // clock has to be sized against.
+    const forDefault = budget();
+    ensure("the default model gets a turn it can finish", forDefault >= 120000, forDefault);
+    // And it rises with the model rather than staying where a small one left
+    // it.
+    // Asked by id. Setting the cached status from out here looked like it
+    // worked and did not - a `let` at module scope in a vm context is not a
+    // property of the global, so every reading came back as the default's.
+    const seen = globalThis.WC_MODELS.map((m) =>
+      ({ name: m.name, mb: m.vramMB, ms: bgt3.turnBudgetFor(m.id) }));
+    const small = seen.find((x) => x.mb < 2000);
+    const large = seen.find((x) => x.mb >= 5000);
+    ensure("a small model is not made to wait for a large one's clock",
+      small && small.ms <= 60000, small);
+    ensure("and a large one is not cut off at a small one's",
+      large && large.ms >= 120000, large);
+    ensure("the budget never falls as the model grows",
+      seen.slice().sort((a, b) => a.mb - b.mb).every((x, i, all) => i === 0 || x.ms >= all[i - 1].ms),
+      seen.map((x) => `${x.mb}=${x.ms}`).join(" "));
+  }
+}
+
+// The same 8B does a whole multi-step instruction in ten to thirty-five
+// seconds on one machine and cannot finish a single turn in forty-five on
+// another. That is not the model and it is not the prompt: it is whether
+// Chrome handed WebGPU a graphics card or its own software renderer, which is
+// roughly ten times slower. hasGpu only ever said the interface existed, so
+// from a card the two were indistinguishable - and the advice each one wants
+// is opposite. "Pick a smaller model" is wrong when nothing is on the GPU.
+{
+  const bggpu = loadBackground({});
+  {
+    // Asked directly. Setting lastTurnMs from out here looks like it works
+    // and does not - a `let` at module scope in a vm context is not a
+    // property of the global - so driving this through a whole ask would be
+    // testing a thirty-second decision that never happened.
+    const slowHint = (gpu) => String(bggpu.slowDecisionHint(30000, gpu));
+
+    const onSoftware = slowHint({ ok: true, software: true, describedAs: "Google SwiftShader" });
+    ensure("a software renderer is named as the reason",
+      /software renderer/i.test(onSoftware), onSoftware);
+    ensure("and it is not blamed on the model being too big",
+      !/smaller model/i.test(onSoftware), onSoftware);
+    ensure("with somewhere to go about it", /chrome:\/\/gpu/.test(onSoftware), onSoftware);
+
+    const onHardware = slowHint({ ok: true, software: false, describedAs: "apple m2" });
+    ensure("a real card that is merely slow suggests a smaller model",
+      /smaller model/i.test(onHardware), onHardware);
+    ensure("and does not accuse it of running on the CPU",
+      !/software renderer/i.test(onHardware), onHardware);
+    ensure("and both say how long a decision actually took",
+      /30s/.test(onSoftware) && /30s/.test(onHardware), `${onSoftware} | ${onHardware}`);
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the
