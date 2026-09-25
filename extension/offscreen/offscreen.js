@@ -554,8 +554,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           vectors: (out && out.data ? out.data : []).map((d) => d.embedding),
           ms: Date.now() - began,
         });
+        // Answered, so give the memory back. Beside a large planner this is
+        // the difference between one model on the GPU and two - 5001MB plus
+        // another 1023MB, on a machine whose adapter grants a 4096MB buffer.
+        // It is asked once per instruction and reloads from cache, so
+        // holding it bought nothing.
+        if (plannerIsLarge()) releaseEmbedder().catch(() => {});
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
+        if (plannerIsLarge()) releaseEmbedder().catch(() => {});
       }
     })();
     return true;
@@ -891,8 +898,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     getEngine((report) => {
       chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
-    }).then(() => {
+    }).then(async (engine) => {
       chrome.runtime.sendMessage({ type: "llmProgress", text: "model ready" });
+      // Loaded is not the same as usable. Measured on this machine: twelve
+      // tokens took 37.1 seconds - a tenth of a token a second - on a model
+      // that does a four-step instruction in twelve seconds elsewhere. It
+      // had loaded perfectly, reported ready, and every check passed.
+      //
+      // So a large model proves itself once, here, on a prompt with nothing
+      // of ours in it. Finding this out now costs a few seconds; finding it
+      // out from an instruction costs three minutes and looks like the model
+      // refusing to answer.
+      if (!plannerIsLarge()) return;
+      try {
+        const began = Date.now();
+        await Promise.race([
+          engine.chat.completions.create({
+            messages: [{ role: "user", content: "Reply with the single word: ready" }],
+            temperature: 0, max_tokens: 12,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("too slow")), 20000)),
+        ]);
+        const took = Date.now() - began;
+        if (took <= 8000) return;                       // usable; nothing to say
+        throw new Error(`${(took / 1000).toFixed(1)}s for twelve tokens`);
+      } catch (e) {
+        const small = globalThis.WC_FALLBACK_MODEL;
+        if (!small || MODEL_ID === small) return;
+        const from = MODEL_ID;
+        fellBackTo = { from, to: small, why: `${from} is far too slow on this machine` };
+        MODEL_ID = small;
+        await releaseEngine();
+        chrome.runtime.sendMessage({
+          type: "llmProgress",
+          text: `${WC_MODEL_NAME(from)} runs far too slowly here - using ${WC_MODEL_NAME(small)}`,
+        }).catch(() => {});
+        // Loaded straight away, so the first instruction does not pay for it.
+        getEngine(() => {}).catch(() => {});
+      }
     }).catch((err) => {
       chrome.runtime.sendMessage({ type: "llmProgress", text: "warm-load failed: " + String((err && err.message) || err) });
     });

@@ -14,10 +14,17 @@ anywhere in the repo.
 ## Setting it up
 
 You need Chrome and a GPU that supports WebGPU. The default model is Llama
-3.1 8B, about 5GB, downloaded once and cached after that. If your GPU cannot
-hold it the extension drops to a 1GB model by itself and says so under the
-picker - so a smaller machine still works, it just chains multi-step
-instructions less well.
+3.1 8B, about 5GB, downloaded once and cached after that.
+
+**Check `diagnose` before timing anything.** Type it in the ask box and read
+the `model speed` line: twelve tokens in, twelve out, with no page involved.
+Two machines running this same build measured 20-40 tokens a second and 0.1 -
+a difference of two orders of magnitude, on a model that loaded perfectly and
+reported ready on both. The slow one was an Apple laptop where every other
+check passed. If yours reads under a token a second, the 8B cannot run there
+and nothing about the instruction will change that; say `use 3b` or
+`use qwen`. The extension now measures this on load and drops to the small
+model by itself, but it is worth seeing the number.
 
 1. `chrome://extensions` → turn on **Developer mode** (top right).
 2. **Load unpacked** → choose the `extension/` folder.

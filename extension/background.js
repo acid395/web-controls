@@ -4775,6 +4775,38 @@ async function embedTexts(texts) {
 // where meaning cannot be had at all - no WebGPU, the embedder not
 // downloaded - so the caller falls back to offering everything, which is
 // what it did before this existed.
+// One control, so far ahead of the rest that choosing is not a judgement.
+//
+// The bind: a 1.5B cannot chain a four-step instruction, and an 8B cannot run
+// on an ordinary machine - measured at a tenth of a token a second on a
+// laptop where every other check passed. Neither end of that is fixable by
+// choosing a different model.
+//
+// What is fixable is how much of the work the model is asked to do. Matching
+// a request to a control is a similarity problem, and arctic-embed-s does it
+// in 1023MB - less than the 1.5B itself, on a machine that can run neither
+// 8B nor anything like it. Where meaning picks one control out decisively,
+// the model is not asked at all, and what is left for it is sequencing and
+// genuine ambiguity, which is what a small model can still do.
+//
+// Decisive means both: close to the request in absolute terms, and clear of
+// whatever came second. A narrow win is exactly the case that wants a
+// reader, and it still gets one.
+const MEANING_SURE = 0.62;      // close enough to act on at all
+const MEANING_CLEAR = 0.12;     // and this far ahead of the runner-up
+async function decisiveByMeaning(goal, controls) {
+  if (!controls || controls.length < 2) return null;
+  const ranked = await rankByMeaning(goal, controls).catch(() => null);
+  if (!ranked || ranked.length < 2) return null;
+  const [first, second] = ranked;
+  if (first.score < MEANING_SURE) return null;
+  if (first.score - second.score < MEANING_CLEAR) return null;
+  const c = first.control;
+  if (!c || c.disabled || c.hidden || c.opensPanel) return null;
+  if (TEXT_INPUT_KINDS.has(String(c.type || "").toLowerCase())) return null;
+  return { control: c, score: first.score, clearBy: first.score - second.score };
+}
+
 async function rankByMeaning(goal, controls) {
   const labels = controls.map((c) => String(c.label || "").slice(0, 80));
   if (!labels.length) return null;
@@ -5100,6 +5132,47 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // scorer's judgement, and putting it between the page and the model
       // hands the model the scorer's mistakes to choose from. Meaning or
       // everything; a bad shortlist is worse than none.
+    }
+
+    // Before spending a turn: is there anything to decide?
+    //
+    // Only on the first step, and only where nothing has been done yet. Once
+    // the run is under way the history is the context and the model is the
+    // one holding it; stepping in after that would be second-guessing a
+    // chain it is halfway through.
+    if (!history.length && !note) {
+      const sure = await decisiveByMeaning(goal, controls).catch(() => null);
+      if (sure) {
+        // Which way. "Uncheck snow depth" resolves to the snow depth box as
+        // decisively as "check snow depth" does, and pressing it is the
+        // right control moved the wrong way - a confident wrong answer,
+        // which is worse than asking.
+        const isSwitch = /^(checkbox|radio)$/.test(String(sure.control.type || "").toLowerCase());
+        const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
+          .test(goal);
+        const call = isSwitch
+          ? { name: "pageCheck", args: { selector: sure.control.selector, on: !wantsOff } }
+          : wantsOff ? null   // a link cannot be turned off; that wants a reader
+          : actionToCall("click", sure.control, {});
+        const ran = call ? await runVerified(routeGlobal, call) : null;
+        const moved = ran ? didItMove(ran) : false;
+        if (ran && ran.ok !== false && moved && !(ran.result && ran.result.opened === true)) {
+          history.push({
+            key: `click|${String(sure.control.label || "").toLowerCase()}`,
+            did: `click "${sure.control.label}"`,
+            outcome: "the page changed",
+            ok: true, changed: true, satisfied: false,
+            label: sure.control.label,
+            why: `nothing else on the page is close to "${String(goal).slice(0, 40)}"`,
+            byMeaning: Number(sure.score.toFixed(3)),
+          });
+          return { ok: true, answer: null, history, steps: history.length,
+            tookMs: Date.now() - began, said: null, withoutModel: true };
+        }
+        // It did not take, or it opened something. Either way this is not the
+        // clear case it looked like, and the model gets the turn it would
+        // have had.
+      }
     }
 
     const thoughtAt = Date.now();
@@ -7120,8 +7193,23 @@ async function runDiagnostics() {
         + " - every model will be about ten times slower than on the graphics card."
         + " Check chrome://gpu and that hardware acceleration is enabled in Chrome's settings");
     }
+    // The number that actually decides throughput, and the one this line was
+    // missing. WebLLM asks the device for a 1GB storage-buffer binding and
+    // quietly settles for 128MB where it cannot have one - an eighth of the
+    // binding, so the same matrix multiply becomes eight times as many
+    // dispatches. That is the shape of a machine where one decision will not
+    // finish in three minutes while the same model elsewhere does a whole
+    // instruction in twelve seconds: a cliff, not a slope, and nothing in
+    // this extension can climb it.
+    if (gpu.maxStorageMB != null && gpu.maxStorageMB < 1024) {
+      // Ninety characters, and the flag is the part that has to survive.
+      throw new Error(`storage binding ${gpu.maxStorageMB}MB, WebLLM wants 1024MB`
+        + " - try chrome://flags/#enable-unsafe-webgpu");
+    }
     return [gpu.describedAs || "hardware adapter",
-      gpu.maxBufferMB ? `max buffer ${gpu.maxBufferMB}MB` : null].filter(Boolean).join(" · ");
+      gpu.maxBufferMB ? `buffer ${gpu.maxBufferMB}MB` : null,
+      gpu.maxStorageMB ? `storage ${gpu.maxStorageMB}MB` : null]
+      .filter(Boolean).join(" · ");
   }, { optional: true });
   // Which model was asked for, beside which one is loaded. Two switches to a
   // smaller model appeared to do nothing and there was no way to see that
@@ -8910,7 +8998,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // read as one and understates what it cost.
                   subtitle: [
                     `${agent.history.length} step${agent.history.length === 1 ? "" : "s"}`
-                      + ` (${acted.length} on the page), decided by the local model`,
+                      + ` (${acted.length} on the page), `
+                      // Credit where it is due, and not where it is not. A
+                      // run the model never saw was still being reported as
+                      // its work, which is the same dishonesty as a card
+                      // claiming an action that did not happen.
+                      + (agent.withoutModel
+                        ? "matched by meaning, without asking the model"
+                        : "decided by the local model"),
                     agent.history.some((h) => h.unrelated)
                       ? "some steps acted on controls your words did not name" : null,
                     // Said in words, not left as a blank column. "Nothing to

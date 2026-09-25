@@ -1478,6 +1478,157 @@ else {
   });
 }
 
+// WebLLM asks the device for a 1GB storage-buffer binding and settles for
+// 128MB where it cannot have one. An eighth of the binding turns one matrix
+// multiply into eight times the dispatches, which is how the same 8B does a
+// four-step instruction in twelve seconds on one machine and cannot finish a
+// single decision in a hundred and eighty on another. The diagnostic already
+// collected this number and printed only the buffer size beside it, so the
+// one figure that decides throughput was the one nobody could see.
+{
+  const gpuPage = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://water.noaa.gov/" });
+  const bgg = loadBackground({ page: gpuPage });
+  const card = (gpu) => new Promise((resolve) => {
+    bgg.__model = (m) => (m.type === "llmStatus"
+      ? { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", gpu }
+      : m.type === "llmBench" ? { ok: true, ms: 800, decodePerS: 30 } : undefined);
+    bgg.__ask({ type: "smartAsk", instruction: "diagnose" }).then(resolve, () => resolve(null));
+  });
+  const lineOf = (r) => (((r || {}).display || {}).rows || [])
+    .find((x) => String(x.name) === "graphics card") || {};
+
+  runAsync(async () => {
+    const starved = lineOf(await card({ ok: true, software: false,
+      describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 128 }));
+    ensure("a 128MB storage binding is called out",
+      /storage binding 128MB/.test(String(starved.meta || "")), starved);
+    ensure("and it says what WebLLM wanted",
+      /1024MB/.test(String(starved.meta || "")), starved);
+    ensure("and offers the flag that can raise it",
+      /enable-unsafe-webgpu/.test(String(starved.meta || "")), starved);
+    ensure("and is not reported as ok", starved.value !== "ok", starved.value);
+
+    const healthy = lineOf(await card({ ok: true, software: false,
+      describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 2048 }));
+    check("a 2GB binding passes", healthy.value, "ok");
+    ensure("and both figures are shown, not just the buffer",
+      /buffer 4096MB/.test(String(healthy.meta || ""))
+      && /storage 2048MB/.test(String(healthy.meta || "")), healthy);
+  });
+}
+
+// The bind, stated: a 1.5B cannot chain a four-step instruction, and an 8B
+// runs at a tenth of a token a second on an ordinary laptop. Neither end is
+// fixed by picking a different model.
+//
+// What can be changed is how much the model is asked to do. Matching a
+// request to a control is a similarity problem, and the embedder does it in
+// 1023MB - less than the 1.5B itself. Where meaning picks one control out
+// decisively, no turn is spent; what is left for the model is sequencing and
+// real ambiguity, which is what a small one can still manage.
+{
+  const oneClose = `<!doctype html><html><body>
+    <a href="#a">Streamflow conditions</a>
+    <a href="#b">About this site</a>
+    <a href="#c">Contact us</a>
+    <a href="#d">Privacy policy</a>
+    </body></html>`;
+  // Two controls the request fits equally well. Nothing about this is
+  // decidable by similarity, and guessing between them is the failure this
+  // whole project keeps coming back to.
+  const twoClose = `<!doctype html><html><body>
+    <a href="#a">Streamflow conditions</a>
+    <a href="#b">Water discharge</a>
+    <a href="#c">Contact us</a>
+    <a href="#d">Privacy policy</a>
+    </body></html>`;
+  // A stand-in embedder: a vector per label, so "how much water is flowing"
+  // lands on streamflow and nowhere near the footer links.
+  const axes = ["flow stream water discharge", "about site", "contact", "privacy"];
+  const vecFor = (t) => axes.map((ax) => {
+    const words = ax.split(" ");
+    const hits = words.filter((w) => String(t).toLowerCase().includes(w)).length;
+    return hits / words.length;
+  });
+
+  for (const [what, html, goal, wantPressed, wantTurns] of [
+    ["one control clearly closest", oneClose, "how much water is flowing", "a", 0],
+    // A narrow win is exactly the case that wants a reader, so it gets one.
+    ["two equally close", twoClose, "how much water is flowing", null, 1],
+  ]) {
+    const page = loadPage(html, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!page) continue;
+    const pressed = [];
+    for (const id of ["a", "b", "c", "d"]) {
+      page.document.querySelector(`[href="#${id}"]`).addEventListener("click", () => {
+        pressed.push(id);
+        page.document.body.appendChild(page.document.createElement("hr"));
+      });
+    }
+    const bgm = loadBackground({ page });
+    let turns = 0;
+    bgm.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmEmbed") return { ok: true, vectors: (m.texts || []).map(vecFor) };
+      if (m.type === "llmStep") { turns++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgm.__ask({ type: "smartAsk", instruction: `model: ${goal}` });
+      if (wantPressed) {
+        check(`${what}: it is pressed`, pressed[0], wantPressed);
+        check(`${what}: and no turn is spent deciding`, turns, wantTurns);
+        // A run the model never saw must not be reported as its work. That
+        // is the same dishonesty as a card claiming an action that did not
+        // happen, which is the thing this whole layer exists to prevent.
+        ensure(`${what}: and the card does not credit the model`,
+          !/decided by the local model/.test(String((r.display || {}).subtitle || "")),
+          (r.display || {}).subtitle);
+        ensure(`${what}: it says what did decide it`,
+          /matched by meaning/.test(String((r.display || {}).subtitle || "")),
+          (r.display || {}).subtitle);
+      } else {
+        ensure(`${what}: the model is asked`, turns >= 1, turns);
+        check(`${what}: and nothing is pressed on a guess`, pressed.length, 0);
+      }
+    });
+  }
+
+  // Which way. "Uncheck snow depth" resolves to the snow depth box exactly as
+  // decisively as "check snow depth" does, so a path that only ever presses
+  // would move the right control the wrong way - confidently, and with a
+  // verification that agrees something changed.
+  {
+    const boxes = `<!doctype html><html><body>
+      <label><input type="checkbox" id="sd" checked> Snow depth</label>
+      <a href="#c">Contact us</a><a href="#p">Privacy policy</a>
+      </body></html>`;
+    const axis = ["snow depth", "contact", "privacy"];
+    const vec = (t) => axis.map((ax) => ax.split(" ")
+      .filter((w) => String(t).toLowerCase().includes(w)).length / ax.split(" ").length);
+    for (const [what, goal, wantChecked] of [
+      ["turning it off leaves it off", "turn off snow depth", false],
+      ["turning it on leaves it on", "turn on snow depth", true],
+    ]) {
+      const page = loadPage(boxes, { url: "https://water.noaa.gov/" });
+      if (!page) continue;
+      page.document.getElementById("sd").checked = (goal.includes("off"));
+      const bgd3 = loadBackground({ page });
+      bgd3.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC" };
+        if (m.type === "llmEmbed") return { ok: true, vectors: (m.texts || []).map(vec) };
+        if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgd3.__ask({ type: "smartAsk", instruction: `model: ${goal}` });
+        check(`${what}`, page.document.getElementById("sd").checked, wantChecked);
+      });
+    }
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the
