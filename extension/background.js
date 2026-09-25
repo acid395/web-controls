@@ -4678,6 +4678,7 @@ function modelName(id) {
 }
 
 let lastTurnMs = 0;
+let lastTurnCost = null;
 let modelStatusCache = { at: 0, value: null };
 let warmedOnce = false;
 async function modelStatus({ maxAgeMs = 4000 } = {}) {
@@ -5126,6 +5127,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
 
     const thoughtMs = Date.now() - thoughtAt;
     if (asked.ok) lastTurnMs = lastTurnMs ? Math.round(lastTurnMs * 0.4 + thoughtMs * 0.6) : thoughtMs;
+    // Kept for the card. Prefill and decode are fixed by opposite work -
+    // a shorter prompt against a shorter reply - and until this was reported
+    // there was no way to know which half of a slow turn to go after.
+    if (asked.cost) lastTurnCost = asked.cost;
     const s = asked.step || {};
     // What it says the request means. This is the only window onto whether a
     // choice was reasoning or word-matching, and it is the thing worth
@@ -7077,6 +7082,33 @@ async function runDiagnostics() {
   // between a machine where an 8B does a whole instruction in half a minute
   // and one where it cannot finish a single decision in forty-five seconds,
   // and until now there was nothing anywhere that would tell the two apart.
+  // The model itself, on a prompt too small to blame. Four explanations have
+  // now been offered for the same wait - it cannot interpret the request, it
+  // is too big, the GPU is software, the prompt is too long - and the first
+  // three were wrong. This is the measurement that separates the last one
+  // from the machine.
+  await step("model speed", async () => {
+    const st = await modelStatus({ maxAgeMs: 0 });
+    if (!st || !st.ready) return "not loaded yet - load it and run this again";
+    await ensureOffscreenDocument();
+    const r = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmBench" })
+      .catch(() => null);
+    if (!r) throw new Error("the offscreen document did not answer");
+    if (!r.ok) throw new Error(r.error || "the benchmark did not finish");
+    const decode = r.decodePerS ? `${r.decodePerS.toFixed(1)} tokens/s` : "unmeasured";
+    const first = r.firstTokenS != null ? `${r.firstTokenS.toFixed(1)}s to first token` : null;
+    // Twelve tokens is nothing. Anything over a few seconds for it means the
+    // weights are not really on the graphics card, whatever the adapter says.
+    // Kept short: this line is truncated at ninety characters, and the way
+    // out is the part that must survive.
+    if (r.ms > 8000) {
+      throw new Error(`12 tokens took ${(r.ms / 1000).toFixed(1)}s (${decode})`
+        + " - too large for this machine; say \"use 3b\" or \"use qwen\"");
+    }
+    return [`${(r.ms / 1000).toFixed(1)}s for twelve tokens`, decode, first]
+      .filter(Boolean).join(" \u00b7 ");
+  }, { optional: true });
+
   await step("graphics card", async () => {
     const st = await modelStatus({ maxAgeMs: 0 });
     const gpu = st && st.gpu;
@@ -7324,6 +7356,58 @@ const PARAPHRASE_CASES = [
 // than its own clauses is the sequence being wrong.
 const SEARCH_CLAUSE =
   /^\s*(?:please\s+)?(?:search|find|look\s*up|search\s+for)\s+(?:for\s+)?(.+?)\s*$/i;
+
+// Can this clause be done without asking anybody? Resolving only - nothing
+// is pressed here, because a caller has to be able to find out that clause
+// three is unclear before it has carried out clauses one and two.
+//
+// Certain means one of two things: the clause is a search, or its words name
+// exactly one control on the page and no other. Anything else - two controls
+// answering to the name, a control that only opens a panel, a phrase naming
+// nothing - is a decision, and decisions are the model's.
+async function certainClausePlan(routeGlobal, clause) {
+  const asSearch = String(clause || "").match(SEARCH_CLAUSE);
+  if (asSearch && asSearch[1].trim()) {
+    const sinv = await readInventory();
+    const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []));
+    if (box) {
+      return {
+        label: `search "${asSearch[1].trim().slice(0, 30)}"`,
+        run: async () => {
+          const did = await searchClause(routeGlobal, clause);
+          return did ? { changed: true } : null;
+        },
+      };
+    }
+    return null;
+  }
+
+  const inv = await readInventory();
+  const all = ((inv.ok && inv.result && inv.result.controls) || []);
+  const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide)\s+/i;
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const whole = flat(clause);
+  const bare = flat(String(clause).replace(LEAD, ""));
+  if (!bare && !whole) return null;
+  const named = all.filter((c) => {
+    if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
+    const l = flat(c.label);
+    return !!l && (l === bare || l === whole || closeName(bare, l));
+  });
+  // One, and only one. Two controls wearing the name is the ambiguity that
+  // sent "Interactive Map" to a radio while the link went unpressed.
+  if (named.length !== 1) return null;
+  const only = named[0];
+  if (TEXT_INPUT_KINDS.has(String(only.type || "").toLowerCase())) return null;
+  return {
+    label: only.label,
+    run: async () => {
+      const did = await actOnExactlyNamedClause(routeGlobal, clause);
+      if (!did) return null;
+      return { changed: did.verified ? did.verified.changed !== false : true };
+    },
+  };
+}
 
 async function searchClause(routeGlobal, clause) {
   const asked = String(clause || "").match(SEARCH_CLAUSE);
@@ -8019,6 +8103,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             modelStatusCache.value && modelStatusCache.value.gpu);
           display.note = display.note ? `${display.note} - ${hint}` : hint;
         }
+        // The shape of the wait, not just its length. A turn spent reading
+        // the prompt and a turn spent writing the answer look identical from
+        // outside and want different fixes.
+        if (display && lastTurnCost && res.plannedBy === "model") {
+          const c = lastTurnCost;
+          display.stats = [...(display.stats || [])];
+          if (c.promptTokens != null) {
+            display.stats.push({ label: "prompt", value: `${c.promptTokens} tok`
+              + (c.prefillPerS ? ` @ ${Math.round(c.prefillPerS)}/s` : "") });
+          }
+          if (c.replyTokens != null) {
+            display.stats.push({ label: "reply", value: `${c.replyTokens} tok`
+              + (c.decodePerS ? ` @ ${Math.round(c.decodePerS)}/s` : "") });
+          }
+        }
         const took = Date.now() - askBegan;
         if (display && took > 1500) {
           display.stats = [...(display.stats || [])];
@@ -8586,6 +8685,74 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           // It could not run at all, so nothing has been touched and the
           // model gets its turn - which is what it is for.
+        }
+
+        // Instant when certain, for compound instructions too.
+        //
+        // The single-clause path above has always skipped the model where the
+        // words name one control exactly. A sentence with two of those in it
+        // did not: every compound instruction went to the model first, and
+        // with an 8B at forty-five seconds a turn, "zoom in and search
+        // alaska" - a button and a search box, neither of them a decision -
+        // could run for six minutes before the page ever got a look.
+        //
+        // So the clauses are resolved first, and the model is only asked if
+        // any of them is genuinely a question. Nothing is pressed while
+        // deciding that: resolving is a read of the inventory, and if a
+        // single clause is unclear the whole thing goes to the model
+        // untouched, because half an instruction done by the page and half by
+        // the model is the worst of both.
+        if (!forceBaseline && !forceModel && isCommand(wanted)) {
+          const clauses = splitIntoSteps(wanted);
+          if (clauses.length > 1 && clauses.length <= 6) {
+            const certain = [];
+            for (const clause of clauses) {
+              const plan = await certainClausePlan(route.global, clause);
+              if (!plan) { certain.length = 0; break; }
+              certain.push({ clause, plan });
+            }
+            if (certain.length === clauses.length) {
+              const rows = [];
+              let anyFailed = false;
+              for (const { clause, plan } of certain) {
+                const did = await plan.run().catch(() => null);
+                if (!did) anyFailed = true;
+                rows.push({
+                  name: plan.label || clause,
+                  value: !did ? "failed" : did.changed === false ? "nothing changed" : "done",
+                  meta: clause,
+                  tone: !did ? "alert" : did.changed === false ? "warn" : "ok",
+                });
+              }
+              if (!anyFailed) {
+                respond({
+                  ok: true, plannedBy: "exact-match",
+                  display: {
+                    title: `${rows.length} steps, straight off the page`,
+                    subtitle: rows.map((r) => r.name).join(" \u00b7 "),
+                    stats: [], rows,
+                    note: "every part of this named one control on the page exactly,"
+                      + " so this did not wait for the model",
+                    source: "this page",
+                  },
+                });
+                return;
+              }
+              // Something did not take. The model is told nothing about what
+              // already happened, so rather than half-doing it twice, the
+              // report says what ran and stops.
+              respond({
+                ok: false, plannedBy: "exact-match",
+                error: "part of that did not take",
+                display: {
+                  title: "part of that did not take",
+                  subtitle: rows.map((r) => `${r.name}: ${r.value}`).join(" \u00b7 "),
+                  stats: [], rows, source: "this page",
+                },
+              });
+              return;
+            }
+          }
         }
 
         if (!forceBaseline) {

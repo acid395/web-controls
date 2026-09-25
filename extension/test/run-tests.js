@@ -1390,6 +1390,94 @@ else {
   }
 }
 
+// Forty-five seconds got three different explanations - the model cannot
+// interpret it, the model is too big, the GPU is a software renderer - and
+// the machine turned out to have a real Metal adapter, so all three were
+// wrong. Guessing a fourth time is not the answer; the engine already knows.
+//
+// "The decision" is two things fixed by opposite work: prefill is the prompt
+// we built, decode is the reply the model chose to write. A card that reports
+// only the total cannot tell them apart, and until it does there is no way to
+// know whether to shorten the page or cap the answer.
+{
+  const costPage = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="gh"> Gage height</label></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (costPage) {
+    const bgc2 = loadBackground({ page: costPage });
+    bgc2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") {
+        const i = (m.controls || []).findIndex((c) => /gage height/i.test(c.label));
+        return {
+          ok: true,
+          step: i >= 0 ? { name: m.controls[i].label, do: "check", on: true }
+            : { do: "finish", answer: "" },
+          // What WebLLM hands back.
+          cost: { promptTokens: 1840, replyTokens: 26,
+            prefillPerS: 210.4, decodePerS: 11.7, firstTokenS: 8.7 },
+        };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgc2.__ask({ type: "smartAsk", instruction: "model: click gage height" });
+      const stats = ((r.display || {}).stats || []);
+      const of = (label) => (stats.find((x) => x.label === label) || {}).value || "";
+      ensure("the card says how big the prompt was", /1840 tok/.test(of("prompt")), stats);
+      ensure("and how fast it was read", /210\/s/.test(of("prompt")), of("prompt"));
+      ensure("and how much the model wrote", /26 tok/.test(of("reply")), stats);
+      ensure("and how fast it wrote it", /11\/s|12\/s/.test(of("reply")), of("reply"));
+    });
+  }
+}
+
+// Ten to thirty seconds for a whole multi-step instruction on one machine;
+// one turn that will not finish in a hundred and eighty on another. Four
+// explanations were offered for that and three were wrong - it cannot
+// interpret the request, it is too big, the GPU is a software renderer - so
+// the fourth is not worth guessing at either. Twelve tokens in, twelve out,
+// no page and no control list: if that is slow the machine cannot run this
+// model, and if it is quick the wait is something we are building.
+{
+  // With a page: diagnose reports on the tab it is looking at, and without
+  // one it stops at "no active tab" before reaching anything worth checking.
+  const benchPage = loadPage("<!doctype html><html><body><p>x</p></body></html>",
+    { url: "https://water.noaa.gov/" });
+  const bgb2 = loadBackground({ page: benchPage });
+  const bench = (reply) => new Promise((resolve) => {
+    bgb2.__model = (m) => (m.type === "llmStatus"
+      ? { ready: true, hasGpu: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC" }
+      : m.type === "llmBench" ? reply : undefined);
+    bgb2.__ask({ type: "smartAsk", instruction: "diagnose" }).then(resolve, () => resolve(null));
+  });
+  const lineOf = (r, name) => (((r || {}).display || {}).rows || [])
+    .find((x) => String(x.name) === name) || {};
+
+  runAsync(async () => {
+    // A machine that cannot hold the model: nothing about the prompt will fix
+    // this, and saying "try a shorter instruction" would be a lie.
+    const slow = await bench({ ok: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC",
+      ms: 41000, promptTokens: 12, replyTokens: 12, decodePerS: 0.3, firstTokenS: 30.1 });
+    const slowLine = lineOf(slow, "model speed");
+    ensure("twelve tokens taking forty seconds is called out",
+      /too large for this machine/.test(String(slowLine.meta || slowLine.value || "")),
+      slowLine);
+    ensure("and it names a way out", /use 3b|use qwen/.test(String(slowLine.meta || "")), slowLine);
+    ensure("and does not blame the prompt",
+      !/shorter instruction/.test(String(slowLine.meta || "")), slowLine);
+
+    // A machine that can: then a slow instruction is ours to account for.
+    const quick = await bench({ ok: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC",
+      ms: 900, promptTokens: 12, replyTokens: 12, decodePerS: 24.6, firstTokenS: 0.3 });
+    const quickLine = lineOf(quick, "model speed");
+    ensure("a healthy machine reports its rate instead",
+      /tokens\/s/.test(String(quickLine.meta || quickLine.value || "")), quickLine);
+    ensure("and is not called too large",
+      !/too large/.test(String(quickLine.meta || quickLine.value || "")), quickLine);
+  });
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the
@@ -1689,7 +1777,10 @@ if (partial) {
     return undefined;
   };
   runAsync(async () => {
-    const r = await bgp.__ask({ type: "smartAsk", instruction: "click related links and click revisions" });
+    // "show me the revisions" rather than "click revisions": one clause loose
+    // is what sends a sentence to the model now, and this is a test about
+    // what the model does with the second half.
+    const r = await bgp.__ask({ type: "smartAsk", instruction: "click related links and show me the revisions" });
     check("a half-done sequence is not started again from the top", clicks, 1);
     check("and it is still reported as the model's work", r.plannedBy, "model");
     ensure("with the part that did not finish named",
@@ -2340,24 +2431,35 @@ for (const b of budgets) {
       if (m.type === "llmStatus") return { ready: true, hasGpu: true };
       if (m.type === "llmStep") {
         turns++;
+        // The model does the work here. Exactly-named clauses are done by
+        // the page now and never reach it, so a card about a slow model
+        // decision has to be one the model actually made.
+        const want = (re) => (m.controls || []).findIndex((c) => re.test(c.label));
+        const y2 = want(/second y-axis/i);
+        const py = want(/prior year/i);
+        const on = (i) => ({ ok: true, step: { name: m.controls[i].label, do: "check", on: true } });
+        const done = (m.history || []).map((h) => String(h.did || "")).join(" ");
+        const next = !/second y-axis/i.test(done) && y2 >= 0 ? on(y2)
+          : !/prior year/i.test(done) && py >= 0 ? on(py)
+          : { ok: true, step: { do: "finish", answer: "" } };
         // Slow on purpose, once. The card only reports a duration when there
         // was a wait worth reporting, and this passed for a while because the
         // suite itself was slow enough to trip that threshold by accident -
         // so it stopped passing the moment the suite got quicker, which is
         // the test depending on the harness rather than on the rule.
-        if (turns === 1) {
-          return new Promise((r) => setTimeout(
-            () => r({ ok: true, step: { do: "finish", answer: "" } }), 1700));
-        }
-        return { ok: true, step: { do: "finish", answer: "" } };
+        if (turns === 1) return new Promise((r) => setTimeout(() => r(next), 1700));
+        return next;
       }
       return undefined;
     };
     runAsync(async () => {
       const r = await bgt2.__ask({ type: "smartAsk",
-        instruction: "click select data to graph on second y-axis and select data for same time span in prior year" });
+        // Loosely phrased on purpose: exactly-named clauses are done by the
+        // page now and never reach the model, and this is about what a card
+        // says when a model decision was slow.
+        instruction: "turn on the second y-axis and also the prior year one" });
       ensure("a model that will not attempt a step is not paid for every part",
-        turns <= 2, turns);
+        turns <= 6, turns);
       const on = [...twoBox.document.querySelectorAll("input")].filter((x) => x.checked).map((x) => x.name);
       // Both, and neither undone by the other. The second step turning the
       // first back off would be the page's own doing, not this.
@@ -2496,7 +2598,14 @@ for (const b of budgets) {
   const shapes = [
     ["click gage height", 0, "exact-match", "one control named word for word"],
     ["show me what the flow is doing", 1, null, "loose phrasing is the model's job"],
-    ["click gage height and click discharge", 1, null, "more than one clause"],
+    // Was "more than one clause goes to the model". It does not any more:
+    // "zoom in and search alaska" - a button and a search box, neither of
+    // them a decision - waited 244 seconds for an 8B to plan what the page
+    // could do at once. The bar is unchanged, only applied per clause: every
+    // part has to name one control word for word, and one unclear part sends
+    // the whole sentence to the model untouched.
+    ["click gage height and click discharge", 0, "exact-match", "each clause named word for word"],
+    ["click gage height and show me the flow", 1, null, "one clause is loose, so all of it is the model's"],
     ["what is the gage height", 1, null, "a question, not an instruction"],
   ];
   for (const [instr, wantCalls, wantPlanner, why] of shapes) {

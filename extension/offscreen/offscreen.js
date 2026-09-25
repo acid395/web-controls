@@ -376,6 +376,29 @@ function embedderWouldCrowdThePlanner() {
 // than the out-of-memory this was avoiding. Where it does fail for want of
 // video memory the caller catches it and ranks by words instead, so the
 // shortlist survives either way and the prompt stays bounded.
+// Handed back as soon as it has answered, where the planner is large.
+//
+// Both engines can be live at once: an 8B wants 5001MB and this wants
+// another 1023MB, and on Apple Silicon that is unified memory shared with
+// Chrome and the page. Nothing errors - Metal pages instead - and the
+// symptom is a decision that will not finish in three minutes on a machine
+// whose adapter reports a 4096MB maximum buffer. Keeping it loaded bought
+// nothing: it is asked once per instruction and reloads from cache.
+async function releaseEmbedder() {
+  if (!embedPromise) return;
+  const held = embedPromise;
+  embedPromise = null;
+  embedReady = false;
+  try {
+    const engine = await held;
+    if (engine && typeof engine.unload === "function") await engine.unload();
+  } catch (e) { /* already gone */ }
+}
+function plannerIsLarge() {
+  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
+  return mb >= 4000;
+}
+
 function getEmbedder(onProgress) {
   if (!embedPromise) {
     embedPromise = CreateMLCEngine(EMBED_MODEL_ID, {
@@ -388,6 +411,18 @@ function getEmbedder(onProgress) {
 }
 
 let fellBackTo = null;   // reported, so a card never silently names the wrong one
+
+// Let go of the planner, so the next request builds whichever one is chosen.
+async function releaseEngine() {
+  if (!enginePromise) return;
+  const held = enginePromise;
+  enginePromise = null;
+  engineReady = false;
+  try {
+    const engine = await held;
+    if (engine && typeof engine.unload === "function") await engine.unload();
+  } catch (e) { /* already gone */ }
+}
 
 function buildEngine(id, onProgress) {
   return CreateMLCEngine(id, {
@@ -432,6 +467,51 @@ function getEngine(onProgress) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "offscreen") return; // not for us, e.g. content-script traffic relayed elsewhere
+
+  // Raw throughput, on a prompt too small to blame.
+  //
+  // Their whole multi-step instruction runs in ten to thirty seconds; one
+  // turn here will not finish in a hundred and eighty. That is not hardware
+  // variance, and four explanations for it have now been wrong. This settles
+  // it by measuring the thing itself: a dozen tokens in, a dozen out, no page
+  // and no control list. If that is slow, the machine cannot run this model
+  // and no amount of work on the prompt will help. If it is fast, the wait is
+  // something we are building, and it is ours to fix.
+  if (msg.type === "llmBench") {
+    (async () => {
+      try {
+        if (!("gpu" in navigator)) throw new Error("no WebGPU here");
+        const engine = await getEngine((report) => {
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text }).catch(() => {});
+        });
+        const began = Date.now();
+        const reply = await Promise.race([
+          engine.chat.completions.create({
+            messages: [{ role: "user", content: "Reply with the single word: ready" }],
+            temperature: 0,
+            max_tokens: 12,
+          }),
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error("even a twelve-token reply did not finish in 60s")), 60000)),
+        ]);
+        const u = (reply && reply.usage) || {};
+        const x = u.extra || {};
+        sendResponse({
+          ok: true,
+          model: MODEL_ID,
+          ms: Date.now() - began,
+          promptTokens: u.prompt_tokens ?? null,
+          replyTokens: u.completion_tokens ?? null,
+          prefillPerS: x.prefill_tokens_per_s ?? null,
+          decodePerS: x.decode_tokens_per_s ?? null,
+          firstTokenS: x.time_to_first_token_s ?? null,
+        });
+      } catch (err) {
+        sendResponse({ ok: false, model: MODEL_ID, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
 
   if (msg.type === "llmPing") {
     (async () => {
@@ -614,14 +694,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             INFERENCE_TIMEOUT_MS)),
         ]);
         const text = (reply.choices[0].message.content || "").trim();
+        // Where the time went, from the engine rather than from a guess.
+        //
+        // Three explanations were offered for the same forty-five seconds -
+        // the model cannot interpret it, the model is too big, the GPU is
+        // software - and the machine turned out to have a real Metal adapter,
+        // so all three were wrong. Reading the page costs milliseconds and
+        // the decision costs everything, but "the decision" is two very
+        // different things: prefill is the prompt we built, decode is the
+        // reply the model chose to write, and they are fixed by opposite
+        // work. Nothing here has ever said which.
+        const u = reply.usage || {};
+        const x = u.extra || {};
+        const cost = {
+          promptTokens: u.prompt_tokens ?? null,
+          replyTokens: u.completion_tokens ?? null,
+          prefillPerS: x.prefill_tokens_per_s ?? null,
+          decodePerS: x.decode_tokens_per_s ?? null,
+          firstTokenS: x.time_to_first_token_s ?? null,
+        };
         const parsed = firstJsonObject(text);
         if (!parsed) {
-          sendResponse({ ok: false, error: `model did not return usable JSON: ${text.slice(0, 200)}` });
+          sendResponse({ ok: false, cost,
+            error: `model did not return usable JSON: ${text.slice(0, 200)}` });
           return;
         }
-        sendResponse({ ok: true, step: parsed, raw: text.slice(0, 300) });
+        sendResponse({ ok: true, step: parsed, cost, raw: text.slice(0, 300) });
       } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
+        const why = String((err && err.message) || err);
+        // A model that cannot finish one decision inside its whole allowance
+        // is not slow, it is unusable - and every retry costs that allowance
+        // again. Three minutes, then three more, is how "zoom in and search
+        // alaska" took four minutes to do what the page does at once.
+        //
+        // The cause does not have to be known to act on it. Weights larger
+        // than the machine will hold, a GPU shared with a heavy page, a
+        // second model loaded beside this one: the evidence is identical and
+        // so is the remedy.
+        if (/timed out/i.test(why) && globalThis.WC_FALLBACK_MODEL
+            && MODEL_ID !== globalThis.WC_FALLBACK_MODEL) {
+          const from = MODEL_ID;
+          const small = globalThis.WC_FALLBACK_MODEL;
+          const allowed = Math.round(inferenceTimeoutMs() / 1000);
+          fellBackTo = { from, to: small, why: `${from} could not finish a decision here` };
+          MODEL_ID = small;
+          await releaseEngine();
+          sendResponse({ ok: false, switchedTo: small, from,
+            error: `${from} could not finish one decision in ${allowed}s on this machine,`
+              + ` so it has been switched to ${WC_MODEL_NAME(small)}.`
+              + " Say \"use 8b\" to put it back." });
+          return;
+        }
+        sendResponse({ ok: false, error: why });
       }
     })();
     return true;
