@@ -683,7 +683,9 @@ function showModelState() {
     const want = modelChoice ? modelChoice.value : null;
     const have = res.model || null;
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
-    modelState.textContent = !have ? "nothing loaded yet - the next instruction loads it"
+    modelState.textContent = res.fellBack
+      ? `${name(res.fellBack.from)} would not load on this machine - using ${name(res.fellBack.to)}`
+      : !have ? "nothing loaded yet - the next instruction loads it"
       : res.loading ? `loading ${name(have)}...`
       : have === want ? `${name(have)} is loaded and answering`
       : `${name(have)} is still loaded - ${name(want)} loads on the next instruction`;
@@ -727,8 +729,18 @@ if (modelChoice) {
 localModelBox.addEventListener("change", () => {
   chrome.storage.local.set({ localModelEnabled: localModelBox.checked }, () => {
     describeRoute(); // the model chip appears or disappears with the switch
+    if (localModelBox.checked) {
+      // Started here, rather than by the first instruction. The default is
+      // five gigabytes: beginning that download inside somebody's first ask
+      // makes the first ask look broken, and the whole point of turning it
+      // on in advance is that it is ready when it is wanted.
+      chrome.runtime.sendMessage({ type: "llmSwitchModel", warm: true }, () => {
+        void chrome.runtime.lastError;
+        showModelState();
+      });
+    }
     logEcho(localModelBox.checked
-      ? "local model enabled - it will start downloading/loading in the background"
+      ? "local model enabled - loading now, watch the line under the picker"
       : "local model disabled - Ask will use the instant paths only");
   });
 });

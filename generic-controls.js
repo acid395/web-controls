@@ -2517,6 +2517,28 @@
     };
   }
 
+  // The page's own words, and not the page's own code.
+  //
+  // This was textContent on <body>, which concatenates everything including
+  // the contents of every <script> and <style> - so on a page with inline
+  // scripts the sample handed to the model was JavaScript source. It cost
+  // the whole sample, twice over: once in the four thousand characters read
+  // here, and again in the summary budget downstream, both of which exist to
+  // carry what the page says.
+  function readableBodyText(root, limit) {
+    const SKIP = /^(script|style|noscript|template|svg|iframe)$/i;
+    let out = "";
+    const walk = (n) => {
+      if (!n || out.length >= limit) return;
+      if (n.nodeType === 3) { out += n.nodeValue || ""; return; }
+      if (n.nodeType !== 1) return;              // comments and the rest are not text
+      if (SKIP.test(n.nodeName)) return;
+      for (const c of n.childNodes) walk(c);
+    };
+    walk(root);
+    return out.replace(/\s+/g, " ").trim().slice(0, limit);
+  }
+
   function readPage() {
     const chart = readChartText();
     const tables = readTables();
@@ -2525,7 +2547,7 @@
     // A bounded sample of the page's own text. Some pages state their subject
     // in prose rather than a heading - "0 miles N of Hermantown, MN" - and
     // without this there is no way to tell such a page is about that place.
-    const bodyText = textOf(document.body || document.documentElement).slice(0, 4000);
+    const bodyText = readableBodyText(document.body || document.documentElement, 4000);
 
     return {
       url: location.href,

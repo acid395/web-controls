@@ -5208,8 +5208,32 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
         continue;
       }
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
-      observation = read.ok ? summariseForModel(read.result) : "could not read the page";
-      history.push({ did: "read the page", outcome: read.ok ? "got its values" : "failed" });
+      let seen = read.ok ? summariseForModel(read.result) : "could not read the page";
+      // The numbers behind the picture, where the picture cannot be read.
+      //
+      // A chart painted to a canvas yields nothing to readPage, by
+      // construction - and after "view the 7 day graph" a canvas hydrograph
+      // is the whole of what the page is for. So "explain what the data is
+      // saying" was answered from the furniture around a chart whose series
+      // this extension had already captured, off the request the chart
+      // itself made. Reading the picture is guesswork; reading what it drew
+      // is not.
+      const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
+      const series = ((feeds.ok && feeds.result && feeds.result.series) || [])
+        .filter((x) => x && x.count >= 3);
+      if (series.length) {
+        const lines = series.slice(0, 6).map((x) =>
+          `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
+        const nothingRead = !read.ok || seen === "nothing readable";
+        seen = [
+          nothingRead ? null : seen,
+          "the series this page's charts are drawn from:",
+          ...lines,
+        ].filter(Boolean).join("\n").slice(0, 2200);
+      }
+      observation = seen;
+      history.push({ did: "read the page",
+        outcome: read.ok || series.length ? "got its values" : "failed" });
       continue;
     }
 
@@ -5890,12 +5914,66 @@ function actionToCall(act, control, s) {
 // rows, not prose: the model needs what the page says, not how it says it.
 function summariseForModel(read) {
   if (!read) return "nothing readable";
-  const bits = [];
-  for (const p of (read.pairs || []).slice(0, 14)) bits.push(`${p.label}: ${p.value}`);
-  for (const n of (read.labelledNumbers || []).slice(0, 10)) bits.push(String(n.text).slice(0, 60));
+  // The table first, and nothing it already says is said again.
+  //
+  // A page whose content is a table had that table described three times
+  // over - once as label/value pairs, once as a run of labelled numbers, and
+  // once as itself. Three renderings of one set of numbers, and prefill is
+  // the slowest part of a request by a wide margin, so it was paying three
+  // times for the page and leaving less room inside the same budget for the
+  // page to be shown in full.
+  const nums = (t) => (String(t).match(/-?\d+(?:\.\d+)?/g) || []);
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+  const tableLines = [];
+  const inTable = new Set();
+  const tableWords = new Set();
+  // The same content with every separator taken out. A table scraped as one
+  // run of text - "DateDischarge 2026-09-2048202026-09-222260" - is the table
+  // and nothing else, but squashing it together invents figures the table
+  // does not carry, so neither the numbers nor the words catch it.
+  const squash = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  let tableSquashed = "";
   for (const t of (read.tables || []).slice(0, 2)) {
-    bits.push(`table [${(t.columns || []).join(" | ")}]`);
-    for (const row of (t.rows || []).slice(0, 6)) bits.push(`  ${row.join(" | ")}`);
+    tableLines.push(`table [${(t.columns || []).join(" | ")}]`);
+    for (const c of t.columns || []) {
+      if (flat(c)) tableWords.add(flat(c));
+      tableSquashed += squash(c);
+    }
+    for (const row of (t.rows || []).slice(0, 6)) {
+      tableLines.push(`  ${row.join(" | ")}`);
+      for (const cell of row) {
+        for (const n of nums(cell)) inTable.add(n);
+        if (flat(cell)) tableWords.add(flat(cell));
+        tableSquashed += squash(cell);
+      }
+    }
+  }
+  // Said already if every number in it is one the table carries. Judged on
+  // the numbers rather than the words, because the duplicate renderings
+  // reword freely and none of them reword the figures - which are the part
+  // worth not repeating.
+  const saidAlready = (text) => {
+    const ns = nums(text);
+    if (ns.length > 0 && ns.every((n) => inTable.has(n))) return true;
+    // No figures in it at all: the column headers restated as a pair. Judged
+    // on the words instead, and only where every word of it is the table's.
+    const ws = flat(text).split(" ").filter(Boolean);
+    if (ws.length > 0 && ws.every((w) => tableWords.has(w))) return true;
+    const sq = squash(text);
+    return sq.length > 8 && tableSquashed.includes(sq);
+  };
+
+  const bits = [...tableLines];
+  for (const p of (read.pairs || []).slice(0, 14)) {
+    const line = `${p.label}: ${p.value}`;
+    if (!saidAlready(line)) bits.push(line);
+  }
+  for (const n of (read.labelledNumbers || []).slice(0, 10)) {
+    // Judged whole, then cut. Cutting first mangled the last figure into one
+    // the table does not carry, so a line made entirely of the table's own
+    // numbers survived the check that exists to remove it.
+    if (saidAlready(n.text)) continue;
+    bits.push(String(n.text).slice(0, 60));
   }
   if (!bits.length && read.text) bits.push(String(read.text).slice(0, 400));
   return bits.join("\n").slice(0, 1600);
@@ -6141,6 +6219,37 @@ function didItMove(ran) {
   return !!(ran && ran.verified && ran.verified.changed);
 }
 
+// A page that is still arriving has nothing to act on yet.
+//
+// Nothing waited for a navigation. "...view the 7 day graph for the first
+// location and then view the tabular data on that page" pressed the link,
+// moved to the location page, and immediately read the controls of a page
+// part-way through loading - so the last step found nothing and the chain
+// ended one step short. The click was right; the reading was too early.
+//
+// A tab with no status at all is treated as settled rather than waited on:
+// Chrome always sets one, and anything else asking is not a browser.
+async function waitForPageLoad({ timeoutMs = 10000 } = {}) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.status || tab.status === "complete") return true;
+    if (!(chrome.tabs && chrome.tabs.onUpdated && chrome.tabs.onUpdated.addListener)) return true;
+    return await new Promise((resolve) => {
+      let timer = null;
+      const stop = (ok) => {
+        try { chrome.tabs.onUpdated.removeListener(heard); } catch (e) { /* already gone */ }
+        if (timer) clearTimeout(timer);
+        resolve(ok);
+      };
+      const heard = (id, info) => { if (id === tab.id && info.status === "complete") stop(true); };
+      chrome.tabs.onUpdated.addListener(heard);
+      timer = setTimeout(() => stop(false), timeoutMs);
+    });
+  } catch (e) {
+    return true;   // never let waiting be the thing that fails an action
+  }
+}
+
 async function runVerified(routeGlobal, toolCall) {
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
@@ -6158,6 +6267,16 @@ async function runVerified(routeGlobal, toolCall) {
   if (!diff.ok) return result;
 
   if (diff.result.changed) forgetPageTools();
+  // Somewhere else entirely now. Everything cached describes the page that
+  // was left behind, and whoever acts next has to be looking at the one that
+  // arrived - so this is settled here, once, rather than by each caller
+  // remembering to.
+  if (diff.result.navigated) {
+    await waitForPageLoad();
+    forgetPageTools();
+    forgetInventory();
+    forgetMeaning();
+  }
   return {
     ...result,
     verified: {
@@ -7082,6 +7201,37 @@ const PARAPHRASE_CASES = [
 // 1 year and then reported that it could not tell whether the second half
 // had worked, on a checkbox the clause named exactly and which the same
 // words on their own set without trouble.
+// "search X", carried out on the page's own search box.
+//
+// This lived inline in the single-instruction path behind a
+// splitIntoSteps(...).length === 1 guard, so "search arizona" worked on its
+// own and the identical words inside a sequence reported "nothing on this
+// page matched". A clause is a clause; the sequence being able to do less
+// than its own clauses is the sequence being wrong.
+const SEARCH_CLAUSE =
+  /^\s*(?:please\s+)?(?:search|find|look\s*up|search\s+for)\s+(?:for\s+)?(.+?)\s*$/i;
+
+async function searchClause(routeGlobal, clause) {
+  const asked = String(clause || "").match(SEARCH_CLAUSE);
+  if (!asked) return null;
+  const words = asked[1].trim();
+  if (!words) return null;
+  const sinv = await readInventory();
+  const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []));
+  if (!box) return null;
+  if (box.hidden && box.revealedBy) {
+    await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
+    forgetPageTools();
+  }
+  const filled = await runVerified(routeGlobal,
+    { name: "pageFill", args: { selector: box.selector, text: words } });
+  if (filled.ok === false) return null;
+  const sent = await runVerified(routeGlobal,
+    { name: "pageSubmit", args: { selector: box.selector } });
+  if (!sent || sent.ok === false) return null;
+  return { ok: true, verified: { changed: true }, words, box, label: box.label };
+}
+
 async function actOnExactlyNamedClause(routeGlobal, clause) {
   const inv = await readInventory();
   const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
@@ -7727,6 +7877,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // produced it, and the comparison the scorer is kept for needs that
       // on every answer, not only the ones the model won.
       let modelTried = false;
+      // Which one. "Is this using the 8B?" could not be answered from a card
+      // where the model had been asked and its answer discarded: the source
+      // line named the route, and the note said "the local model" without
+      // saying which. The whole point of offering six is being able to tell
+      // them apart afterwards.
+      let modelUsed = null;
       let modelSaid = null;
       // Why the run stopped, in its own words. The loop works out something
       // specific - that a name fits more than one control, that it kept
@@ -7762,12 +7918,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // answering. Worth saying outright: the two are meant to be
           // compared, and an unlabelled answer counts for neither.
           !modelSkipped && modelTried && res.plannedBy !== "model"
-            ? "the local model planned nothing here, so this is the keyword baseline"
+            ? `${modelUsed ? modelName(modelUsed) : "the local model"} planned nothing here,`
+              + " so this is the keyword baseline"
               + (modelSaid ? ` - it replied: ${String(modelSaid).slice(0, 120)}` : "")
             : null,
           res.ok === false && ruleTried ? ruleTried : null,
         ].filter(Boolean).join(" - ");
         if (display && why) display.note = display.note ? `${display.note} - ${why}` : why;
+        // The route alone was the source on every card the model did not
+        // plan, so a run that asked a model and threw its answer away looked
+        // identical to one where no model existed.
+        if (display && modelTried && modelUsed && res.plannedBy !== "model") {
+          display.source = `${display.source || route.global} - asked ${modelName(modelUsed)}`;
+        }
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
         recordAsk(askId, msg.instruction, {
           status: res.ok === false ? "error" : "done",
@@ -7940,36 +8103,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // It cost forty-five seconds and a wrong press before: the model was
         // offered typing and pressing and nothing that meant searching, so
         // it pressed a link called Public Health.
-        const askedSearch = String(wanted)
-          .match(/^\s*(?:please\s+)?(?:search|find|look\s*up|search\s+for)\s+(?:for\s+)?(.+?)\s*$/i);
+        const askedSearch = SEARCH_CLAUSE.test(String(wanted));
         if (askedSearch && !forceBaseline && !forceModel && splitIntoSteps(wanted).length === 1) {
-          const sinv = await readInventory();
-          const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []));
-          const words = askedSearch[1].trim();
-          if (box && words) {
-            if (box.hidden && box.revealedBy) {
-              await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
-              forgetPageTools();
-            }
-            const filled = await runVerified(route.global,
-              { name: "pageFill", args: { selector: box.selector, text: words } });
-            const sent = filled.ok === false ? filled
-              : await runVerified(route.global,
-                { name: "pageSubmit", args: { selector: box.selector } });
-            if (sent && sent.ok !== false) {
-              respond({
-                ...sent, ok: true, plannedBy: "exact-match",
-                toolCall: { name: "pageSubmit", args: { selector: box.selector } },
-                display: {
-                  title: `searched for "${words.slice(0, 40)}"`,
-                  subtitle: `put into ${box.label || "this page's search"} and submitted`,
-                  stats: [], rows: [],
-                  note: "this page has a search box, so this did not wait for the model",
-                  source: "this page",
-                },
-              });
-              return;
-            }
+          const did = await searchClause(route.global, wanted).catch(() => null);
+          if (did) {
+            respond({
+              ok: true, plannedBy: "exact-match", verified: did.verified,
+              toolCall: { name: "pageSubmit", args: { selector: did.box.selector } },
+              display: {
+                title: `searched for "${did.words.slice(0, 40)}"`,
+                subtitle: `put into ${did.box.label || "this page's search"} and submitted`,
+                stats: [], rows: [],
+                note: "this page has a search box, so this did not wait for the model",
+                source: "this page",
+              },
+            });
+            return;
           }
         }
 
@@ -8363,6 +8512,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           if (status && status.ready) {
             modelTried = true;
+            modelUsed = (status && status.model) || null;
             // One part at a time, each with its own turn budget, so a
             // two-part instruction is two short runs rather than one long
             // one that may never reach the second half.
@@ -8677,6 +8827,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // right answer, a fill of the search box, all along. The main
                 // route has preferred the page since the one-list picker
                 // landed; the sequence never did.
+                // Searching first: "search arizona" names no control, so
+                // every path below it looks for one and reports that nothing
+                // matched.
+                const searched = await searchClause(route.global, text).catch(() => null);
+                if (searched) {
+                  steps.push({ part, ok: true, changed: true, unconfirmed: false });
+                  continue;
+                }
                 const exact = await actOnExactlyNamedClause(route.global, text).catch(() => null);
                 if (exact) {
                   steps.push({ part, ok: true, changed: exact.verified.changed !== false,

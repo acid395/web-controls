@@ -28,8 +28,8 @@ globalThis.WC_MODELS = [
     name: "Qwen2.5 1.5B",
     vramMB: 1630,
     aliases: ["qwen", "15b", "qwen15b", "qwen2515b"],
-    note: "the default - the smallest that is usually right",
-    default: true,
+    note: "small and quick; the fallback where a big one will not fit",
+    fallback: true,
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
@@ -50,12 +50,42 @@ globalThis.WC_MODELS = [
     name: "Llama 3.1 8B",
     vramMB: 5001,
     aliases: ["8b", "llama8b", "llama318b"],
-    note: "best at choosing; needs a large GPU to itself",
+    note: "the default - best at chaining several steps",
+    default: true,
+  },
+  {
+    id: "Qwen3-8B-q4f16_1-MLC",
+    name: "Qwen3 8B",
+    vramMB: 5696,
+    aliases: ["qwen3", "qwen38b"],
+    note: "newer than the Llama of the same size",
+  },
+  {
+    // Ran a four-step instruction end to end on waterdata.usgs.gov that the
+    // 1.5B got three quarters of the way through. The largest here that is
+    // still a plausible thing to run beside a heavy page.
+    id: "Qwen3.5-9B-q4f16_1-MLC",
+    name: "Qwen3.5 9B",
+    vramMB: 6433,
+    aliases: ["9b", "qwen35", "qwen359b"],
+    note: "chains several steps where the small ones lose the thread",
   },
 ];
 
 globalThis.WC_DEFAULT_MODEL =
   (globalThis.WC_MODELS.find((m) => m.default) || globalThis.WC_MODELS[0]).id;
+
+// Where the default will not fit. Defaulting to five gigabytes means every
+// machine that cannot hold it gets a load failure instead of a working
+// extension, so there has to be somewhere to land - and landing somewhere is
+// better than a picker nobody knew they had to touch.
+globalThis.WC_FALLBACK_MODEL =
+  (globalThis.WC_MODELS.find((m) => m.fallback) || globalThis.WC_MODELS[0]).id;
+
+globalThis.WC_MODEL_VRAM = function (id) {
+  const hit = globalThis.WC_MODELS.find((m) => m.id === id);
+  return hit ? hit.vramMB : 0;
+};
 
 globalThis.WC_MODEL_IDS = globalThis.WC_MODELS.map((m) => m.id);
 

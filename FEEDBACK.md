@@ -13,8 +13,11 @@ anywhere in the repo.
 
 ## Setting it up
 
-You need Chrome and a GPU that supports WebGPU. Roughly 1GB downloads on
-first use and is cached after that.
+You need Chrome and a GPU that supports WebGPU. The default model is Llama
+3.1 8B, about 5GB, downloaded once and cached after that. If your GPU cannot
+hold it the extension drops to a 1GB model by itself and says so under the
+picker - so a smaller machine still works, it just chains multi-step
+instructions less well.
 
 1. `chrome://extensions` → turn on **Developer mode** (top right).
 2. **Load unpacked** → choose the `extension/` folder.

@@ -246,8 +246,11 @@
       <div class="tool-group">
         <h2>Local model</h2>
         <div class="hint">
-          A local model, roughly 1GB on first load, which needs WebGPU and
-          saturates it while running. Everything else here works without it.
+          A local model, which needs WebGPU and saturates it while running.
+          The default is Llama 3.1 8B - about 5GB on first load, and worth it
+          for anything with several steps in it. A machine that cannot hold it
+          falls back to Qwen2.5 1.5B on its own and says so below. Everything
+          else here works without a model at all.
           Prefix any question with <code>model:</code> to put it to the model
           directly, and type <code>use 1b</code>, <code>use 3b</code>,
           <code>use 7b</code> or <code>use 8b</code> in the ask box to change

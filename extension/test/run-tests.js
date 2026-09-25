@@ -37,6 +37,14 @@ let reported = false;
 // file: a section that runs early would otherwise hit the temporal dead zone
 // and take the rest of the suite down with it.
 let pendingAsync = 0;
+// Declared here rather than beside pumpAsync: runAsync is hoisted and called
+// from the first section onwards, while a `const` further down is not
+// initialised until the file reaches it - so the first test to queue anything
+// threw "Cannot access 'asyncQueue' before initialization" and took the run
+// with it.
+const ASYNC_LIMIT = 4;
+const asyncQueue = [];
+let asyncRunning = 0;
 let exiting = false;
 
 const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
@@ -948,6 +956,20 @@ else {
   ensure("there is more than one model to choose from", MODELS.length >= 4, MODELS.length);
   ensure("exactly one is the default",
     MODELS.filter((m) => m.default).length === 1, MODELS.filter((m) => m.default).length);
+  // Defaulting to five gigabytes is only safe because there is somewhere to
+  // land. Without a fallback, every machine that cannot hold the default gets
+  // a load failure instead of a working extension, over a choice it never
+  // made.
+  ensure("exactly one is the fallback",
+    MODELS.filter((m) => m.fallback).length === 1, MODELS.filter((m) => m.fallback).length);
+  const dflt = MODELS.find((m) => m.default);
+  const back = MODELS.find((m) => m.fallback);
+  ensure("and the fallback is the smaller of the two", back.vramMB < dflt.vramMB,
+    `${back.name} ${back.vramMB} vs ${dflt.name} ${dflt.vramMB}`);
+  ensure("the fallback fits an ordinary GPU", back.vramMB <= 2048, back.vramMB);
+  check("WC_DEFAULT_MODEL is that default", globalThis.WC_DEFAULT_MODEL, dflt.id);
+  check("WC_FALLBACK_MODEL is that fallback", globalThis.WC_FALLBACK_MODEL, back.id);
+  check("and a model's size is readable by id", globalThis.WC_MODEL_VRAM(dflt.id), dflt.vramMB);
 
   // The one that cannot be caught by reading the code: an id that is not a
   // real WebLLM model loads fine in every test here and fails only on a real
@@ -993,6 +1015,169 @@ else {
   // string with its quantisation suffix hanging off it.
   check("an unregistered id is still legible",
     globalThis.WC_MODEL_NAME("Phi-3-mini-4k-instruct-q4f16_1-MLC"), "Phi 3 mini 4k instruct");
+}
+
+// A page whose content is a table had that table put in front of the model
+// three times over: once as label/value pairs, once as a run of labelled
+// numbers, and once as itself. Prefill is the slowest part of a request by a
+// wide margin, and the summary is capped - so the duplicates were not only
+// paying three times for one set of numbers, they were pushing the rest of
+// the page out of the budget meant to carry it.
+{
+  const bgs = loadBackground({});
+  const read = {
+    tables: [{ columns: ["Date", "Discharge"],
+      rows: [["2026-09-20", "4820"], ["2026-09-22", "2260"]] }],
+    // The three shapes a scraper gets from one table.
+    pairs: [{ label: "Date", value: "Discharge" }, { label: "Gage height", value: "3.11 ft" }],
+    labelledNumbers: [{ text: "DateDischarge 2026-09-2048202026-09-222260" },
+      { text: "Drainage area 11560 sq mi" }],
+  };
+  const out = bgs.summariseForModel(read);
+  const lines = out.split("\n").filter(Boolean);
+  ensure("the table is shown", /table \[Date \| Discharge\]/.test(out), out);
+  ensure("with its rows", /4820/.test(out) && /2260/.test(out), out);
+  check("and each figure appears once", (out.match(/4820/g) || []).length, 1);
+  ensure("the headers are not restated as a pair",
+    !/^Date: Discharge$/m.test(out), out);
+  ensure("nor the whole table as one squashed run",
+    !/2048202026/.test(out), out);
+  // Everything the table does not carry survives. Removing duplicates must
+  // not remove the page.
+  ensure("a figure the table does not carry is kept", /11560/.test(out), out);
+  ensure("and so is a value of its own", /3\.11/.test(out), out);
+  ensure("so the summary is shorter than the sum of its parts", lines.length <= 6, lines);
+}
+
+// Nothing waited for a navigation. "...view the 7 day graph for the first
+// location and then view the tabular data on that page" pressed the link,
+// arrived on the location page, and read its controls while it was still
+// loading - so the last step found nothing and a four-step instruction
+// stopped at three. The press was right; the reading was too early.
+{
+  const bgn = loadBackground({});
+  const calls = [];
+  runAsync(async () => {
+    // Still arriving, then finished. The wait has to end when it lands, not
+    // when the clock runs out.
+    let heard = null;
+    bgn.chrome.tabs.query = async () => [{ id: 7, url: "https://x/", active: true, status: "loading" }];
+    bgn.chrome.tabs.onUpdated.addListener = (fn) => { heard = fn; };
+    bgn.chrome.tabs.onUpdated.removeListener = () => { heard = null; };
+    const began = Date.now();
+    const waiting = bgn.waitForPageLoad({ timeoutMs: 5000 });
+    await new Promise((r) => setTimeout(r, 30));
+    ensure("it waits while the page is still arriving", heard !== null, "nobody listening");
+    if (heard) heard(7, { status: "complete" });
+    check("and stops the moment it lands", await waiting, true);
+    ensure("without sitting out the timeout", Date.now() - began < 2000, Date.now() - began);
+
+    // A tab that reports no status at all is settled, not pending. Chrome
+    // always sets one; treating its absence as "still loading" would make
+    // every action wait out the clock for nothing.
+    bgn.chrome.tabs.query = async () => [{ id: 7, url: "https://x/", active: true }];
+    const began2 = Date.now();
+    check("no status means nothing to wait for", await bgn.waitForPageLoad({ timeoutMs: 5000 }), true);
+    ensure("and it returns at once", Date.now() - began2 < 500, Date.now() - began2);
+
+    // A page that never finishes must not hold the action for ever.
+    bgn.chrome.tabs.query = async () => [{ id: 7, url: "https://x/", active: true, status: "loading" }];
+    bgn.chrome.tabs.onUpdated.addListener = () => { calls.push("listened"); };
+    check("a page that never lands gives up", await bgn.waitForPageLoad({ timeoutMs: 300 }), false);
+
+    // And a browser without the API at all is not a reason to fail.
+    bgn.chrome.tabs.onUpdated = undefined;
+    check("no onUpdated is not a failure", await bgn.waitForPageLoad({ timeoutMs: 300 }), true);
+  });
+}
+
+// "Explain what the data is saying", on a page whose data is a picture.
+//
+// A canvas chart yields nothing to readPage by construction, and after "view
+// the 7 day graph" a canvas hydrograph is the whole of what the page is for -
+// so the question was answered from the furniture around a chart whose series
+// this extension had already captured off the request the chart itself made.
+// Reading the picture is guesswork; reading what it drew is not.
+{
+  const canvasPage = loadPage(`<!doctype html><html><head><title>USGS 15515500</title></head>
+    <body><h1>Tanana River at Nenana AK</h1><canvas width="600" height="300"></canvas>
+    <script>var CONFIG={secretLookingButMerelyLong:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"};<\/script>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/15515500/" });
+  if (canvasPage) {
+    canvasPage.window.__wcFeedCapture = { installedAt: Date.now(), feeds: [{
+      url: "https://waterservices.usgs.gov/nwis/iv/?sites=15515500&parameterCd=00060",
+      method: "GET", status: 200, contentType: "application/json", bytes: 900,
+      body: JSON.stringify({ values: [{ discharge: 2140 }, { discharge: 2050 },
+        { discharge: 4820 }, { discharge: 3310 }, { discharge: 2260 }] }) }] };
+    const bgc = loadBackground({ page: canvasPage });
+    let observed = null;
+    bgc.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        if (m.observation) { observed = String(m.observation);
+          return { ok: true, step: { do: "finish", answer: "Flow peaked at 4820." } }; }
+        return { ok: true, step: { do: "read" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgc.__ask({ type: "smartAsk", instruction: "explain me what the data is saying" });
+      ensure("a question about a canvas chart still reaches the model",
+        r.plannedBy === "model", r.plannedBy);
+      ensure("and the model is given the series behind the picture",
+        /discharge/.test(observed || ""), observed);
+      ensure("with its range", /2050/.test(observed || "") && /4820/.test(observed || ""), observed);
+      ensure("and the answer comes back", /4820/.test(String(r.answer || "")), r.answer);
+      // The page's words, not the page's code. textContent on <body> takes
+      // the contents of every <script> with it, so the sample meant to carry
+      // what the page says was carrying JavaScript.
+      ensure("and no script source is fed to it",
+        !/secretLookingButMerelyLong|var CONFIG/.test(observed || ""), observed);
+      ensure("while the page's own heading survives",
+        /Tanana/.test(observed || ""), observed);
+    });
+  }
+}
+
+// "search arizona then click show my favorite options and select huc -06
+// basin" reported: nothing on this page matched "search arizona" - on a page
+// with a search box, where those same words on their own fill it and submit.
+// The search handling sat behind a splitIntoSteps(...).length === 1 guard, so
+// it was available to an instruction of one clause and to no other. Same
+// shape as the named-control clause before it: the sequence able to do less
+// than its own clauses is the sequence being wrong.
+{
+  const seqSearch = `<!doctype html><html><body>
+    <form role="search"><input type="search" id="q" placeholder="Search"><button type="submit">Go</button></form>
+    <button id="fav">Show My Favorite Options</button>
+    <label><input type="checkbox" id="h6"> HUC-06 Basin</label>
+    </body></html>`;
+  for (const [what, instr, wantFilled, wantChecked] of [
+    ["on its own", "search arizona", "arizona", false],
+    ["as the first of two", "search arizona then click show my favorite options", "arizona", false],
+    ["as the first of three",
+      "search arizona then click show my favorite options and select huc -06 basin", "arizona", true],
+  ]) {
+    const page = loadPage(seqSearch, { url: "https://waterdata.usgs.gov/state/Alaska/" });
+    if (!page) continue;
+    const bgs2 = loadBackground({ page });
+    // No model at all: this is the page's own doing, and has to be.
+    bgs2.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: true } : undefined);
+    runAsync(async () => {
+      const r = await bgs2.__ask({ type: "smartAsk", instruction: instr });
+      check(`${what}: the words reach the search box`,
+        page.document.getElementById("q").value, wantFilled);
+      ensure(`${what}: and it is not reported as unmatched`,
+        !/nothing on this page matched/.test(String((r.display || {}).subtitle || r.error || "")),
+        (r.display || {}).subtitle || r.error);
+      // "huc -06" against "HUC-06 Basin": the spacing is the person's, the
+      // hyphen is the page's, and the figure is the same either way.
+      if (wantChecked) {
+        check(`${what}: and the later clause still runs`,
+          page.document.getElementById("h6").checked, true);
+      }
+    });
+  }
 }
 
 section("the model drives");
@@ -1943,7 +2128,19 @@ for (const b of budgets) {
     let turns = 0;
     bgt2.__model = (m) => {
       if (m.type === "llmStatus") return { ready: true, hasGpu: true };
-      if (m.type === "llmStep") { turns++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      if (m.type === "llmStep") {
+        turns++;
+        // Slow on purpose, once. The card only reports a duration when there
+        // was a wait worth reporting, and this passed for a while because the
+        // suite itself was slow enough to trip that threshold by accident -
+        // so it stopped passing the moment the suite got quicker, which is
+        // the test depending on the harness rather than on the rule.
+        if (turns === 1) {
+          return new Promise((r) => setTimeout(
+            () => r({ ok: true, step: { do: "finish", answer: "" } }), 1700));
+        }
+        return { ok: true, step: { do: "finish", answer: "" } };
+      }
       return undefined;
     };
     runAsync(async () => {
@@ -7569,8 +7766,14 @@ else {
   // The API moved from navigator to document. navigator still works but warns
   // on every access, which filled the extension's error list with noise on
   // any page this touches repeatedly.
+  // Its own page. This asked mcpPage, which the block below then gives the
+  // API to - so "a browser without it" was only true for as long as this
+  // happened to run before that line. A test of the absent case cannot share
+  // a page with the test that installs it.
+  const barePage = loadPage("<!doctype html><html><body><p>plain</p></body></html>",
+    { url: "https://example.gov/" });
   runAsync(async () => {
-    const bare = await mcpPage.GENERIC.mcpInfo();
+    const bare = await barePage.GENERIC.mcpInfo();
     check("an unsupporting browser is reported plainly", bare.available, false);
     ensure("and says what it would need", /modelContext/.test(bare.note), bare.note);
   });
@@ -8091,13 +8294,41 @@ if (process.argv.includes("--live")) {
 // 0, which reads as "all fine" to a person and to CI alike.
 // The suite is otherwise synchronous; these few need to await. Tracked so the
 // summary cannot print before they have finished.
+// Queued, a few at a time, rather than all at once.
+//
+// Every one of these used to start the moment the file reached it, so a
+// hundred end-to-end asks ran against each other on one event loop - each
+// waiting real milliseconds for a page to settle, none of them getting the
+// loop back in time. They starved each other, and the same code reported 2
+// failures, then 14, then 52, then 137, depending on nothing but what else
+// the machine was doing. A suite that is red for that reason hides the
+// failures worth seeing, and it cost three separate attempts to verify one
+// small change.
+//
+// It also made the suite sensitive to its own length: adding a single empty
+// task at one point in the file reliably turned five model tests red,
+// because the click they verify was judged "nothing changed" when its
+// snapshot arrived late. Bounded, that cannot happen - a new test queues
+// behind the others instead of competing with them.
+//
+// Four, not one: these are mostly waiting, so some overlap is free, and
+// serialising them outright would make the suite far slower than it needs
+// to be for no extra certainty.
+function pumpAsync() {
+  while (asyncRunning < ASYNC_LIMIT && asyncQueue.length) {
+    const fn = asyncQueue.shift();
+    asyncRunning++;
+    fn().catch((err) => {
+      failed++;
+      failures.push({ label: "end to end threw", actual: String((err && err.message) || err), expected: "no throw" });
+      console.log(`  FAIL end to end threw: ${(err && err.message) || err}`);
+    }).finally(() => { asyncRunning--; pendingAsync--; pumpAsync(); });
+  }
+}
 function runAsync(fn) {
   pendingAsync++;
-  fn().catch((err) => {
-    failed++;
-    failures.push({ label: "end to end threw", actual: String((err && err.message) || err), expected: "no throw" });
-    console.log(`  FAIL end to end threw: ${(err && err.message) || err}`);
-  }).finally(() => { pendingAsync--; });
+  asyncQueue.push(fn);
+  pumpAsync();
 }
 
 function report() {

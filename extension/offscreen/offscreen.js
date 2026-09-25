@@ -257,7 +257,15 @@ let engineReady = false; // a Promise can't be asked "are you resolved yet?" dir
 // available memory the next thing to ask for some is what falls over. The
 // cache keeps the download, so coming back costs a load rather than a
 // fetch.
-const IDLE_RELEASE_MS = 5 * 60 * 1000;
+// How long an idle model is worth keeping, against what reloading it costs.
+// A flat five minutes was right for a one gigabyte model and exactly wrong
+// for an eight billion parameter one: the second ask of the afternoon paid
+// the whole five gigabyte load again, which is the opposite of the reason
+// somebody chose the big one. The bigger it is, the longer it stays.
+function idleReleaseMs() {
+  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
+  return mb >= 4000 ? 60 * 60 * 1000 : 5 * 60 * 1000;
+}
 let idleTimer = null;
 function touchEngine() {
   if (idleTimer) clearTimeout(idleTimer);
@@ -270,7 +278,7 @@ function touchEngine() {
     enginePromise = null;
     engineReady = false;
     lastProgress = null;
-  }, IDLE_RELEASE_MS);
+  }, idleReleaseMs());
 }
 
 // Meaning, as distinct from judgment.
@@ -289,10 +297,29 @@ function touchEngine() {
 //
 // Small on purpose: arctic-embed-s is tens of megabytes beside the 1.5B's
 // gigabyte, and this machine has already had Chrome fall over once.
+//
+// "Small" stopped being the whole story when the default became an eight
+// billion parameter model. This wants a gigabyte of its own, on top of the
+// planner's five, and it is loaded lazily - in the middle of an instruction,
+// on a card where running out of video memory would read as the model
+// refusing. Narrowing the control list is an optimisation and the caller
+// already copes with not getting it, so where the planner is large this
+// stands down rather than competing with it for the GPU.
 const EMBED_MODEL_ID = "snowflake-arctic-embed-s-q0f32-MLC";
+const EMBED_VRAM_MB = 1023;
+const BIG_PLANNER_MB = 4000;
 let embedPromise = null;
 let embedReady = false;
+function embedderWouldCrowdThePlanner() {
+  const planner = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
+  return planner >= BIG_PLANNER_MB;
+}
 function getEmbedder(onProgress) {
+  if (embedderWouldCrowdThePlanner()) {
+    return Promise.reject(new Error(
+      `not loading the embedder (${EMBED_VRAM_MB}MB) beside ${MODEL_ID}`
+      + " - the planner needs the GPU more than the shortlist does"));
+  }
   if (!embedPromise) {
     embedPromise = CreateMLCEngine(EMBED_MODEL_ID, {
       initProgressCallback: (report) => {
@@ -303,24 +330,45 @@ function getEmbedder(onProgress) {
   return embedPromise;
 }
 
+let fellBackTo = null;   // reported, so a card never silently names the wrong one
+
+function buildEngine(id, onProgress) {
+  return CreateMLCEngine(id, {
+    initProgressCallback: (report) => {
+      // Kept, not just forwarded: the panel may not be open when this
+      // arrives, and "still downloading, 41%" is the answer to why the
+      // model did not plan.
+      lastProgress = String((report && report.text) || "").slice(0, 120);
+      if (onProgress) onProgress(report);
+    },
+  });
+}
+
 function getEngine(onProgress) {
   touchEngine();
   if (!enginePromise) {
     // The choice first, then the engine. Building one before knowing which
     // model was asked for is how the wrong weights get two gigabytes of
     // download and every decision after it.
-    enginePromise = chosenModelId().then((id) => CreateMLCEngine(id, {
-      initProgressCallback: (report) => {
-        // Kept, not just forwarded: the panel may not be open when this
-        // arrives, and "still downloading, 41%" is the answer to why the
-        // model did not plan.
-        lastProgress = String((report && report.text) || "").slice(0, 120);
-        if (onProgress) onProgress(report);
-      },
-    })).then((engine) => {
-      engineReady = true;
-      return engine;
-    });
+    enginePromise = chosenModelId()
+      .then((id) => buildEngine(id, onProgress).catch((err) => {
+        // The default is five gigabytes and plenty of machines cannot hold
+        // it. Failing outright would make the extension worse for everyone
+        // whose GPU is ordinary, over a choice they never made - so it lands
+        // on the small one and says so, rather than leaving a person to
+        // discover a picker they did not know existed.
+        const small = globalThis.WC_FALLBACK_MODEL;
+        if (!small || id === small) throw err;
+        fellBackTo = { from: id, to: small, why: String((err && err.message) || err).slice(0, 160) };
+        lastProgress = `${id} would not load here - falling back to ${small}`;
+        MODEL_ID = small;
+        return buildEngine(small, onProgress);
+      }))
+      .then((engine) => {
+        engineReady = true;
+        return engine;
+      })
+      .catch((err) => { enginePromise = null; engineReady = false; throw err; });
   }
   return enginePromise;
 }
@@ -393,6 +441,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       started: !!enginePromise,
       progress: lastProgress || null,
       model: MODEL_ID,
+      // MODEL_ID already reads as the one that loaded, but not why. A card
+      // saying Qwen2.5 1.5B when the panel says Llama 3.1 8B is a bug report
+      // waiting to happen unless it also says the big one would not fit.
+      fellBack: fellBackTo,
     });
     return; // synchronous, no need to keep the channel open
   }
