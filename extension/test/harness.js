@@ -18,7 +18,12 @@ const EXT = path.join(__dirname, "..");
 // so a message can be sent in and an answer waited for, end to end.
 function loadBackground({ onFetch, page } = {}) {
   const requests = [];
-  let messageHandler = null;
+  // Chrome delivers a message to every listener; this kept only the last
+  // one, so a second addListener silently replaced the first. That is not a
+  // detail: background.js registers one listener for asks and another for
+  // model-loading progress, and under this stub whichever registered last
+  // was the only one that existed.
+  const messageHandlers = [];
   const sandbox = {
     console,
     __wcQuiet: true,   // the product logs every ask; tests do not need it
@@ -36,7 +41,7 @@ function loadBackground({ onFetch, page } = {}) {
       runtime: {
         onStartup: { addListener() {} },
         onInstalled: { addListener() {} },
-        onMessage: { addListener(fn) { messageHandler = fn; } },
+        onMessage: { addListener(fn) { messageHandlers.push(fn); } },
         getPlatformInfo(cb) { cb && cb({}); },
         // Messages to the offscreen document are the model talking. There is
         // no WebGPU here and never will be, so a test scripts the decisions
@@ -53,6 +58,14 @@ function loadBackground({ onFetch, page } = {}) {
         getURL: (p) => `chrome-extension://test/${p}`,
         getManifest: () => JSON.parse(fs.readFileSync(path.join(EXT, "manifest.json"), "utf8")),
         getContexts: async () => [],
+      },
+      // The toolbar icon. Loading progress goes here because it is the only
+      // surface visible when the panel is shut, which is exactly when a
+      // first download is running.
+      action: {
+        setBadgeText: (o) => { sandbox.__badge = (o && o.text) || ""; },
+        setBadgeBackgroundColor: () => {},
+        setTitle: (o) => { sandbox.__actionTitle = (o && o.title) || ""; },
       },
       tabs: {
         query: async () => (page ? [{ id: 1, url: page.location.href, active: true }] : []),
@@ -127,7 +140,7 @@ function loadBackground({ onFetch, page } = {}) {
   // which is a harness budget, not a product fault: raising it hides nothing,
   // because a genuine hang still exhausts it.
   sandbox.__ask = (message, { timeoutMs = 60000 } = {}) => new Promise((resolve, reject) => {
-    if (!messageHandler) return reject(new Error("background.js registered no onMessage listener"));
+    if (!messageHandlers.length) return reject(new Error("background.js registered no onMessage listener"));
     // Which ask hung. "The handler never responded" names no instruction, so
     // an intermittent one sent several rounds of guessing at code that was
     // not involved.
@@ -137,7 +150,10 @@ function loadBackground({ onFetch, page } = {}) {
     let done = false;
     const sendResponse = (res) => { if (done) return; done = true; clearTimeout(timer); resolve(res); };
     try {
-      messageHandler(message, { id: "test" }, sendResponse);
+      // Every listener sees it, as in Chrome. One of them answers; the rest
+      // are free to act on it and say nothing, which is what the progress
+      // listener does.
+      for (const fn of messageHandlers) fn(message, { id: "test" }, sendResponse);
     } catch (err) {
       clearTimeout(timer);
       reject(err); // a synchronous throw here fails every ask in the product

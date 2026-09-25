@@ -1180,6 +1180,144 @@ else {
   }
 }
 
+// "explain this data" on water.noaa.gov came back as: what "this data"
+// matches here - 163 controls scored, top hit a checkbox called "Data Not
+// Current", and an offer to run pageCheck on it. Two faults, one card.
+//
+// "explain X" is a diagnostic that reports what a phrase matches. It is also
+// how a person asks to be told what a page is showing, and the diagnostic was
+// taking those - a debugging verb helping itself to ordinary English, the
+// same fault the settings command had with "use".
+//
+// And the shortlist had no fallback. The embedder stands down beside a large
+// planner rather than fight it for the GPU, and with nothing in its place a
+// 163-control page went to the model whole: the largest prompt this can
+// build, handed to the slowest model it offers. Forty-seven seconds, and a
+// reply that could not be used.
+{
+  let big = `<table><tr><th>Gauge</th><th>Stage</th></tr>
+    <tr><td>Nenana</td><td>12.4</td></tr><tr><td>Fairbanks</td><td>8.1</td></tr></table>`;
+  for (let i = 0; i < 60; i++) big += `<a href="#l${i}">Layer option ${i}</a>`;
+  // Four controls carrying the word, as the real page had.
+  big += `<label><input type="checkbox"> Data Not Current</label>
+    <button>Data and APIs</button>
+    <a href="#cat">Data and Web Services Catalog</a>
+    <a href="#dl">Download this data</a>`;
+  const html = `<!doctype html><html><head><title>NWPS</title></head><body>${big}</body></html>`;
+
+  // Answered, not matched.
+  const answering = loadPage(html, { url: "https://water.noaa.gov/" });
+  if (answering) {
+    const bga = loadBackground({ page: answering });
+    let offered = null;
+    bga.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC" };
+      // A real embedder, near enough: a vector per label, close to the goal's
+      // where they share a word. The shortlist is what keeps a long page from
+      // going to the model whole, so it has to be exercised, not skipped.
+      if (m.type === "llmEmbed") {
+        const vec = (t) => {
+          const has = (w) => (String(t).toLowerCase().includes(w) ? 1 : 0);
+          return [has("data"), has("gauge"), has("stage"), has("layer"), 0.01];
+        };
+        return { ok: true, vectors: (m.texts || []).map(vec) };
+      }
+      if (m.type === "llmStep") {
+        if (offered === null) offered = (m.controls || []).length;
+        return m.observation
+          ? { ok: true, step: { do: "finish", answer: "Nenana 12.4, Fairbanks 8.1." } }
+          : { ok: true, step: { do: "read" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bga.__ask({ type: "smartAsk", instruction: "explain this data" });
+      check("a question about the data reaches the model", r.plannedBy, "model");
+      ensure("and is answered from the page", /12\.4/.test(String(r.answer || "")), r.answer);
+      ensure("not answered with what the words match",
+        !/matches here/.test(String((r.display || {}).title || "")), (r.display || {}).title);
+      // No embedder here, exactly as beside a large planner. Without a
+      // fallback this was the whole page.
+      // Twelve is what the shortlist keeps, against a page of sixty-odd.
+      // Without it the 8B got all 163 controls of water.noaa.gov: the
+      // largest prompt this can build, handed to the slowest model it has.
+      ensure("and the page is not sent whole",
+        offered !== null && offered <= 12 && offered < 60, offered);
+    });
+  }
+
+  // And where the model gets nowhere, a question is not answered by offering
+  // to press something. Ticking "Data Not Current" is not an explanation.
+  const stuck = loadPage(html, { url: "https://water.noaa.gov/" });
+  if (stuck) {
+    const bgs3 = loadBackground({ page: stuck });
+    bgs3.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmStep") return { ok: false, error: "the model stopped answering" };
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgs3.__ask({ type: "smartAsk", instruction: "explain this data" });
+      const stats = ((r.display || {}).stats || []).map((x) => `${x.label}=${x.value}`).join(",");
+      ensure("a model that got nowhere on a question offers no control to press",
+        !/would run/.test(stats), stats);
+      check("and nothing is pressed", [...stuck.document.querySelectorAll("input")]
+        .filter((x) => x.checked).length, 0);
+      // It also has to name which model got nowhere, with six to choose from.
+      const said = `${(r.display || {}).note || ""} ${(r.display || {}).source || ""}`;
+      ensure("while naming the model that was asked", /Llama 3\.1 8B/.test(said), said);
+    });
+  }
+
+  // The diagnostic itself still works, asked for plainly.
+  const diag = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox"> Gage height</label></body></html>`,
+    { url: "https://water.noaa.gov/" });
+  if (diag) {
+    const bgd2 = loadBackground({ page: diag });
+    bgd2.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: true } : undefined);
+    runAsync(async () => {
+      const r = await bgd2.__ask({ type: "smartAsk", instruction: "baseline: what matches gage height" });
+      ensure("and \"what matches X\" still reports what X matches",
+        /matches here/.test(String((r.display || {}).title || "")), (r.display || {}).title);
+    });
+  }
+}
+
+// Loading progress was broadcast to the panel and nowhere else, so the one
+// moment it matters most - somebody has just installed this and five
+// gigabytes are on the way - had nothing on screen at all. The panel is shut
+// then by definition: nobody opens a side panel before they know there is
+// something to wait for. The toolbar badge is the only surface always visible.
+{
+  const bgb = loadBackground({});
+  const say = (text) => {
+    for (const fn of (bgb.__messageHandlers || [])) fn({ type: "llmProgress", text }, { id: "t" }, () => {});
+  };
+  // Driven through the real listener, so this tests what Chrome would deliver.
+  bgb.__ask({ type: "llmProgress", text: "Fetching param cache[12/38]: 41% completed, 12 secs elapsed" },
+    { timeoutMs: 50 }).catch(() => {});
+  check("a percentage reaches the toolbar", bgb.__badge, "41%");
+  ensure("and the tooltip says what is happening",
+    /loading the local model/.test(bgb.__actionTitle || ""), bgb.__actionTitle);
+
+  bgb.__ask({ type: "llmProgress", text: "Finish loading on WebGPU" }, { timeoutMs: 50 }).catch(() => {});
+  check("and it clears when the model is ready", bgb.__badge, "");
+  ensure("with the tooltip back to normal",
+    /ask about this page/.test(bgb.__actionTitle || ""), bgb.__actionTitle);
+
+  // A message with no figure in it still says something is happening, rather
+  // than leaving the toolbar looking idle.
+  bgb.__ask({ type: "llmProgress", text: "Loading model from cache" }, { timeoutMs: 50 }).catch(() => {});
+  check("a message with no figure still shows activity", bgb.__badge, "...");
+
+  // Four characters is all a badge holds; anything longer is truncated rather
+  // than dropped.
+  bgb.__ask({ type: "llmProgress", text: "100% completed" }, { timeoutMs: 50 }).catch(() => {});
+  ensure("and a badge is never longer than it can show",
+    (bgb.__badge || "").length <= 4, bgb.__badge);
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the
@@ -5387,7 +5525,9 @@ if (!explainPage) skip("explain", "jsdom not installed");
 else {
   const bg = loadBackground({ page: explainPage });
   runAsync(async () => {
-    const r = await bg.__ask({ type: "smartAsk", instruction: "explain select snow depth" });
+    // "explain X" alone is how somebody asks to be told what a page shows,
+    // so the diagnostic answers to the unambiguous forms only.
+    const r = await bg.__ask({ type: "smartAsk", instruction: "what matches select snow depth" });
     ensure("it answers at all", !!(r && r.display), r);
     const d = (r && r.display) || {};
     ensure("it names the instruction", /snow depth/i.test(d.title || ""), d.title);

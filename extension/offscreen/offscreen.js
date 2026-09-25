@@ -314,12 +314,13 @@ function embedderWouldCrowdThePlanner() {
   const planner = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
   return planner >= BIG_PLANNER_MB;
 }
+// Tried, not refused. Standing this down beside a large planner removed the
+// only thing that narrows a long page, and a 163-control page then went to
+// the 8B whole: forty-seven seconds and an unusable reply, which is worse
+// than the out-of-memory this was avoiding. Where it does fail for want of
+// video memory the caller catches it and ranks by words instead, so the
+// shortlist survives either way and the prompt stays bounded.
 function getEmbedder(onProgress) {
-  if (embedderWouldCrowdThePlanner()) {
-    return Promise.reject(new Error(
-      `not loading the embedder (${EMBED_VRAM_MB}MB) beside ${MODEL_ID}`
-      + " - the planner needs the GPU more than the shortlist does"));
-  }
   if (!embedPromise) {
     embedPromise = CreateMLCEngine(EMBED_MODEL_ID, {
       initProgressCallback: (report) => {

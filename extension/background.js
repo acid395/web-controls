@@ -5060,6 +5060,13 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = 45000
           narrowedFrom = controls.length;
         }
       }
+      // A word-overlap shortlist was tried here, for when the embedder is
+      // unavailable. It cost two of the forty-four hand-written cases -
+      // "plot the water level" and "how much water is flowing" both started
+      // pressing things - because ranking by shared words is the keyword
+      // scorer's judgement, and putting it between the page and the model
+      // hands the model the scorer's mistakes to choose from. Meaning or
+      // everything; a bad shortlist is worse than none.
     }
 
     const thoughtAt = Date.now();
@@ -6811,6 +6818,63 @@ async function warmModel() {
 }
 chrome.runtime.onStartup.addListener(warmModel);
 chrome.runtime.onInstalled.addListener(warmModel);
+
+// The download, on the toolbar, whether or not the panel is open.
+//
+// Progress was broadcast to the panel and nowhere else, so the one moment it
+// matters most - somebody has just installed this, and five gigabytes are
+// coming down - had nothing on screen at all. The panel is shut then, by
+// definition: nobody opens a side panel before they know there is anything
+// to wait for. The badge is the only surface that is always visible.
+//
+// Guarded throughout: a badge that throws must never be the thing that stops
+// a model loading.
+function showLoadingBadge(text) {
+  try {
+    if (!(chrome.action && chrome.action.setBadgeText)) return;
+    chrome.action.setBadgeText({ text: String(text || "").slice(0, 4) });
+    if (chrome.action.setBadgeBackgroundColor) {
+      chrome.action.setBadgeBackgroundColor({ color: "#1f6feb" });
+    }
+  } catch (e) { /* the model matters more than the badge */ }
+}
+function setActionTitle(text) {
+  try {
+    if (chrome.action && chrome.action.setTitle) chrome.action.setTitle({ title: String(text).slice(0, 200) });
+  } catch (e) { /* as above */ }
+}
+
+let badgeClearAt = null;
+if (chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== "llmProgress") return;
+    const text = String(msg.text || "");
+    // WebLLM reports "... 41% completed, 12 secs elapsed". A percentage is
+    // the only part that fits on a badge and the only part anyone wants.
+    const pct = text.match(/(\d{1,3})\s*%/);
+    if (pct) {
+      showLoadingBadge(`${pct[1]}%`);
+      setActionTitle(`web-controls - loading the local model, ${pct[1]}% done`);
+    } else if (/finish|ready|completed loading/i.test(text)) {
+      showLoadingBadge("");
+      setActionTitle("web-controls - ask about this page");
+    } else {
+      showLoadingBadge("...");
+      setActionTitle(`web-controls - ${text.slice(0, 120)}`);
+    }
+    // A download that stops reporting should not leave a stale figure on the
+    // toolbar for the rest of the session.
+    if (badgeClearAt) clearTimeout(badgeClearAt);
+    badgeClearAt = setTimeout(() => {
+      modelStatus({ maxAgeMs: 0 }).then((st) => {
+        if (st && st.ready) {
+          showLoadingBadge("");
+          setActionTitle("web-controls - ask about this page");
+        }
+      }).catch(() => {});
+    }, 20000);
+  });
+}
 
 // MV3 service workers get terminated by Chrome after a period of perceived
 // inactivity - confirmed live: a real WebLLM inference call (genuinely
@@ -9020,7 +9084,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
-        const explainMatch = wanted.match(/^\s*(?:explain|match|why did|what matches)\s+(.+)$/i);
+        // "explain X" reports what X matches - a diagnostic, for working out
+        // why a phrase reached the wrong control. It is also how a person
+        // asks to be told what a page is showing, and the diagnostic was
+        // taking those: "explain this data" on a page of river gauges came
+        // back with a checkbox called "Data Not Current" and an offer to
+        // tick it. A debugging verb helping itself to ordinary English,
+        // which is the same fault the settings command had with "use".
+        //
+        // The unambiguous forms keep it. The bare verb goes to the page,
+        // because that is what somebody typing it means.
+        const explainMatch = wanted.match(
+          /^\s*(?:why did|what matches|explain\s+match|match)\s+(.+)$/i);
         if (explainMatch) {
           const q = explainMatch[1].trim();
           const words = meaningfulWords(q);

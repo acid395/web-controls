@@ -686,9 +686,15 @@ function showModelState() {
     modelState.textContent = res.fellBack
       ? `${name(res.fellBack.from)} would not load on this machine - using ${name(res.fellBack.to)}`
       : !have ? "nothing loaded yet - the next instruction loads it"
-      : res.loading ? `loading ${name(have)}...`
+      // The figure it is already at, not just that it is loading. A panel
+      // opened part-way through a five gigabyte download used to say
+      // "loading..." and sit there until the next broadcast happened to
+      // arrive, which on a slow link is a long time to look stuck.
+      : res.loading ? `loading ${name(have)} - ${res.progress || "starting"}`
       : have === want ? `${name(have)} is loaded and answering`
       : `${name(have)} is still loaded - ${name(want)} loads on the next instruction`;
+    // And on the main line too, where somebody is actually looking.
+    if (res.loading && res.progress) setStatus(`model loading - ${res.progress}`, "load");
   });
 }
 
