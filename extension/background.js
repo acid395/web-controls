@@ -7081,14 +7081,19 @@ async function runDiagnostics() {
   // Three outcomes, not two. A browser with no WebMCP is not a fault to fix -
   // counting it as one would put a red mark on every working install and bury
   // the failure that matters underneath it.
+  // Ninety cut the end off three separate diagnoses in a row, and the end is
+  // where the way out lives - the flag to try, the model to switch to, the
+  // build to install. A line nobody can act on is not a shorter diagnosis, it
+  // is a worse one.
+  const DIAG_LINE = 160;
   const step = async (name, fn, { optional = false } = {}) => {
     const t0 = Date.now();
     try {
       const value = await fn();
-      steps.push({ name, state: "ok", value: String(value).slice(0, 90), ms: Date.now() - t0 });
+      steps.push({ name, state: "ok", value: String(value).slice(0, DIAG_LINE), ms: Date.now() - t0 });
     } catch (err) {
       steps.push({ name, state: optional ? "n/a" : "failed",
-        value: String((err && err.message) || err).slice(0, 90), ms: Date.now() - t0 });
+        value: String((err && err.message) || err).slice(0, DIAG_LINE), ms: Date.now() - t0 });
     }
   };
 
@@ -7206,9 +7211,37 @@ async function runDiagnostics() {
       throw new Error(`storage binding ${gpu.maxStorageMB}MB, WebLLM wants 1024MB`
         + " - try chrome://flags/#enable-unsafe-webgpu");
     }
+    // An Intel Chrome on an Apple GPU. It runs, it reports a real Metal
+    // adapter, it loads weights at full speed off disk - and every model it
+    // drives is twenty to thirty times slow, including a 1.5B that has no
+    // business being slow anywhere. Nothing else here would catch it: the
+    // user agent of every Mac Chrome says "Intel Mac OS X" whatever it was
+    // built for.
+    if (gpu.arch === "x86" && /apple/i.test(String(gpu.describedAs || ""))) {
+      throw new Error("an Intel build of Chrome on an Apple GPU, so it is running"
+        + " translated and every model will be tens of times slower."
+        + " Install the Apple Silicon (arm64) build of Chrome");
+    }
+    // Weights against memory. Chrome caps its figure at 8GB, so this can
+    // only catch the clear cases - but a machine reporting 4GB being asked
+    // to hold five gigabytes of weights is a clear case, and it is invisible
+    // in every other line here.
+    const wants = (globalThis.WC_MODEL_VRAM
+      && globalThis.WC_MODEL_VRAM((st && st.model) || WC_DEFAULT_MODEL)) || 0;
+    // Only below the cap. Chrome reports 8 for a machine with 8GB and for one
+    // with 64, so 8 says nothing and judging it would fail most of the
+    // capable machines this runs on. Four says something.
+    if (gpu.deviceMemoryGB && gpu.deviceMemoryGB < 8
+        && wants && wants > gpu.deviceMemoryGB * 1024 * 0.6) {
+      throw new Error(`${modelName(st && st.model)} wants ${Math.round(wants / 1024)}GB,`
+        + ` machine reports ~${gpu.deviceMemoryGB}GB - say "use 3b"`);
+    }
     return [gpu.describedAs || "hardware adapter",
       gpu.maxBufferMB ? `buffer ${gpu.maxBufferMB}MB` : null,
-      gpu.maxStorageMB ? `storage ${gpu.maxStorageMB}MB` : null]
+      gpu.maxStorageMB ? `storage ${gpu.maxStorageMB}MB` : null,
+      gpu.deviceMemoryGB ? `~${gpu.deviceMemoryGB}GB RAM` : null,
+      gpu.cores ? `${gpu.cores} cores` : null,
+      gpu.arch ? `${gpu.arch} build` : null]
       .filter(Boolean).join(" · ");
   }, { optional: true });
   // Which model was asked for, beside which one is loaded. Two switches to a

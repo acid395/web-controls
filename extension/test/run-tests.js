@@ -1491,7 +1491,7 @@ else {
   const bgg = loadBackground({ page: gpuPage });
   const card = (gpu) => new Promise((resolve) => {
     bgg.__model = (m) => (m.type === "llmStatus"
-      ? { ready: true, hasGpu: true, model: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", gpu }
+      ? { ready: true, hasGpu: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC", gpu }
       : m.type === "llmBench" ? { ok: true, ms: 800, decodePerS: 30 } : undefined);
     bgg.__ask({ type: "smartAsk", instruction: "diagnose" }).then(resolve, () => resolve(null));
   });
@@ -1499,6 +1499,60 @@ else {
     .find((x) => String(x.name) === "graphics card") || {};
 
   runAsync(async () => {
+    // Five wrong explanations for one wait: the model cannot interpret the
+    // request, the model is too big, the GPU is a software renderer, the
+    // storage binding is starved, the prompt is too long. The adapter turned
+    // out to be real Metal with a 4096MB buffer and a 4096MB binding, and
+    // loading was fast - 3161MB off disk in seven seconds - on a machine
+    // that then managed a tenth of a token a second. Sequential reads fine,
+    // random access across five gigabytes of weights not: paging, which no
+    // GPU limit reports.
+    const tight = lineOf(await card({ ok: true, software: false,
+      describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 4096,
+      deviceMemoryGB: 4, cores: 8 }));
+    ensure("weights larger than the machine are called out",
+      /wants 5GB/.test(String(tight.meta || "")), tight);
+    ensure("and it says what the machine has",
+      /~4GB/.test(String(tight.meta || "")), tight);
+    ensure("and names a model that fits", /use 3b/.test(String(tight.meta || "")), tight);
+
+    const roomy = lineOf(await card({ ok: true, software: false,
+      describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 4096,
+      deviceMemoryGB: 8, cores: 10 }));
+    // Chrome caps this figure at 8, so 8 covers everything from a small
+    // laptop to a workstation. Judging it would fail most of the machines
+    // this is meant to run on, so it is reported and not judged.
+    check("a machine at the reporting cap is not judged", roomy.value, "ok");
+    ensure("but its figure is still shown", /~8GB RAM/.test(String(roomy.meta || "")), roomy);
+
+    // The one that fits every measurement: a 1.5B taking thirty-two seconds
+    // a turn and timing out at forty-five, on a real Metal adapter with a
+    // 4096MB storage binding and memory to spare, loading weights off disk
+    // at full speed. Every model twenty to thirty times slow is not a model
+    // problem. An Intel build of Chrome will drive an Apple GPU, and drive
+    // it badly - and every Mac Chrome's user agent says "Intel Mac OS X"
+    // whatever it was built for, so nothing else here would catch it.
+    const translated = lineOf(await card({ ok: true, software: false,
+      describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 4096,
+      deviceMemoryGB: 8, cores: 10, arch: "x86" }));
+    ensure("an Intel Chrome on an Apple GPU is called out",
+      /Intel build of Chrome/.test(String(translated.meta || "")), translated);
+    ensure("and it says what to do about it",
+      /Apple Silicon/.test(String(translated.meta || "")), translated);
+    ensure("and is not reported as ok", translated.value !== "ok", translated.value);
+
+    // The same GPU, natively. Nothing to report.
+    const native = lineOf(await card({ ok: true, software: false,
+      describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 4096,
+      deviceMemoryGB: 8, cores: 10, arch: "arm" }));
+    check("the native build passes", native.value, "ok");
+    ensure("and says which build it is", /arm build/.test(String(native.meta || "")), native);
+    // An Intel Chrome on an Intel GPU is just an Intel machine.
+    const intelBox = lineOf(await card({ ok: true, software: false,
+      describedAs: "intel iris", maxBufferMB: 4096, maxStorageMB: 4096,
+      deviceMemoryGB: 8, cores: 8, arch: "x86" }));
+    check("and an Intel machine is not accused of translating", intelBox.value, "ok");
+
     const starved = lineOf(await card({ ok: true, software: false,
       describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 128 }));
     ensure("a 128MB storage binding is called out",
