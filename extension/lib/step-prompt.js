@@ -170,7 +170,7 @@ function buildReadPrompt({ goal, observation, note }) {
     `Question: ${goal}`,
     "",
     "What the page shows:",
-    String(observation || "nothing readable").slice(0, 1800),
+    String(observation || "nothing readable").slice(0, 2200),
     note ? `\nNote: ${note}` : "",
     "",
     '{"answer":"YOUR ANSWER","do":"finish"}',

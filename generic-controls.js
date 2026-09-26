@@ -966,13 +966,99 @@
 
   const textOf = (el) => (el.textContent || "").replace(/\s+/g, " ").trim();
 
+  /* The same text, with the gaps the markup implies.
+   *
+   * textContent runs adjacent elements straight together, so a readout built
+   * as <span>3.12 ft</span><span>Provisional</span><span>Sep 25, 2026</span>
+   * came back "3.12 ftProvisionalSep 25, 202611:50:00 AM EDT" - which is not
+   * only ugly, it is unreadable: nothing downstream can tell where the value
+   * ends and the timestamp begins, and a 3B asked to explain it has to guess.
+   * An element boundary is a word boundary, so this joins across one.
+   *
+   * Deliberately separate from textOf rather than a change to it. textOf
+   * supplies control labels, and every exact-name match in this extension
+   * compares against those - inventing a space inside one would move the
+   * matching layer underneath the benchmarks that pin it. Only the reading
+   * path uses this.
+   */
+  const readableTextOf = (el) => {
+    if (!el) return "";
+    const parts = [];
+    const walk = (node) => {
+      for (const child of node.childNodes || []) {
+        if (child.nodeType === 3) parts.push(String(child.nodeValue || ""));
+        else if (child.nodeType === 1) {
+          const tag = (child.tagName || "").toLowerCase();
+          if (tag === "script" || tag === "style" || tag === "noscript") continue;
+          parts.push(" ");
+          walk(child);
+          parts.push(" ");
+        }
+      }
+    };
+    walk(el);
+    return parts.join("").replace(/\s+/g, " ").trim();
+  };
+
+  /* Readable is not the same question as clickable.
+   *
+   * isVisible asks for a layout box, which is exactly right before pressing
+   * something and wrong before reading it: a table inside a collapsed
+   * accordion or an inactive tab has no box and has all of its data. Asked
+   * to explain a page, this skipped those outright - so the values somebody
+   * could see one click away were not merely unmentioned, they were never
+   * read. What is excluded here is only what is genuinely not content:
+   * display:none, visibility:hidden, hidden, aria-hidden.
+   */
+  const readableIn = (el) => {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      if (n.hasAttribute && (n.hasAttribute("hidden") || n.getAttribute("aria-hidden") === "true")) return false;
+      try {
+        const st = getComputedStyle(n);
+        if (st && (st.display === "none" || st.visibility === "hidden")) return false;
+      } catch (e) { /* detached or styleless: judged on its attributes alone */ }
+    }
+    return true;
+  };
+
+  /* Tables that are not <table>.
+   *
+   * Plenty of federal pages lay their data out as divs - a role="table" with
+   * role="row" inside, or a CSS grid - and to this it was not a table at
+   * all, so "explain this data" got the page's prose and none of its
+   * numbers. Read by the roles the page itself declares, which is the page
+   * saying outright that this is tabular.
+   */
+  function readAriaTables(limit = 4) {
+    const out = [];
+    const grids = deepQueryAll('[role="table"], [role="grid"], [role="treegrid"]');
+    for (const grid of grids.slice(0, limit)) {
+      if (!readableIn(grid)) continue;
+      const rowEls = [...grid.querySelectorAll('[role="row"]')].slice(0, 25);
+      if (rowEls.length < 2) continue;
+      const cellsOf = (r) => [...r.querySelectorAll('[role="cell"], [role="gridcell"], [role="columnheader"], [role="rowheader"]')]
+        .map((c) => readableTextOf(c).slice(0, 60));
+      const first = cellsOf(rowEls[0]);
+      const headed = [...rowEls[0].querySelectorAll('[role="columnheader"]')].length > 0;
+      const rows = rowEls.map(cellsOf).filter((r) => r.length);
+      if (!rows.length) continue;
+      out.push({
+        caption: null,
+        columns: headed && first.length ? first : null,
+        rows: headed ? rows.slice(1) : rows,
+        totalRows: rowEls.length,
+      });
+    }
+    return out;
+  }
+
   function readTables(limit = 6) {
     const out = [];
     for (const table of deepQueryAll("table").slice(0, limit)) {
-      if (!isVisible(table)) continue;
+      if (!readableIn(table)) continue;
       const rows = [...table.rows].slice(0, 25);
       if (rows.length < 2) continue;
-      const cells = (r) => [...r.cells].map((c) => textOf(c).slice(0, 60));
+      const cells = (r) => [...r.cells].map((c) => readableTextOf(c).slice(0, 60));
 
       // Requiring <th> was too strict: plenty of real tables mark up their
       // header row with <td>, and without column names a lookup has nothing
@@ -1005,14 +1091,14 @@
       const kids = [...dl.children];
       for (let i = 0; i < kids.length - 1; i++) {
         if (kids[i].tagName === "DT" && kids[i + 1].tagName === "DD") {
-          pairs.push({ label: textOf(kids[i]).slice(0, 60), value: textOf(kids[i + 1]).slice(0, 60) });
+          pairs.push({ label: readableTextOf(kids[i]).slice(0, 60), value: readableTextOf(kids[i + 1]).slice(0, 60) });
         }
       }
     }
     // two-cell rows, the usual shape of a "current conditions" table
     for (const tr of deepQueryAll("tr")) {
       if (tr.cells && tr.cells.length === 2) {
-        const label = textOf(tr.cells[0]), value = textOf(tr.cells[1]);
+        const label = readableTextOf(tr.cells[0]), value = readableTextOf(tr.cells[1]);
         if (label && value && label.length < 60) pairs.push({ label: label.slice(0, 60), value: value.slice(0, 60) });
       }
     }
@@ -1023,9 +1109,12 @@
     const out = [];
     const seen = new Set();
     for (const el of deepQueryAll("[class*=value], [class*=reading], [class*=stat], [class*=metric], [data-value], output")) {
-      if (!isVisible(el)) continue;
-      const text = textOf(el);
-      if (!text || text.length > 40 || !/\d/.test(text)) continue;
+      if (!readableIn(el)) continue;
+      const text = readableTextOf(el);
+      // A little longer than it was. Putting the spaces back makes these
+      // read properly and also makes them longer, and the cap was cutting
+      // off the readings it exists to collect.
+      if (!text || text.length > 60 || !/\d/.test(text)) continue;
       const key = text + "|" + (el.className || "");
       if (seen.has(key)) continue;
       seen.add(key);
@@ -1034,7 +1123,17 @@
         text,
         value: m ? Number(m[1].replace(/,/g, "")) : null,
         unit: m && m[2] ? m[2] : null,
-        label: (el.getAttribute("aria-label") || rawLabelOf(el) || "").slice(0, 60) || null,
+        // Its own text is not a label for itself. rawLabelOf falls back to
+        // the element's own contents, so a readout came back labelled with
+        // a run-together copy of the value it was already reporting -
+        // printed as "Latest value7.45 ftProvisional: Latest value 7.45 ft
+        // Provisional", which is noise twice over.
+        label: (() => {
+          const said = (el.getAttribute("aria-label") || rawLabelOf(el) || "").replace(/\s+/g, " ").trim();
+          if (!said) return null;
+          const bare = (t) => String(t).toLowerCase().replace(/[^a-z0-9]/g, "");
+          return bare(said) === bare(text) ? null : said.slice(0, 60);
+        })(),
       });
       if (out.length >= limit) break;
     }
@@ -1045,7 +1144,7 @@
   // their points; canvas charts have none of this, which is the difference
   // between a chart this can read and one it cannot.
   function readChartText(limit = 60) {
-    const svgs = deepQueryAll("svg").filter(isVisible);
+    const svgs = deepQueryAll("svg").filter(readableIn);
     const labelled = [];
     for (const svg of svgs.slice(0, 4)) {
       const texts = [...svg.querySelectorAll("text")].map(textOf).filter(Boolean);
@@ -1075,13 +1174,18 @@
     const out = [];
     const seen = new Set();
     for (const el of deepQueryAll("p, span, div, li, dd, dt, td, th, strong, b, h3, h4, h5, h6")) {
-      if (!isVisible(el)) continue;
+      if (!readableIn(el)) continue;
       // Leaves only. A wrapper's textContent is its children concatenated,
       // which yields runs like "TodayHigh: 83 °F" alongside the "High: 83 °F"
       // it already contains - duplicated, and uglier to show.
       if (el.children.length > 1) continue;
-      const text = textOf(el);
-      if (!text || text.length > 70 || !/\d/.test(text)) continue;
+      const text = readableTextOf(el);
+      // Ninety, not seventy. "Latest value3.12 ftProvisionalSep 25, 2026"
+      // fitted in seventy only because the spaces were missing; putting
+      // them back is what makes it a reading rather than a run of
+      // characters, and it must not then be dropped for the length that
+      // made it legible.
+      if (!text || text.length > 90 || !/\d/.test(text)) continue;
       if (!/[a-zA-Z]/.test(text)) continue; // a bare number says nothing
       if (seen.has(text)) continue;
       seen.add(text);
@@ -2566,15 +2670,72 @@
       if (n.nodeType === 3) { out += n.nodeValue || ""; return; }
       if (n.nodeType !== 1) return;              // comments and the rest are not text
       if (SKIP.test(n.nodeName)) return;
+      // A space per element boundary, for the same reason readableTextOf
+      // puts one there: without it this sample read "Latest value7.45
+      // ftProvisional TimeResult 2026-09-25 12:503.09", which is the page's
+      // words with the word boundaries taken out. It is the fallback shown
+      // to the model on any page with no structured data in it, so it is
+      // exactly the text that has to be legible.
+      out += " ";
       for (const c of n.childNodes) walk(c);
+      out += " ";
     };
     walk(root);
     return out.replace(/\s+/g, " ").trim().slice(0, limit);
   }
 
+  /* Why there is nothing to read, where there is nothing to read.
+   *
+   * "No data" and "the data is a picture" are different answers, and only
+   * the second tells somebody what to do about it. The U.S. Drought
+   * Monitor states its whole result as a map image beside a colour legend:
+   * every value a person can see is painted, and the page's own DOM
+   * genuinely carries none of them. Answering that with silence made the
+   * model look broken when it was being accurate.
+   */
+  function noteFor({ tables, pairs, readouts, chart }) {
+    if (tables.length || pairs.length || readouts.length || chart.svgCharts.length) return undefined;
+    if (chart.canvasCount) {
+      return `no readable data in the DOM - this page draws to ${chart.canvasCount} canvas element(s),`
+        + " whose contents are pixels, not elements";
+    }
+    // A picture big enough to be the point of the page, rather than a logo.
+    // Measured where there is layout to measure, and judged on what the
+    // markup says where there is not - an image that has not loaded reports
+    // zero for everything, and so does every element in a document that was
+    // parsed but never rendered.
+    const big = deepQueryAll("img").filter((im) => {
+      if (!readableIn(im)) return false;
+      const src = String(im.getAttribute("src") || "");
+      const alt = String(im.getAttribute("alt") || "").trim();
+      // Furniture, whatever size it reports.
+      if (/logo|icon|spacer|banner|avatar|footer|seal/i.test(src + " " + alt)) return false;
+      const r = im.getBoundingClientRect ? im.getBoundingClientRect() : null;
+      const w = (r && r.width) || im.naturalWidth || Number(im.getAttribute("width")) || 0;
+      const h = (r && r.height) || im.naturalHeight || Number(im.getAttribute("height")) || 0;
+      // Either it measures like the point of the page, or it is described
+      // like it. Size alone is not enough to rely on: an image that has not
+      // finished loading reports nothing, and a document that was parsed
+      // rather than rendered reports nothing for everything. A described
+      // image on a page that yielded no data at all - which is the only way
+      // execution reaches here - is the thing being asked about.
+      if (w >= 300 && h >= 200) return true;
+      return alt.length >= 8;
+    });
+    if (big.length) {
+      const named = big.map((im) => (im.getAttribute("alt") || "").trim()).filter(Boolean)[0];
+      return `no readable data in the DOM - what this page shows is an image${
+        named ? ` ("${named.slice(0, 60)}")` : ""}, so its values are painted rather than written`
+        + " - a data or download page on this site will have the numbers";
+    }
+    return undefined;
+  }
+
   function readPage() {
     const chart = readChartText();
-    const tables = readTables();
+    // Both kinds: the ones marked up as tables and the ones a page only
+    // declares through roles.
+    const tables = readTables().concat(readAriaTables());
     const pairs = readPairs();
     const readouts = readReadouts();
     // A bounded sample of the page's own text. Some pages state their subject
@@ -2594,9 +2755,7 @@
       chart,
       // Said plainly, because "found nothing" and "the data is painted onto a
       // canvas and cannot be read from the DOM at all" are different answers.
-      note: !tables.length && !pairs.length && !readouts.length && !chart.svgCharts.length && chart.canvasCount
-        ? `no readable data in the DOM - this page draws to ${chart.canvasCount} canvas element(s), whose contents are pixels, not elements`
-        : undefined,
+      note: noteFor({ tables, pairs, readouts, chart }),
     };
   }
 

@@ -2873,17 +2873,30 @@ function leftOverOfConcepts(text, groups) {
   });
 }
 
+// Built once, from a vocabulary that does not change while the extension
+// runs. This is called at least twice per control scored - once for the
+// request, once for that control's own label - so on a page of a hundred
+// controls a single instruction was rebuilding and re-sorting the same
+// thirty-odd phrases several hundred times over.
+let ALL_CONCEPT_PHRASES = null;
+function allConceptPhrases() {
+  if (!ALL_CONCEPT_PHRASES) {
+    synonymGroupsFor("");                       // builds the indexes if needed
+    const phrases = [];
+    for (const [group, list] of (SYNONYM_PHRASES || new Map())) {
+      for (const phrase of list) phrases.push({ group, phrase });
+    }
+    phrases.sort((a, b) => b.phrase.length - a.phrase.length);
+    ALL_CONCEPT_PHRASES = phrases;
+  }
+  return ALL_CONCEPT_PHRASES;
+}
+
 function conceptsInPhrase(text) {
   const found = new Set();
   let flat = ` ${String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
   if (flat.trim().length < 2) return found;
-  synonymGroupsFor("");                       // builds the indexes if needed
-  const phrases = [];
-  for (const [group, list] of (SYNONYM_PHRASES || new Map())) {
-    for (const phrase of list) phrases.push({ group, phrase });
-  }
-  phrases.sort((a, b) => b.phrase.length - a.phrase.length);
-  for (const { group, phrase } of phrases) {
+  for (const { group, phrase } of allConceptPhrases()) {
     if (flat.includes(` ${phrase} `)) {
       found.add(group);
       flat = flat.replace(` ${phrase} `, "  ");
@@ -5092,6 +5105,12 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
         // part-way through a download had nothing to show.
         progress: fromPanel.progress || null,
         fraction: typeof fromPanel.fraction === "number" ? fromPanel.fraction : null,
+        // The adapter this window is actually running on. Without this the
+        // panel branch answered every question about the graphics card with
+        // silence - "graphics card" said "not reported yet" and "model fits
+        // this machine" said "n/a" - every single time the panel was the one
+        // in use, which the whole design makes the ordinary case.
+        gpu: fromPanel.gpu || null,
         where: "panel",
       };
       modelStatusCache = { at: Date.now(), value };
@@ -6722,15 +6741,62 @@ function summariseForModel(read) {
     const line = `${p.label}: ${p.value}`;
     if (!saidAlready(line)) bits.push(line);
   }
+  // The page's own readouts - the things it marks up as a value, a reading,
+  // a statistic. These were being collected and then dropped on the floor
+  // here, so a page whose whole content is six big numbers in <output>
+  // elements was summarised as having nothing in it.
+  for (const r of (read.readouts || []).slice(0, 12)) {
+    const line = r.label ? `${r.label}: ${r.text}` : String(r.text || "");
+    if (line.trim() && !saidAlready(line)) bits.push(line.slice(0, 110));
+  }
   for (const n of (read.labelledNumbers || []).slice(0, 10)) {
     // Judged whole, then cut. Cutting first mangled the last figure into one
     // the table does not carry, so a line made entirely of the table's own
     // numbers survived the check that exists to remove it.
     if (saidAlready(n.text)) continue;
-    bits.push(String(n.text).slice(0, 60));
+    // Long enough to carry the whole reading. Sixty characters cut "Latest
+    // value 3.12 ft Provisional Sep 25, 2026 11:50:00 AM EDT" in half, and
+    // half a reading is worse than none - the model quotes it as though it
+    // were the whole thing.
+    bits.push(String(n.text).slice(0, 110));
   }
+  /* What the charts say.
+   *
+   * readChartText has been pulling axis labels, titles and per-point aria
+   * values out of every SVG on the page since it was written, and not one
+   * of them ever reached the model: this summarised tables, pairs and
+   * labelled numbers and stopped. So "explain this chart" was answered from
+   * the page's prose, by a model that had never been shown the chart - and
+   * where the chart was a canvas, nothing said so either, which is the one
+   * case where the honest answer is that it cannot be read at all.
+   */
+  const charts = (read.chart && read.chart.svgCharts) || [];
+  for (const c of charts.slice(0, 2)) {
+    const titles = (c.titles || []).filter(Boolean).slice(0, 3);
+    if (titles.length) bits.push(`chart: ${titles.join("; ")}`.slice(0, 160));
+    // The points carry the numbers; the axis labels say what they are of.
+    const points = (c.points || []).filter(Boolean).slice(0, 12);
+    if (points.length) bits.push(`chart points: ${points.join(" | ")}`.slice(0, 400));
+    const labels = (c.labels || []).filter(Boolean).slice(0, 16);
+    if (labels.length && !points.length) bits.push(`chart labels: ${labels.join(" | ")}`.slice(0, 300));
+  }
+  // The page's own words, where it yielded no structured data at all. Judged
+  // before the note is added, not after: the note is an explanation of the
+  // emptiness rather than a filling of it, and counting it as content meant
+  // a canvas page - the exact case the note exists for - lost the heading
+  // that said what the picture was of.
   if (!bits.length && read.text) bits.push(String(read.text).slice(0, 400));
-  return bits.join("\n").slice(0, 1600);
+
+  // Said rather than left as an absence. A page that paints its data onto a
+  // canvas, or states it as a map, is not a page with no data, and the
+  // difference is the part worth telling somebody - it is what sends them to
+  // the download instead.
+  if (read.note) bits.push(String(read.note).slice(0, 200));
+  // Wider than it was. The reading prompt is about sixty tokens of
+  // scaffolding and the rest is this, so what fits here is very nearly the
+  // whole of what a question gets answered from - and prefill measured on
+  // the machine this runs on is the cheap half of a turn.
+  return bits.join("\n").slice(0, 2200);
 }
 
 async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] } = {}) {

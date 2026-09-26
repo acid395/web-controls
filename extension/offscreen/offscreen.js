@@ -18,6 +18,7 @@
 import { CreateMLCEngine } from "./vendor/web-llm.js";
 import "../lib/models.js";
 import "../lib/step-prompt.js";
+import "../lib/gpu.js";
 
 // WebLLM 0.2.85 only accepts ChatCompletionRequest.tools on Hermes-2-Pro and
 // Hermes-3 at 7-8B - its own error names them - so using the API meant an 8B
@@ -89,62 +90,9 @@ let modelChoice = null;
 // the two apart from a card, so "the model is slow" and "the model is not on
 // the GPU at all" looked identical.
 let gpuInfo = null;
-async function describeGpu() {
-  if (!("gpu" in navigator)) return { ok: false, why: "this browser has no WebGPU" };
-  try {
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) return { ok: false, why: "WebGPU is present but no adapter was granted" };
-    const info = adapter.info
-      || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : null) || {};
-    const described = [info.vendor, info.architecture, info.device, info.description]
-      .filter(Boolean).join(" ").trim();
-    const limits = adapter.limits || {};
-    const mb = (n) => (typeof n === "number" ? Math.round(n / (1024 * 1024)) : null);
-    return {
-      ok: true,
-      describedAs: described || null,
-      // Named outright. A fallback adapter runs, so nothing errors - it is
-      // just slow enough that every timeout here looks like the model's
-      // fault.
-      software: adapter.isFallbackAdapter === true
-        || /swiftshader|llvmpipe|software|basic render|microsoft basic/i.test(described),
-      maxBufferMB: mb(limits.maxBufferSize),
-      maxStorageMB: mb(limits.maxStorageBufferBindingSize),
-      // How much memory the machine has, roughly. Chrome reports this in
-      // powers of two and caps it at 8, so it cannot tell 8GB from 32 - but
-      // it can tell 4 from 8, and that is the distinction that matters when
-      // the weights are five gigabytes.
-      //
-      // Wanted because loading is fast here and inference is not: 3161MB
-      // came off disk in seven seconds on a machine that then managed a
-      // tenth of a token a second. Sequential reads are fine and random
-      // access across five gigabytes of weights is not, which is what
-      // paging looks like from the outside, and the GPU's own limits - a
-      // 4096MB buffer and a 4096MB storage binding - say nothing about it.
-      deviceMemoryGB: (typeof navigator.deviceMemory === "number") ? navigator.deviceMemory : null,
-      cores: (typeof navigator.hardwareConcurrency === "number") ? navigator.hardwareConcurrency : null,
-      // Which Chrome. The 1.5B takes thirty-two seconds a turn on this
-      // machine and times out at forty-five - a 1630MB model, on a real
-      // Metal adapter, with four gigabytes of storage binding and memory to
-      // spare. Every model being twenty to thirty times slow is not a model
-      // problem, and the remaining explanation that fits is the browser
-      // itself running translated: an Intel build of Chrome under Rosetta on
-      // an Apple GPU will drive Metal, and drive it badly.
-      //
-      // Every Mac Chrome says "Intel Mac OS X" in its user agent whatever it
-      // is built for, so the string cannot answer this. This can.
-      arch: await (async () => {
-        try {
-          if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) return null;
-          const h = await navigator.userAgentData.getHighEntropyValues(["architecture", "bitness"]);
-          return h && h.architecture ? String(h.architecture) : null;
-        } catch (e) { return null; }
-      })(),
-    };
-  } catch (e) {
-    return { ok: false, why: String((e && e.message) || e).slice(0, 160) };
-  }
-}
+// Shared with the panel now (lib/gpu.js), so whichever window is actually
+// running the model can answer the same question about it.
+const describeGpu = globalThis.WC_DESCRIBE_GPU;
 // Asked once, early, so llmStatus can answer without becoming asynchronous.
 describeGpu().then((g) => { gpuInfo = g; }).catch(() => { gpuInfo = null; });
 

@@ -297,4 +297,28 @@ function loadOffscreenHelper(name) {
   return sandbox.__fn;
 }
 
-module.exports = { loadBackground, loadPage, loadOffscreenHelper, EXT };
+/* popup.js runs in a side panel, with a document and a chrome.runtime it
+ * assumes are there - and unlike offscreen.js's helpers, its functions close
+ * over module-level bindings (loadWrap, modelState, ...) that are themselves
+ * assignments off `document.getElementById`, not arguments. Extracting a
+ * region and handing it a sandbox that defines those same names is what
+ * lets that closure resolve without a real panel behind it: `sandboxExtra`
+ * is that fill-in, in the caller's own words for what each one needs to be.
+ */
+function loadPopupHelper(name, sandboxExtra = {}) {
+  const src = fs.readFileSync(path.join(EXT, "popup", "popup.js"), "utf8");
+  const open = `/* @testable-start ${name} */`;
+  const start = src.indexOf(open);
+  const end = src.indexOf("/* @testable-end */", start);
+  if (start === -1 || end === -1) throw new Error(`${name} is not marked testable in popup.js`);
+  const sandbox = {
+    JSON, console, setInterval, clearInterval, setTimeout, clearTimeout, Date,
+    globalThis: {}, ...sandboxExtra,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(`${src.slice(start + open.length, end)}
+this.__fn = ${name};`, sandbox);
+  return sandbox.__fn;
+}
+
+module.exports = { loadBackground, loadPage, loadOffscreenHelper, loadPopupHelper, EXT };

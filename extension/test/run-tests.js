@@ -47,7 +47,7 @@ const asyncQueue = [];
 let asyncRunning = 0;
 let exiting = false;
 
-const { loadBackground, loadPage, loadOffscreenHelper } = require("./harness");
+const { loadBackground, loadPage, loadOffscreenHelper, loadPopupHelper } = require("./harness");
 
 let passed = 0, failed = 0, skipped = 0;
 const failures = [];
@@ -1348,6 +1348,16 @@ else {
     check("and it does fit", globalThis.WC_MODEL_FITS(best.id, gpu).fits, true);
     ensure("and it is not the one that failed", best.id !== big, best.id);
   }
+  // A software renderer fails every model, whatever its size - there is no
+  // smaller model that fixes a renderer, so nothing should be named as the
+  // remedy. Falling back to naming the smallest one anyway claimed a model
+  // "fits" when WC_MODEL_FITS's own answer for it, on this exact machine,
+  // was false.
+  {
+    const gpu = { ok: true, software: true, deviceMemoryGB: 8 };
+    const best = globalThis.WC_BIGGEST_THAT_FITS(gpu);
+    check("nothing is offered as a fix for a software renderer", best, null);
+  }
   // Every model in the registry runs somewhere. A model nothing can load is
   // a model that should not be offered.
   for (const m of globalThis.WC_MODELS) {
@@ -2553,6 +2563,244 @@ else {
   ensure("the shared prompt still names the control", /Gage height/.test(prompt), prompt.slice(0, 80));
   const parsed = firstJsonObject('sure: {"name":"Gage height","do":"check","on":true} ok');
   check("and the shared parser still finds the object", parsed && parsed.name, "Gage height");
+
+  // The panel answered every question about the graphics card with silence:
+  // it reported only `"gpu" in navigator`, which says the API exists and
+  // nothing about whether it is real hardware, a fallback renderer, or how
+  // much it can hold. diagnose's "graphics card" line, "model fits this
+  // machine", and every remedy a failed decision can offer all read
+  // status.gpu - so all of them went quiet exactly when the panel was the
+  // one actually running the model, which is the ordinary case.
+  //
+  // Caught by content rather than by driving a live panel: the harness's
+  // sendMessage stub never answers target:"panel" at all (there is no DOM to
+  // simulate one against), so every prior test that looked like it exercised
+  // the panel branch was, underneath, only ever exercising the offscreen
+  // one - the gap here was invisible to the whole suite until read directly.
+  {
+    const popupJs = fsx.readFileSync(pathx.join(__dirname, "..", "popup", "popup.js"), "utf8");
+    const popupHtml = fsx.readFileSync(pathx.join(__dirname, "..", "popup", "popup.html"), "utf8");
+    const offscreenSrc = fsx.readFileSync(
+      pathx.join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
+    const gpuLib = fsx.readFileSync(pathx.join(__dirname, "..", "lib", "gpu.js"), "utf8");
+
+    ensure("the GPU probe is a shared lib now", /globalThis\.WC_DESCRIBE_GPU/.test(gpuLib),
+      "lib/gpu.js does not exist or does not export it");
+    ensure("the panel loads it", /lib\/gpu\.js/.test(popupHtml), "popup.html never loads lib/gpu.js");
+    ensure("the hidden document imports the same one, not its own copy",
+      /import "\.\.\/lib\/gpu\.js"/.test(offscreenSrc) && !/async function describeGpu/.test(offscreenSrc),
+      "offscreen.js still carries a private copy of describeGpu");
+    ensure("panelStatus answers with it", /gpu: panelGpuInfo/.test(popupJs),
+      "the panel's status reply has no gpu field");
+    ensure("and the worker keeps what the panel says, not just what it says about the model",
+      /gpu: fromPanel\.gpu/.test(worker), "the panel branch of modelStatus drops gpu on the floor");
+  }
+}
+
+// "Explain this page" on a page with a table in it answered from the page's
+// prose and never mentioned the numbers. Three separate reasons, all in the
+// reading path, all found from one live run whose card showed a 258-token
+// prompt - which is a reading prompt with almost nothing in it.
+{
+  const dataPage = `<!doctype html><html><body>
+    <h1>Gauge readings</h1>
+    <div class="latest-value">Latest value<span>7.45 ft</span><span>Provisional</span></div>
+    <table>
+      <tr><th>Time</th><th>Result</th><th>Approval</th></tr>
+      <tr><td>2026-09-25 12:50</td><td>3.09</td><td>Provisional</td></tr>
+      <tr><td>2026-09-25 11:50</td><td>3.12</td><td>Provisional</td></tr>
+    </table>
+    <div role="table">
+      <div role="row"><span role="columnheader">Category</span><span role="columnheader">Area</span></div>
+      <div role="row"><span role="cell">D0 Abnormally Dry</span><span role="cell">41.2%</span></div>
+      <div role="row"><span role="cell">D1 Moderate Drought</span><span role="cell">18.7%</span></div>
+    </div>
+    </body></html>`;
+  const page = loadPage(dataPage, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page) {
+    const bgr = loadBackground({ page });
+    runAsync(async () => {
+      const read = await bgr.invokeOnActiveTab("readPage", []);
+      ensure("the page can be read at all", read.ok, read.error);
+      const r = read.result;
+      // An ordinary <table> was skipped whenever it had no layout box, which
+      // is every table in a collapsed panel or an inactive tab - and every
+      // table at all in a document that was parsed rather than rendered.
+      ensure("a real table is read", (r.tables || []).length >= 1,
+        `tables=${(r.tables || []).length}`);
+      // And the ones a page only declares through roles, which plenty of
+      // federal pages use instead of <table>.
+      const all = JSON.stringify(r.tables || []);
+      ensure("so is a table marked up only by its roles", /Abnormally Dry/.test(all), all.slice(0, 200));
+      ensure("with the values beside the categories", /41\.2%/.test(all), all.slice(0, 200));
+
+      const summary = bgr.summariseForModel(r);
+      // textContent runs adjacent elements together: this readout arrived as
+      // "Latest value3.12 ftProvisional", which nothing can parse back.
+      ensure("adjacent elements are not run together",
+        !/value7\.45/.test(summary), summary.slice(0, 200));
+      ensure("and the reading survives with its spaces",
+        /7\.45 ft/.test(summary), summary.slice(0, 200));
+      ensure("the table's numbers reach the model", /3\.09/.test(summary), summary.slice(0, 300));
+    });
+  }
+
+  // Charts were read and then thrown away: readChartText pulled out titles,
+  // axis labels and per-point values, and summariseForModel passed on
+  // tables, pairs and labelled numbers only. "Explain this chart" was
+  // answered by a model that had never been shown the chart.
+  {
+    const chartPage = `<!doctype html><html><body>
+      <svg><title>Discharge, last 7 days</title>
+        <text>Mon</text><text>Tue</text>
+        <g aria-label="Mon: 4820 cfs"></g><g aria-label="Tue: 5010 cfs"></g>
+      </svg></body></html>`;
+    const page2 = loadPage(chartPage, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (page2) {
+      const bg2 = loadBackground({ page: page2 });
+      runAsync(async () => {
+        const read = await bg2.invokeOnActiveTab("readPage", []);
+        const summary = bg2.summariseForModel(read.result);
+        ensure("a chart's title reaches the model", /Discharge, last 7 days/.test(summary), summary.slice(0, 200));
+        ensure("and so do its values", /4820/.test(summary) && /5010/.test(summary), summary.slice(0, 200));
+      });
+    }
+  }
+
+  // A page whose answer is a picture is not a page with nothing on it, and
+  // the difference is the only part worth telling somebody: the drought
+  // monitor states its whole result as a map image beside a colour legend.
+  {
+    const mapPage = `<!doctype html><html><body>
+      <h1>U.S. Drought Monitor</h1>
+      <img src="/maps/current.png" alt="Drought Monitor map for September 22, 2026">
+      <ul><li><strong>D0</strong> (Abnormally Dry)</li></ul>
+      </body></html>`;
+    const page3 = loadPage(mapPage, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+    if (page3) {
+      const bg3 = loadBackground({ page: page3 });
+      runAsync(async () => {
+        const read = await bg3.invokeOnActiveTab("readPage", []);
+        ensure("a page that is a picture says so", /image/i.test(String(read.result.note || "")),
+          String(read.result.note));
+        const summary = bg3.summariseForModel(read.result);
+        ensure("and says it where the model will see it", /image/i.test(summary), summary.slice(0, 300));
+      });
+    }
+  }
+}
+
+// Picking a model has to mean using that model. watchLoad's own first check
+// asked only "is anything ready", not "is the thing I was just asked for
+// ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting
+// ready, reported "Llama 3.2 3B is ready", and never called warm() at all.
+// The picker changed; the engine did not. Caught here rather than by
+// driving a real panel, using the same marker convention offscreen.js's
+// pure helpers are tested with - loadPopupHelper extracts the region and
+// hands it stand-ins for the DOM it normally closes over.
+if (typeof require === "undefined") skip("switching models still switches models", "no require");
+else {
+  const stub = () => {
+    const state = {
+      loadWrap: { className: "" },
+      loadFill: { className: "", style: {} },
+      loadWhat: { textContent: "" },
+      loadPct: { textContent: "" },
+      modelState: { className: "", textContent: "" },
+      modelChoice: { value: "" },
+      statusOwner: "load",
+      setStatus: () => {},
+      clearStatus: () => {},
+    };
+    state.globalThis = { WC_MODEL_NAME: (id) => id };
+    state.WC_MODEL_NAME = state.globalThis.WC_MODEL_NAME;
+    return state;
+  };
+
+  {
+    const s = stub();
+    const watchLoad = loadPopupHelper("watchLoad", s);
+    let warmedWith = null;
+    // Ready, but with a different model than the one being asked for now -
+    // the exact shape of "3B is loaded, the picker was just set to 8B".
+    const fakeMod = { status: () => ({ ready: true, loading: false, model: "3b" }),
+      warm: (id) => { warmedWith = id; } };
+    watchLoad(fakeMod, "8b");
+    check("a different model being ready does not count as done", warmedWith, "8b");
+  }
+
+  {
+    const s = stub();
+    const watchLoad = loadPopupHelper("watchLoad", s);
+    // Already ready with the model actually asked for: nothing to do, and
+    // nothing pretends otherwise either.
+    const fakeMod = { status: () => ({ ready: true, loading: false, model: "8b" }),
+      warm: () => { throw new Error("should not have been called"); } };
+    watchLoad(fakeMod, "8b");
+    check("the same model already ready is left alone", s.modelState.className, "modelstate ready");
+  }
+
+  runAsync(async () => {
+    const s = stub();
+    const watchLoad = loadPopupHelper("watchLoad", s);
+    // engineFor's own release() clears both ready and loading synchronously,
+    // before it ever awaits the old engine's unload - so there is a real
+    // span, not a single instant, where a load that is about to succeed
+    // looks identical to one that never will: neither ready nor loading is
+    // true. Isolated from the model-identity fix above by starting from
+    // nothing loaded at all, so this is the gap-tolerance mechanism on its
+    // own rather than the two fixes masking each other.
+    let began = null;
+    const classNames = [];
+    Object.defineProperty(s.modelState, "className", {
+      get() { return this._c; },
+      set(v) { this._c = v; classNames.push(v); },
+    });
+    const fakeMod = {
+      status: () => {
+        if (began === null) return { ready: false, loading: false, model: null };
+        const dt = Date.now() - began;
+        if (dt < 850) return { ready: false, loading: false, model: null };       // the gap
+        if (dt < 1750) return { ready: false, loading: true, model: "8b" };       // now loading
+        return { ready: true, loading: false, model: "8b" };                      // done
+      },
+      warm: () => { began = Date.now(); },
+    };
+    watchLoad(fakeMod, "8b");
+    await new Promise((r) => setTimeout(r, 2500));
+    check("it comes out the other side ready, with the right model",
+      s.modelState.className, "modelstate ready");
+    ensure("and the gap in the middle was never reported as a failure",
+      !classNames.includes("modelstate warn"), classNames.join(", "));
+  });
+
+  runAsync(async () => {
+    const s = stub();
+    const watchLoad = loadPopupHelper("watchLoad", s);
+    // Two picks in a row, before the first watch had settled either way -
+    // "use 3b" then "use 9b" typed in quick succession. Without a singleton
+    // guard the first call's interval keeps polling in the background, and
+    // if that model's load later genuinely fails, its "did not load"
+    // message lands after the second pick already reported success,
+    // clobbering the only answer that was true.
+    const classNames = [];
+    Object.defineProperty(s.modelState, "className", {
+      get() { return this._c; },
+      set(v) { this._c = v; classNames.push(v); },
+    });
+    // "3b" never resolves either way - it just keeps loading, then, after
+    // the point a real timeout would give up on it, stops. A leaked watch
+    // would eventually report that as a failure; the fix means nothing is
+    // still listening for it by then.
+    const fakeModA = { status: () => ({ ready: false, loading: false, model: null }), warm: () => {} };
+    const fakeModB = { status: () => ({ ready: true, loading: false, model: "9b" }), warm: () => {} };
+    watchLoad(fakeModA, "3b");
+    watchLoad(fakeModB, "9b");
+    await new Promise((r) => setTimeout(r, 1600));
+    check("the second pick is the one reported", s.modelState.className, "modelstate ready");
+    ensure("and the first pick's watch never got to overwrite it",
+      !classNames.includes("modelstate warn"), classNames.join(", "));
+  });
 }
 
 // A 3B replied {"why":"selecting a state",name":"Alaska","do":"select"} and

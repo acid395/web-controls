@@ -239,6 +239,25 @@ let statusText = null;
 // under a finished card. A model download is not an ask and stays.
 let statusOwner = null;
 
+// What this window's own graphics adapter can and cannot do. Asked once at
+// load, the same way the offscreen document has always asked at its own
+// load - and read from here whenever panelStatus answers, rather than
+// requesting a fresh adapter on every status check somebody's card happens
+// to trigger.
+//
+// This was missing entirely before: the panel reported only
+// `"gpu" in navigator`, which says the API exists and nothing about whether
+// it is real hardware or how much it can hold - so diagnose's "graphics
+// card" line, and every remedy this file's own model-fit checks can offer,
+// had nothing to say whenever the panel was the one actually running the
+// model. That is the common case: the whole reason the panel hosts the
+// engine is that Chrome throttles what it cannot see.
+let panelGpuInfo = null;
+(async () => {
+  try { panelGpuInfo = globalThis.WC_DESCRIBE_GPU ? await WC_DESCRIBE_GPU() : null; }
+  catch (e) { panelGpuInfo = null; }
+})();
+
 // Past instructions, newest first, for up-arrow recall.
 let recallList = [];
 let recallAt = -1;
@@ -633,7 +652,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const mod = await panelModelModule();
         const st = mod.status();
-        sendResponse({ ok: true, ...st, hasGpu: "gpu" in navigator });
+        sendResponse({ ok: true, ...st, hasGpu: "gpu" in navigator, gpu: panelGpuInfo });
       } catch (e) {
         sendResponse({ ok: false, error: String((e && e.message) || e) });
       }
@@ -865,6 +884,7 @@ const loadPct = document.getElementById("loadPct");
  * Three states, and the last one is the point: a bar that fills and then
  * disappears leaves nothing behind saying it finished. It says so.
  */
+/* @testable-start watchLoad */
 let readyTimer = null;
 let loadingSince = null;
 function showLoading(text, fraction) {
@@ -931,9 +951,23 @@ function showReady(modelId) {
  * report said and the line above it kept saying "loading" until something
  * else happened to redraw. The finish is the moment somebody is waiting
  * for, so it is watched for directly.
+ *
+ * Only ever one watch running. Picking a second model before the first had
+ * finished started a second poll loop beside the first, both writing the
+ * same handful of DOM nodes - and whichever noticed first that the engine
+ * was no longer the model IT was watching declared that load dead while the
+ * other was about to report it succeeding.
  */
+let watchTick = null;
 function watchLoad(mod, modelId) {
-  if (mod.status().ready) { showReady(mod.status().model || modelId); return; }
+  if (watchTick) { clearInterval(watchTick); watchTick = null; }
+  const now = mod.status();
+  // Ready is not enough on its own - it has to be ready with the model that
+  // was actually asked for. "Ready" alone reported whichever model had been
+  // loaded before: picking 8B while 3B sat loaded and answering showed
+  // "Llama 3.2 3B is ready" and never called warm() at all, so choosing a
+  // different model from the picker silently kept the old one running.
+  if (now.ready && now.model === modelId) { showReady(now.model); return; }
   showLoading("starting", null);
   mod.warm(modelId, (t, fraction) => {
     setStatus(`model loading - ${t}`, "load");
@@ -944,13 +978,26 @@ function watchLoad(mod, modelId) {
   // promise, so that a failed load reports through status() instead of
   // becoming an unhandled rejection here.
   const began = Date.now();
-  const tick = setInterval(() => {
+  // Switching models releases the old engine before the new one starts
+  // loading, and the moment in between reports neither ready nor loading -
+  // engineFor's own release() clears both flags before it awaits the
+  // unload, and freeing a multi-gigabyte GPU allocation is not always
+  // faster than one poll tick. That gap looks exactly like a failure to a
+  // check that only asks "is it doing something right now", so failure is
+  // not declared until loading has actually been seen at least once - a
+  // transition this cannot have without a real engine behind it.
+  let sawLoading = false;
+  watchTick = setInterval(() => {
     const st = mod.status();
-    if (st.ready) { clearInterval(tick); showReady(st.model || modelId); return; }
-    if (!st.loading) {
-      // Neither loading nor ready: it fell over. Say so rather than leaving
-      // a bar that never moves again.
-      clearInterval(tick);
+    if (st.ready && st.model === modelId) {
+      clearInterval(watchTick); watchTick = null; showReady(st.model); return;
+    }
+    if (st.loading) {
+      sawLoading = true;
+    } else if (sawLoading) {
+      // Neither loading nor ready, after having been loading: it fell over.
+      // Say so rather than leaving a bar that never moves again.
+      clearInterval(watchTick); watchTick = null;
       hideLoading();
       if (modelState) {
         modelState.className = "modelstate warn";
@@ -958,7 +1005,12 @@ function watchLoad(mod, modelId) {
       }
       return;
     }
-    if (Date.now() - began > 30 * 60 * 1000) clearInterval(tick);
+    if (Date.now() - began > 30 * 60 * 1000) {
+      // Given up on, not merely stopped. A bar left mid-fill forever is the
+      // same complaint this all exists to fix.
+      clearInterval(watchTick); watchTick = null;
+      hideLoading();
+    }
   }, 700);
 }
 
@@ -968,6 +1020,7 @@ function hideLoading() {
   loadWrap.className = "loadwrap";
   loadingSince = null;
 }
+/* @testable-end */
 
 // What is actually loaded, next to what is chosen. A picker you cannot
 // confirm is worse than none: two switches to a smaller model looked like

@@ -164,5 +164,12 @@ globalThis.WC_BIGGEST_THAT_FITS = function (gpu) {
   for (const m of ordered) {
     if (globalThis.WC_MODEL_FITS(m.id, gpu).fits) return m;
   }
-  return ordered[ordered.length - 1];
+  // Software rendering fails every model regardless of size - it is not a
+  // size problem, so there is no smaller model that would fix it - and the
+  // three callers all name what this returns as "the largest that fits".
+  // Falling back to the smallest one anyway said that of a model that does
+  // not, in fact, fit; null says plainly that nothing here does, and every
+  // caller already treats a falsy return as "no remedy to offer", so this
+  // is the only change needed.
+  return null;
 };
