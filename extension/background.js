@@ -7228,16 +7228,13 @@ async function runDiagnostics() {
     // only catch the clear cases - but a machine reporting 4GB being asked
     // to hold five gigabytes of weights is a clear case, and it is invisible
     // in every other line here.
-    const wants = (globalThis.WC_MODEL_VRAM
-      && globalThis.WC_MODEL_VRAM((st && st.model) || WC_DEFAULT_MODEL)) || 0;
-    // Only below the cap. Chrome reports 8 for a machine with 8GB and for one
-    // with 64, so 8 says nothing and judging it would fail most of the
-    // capable machines this runs on. Four says something.
-    if (gpu.deviceMemoryGB && gpu.deviceMemoryGB < 8
-        && wants && wants > gpu.deviceMemoryGB * 1024 * 0.6) {
-      throw new Error(`${modelName(st && st.model)} wants ${Math.round(wants / 1024)}GB,`
-        + ` machine reports ~${gpu.deviceMemoryGB}GB - say "use 3b"`);
-    }
+    // The memory figure is reported and not judged. Chrome caps it at 8, so a
+    // laptop with 8GB and a workstation with 64 are indistinguishable here -
+    // and a rule that fired on 8 would fail every capable machine this runs
+    // on to catch the one that cannot cope. Seven explanations have already
+    // been built on this machine's description of itself and all seven were
+    // wrong; the measurement below is what settles it, and it is the model
+    // speed line rather than anything inferred from hardware.
     return [gpu.describedAs || "hardware adapter",
       gpu.maxBufferMB ? `buffer ${gpu.maxBufferMB}MB` : null,
       gpu.maxStorageMB ? `storage ${gpu.maxStorageMB}MB` : null,
@@ -7269,13 +7266,24 @@ async function runDiagnostics() {
   });
 
   const failed = steps.filter((x) => x.state === "failed");
+  // "n/a" is for a thing that does not apply here, not for a thing that is
+  // broken. This said "All checks passed · everything this extension needs
+  // is working here" on a machine whose model could not produce twelve
+  // tokens in sixty seconds, because the model checks were all marked
+  // optional and an optional failure is reported as "n/a". A green headline
+  // over a dead model is worse than no headline.
+  const unusable = steps.filter((x) => x.state === "n/a"
+    && /^(model speed|graphics card|local model)$/.test(x.name));
+  const worst = failed[0] || unusable[0];
   return {
-    ok: failed.length === 0,
+    ok: failed.length === 0 && unusable.length === 0,
     steps,
     display: {
-      title: failed.length ? `${failed.length} of ${steps.length} checks failed` : "All checks passed",
-      subtitle: failed.length
-        ? `first failure: ${failed[0].name} - ${failed[0].value}`
+      title: failed.length ? `${failed.length} of ${steps.length} checks failed`
+        : unusable.length ? `the model cannot run on this machine`
+        : "All checks passed",
+      subtitle: worst
+        ? `${worst.name} - ${worst.value}`
         : `v${mf.version} · everything this extension needs is working here`,
       stats: [],
       rows: steps.map((x) => ({

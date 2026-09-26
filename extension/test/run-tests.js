@@ -1462,6 +1462,17 @@ else {
     // this, and saying "try a shorter instruction" would be a lie.
     const slow = await bench({ ok: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC",
       ms: 41000, promptTokens: 12, replyTokens: 12, decodePerS: 0.3, firstTokenS: 30.1 });
+    // "All checks passed · everything this extension needs is working here",
+    // on a machine whose model could not produce twelve tokens in sixty
+    // seconds. The model checks were marked optional, an optional failure
+    // reports as "n/a", and "n/a" was not counted. A green headline over a
+    // dead model is worse than no headline at all.
+    ensure("a model that cannot run is not 'all checks passed'",
+      !/All checks passed/.test(String(((slow || {}).display || {}).title || "")),
+      ((slow || {}).display || {}).title);
+    ensure("and the headline says what is actually wrong",
+      /cannot run on this machine/.test(String(((slow || {}).display || {}).title || "")),
+      ((slow || {}).display || {}).title);
     const slowLine = lineOf(slow, "model speed");
     ensure("twelve tokens taking forty seconds is called out",
       /too large for this machine/.test(String(slowLine.meta || slowLine.value || "")),
@@ -1510,14 +1521,17 @@ else {
     // that then managed a tenth of a token a second. Sequential reads fine,
     // random access across five gigabytes of weights not: paging, which no
     // GPU limit reports.
+    // Memory is reported, not judged. Chrome caps the figure at 8, so a
+    // laptop with 8GB and a workstation with 64 read the same - and a rule
+    // that fired on 8 would fail every capable machine to catch the one that
+    // cannot cope. What settles it is the measured model speed, not anything
+    // inferred from the hardware's own description, which has now been wrong
+    // about this machine seven times.
     const tight = lineOf(await card({ ok: true, software: false,
       describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 4096,
       deviceMemoryGB: 4, cores: 8 }));
-    ensure("weights larger than the machine are called out",
-      /wants 5GB/.test(String(tight.meta || "")), tight);
-    ensure("and it says what the machine has",
-      /~4GB/.test(String(tight.meta || "")), tight);
-    ensure("and names a model that fits", /use 3b/.test(String(tight.meta || "")), tight);
+    ensure("a small memory figure is reported", /~4GB/.test(String(tight.meta || "")), tight);
+    ensure("but not treated as a verdict", tight.value === "ok", tight.value);
 
     const roomy = lineOf(await card({ ok: true, software: false,
       describedAs: "apple metal-3", maxBufferMB: 4096, maxStorageMB: 4096,
