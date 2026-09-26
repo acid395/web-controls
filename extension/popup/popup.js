@@ -596,6 +596,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg.type === "panelBench") {
+    (async () => {
+      try {
+        const mod = await panelModelModule();
+        const began = Date.now();
+        const out = await mod.step(msg.model, "Reply with the single word: ready",
+          { timeoutMs: 60000 });
+        sendResponse({ ok: true, ms: Date.now() - began,
+          decodePerS: out.cost && out.cost.decodePerS, where: "the panel" });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e), where: "the panel" });
+      }
+    })();
+    return true;
+  }
   if (msg.type === "panelEmbed") {
     (async () => {
       try {

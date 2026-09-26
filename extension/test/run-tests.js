@@ -1658,9 +1658,12 @@ else {
   });
 
   for (const [what, html, goal, wantPressed, wantTurns] of [
-    ["one control clearly closest", oneClose, "how much water is flowing", "a", 0],
+    // A command, not a question. "How much water is flowing" reads the page
+    // now - it is asking to be told something - and this is about the press
+    // path, where meaning picks one control out and no turn is spent.
+    ["one control clearly closest", oneClose, "open the streamflow conditions", "a", 0],
     // A narrow win is exactly the case that wants a reader, so it gets one.
-    ["two equally close", twoClose, "how much water is flowing", null, 1],
+    ["two equally close", twoClose, "open the streamflow conditions", null, 1],
   ]) {
     const page = loadPage(html, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
     if (!page) continue;
@@ -2060,6 +2063,119 @@ else {
   // Braces inside an answer are not structure.
   const withBraces = firstJsonObject('{"do":"finish","answer":"use {this} form"}');
   check("braces inside an answer survive", withBraces && withBraces.answer, "use {this} form");
+}
+
+// A 3B asked to "explain this data" replied {"name":"Legend","do":"click"}
+// and pressed a map control. The prompt says "Question: read, do not press"
+// and it did the opposite - which is a decision a small model can get wrong
+// and one there is nothing to get right: for a question the answer is
+// always read. So the page is read before the first turn and the model is
+// handed what it says, which also saves a turn where turns are expensive.
+{
+  const askPage = `<!doctype html><html><head><title>Dashboard</title></head><body>
+    <button>Legend</button><button>Layers</button><button>Tools</button>
+    <table><tr><th>Gauge</th><th>Stage</th></tr>
+    <tr><td>Nenana</td><td>12.4</td></tr><tr><td>Fairbanks</td><td>8.1</td></tr></table>
+    </body></html>`;
+  for (const [what, instr, wantRead] of [
+    ["a question reads before asking", "explain this data", true],
+    ["and so does a what-is question", "what is this data saying", true],
+    // A command still asks first: there is a real choice to make.
+    ["a command still asks the model", "click legend", false],
+  ]) {
+    const page = loadPage(askPage, { url: "https://dashboard.waterdata.usgs.gov/app/nwd/en/" });
+    if (!page) continue;
+    let pressed = 0;
+    for (const b of page.document.querySelectorAll("button")) {
+      b.addEventListener("click", () => { pressed++; });
+    }
+    const bgq2 = loadBackground({ page });
+    let firstTurnHadObservation = null;
+    bgq2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmEmbed") return { ok: false, error: "none" };
+      if (m.type === "llmStep") {
+        if (firstTurnHadObservation === null) firstTurnHadObservation = !!m.observation;
+        // The behaviour that caused this: press something rather than read.
+        const legend = (m.controls || []).findIndex((c) => /legend/i.test(c.label || ""));
+        return m.observation
+          ? { ok: true, step: { do: "finish", answer: "Nenana 12.4, Fairbanks 8.1." } }
+          : { ok: true, step: legend >= 0 ? { name: m.controls[legend].label, do: "click" }
+              : { do: "finish", answer: "" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgq2.__ask({ type: "smartAsk", instruction: `model: ${instr}` });
+      check(`${what}: the first turn already has the page`, firstTurnHadObservation, wantRead);
+      if (wantRead) {
+        check(`${what}: and nothing is pressed`, pressed, 0);
+      }
+    });
+  }
+}
+
+// Asked for "the tidal predictions calibrator" - which does not exist - the
+// no-model path pressed "Other water data resources" and "Show these data
+// types" three times each before giving up. Six real presses on somebody's
+// page in pursuit of nothing, on exactly the machines that have no model to
+// refuse for them.
+//
+// Both doors were "related" to the request through the "the" inside "Other"
+// and "these": relatedness was a substring match on any word over two
+// letters. A door is related when it is named for what was asked - a whole
+// word, and not a small one - and a request for something absent must end
+// with nothing pressed.
+{
+  const doorsHtml = `<!doctype html><html><body>
+    <button aria-expanded="false" aria-controls="p1">Other water data resources</button>
+    <div id="p1" hidden><a href="#x">Something else</a></div>
+    <button aria-expanded="false" aria-controls="p2">Show these data types</button>
+    <div id="p2" hidden><label><input type="checkbox"> Temperature</label></div>
+    <button aria-expanded="false" aria-controls="p3">Flood Inundation</button>
+    <div id="p3" hidden><label><input type="checkbox" id="fi"> Inundation layer</label></div>
+    </body></html>`;
+  const page = loadPage(doorsHtml, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page) {
+    for (const id of ["p1", "p2", "p3"]) {
+      const btn = page.document.querySelector(`[aria-controls="${id}"]`);
+      btn.addEventListener("click", function () {
+        const panel = page.document.getElementById(id);
+        panel.hidden = !panel.hidden;
+        this.setAttribute("aria-expanded", String(!panel.hidden));
+      });
+    }
+    // The page's own judgement first: which doors does it call related?
+    const found = page.GENERIC.disclosures({ match: "click the tidal predictions calibrator" });
+    const related = (found.disclosures || []).filter((d) => d.related).map((d) => d.label);
+    check("a small word inside another word does not make a door related",
+      related.join(","), "");
+    const flood = page.GENERIC.disclosures({ match: "enable flood inundation" });
+    const floodRelated = (flood.disclosures || []).filter((d) => d.related).map((d) => d.label);
+    check("while a door named for the request still is", floodRelated.join(","), "Flood Inundation");
+
+    // Then the whole path, with no model: nothing pressed for something absent.
+    const pressed = [];
+    for (const b of page.document.querySelectorAll("button")) {
+      b.addEventListener("click", () => pressed.push(b.textContent.trim()));
+    }
+    const bgd4 = loadBackground({ page });
+    bgd4.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: true } : undefined);
+    runAsync(async () => {
+      const r = await bgd4.__ask({ type: "smartAsk", instruction: "click the tidal predictions calibrator" });
+      // Not zero: a door named for holding controls - "Show ..." - is worth
+      // one look, because a panel built with {#if open} holds controls that
+      // are in no inventory until it is pressed. What must not happen is a
+      // door unrelated to the request, or any door twice.
+      ensure("nothing unrelated is pressed on the way to refusing",
+        !pressed.includes("Other water data resources"), pressed);
+      check("and no door is pressed twice", pressed.length, new Set(pressed).size);
+      ensure("and is refused rather than claimed",
+        r.ok === false || /did not work|clearly does|nothing on this page/i
+          .test(String((r.display || {}).title || r.error || "")),
+        (r.display || {}).title || r.error);
+    });
+  }
 }
 
 section("the model drives");

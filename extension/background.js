@@ -4914,6 +4914,13 @@ let panelHasModel = false;
 // was that instructions were still slow. A card that says where the decision
 // came from turns that into one line instead of an afternoon.
 let lastDecisionBy = null;
+// Doors opened so far in this ask. Two paths open doors - the pursuit loop
+// and the nothing-matched fallback after it - and each kept its own list, so
+// every door the first had tried the second tried again. On the real page
+// the buttons carry no aria-expanded, so nothing marked them open, and "WDFN
+// tools and data" and "Show legend" were each pressed twice for a control
+// that does not exist.
+let doorsOpenedThisAsk = new Set();
 async function panelIsOpen() {
   try {
     const said = await chrome.runtime.sendMessage({ target: "panel", type: "panelPing" });
@@ -5299,6 +5306,33 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // scorer's judgement, and putting it between the page and the model
       // hands the model the scorer's mistakes to choose from. Meaning or
       // everything; a bad shortlist is worse than none.
+    }
+
+    // A question is read first, not asked about.
+    //
+    // The prompt tells the model "Question: read, do not press", and a 3B
+    // asked to explain a page replied {"name":"Legend","do":"click"} - it
+    // pressed a map control instead. Asking a small model whether to read
+    // is a decision it can get wrong, and there is nothing to get right:
+    // the answer is always yes. So the page is read before the first turn
+    // and the model is handed what it says, which also saves a turn on a
+    // machine where turns are the expensive part.
+    if (!history.length && !observation && ASKING_TO_READ.test(goal)) {
+      const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+      let seen = read.ok ? summariseForModel(read.result) : null;
+      const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
+      const series = ((feeds.ok && feeds.result && feeds.result.series) || [])
+        .filter((x) => x && x.count >= 3);
+      if (series.length) {
+        const lines = series.slice(0, 6).map((x) =>
+          `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
+        seen = [seen && seen !== "nothing readable" ? seen : null,
+          "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
+      }
+      if (seen) {
+        observation = String(seen).slice(0, 2200);
+        history.push({ did: "read the page", outcome: "got its values" });
+      }
     }
 
     // Before spending a turn: is there anything to decide?
@@ -6326,10 +6360,22 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       // anything to do with flood inundation, both revealing nothing, both
       // real presses on somebody's page. A door that shares no word with the
       // instruction is not a lead; it is just the next thing in a list.
+      // Related, or named for holding controls - "Layers", "Filters". Not
+      // merely collapsed. Asked for "the tidal predictions calibrator",
+      // which does not exist, this pressed "Other water data resources" and
+      // "Show these data types" three times each: both were "related"
+      // through the "the" inside "Other" and "these", because relatedness
+      // was a substring match on any word over two letters. That is fixed
+      // where it lives, in the page bundle, with whole words and the small
+      // ones dropped. A generic door is still worth a look, because a panel
+      // built with {#if open} does not exist until it is pressed and the
+      // control inside it was never in any inventory.
       const door = ((doors.ok && doors.result && doors.result.disclosures) || [])
-        .find((d) => (d.related || d.generic) && !actedOn.has(d.selector));
+        .find((d) => (d.related || d.generic) && !actedOn.has(d.selector)
+          && !doorsOpenedThisAsk.has(d.selector));
       if (!door) break;
       actedOn.add(door.selector);
+      doorsOpenedThisAsk.add(door.selector);
       const opened = await invokeOnActiveTab("openDisclosure", [door.selector]).catch(() => null);
       forgetPageTools();
       const appeared = (opened && opened.ok && opened.result.appeared) || 0;
@@ -7338,9 +7384,20 @@ async function runDiagnostics() {
   await step("model speed", async () => {
     const st = await modelStatus({ maxAgeMs: 0 });
     if (!st || !st.ready) return "not loaded yet - load it and run this again";
-    await ensureOffscreenDocument();
-    const r = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmBench" })
-      .catch(() => null);
+    // Measured where the model actually runs. This only ever asked the
+    // offscreen document, so on a machine whose panel does 25 tokens a
+    // second it reported 54 seconds for twelve tokens and announced "the
+    // model cannot run on this machine" - about a window nothing uses.
+    let r = null;
+    if (await panelIsOpen()) {
+      r = await chrome.runtime.sendMessage({ target: "panel", type: "panelBench",
+        model: st.model || WC_DEFAULT_MODEL }).catch(() => null);
+    }
+    if (!r) {
+      await ensureOffscreenDocument();
+      r = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmBench" })
+        .catch(() => null);
+    }
     if (!r) throw new Error("the offscreen document did not answer");
     if (!r.ok) throw new Error(r.error || "the benchmark did not finish");
     const decode = r.decodePerS ? `${r.decodePerS.toFixed(1)} tokens/s` : "unmeasured";
@@ -7353,8 +7410,8 @@ async function runDiagnostics() {
       throw new Error(`12 tokens took ${(r.ms / 1000).toFixed(1)}s (${decode})`
         + " - too large for this machine; say \"use 3b\" or \"use qwen\"");
     }
-    return [`${(r.ms / 1000).toFixed(1)}s for twelve tokens`, decode, first]
-      .filter(Boolean).join(" \u00b7 ");
+    return [`${(r.ms / 1000).toFixed(1)}s for twelve tokens`, decode, first,
+      r.where ? `in ${r.where}` : null].filter(Boolean).join(" \u00b7 ");
   }, { optional: true });
 
   await step("graphics card", async () => {
@@ -8368,6 +8425,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Recorded before the work starts, so a popup opened mid-ask sees it
       // running rather than seeing nothing.
       lastDecisionBy = null;
+      doorsOpenedThisAsk = new Set();
       const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       recordAsk(askId, msg.instruction, { status: "running" });
 
@@ -10903,8 +10961,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!commandLike || forceModel) { /* only for instructions */ } else {
           const found = await invokeOnActiveTab("disclosures", [{ match: wanted }])
             .catch(() => ({ ok: false }));
-          const candidates = (found.ok && found.result && found.result.disclosures) || [];
+          // Named for what was asked, or named for holding controls. Not
+          // merely collapsed: this opened the first three collapsed things
+          // on the page, and on waterdata.usgs.gov those were the "Here's
+          // how you know" government banner, "WDFN tools and data" and
+          // "Related links" - pressed in pursuit of "the tidal predictions
+          // calibrator", which does not exist. The rule the page bundle
+          // already states, applied: a door is worth opening if it is named
+          // for the request or for holding controls, and not otherwise.
+          const candidates = ((found.ok && found.result && found.result.disclosures) || [])
+            .filter((d) => (d.related || d.generic) && !doorsOpenedThisAsk.has(d.selector));
           for (const d of candidates.slice(0, 3)) {
+            doorsOpenedThisAsk.add(d.selector);
             const opened = await invokeOnActiveTab("openDisclosure", [d.selector]).catch(() => null);
             if (!opened || !opened.ok || !opened.result.appeared) continue;
 

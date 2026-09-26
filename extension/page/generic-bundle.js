@@ -2163,11 +2163,21 @@
     // "Flood Inundation", "National Snow Analysis" - so a list of generic
     // words like "layers" or "menu" never matched one, and the header got
     // clicked as though it were the layer. It is a door, not the room.
+    // Whole words, and not the small ones. This matched substrings of any
+    // word over two letters, so "click the tidal predictions calibrator"
+    // was related to "Other water data resources" and "Show these data
+    // types" through the "the" inside "Other" and "these" - and both were
+    // pressed, three times each, in pursuit of a control that does not
+    // exist. Related has to mean the door is named for what was asked, not
+    // that three letters of it appear somewhere in the label.
+    const SMALL = new Set(["the", "and", "for", "with", "this", "that", "from", "into",
+      "click", "press", "tap", "open", "show", "select", "choose", "pick", "set", "turn",
+      "enable", "disable", "check", "toggle", "please", "then", "also", "all", "any"]);
     const wantWords = String(match || "").toLowerCase().split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2);
+      .filter((w) => w.length > 2 && !SMALL.has(w));
     const relatedTo = (label) => {
-      const l = (label || "").toLowerCase();
-      return !!l && wantWords.some((w) => l.includes(w));
+      const words = (label || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      return words.length > 0 && wantWords.some((w) => words.includes(w));
     };
     const isAccordion = (el) => {
       try {
@@ -2182,6 +2192,12 @@
       if (seen.has(el) || !isVisible(el)) continue;
       const label = rawLabelOf(el);
       const expanded = el.getAttribute && el.getAttribute("aria-expanded");
+      // Already open is not a door to open. This listed an expanded button
+      // whenever its name looked generic, so a door one path had opened was
+      // pressed again by the next - which toggled it shut, and put "Show
+      // these data types" on the pressed list twice for a control that was
+      // never behind it. Whatever it hides is on the page now; look there.
+      if (expanded === "true") continue;
       const accordion = isAccordion(el);
       const says = expanded === "false" || (el.getAttribute && el.getAttribute("aria-haspopup"))
         || tagOf(el) === "summary" || accordion;
