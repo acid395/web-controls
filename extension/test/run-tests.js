@@ -1770,11 +1770,30 @@ else {
   const src = fsx.readFileSync(
     pathx.join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
 
+  const lines = src.split("\n");
   ensure("there is a way to forget the chosen model",
     /function forgetChosenModel\s*\(/.test(src), "no forgetChosenModel");
 
-  // Every assignment to MODEL_ID, and whether the cache is dropped nearby.
-  const lines = src.split("\n");
+  // "Object has already been disposed" is WebLLM saying something unloaded
+  // the engine while a generation was still running in it. Three things here
+  // unload - the idle timer, stepping down a model, handing the embedder
+  // back - each added for a good reason, none of them asking whether anybody
+  // was mid-answer. A release during a decision kills the decision and reads,
+  // from a card, as the model failing.
+  ensure("there is a way to know something is mid-answer",
+    /function whileBusy\s*\(/.test(src) && /function whenIdle\s*\(/.test(src),
+    "no whileBusy/whenIdle");
+  // Every unload waits first. Counted rather than eyeballed, because this is
+  // three call sites that each looked harmless alone.
+  const unloads = lines.reduce((n, l) => n + (/\.unload\(\)/.test(l) ? 1 : 0), 0);
+  const waits = lines.reduce((n, l) => n + (/await whenIdle\(/.test(l) ? 1 : 0), 0);
+  ensure(`each of the ${unloads} unloads waits for the work to finish`,
+    unloads > 0 && waits >= unloads, `${unloads} unloads, ${waits} waits`);
+  // And the generating paths say when they are busy, or the waiting is a
+  // no-op that looks like a fix.
+  const busy = (src.match(/whileBusy\(/g) || []).length;
+  ensure("and the generating paths mark themselves busy", busy >= 4, busy);
+
   const assigns = [];
   lines.forEach((line, i) => {
     if (/^\s*MODEL_ID\s*=/.test(line)) assigns.push({ at: i + 1, line: line.trim() });

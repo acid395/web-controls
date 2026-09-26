@@ -4953,8 +4953,10 @@ function slowDecisionHint(ms, gpu) {
         gpu.describedAs ? ` (${gpu.describedAs})` : ""}, which is roughly ten times slower.`
       + " Check chrome://gpu, and that hardware acceleration is on in Chrome's settings";
   }
+  // Says where the picker is, because it moved to the top of the panel, and
+  // an instruction pointing at the place it used to be is worse than none.
   return `one decision takes about ${secs}s on this machine`
-    + " - a smaller model in the panel's settings is two to four times quicker";
+    + " - a smaller model, from the picker at the top of the panel, is two to four times quicker";
 }
 
 function turnBudgetFor(modelId) {
@@ -8420,7 +8422,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Asked for by name, so this is a choice and not a fall-back. It
           // clears the record of having been stepped down, which is also how
           // somebody retries the model that was stepped down from.
-          await chrome.storage.local.set({ llmModelId: pick, llmDemotedFrom: null, llmDemotedWhy: null });
+          await chrome.storage.local.set({ llmModelId: pick, llmDemotedFrom: null,
+            llmDemotedWhy: null, llmChosenByHand: true });
           await releaseOffscreenModel();
           const now = await modelStatus();
           respond({ ok: true, plannedBy: "settings",

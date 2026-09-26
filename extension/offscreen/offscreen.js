@@ -370,6 +370,9 @@ function touchEngine() {
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(async () => {
     if (!enginePromise) return;
+    // Idle means idle. Unloading under a live generation is what produces
+    // "Object has already been disposed" on a card.
+    if (!(await whenIdle())) { touchEngine(); return; }
     try {
       const engine = await enginePromise;
       if (engine && typeof engine.unload === "function") await engine.unload();
@@ -421,6 +424,7 @@ let embedReady = false;
 // nothing: it is asked once per instruction and reloads from cache.
 async function releaseEmbedder() {
   if (!embedPromise) return;
+  await whenIdle();
   const held = embedPromise;
   embedPromise = null;
   embedReady = false;
@@ -447,6 +451,29 @@ function getEmbedder(onProgress) {
 
 let fellBackTo = null;   // reported, so a card never silently names the wrong one
 
+// How many requests are inside the engine right now.
+//
+// "Object has already been disposed" is WebLLM saying something unloaded the
+// engine while a generation was still running in it. Three things here
+// unload: the idle timer, stepping down a model, and handing the embedder
+// back - and all three were added for good reasons and none of them asked
+// whether anybody was mid-answer. A release while a decision is in flight
+// kills the decision and reads, from a card, as the model failing.
+let inFlight = 0;
+async function whileBusy(fn) {
+  inFlight++;
+  try { return await fn(); } finally { inFlight--; }
+}
+// Waits for the work to finish rather than cutting it off. Bounded, because
+// a generation that never returns must not make this wait for ever either.
+async function whenIdle({ waitMs = 5000 } = {}) {
+  const until = Date.now() + waitMs;
+  while (inFlight > 0 && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return inFlight === 0;
+}
+
 // Down the ladder until one of them is quick enough.
 //
 // There is no reading a machine and knowing what it can run. One laptop here
@@ -466,20 +493,31 @@ const PROVE_LIMIT_MS = 8000;      // twelve tokens is nothing; this is generous
 const PROVE_TIMEOUT_MS = 25000;
 
 async function proveOrStepDown(engine) {
+  // A choice is a choice. Stepping down exists so a machine nobody has
+  // configured lands somewhere usable - not to overrule somebody who went to
+  // the picker and said 8B. Asked for by hand, it is measured and reported
+  // and left alone; the number is the useful part, and what to do about it
+  // belongs to whoever chose.
+  let byHand = false;
+  try {
+    const g = await chrome.storage.local.get(["llmChosenByHand"]);
+    byHand = !!(g && g.llmChosenByHand);
+  } catch (e) { byHand = false; }
+
   let current = engine;
   for (;;) {
     const id = MODEL_ID;
     let took = null;
     try {
       const began = Date.now();
-      await Promise.race([
+      await whileBusy(() => Promise.race([
         current.chat.completions.create({
           messages: [{ role: "user", content: "Reply with the single word: ready" }],
           temperature: 0, max_tokens: PROVE_TOKENS,
         }),
         new Promise((_, reject) => setTimeout(
           () => reject(new Error("did not finish")), PROVE_TIMEOUT_MS)),
-      ]);
+      ]));
       took = Date.now() - began;
       if (took <= PROVE_LIMIT_MS) {
         chrome.runtime.sendMessage({
@@ -494,6 +532,14 @@ async function proveOrStepDown(engine) {
     const why = took === null
       ? `could not manage twelve tokens in ${Math.round(PROVE_TIMEOUT_MS / 1000)}s here`
       : `took ${(took / 1000).toFixed(1)}s for twelve tokens here`;
+    if (byHand) {
+      chrome.runtime.sendMessage({
+        type: "llmProgress",
+        text: `${WC_MODEL_NAME(id)} ${why} - keeping it because you chose it.`
+          + (next ? ` ${WC_MODEL_NAME(next)} would be quicker.` : ""),
+      }).catch(() => {});
+      return;
+    }
     if (!next) {
       // The smallest there is, and still slow. Say so rather than stepping
       // down to nothing: every model will be slow on this machine, and
@@ -543,6 +589,7 @@ async function demoteTo(small, from, why) {
 // Let go of the planner, so the next request builds whichever one is chosen.
 async function releaseEngine() {
   if (!enginePromise) return;
+  await whenIdle();
   const held = enginePromise;
   enginePromise = null;
   engineReady = false;
@@ -701,7 +748,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }).catch(() => {});
         });
         const began = Date.now();
-        const out = await engine.embeddings.create({ input: texts });
+        const out = await whileBusy(() => engine.embeddings.create({ input: texts }));
         sendResponse({
           ok: true,
           vectors: (out && out.data ? out.data : []).map((d) => d.embedding),
@@ -833,7 +880,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // point holds the engine, so the next step queues behind a decision
         // nobody is waiting for any more.
         const INFERENCE_TIMEOUT_MS = inferenceTimeoutMs();
-        const reply = await Promise.race([
+        const reply = await whileBusy(() => Promise.race([
           engine.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             temperature: 0,
@@ -852,7 +899,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           new Promise((_, reject) => setTimeout(
             () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),
             INFERENCE_TIMEOUT_MS)),
-        ]);
+        ]));
         const text = (reply.choices[0].message.content || "").trim();
         // Where the time went, from the engine rather than from a guess.
         //

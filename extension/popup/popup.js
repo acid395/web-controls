@@ -795,7 +795,7 @@ if (modelChoice) {
     // Chosen deliberately, so it is no longer a demotion - and picking the
     // one that was stepped down from is how somebody asks to try it again.
     chrome.storage.local.set({ llmModelId: modelChoice.value,
-      llmDemotedFrom: null, llmDemotedWhy: null }, () => {
+      llmDemotedFrom: null, llmDemotedWhy: null, llmChosenByHand: true }, () => {
       // The offscreen document keeps the weights it loaded, so it has to be
       // let go of before another model can take its place. Then it is warmed
       // straight away rather than on the next instruction: a 5GB download
