@@ -7914,6 +7914,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // its own visible window and compares, which is the only way to tell a slow
   // machine from a throttled hidden document - and every number this
   // extension had was measured in the hidden one.
+  // Let go of the planner so something else can measure the GPU alone.
+  // Benchmarking in the panel while the offscreen document still held an 8B
+  // put ten gigabytes of weights on one card and measured the contention,
+  // not the machine.
+  if (msg.type === "llmRelease") {
+    (async () => {
+      await releaseOffscreenModel();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
   if (msg.type === "llmBenchOffscreen") {
     (async () => {
       try {

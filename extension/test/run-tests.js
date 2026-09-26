@@ -1751,6 +1751,48 @@ else {
   }
 }
 
+// The offscreen document cannot be loaded here - it is an ES module that
+// pulls in a multi-megabyte engine - so this reads it instead. That is a
+// weaker test than running it, and it is what caught nothing when the bug
+// was live, so it is worth being exact about what it checks.
+//
+// chosenModelId() memoises the chosen model for the life of the document and
+// its .then reassigns MODEL_ID. Stepping down set MODEL_ID to the smaller
+// model and released the engine - and the next load asked chosenModelId(),
+// got the cached large one back, and put MODEL_ID back with it. The 8B
+// reloaded, failed, stepped down, reloaded, for ten minutes, while the panel
+// said "still loading" because it truly never stopped.
+//
+// So: anything that changes MODEL_ID has to invalidate that cache.
+if (typeof require === "undefined") skip("the model choice", "no require");
+else {
+  const fsx = require("fs"), pathx = require("path");
+  const src = fsx.readFileSync(
+    pathx.join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
+
+  ensure("there is a way to forget the chosen model",
+    /function forgetChosenModel\s*\(/.test(src), "no forgetChosenModel");
+
+  // Every assignment to MODEL_ID, and whether the cache is dropped nearby.
+  const lines = src.split("\n");
+  const assigns = [];
+  lines.forEach((line, i) => {
+    if (/^\s*MODEL_ID\s*=/.test(line)) assigns.push({ at: i + 1, line: line.trim() });
+  });
+  ensure("something does set it", assigns.length > 0, assigns.length);
+  for (const a of assigns) {
+    // Within a few lines either way: the two belong together and reading
+    // them apart is how they came apart.
+    const near = lines.slice(Math.max(0, a.at - 6), a.at + 6).join("\n");
+    const safe = /forgetChosenModel/.test(near)
+      // The one inside chosenModelId itself is the cache being filled, not
+      // bypassed.
+      || /modelChoice\s*=/.test(near)
+      || /\.then\(\(id\)\s*=>\s*\{\s*MODEL_ID/.test(near);
+    ensure(`MODEL_ID set at line ${a.at} also drops the cached choice`, safe, a.line);
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

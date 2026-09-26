@@ -116,6 +116,21 @@ globalThis.WC_MODEL_BY_WORDS = function (words) {
   return best ? best.model : null;
 };
 
+// Biggest first. A machine gets the largest model it can actually run, found
+// by trying rather than guessed from its hardware: one laptop here has a real
+// Metal adapter, a 4096MB storage binding and memory to spare, and manages a
+// tenth of a token a second on the 8B - nothing about the machine's own
+// report predicted that.
+globalThis.WC_LADDER = globalThis.WC_MODELS
+  .slice().sort((a, b) => b.vramMB - a.vramMB).map((m) => m.id);
+
+// The next one down from here, or null at the bottom.
+globalThis.WC_NEXT_SMALLER = function (id) {
+  const at = globalThis.WC_LADDER.indexOf(id);
+  if (at === -1) return globalThis.WC_FALLBACK_MODEL;
+  return at + 1 < globalThis.WC_LADDER.length ? globalThis.WC_LADDER[at + 1] : null;
+};
+
 globalThis.WC_MODEL_SIZE = function (m) {
   return m.vramMB >= 1024 ? `~${(m.vramMB / 1024).toFixed(1)}GB` : `~${m.vramMB}MB`;
 };

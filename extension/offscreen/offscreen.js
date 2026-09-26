@@ -152,6 +152,19 @@ function inferenceTimeoutMs() {
   return mb >= 4000 ? 180000 : mb >= 2000 ? 90000 : 45000;
 }
 
+// Forget what was chosen, so the next load reads the choice again.
+//
+// This promise was cached for the life of the document and never invalidated,
+// and its .then also reassigned MODEL_ID. So stepping down set MODEL_ID to
+// the smaller model, released the engine - and the next load asked this,
+// which handed back the cached large one and put MODEL_ID back with it. The
+// 8B reloaded, failed its twelve tokens, stepped down, reloaded, forever,
+// while the card named the small model and the panel said "still loading"
+// for ten minutes because it genuinely never stopped.
+function forgetChosenModel(id) {
+  modelChoice = id ? Promise.resolve(id) : null;
+}
+
 function chosenModelId() {
   if (!modelChoice) {
     modelChoice = new Promise((resolve) => {
@@ -434,6 +447,72 @@ function getEmbedder(onProgress) {
 
 let fellBackTo = null;   // reported, so a card never silently names the wrong one
 
+// Down the ladder until one of them is quick enough.
+//
+// There is no reading a machine and knowing what it can run. One laptop here
+// reports a real Metal adapter, a 4096MB storage binding and memory to
+// spare, and manages a tenth of a token a second on an 8B - and a 1.5B on
+// that same machine timed out at forty-five seconds. Nothing in its own
+// description predicted either, and six explanations built on its hardware
+// were all wrong.
+//
+// So it is tried instead. Twelve tokens, no page and no control list: quick
+// enough and this is the model; too slow and the next one down gets the same
+// test, until something passes or the smallest is reached. Finding out costs
+// seconds. Finding out from an instruction costs minutes and reads as the
+// model refusing to answer.
+const PROVE_TOKENS = 12;
+const PROVE_LIMIT_MS = 8000;      // twelve tokens is nothing; this is generous
+const PROVE_TIMEOUT_MS = 25000;
+
+async function proveOrStepDown(engine) {
+  let current = engine;
+  for (;;) {
+    const id = MODEL_ID;
+    let took = null;
+    try {
+      const began = Date.now();
+      await Promise.race([
+        current.chat.completions.create({
+          messages: [{ role: "user", content: "Reply with the single word: ready" }],
+          temperature: 0, max_tokens: PROVE_TOKENS,
+        }),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error("did not finish")), PROVE_TIMEOUT_MS)),
+      ]);
+      took = Date.now() - began;
+      if (took <= PROVE_LIMIT_MS) {
+        chrome.runtime.sendMessage({
+          type: "llmProgress",
+          text: `${WC_MODEL_NAME(id)} ready - ${(took / 1000).toFixed(1)}s for twelve tokens`,
+        }).catch(() => {});
+        return;
+      }
+    } catch (e) { took = null; }
+
+    const next = globalThis.WC_NEXT_SMALLER ? globalThis.WC_NEXT_SMALLER(id) : null;
+    const why = took === null
+      ? `could not manage twelve tokens in ${Math.round(PROVE_TIMEOUT_MS / 1000)}s here`
+      : `took ${(took / 1000).toFixed(1)}s for twelve tokens here`;
+    if (!next) {
+      // The smallest there is, and still slow. Say so rather than stepping
+      // down to nothing: every model will be slow on this machine, and
+      // knowing that is worth more than another attempt.
+      chrome.runtime.sendMessage({
+        type: "llmProgress",
+        text: `${WC_MODEL_NAME(id)} ${why}, and it is the smallest there is`,
+      }).catch(() => {});
+      return;
+    }
+    await demoteTo(next, id, why);
+    try {
+      current = await getEngine((r) => {
+        chrome.runtime.sendMessage({ type: "llmProgress", text: r.text }).catch(() => {});
+      });
+    } catch (e) { return; }
+  }
+}
+
 // Stepping down, once, and remembered.
 //
 // Three places changed MODEL_ID and none of them wrote it anywhere, so the
@@ -447,6 +526,10 @@ let fellBackTo = null;   // reported, so a card never silently names the wrong o
 async function demoteTo(small, from, why) {
   fellBackTo = { from, to: small, why };
   MODEL_ID = small;
+  // Before anything reloads. Without this the next load reads the cached
+  // choice, gets the model just stepped away from, and starts the whole
+  // thing again.
+  forgetChosenModel(small);
   try {
     await chrome.storage.local.set({ llmModelId: small, llmDemotedFrom: from, llmDemotedWhy: why });
   } catch (e) { /* the switch still holds for this session */ }
@@ -517,6 +600,9 @@ function getEngine(onProgress) {
         fellBackTo = { from: id, to: small, why: String((err && err.message) || err).slice(0, 160) };
         lastProgress = `${id} would not load here - falling back to ${small}`;
         MODEL_ID = small;
+        // And the cached choice with it, or the next load reads the one that
+        // just refused to load and starts over.
+        forgetChosenModel(small);
         // Recorded, but not released: this is inside building the engine, and
         // it cannot let go of the one it is in the middle of constructing.
         chrome.storage.local.set({ llmModelId: small, llmDemotedFrom: id,
@@ -974,27 +1060,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // of ours in it. Finding this out now costs a few seconds; finding it
       // out from an instruction costs three minutes and looks like the model
       // refusing to answer.
-      if (!plannerIsLarge()) return;
-      try {
-        const began = Date.now();
-        await Promise.race([
-          engine.chat.completions.create({
-            messages: [{ role: "user", content: "Reply with the single word: ready" }],
-            temperature: 0, max_tokens: 12,
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("too slow")), 20000)),
-        ]);
-        const took = Date.now() - began;
-        if (took <= 8000) return;                       // usable; nothing to say
-        throw new Error(`${(took / 1000).toFixed(1)}s for twelve tokens`);
-      } catch (e) {
-        const small = globalThis.WC_FALLBACK_MODEL;
-        if (!small || MODEL_ID === small) return;
-        const from = MODEL_ID;
-        await demoteTo(small, from, "runs far too slowly on this machine");
-        // Loaded straight away, so the first instruction does not pay for it.
-        getEngine(() => {}).catch(() => {});
-      }
+      await proveOrStepDown(engine);
     }).catch((err) => {
       chrome.runtime.sendMessage({ type: "llmProgress", text: "warm-load failed: " + String((err && err.message) || err) });
     });

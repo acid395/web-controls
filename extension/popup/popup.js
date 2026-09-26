@@ -553,7 +553,13 @@ async function runSpeedTest() {
       resolve(r || { ok: false, error: "no answer from the background" });
     });
   });
-  setStatus(`speed test: now the same thing here, where the window is visible...`, "ask");
+  // The hidden one is done with; let it go before measuring here, or this
+  // measures two copies of the same model fighting over one card rather
+  // than the card.
+  await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "llmRelease" }, () => { void chrome.runtime.lastError; resolve(); });
+  });
+  setStatus(`speed test: now the same thing here, with the other copy unloaded...`, "ask");
   let here = null;
   try {
     const mod = await import("./panel-bench.js");
@@ -693,7 +699,13 @@ if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addList
   if (msg.type === "llmProgress") {
     setStatus("model loading - " + msg.text, "load");
     const ms = document.getElementById("modelState");
-    if (ms) ms.textContent = msg.text;
+    if (ms) {
+      ms.textContent = msg.text;
+      // Unmistakable while it is happening. A five gigabyte download that
+      // looks like nothing is the commonest way this appears broken.
+      const done = /ready|finish|completed loading|using |smallest there is/i.test(msg.text);
+      ms.className = done ? "modelstate" : "modelstate loading";
+    }
   }
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
   // Which step, not just that something is happening. "Still running" for a
@@ -743,6 +755,8 @@ function showModelState() {
     const want = modelChoice ? modelChoice.value : null;
     const have = res.model || null;
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
+    modelState.className = res.loading ? "modelstate loading"
+      : res.fellBack ? "modelstate warn" : "modelstate";
     modelState.textContent = res.fellBack
       ? `${name(res.fellBack.from)} would not load on this machine - using ${name(res.fellBack.to)}`
       : !have ? "nothing loaded yet - the next instruction loads it"
