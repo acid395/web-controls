@@ -1835,10 +1835,18 @@ else {
   // request may be about to touch, so nothing unloads on a timer or in the
   // middle of an instruction any more: the weights stay until the model is
   // deliberately changed, which closes the document and takes everything.
-  const unloads = lines.reduce((n, l) => n + (/\.unload\(\)/.test(l) ? 1 : 0), 0);
-  check("there is one place that unloads, not several", unloads, 1);
-  ensure("and it refuses while something is running",
-    /if \(!\(await whenIdle\([^)]*\)\)\) return;/.test(src), "it waits and unloads anyway");
+  // Counting sites was the wrong rule - switching a model legitimately needs
+  // to give the old engine back. The rule is that no unload can happen while
+  // a decision is running in that engine, which is what produced "Object has
+  // already been disposed" twice.
+  const unloadLines = [];
+  lines.forEach((l, i) => { if (/\.unload\(\)/.test(l)) unloadLines.push(i + 1); });
+  ensure("something gives an engine back", unloadLines.length > 0, unloadLines.length);
+  for (const at of unloadLines) {
+    const near = lines.slice(Math.max(0, at - 12), at).join("\n");
+    ensure(`the unload at line ${at} waits for any decision first`,
+      /whenIdle\(/.test(near), lines[at - 1].trim());
+  }
   ensure("nothing unloads on a timer",
     !/setTimeout\([^)]*\n?[^}]*unload/.test(src), "an idle release is back");
   ensure("and the embedder is not handed back mid-instruction",

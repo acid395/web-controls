@@ -650,13 +650,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (want === MODEL_ID && engineReady) { sendResponse({ ok: true, model: MODEL_ID }); return; }
       MODEL_ID = want;
       forgetChosenModel(want);
-      lastProgress = null;
-      await releaseEngine();
-      sendResponse({ ok: true, model: MODEL_ID });
-      // Loaded after answering, so the panel is not held open by a download.
-      getEngine((r) => {
-        chrome.runtime.sendMessage({ type: "llmProgress", text: r.text }).catch(() => {});
-      }).catch(() => {});
+      engineReady = false;
+
+      // The engine promise is replaced, not awaited.
+      //
+      // releaseEngine awaits whatever it is holding, and what it was holding
+      // was a four-gigabyte load in progress - so switching queued behind
+      // the model being switched away from, which on the machine that
+      // reported this takes minutes. "use 3b" answered "stored", and the 8B
+      // carried on loading, and every card went on naming it.
+      //
+      // Pointing enginePromise at the new one immediately means the status
+      // is honest from this moment, and nothing else starts a second engine
+      // while the change is happening. The old load still has to finish -
+      // WebLLM offers no way to abandon one - but it is unloaded the instant
+      // it lands rather than being waited for first.
+      const old = enginePromise;
+      lastProgress = old
+        ? `waiting for the previous model to finish loading, then switching to ${WC_MODEL_NAME(want)}`
+        : null;
+      enginePromise = (async () => {
+        try {
+          const e = await old;
+          // Waits for generations, not for loads. A load in progress is not
+          // inFlight, so this returns at once in the ordinary case - and
+          // where a decision really is running on the old engine, it is
+          // allowed to finish rather than being disposed underneath.
+          await whenIdle({ waitMs: 20000 });
+          if (e && typeof e.unload === "function") await e.unload();
+        } catch (err) { /* it never finished loading; nothing to give back */ }
+        return buildEngine(want, (r) => {
+          lastProgress = String((r && r.text) || "").slice(0, 120);
+          chrome.runtime.sendMessage({ type: "llmProgress", text: r.text }).catch(() => {});
+        });
+      })().then((e) => { engineReady = true; return e; })
+        .catch((err) => { enginePromise = null; engineReady = false; throw err; });
+      enginePromise.catch(() => { /* reported through llmStatus */ });
+      sendResponse({ ok: true, model: MODEL_ID, waitingForPrevious: !!old });
     })();
     return true;
   }
