@@ -4732,6 +4732,28 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
 // offscreen document reads the choice once at startup and will not swap
 // under a live engine, which is right - the two would disagree about what is
 // in memory - so the document itself has to go.
+// Switch the loaded model. One path, because there were two and only one of
+// them worked: the picker told the offscreen document directly, while
+// "use 3b" closed the document and hoped - and closing fails silently while
+// a large model is loading, so "use 3b" stored the choice and the 8B went on
+// loading underneath it. Three cards in a row said "asked for Llama 3.2 3B,
+// loaded now Llama 3.1 8B".
+async function switchModelTo(id) {
+  if (!id) return { ok: false, error: "no model named" };
+  await chrome.storage.local.set({ llmModelId: id });
+  modelStatusCache = { at: 0, value: null };
+  try {
+    await ensureOffscreenDocument();
+    const said = await chrome.runtime.sendMessage(
+      { target: "offscreen", type: "llmUseModel", model: id });
+    if (said && said.ok) return { ok: true, model: said.model };
+  } catch (e) { /* fall through to closing it */ }
+  // Only if telling it did not work. This is the path that used to fail
+  // without saying so.
+  await releaseOffscreenModel();
+  return { ok: true, model: id };
+}
+
 async function releaseOffscreenModel() {
   modelStatusCache = { at: 0, value: null };
   warmedOnce = false;
@@ -7273,7 +7295,7 @@ async function runDiagnostics() {
   // optional and an optional failure is reported as "n/a". A green headline
   // over a dead model is worse than no headline.
   const unusable = steps.filter((x) => x.state === "n/a"
-    && /^(model speed|graphics card|local model)$/.test(x.name));
+    && /^(model speed|graphics card|local model|model chosen)$/.test(x.name));
   const worst = failed[0] || unusable[0];
   return {
     ok: failed.length === 0 && unusable.length === 0,
@@ -7951,24 +7973,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "llmSwitchModel") {
     (async () => {
-      // Told, not closed. Closing the document and hoping the next one reads
-      // the new choice fails silently when the close fails - which it does
-      // while a large model is loading, the moment somebody is most likely
-      // to reach for the picker. Every card then went on naming the model
-      // they had just switched away from.
-      try {
-        const want = (await chrome.storage.local.get("llmModelId")).llmModelId;
-        if (want) {
-          await ensureOffscreenDocument();
-          const said = await chrome.runtime.sendMessage(
-            { target: "offscreen", type: "llmUseModel", model: want });
-          if (said && said.ok) {
-            modelStatusCache = { at: 0, value: null };
-            sendResponse({ ok: true, model: said.model });
-            return;
-          }
-        }
-      } catch (e) { /* fall back to closing it, below */ }
+      const want = await chrome.storage.local.get("llmModelId")
+        .then((g) => g.llmModelId).catch(() => null);
+      if (want) {
+        const done = await switchModelTo(want);
+        if (msg.warm) warmModel().catch(() => {});
+        sendResponse({ ok: true, model: done.model });
+        return;
+      }
       await releaseOffscreenModel();
       // Started now, not on the next instruction. Eight billion parameters
       // is a five gigabyte download, and beginning it silently the next time
@@ -8445,9 +8457,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 stats: [], rows: [], source: "settings" } });
             return;
           } else {
-          await chrome.storage.local.set({ llmModelId: pick });
-          await releaseOffscreenModel();
-          const now = await modelStatus();
+          await switchModelTo(pick);
+          const now = await modelStatus({ maxAgeMs: 0 });
           respond({ ok: true, plannedBy: "settings",
             display: {
               title: modelName(pick),

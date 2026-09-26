@@ -1738,6 +1738,26 @@ else {
       ["llmModelId", "llmDemotedFrom"], r));
     check("asking for a model by name stores it",
       after.llmModelId, "Llama-3.1-8B-Instruct-q4f16_1-MLC");
+    // There were two ways to switch and only one of them worked. The picker
+    // told the offscreen document directly; "use 3b" closed the document and
+    // hoped - and closing fails silently while a large model is loading, so
+    // three cards in a row read "asked for Llama 3.2 3B, loaded now Llama
+    // 3.1 8B". Everything that switches goes through one function now.
+    ensure("and there is one way to switch, not two",
+      typeof bgv.switchModelTo === "function", "no switchModelTo");
+    const worker = require("fs").readFileSync(
+      require("path").join(__dirname, "..", "background.js"), "utf8");
+    // The two callers that switch - the picker's message and "use 3b" - both
+    // go through it. Counting closes is not the test: closing is still right
+    // for releasing before a benchmark, and as the fallback inside the
+    // switch itself.
+    const tells = (worker.match(/switchModelTo\(/g) || []).length;
+    ensure("and both ways of switching go through it", tells >= 3, `${tells} uses`);
+    const useX = worker.slice(worker.indexOf("const useModel = wanted.match"),
+      worker.indexOf("const useModel = wanted.match") + 2500);
+    ensure("including the one typed in the ask box",
+      /switchModelTo\(/.test(useX) && !/releaseOffscreenModel\(\)/.test(useX),
+      "use 3b still closes the document");
     void stored;
   });
 }
