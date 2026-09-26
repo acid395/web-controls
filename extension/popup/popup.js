@@ -869,6 +869,23 @@ if (modelChoice) {
       modelChoice.value = globalThis.WC_DEFAULT_MODEL || modelChoice.value;
     }
     showModelState();
+    // And start loading it here, because the panel is what answers now.
+    // Nothing else warms it any more: the service worker deliberately stops
+    // short while this window is open, so that only one copy of the weights
+    // is ever on the card.
+    chrome.storage.local.get("localModelEnabled", async ({ localModelEnabled }) => {
+      if (localModelEnabled === false) return;
+      try {
+        const mod = await panelModelModule();
+        if (mod.status().ready || mod.status().loading) return;
+        setStatus("model loading...", "load");
+        mod.warm(modelChoice.value, (t) => {
+          setStatus(`model loading - ${t}`, "load");
+          const ms = document.getElementById("modelState");
+          if (ms) { ms.textContent = t; ms.className = "modelstate loading"; }
+        });
+      } catch (e) { /* it loads on the first instruction instead */ }
+    });
   });
   modelChoice.addEventListener("change", () => {
     const chosen = modelChoice.options[modelChoice.selectedIndex].text;
@@ -886,6 +903,15 @@ if (modelChoice) {
         void chrome.runtime.lastError;
         showModelState();
       });
+      // Loaded here too, for the same reason: this window is the one that
+      // will answer with it.
+      panelModelModule().then((mod) => {
+        mod.warm(modelChoice.value, (t) => {
+          setStatus(`model loading - ${t}`, "load");
+          const ms = document.getElementById("modelState");
+          if (ms) { ms.textContent = t; ms.className = "modelstate loading"; }
+        });
+      }).catch(() => { /* it loads on the first instruction instead */ });
       logEcho(`model set to ${chosen} - loading now, watch the line under the picker`);
     });
   });

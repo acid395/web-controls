@@ -1987,6 +1987,25 @@ else {
   // second. Nothing failed; the prompt just quietly grew tenfold.
   const embedAt = worker.indexOf("async function embedTexts");
   const embedFn = worker.slice(embedAt, embedAt + 1200);
+  // Something has to preload the model. warmModel stops short while the
+  // panel is open, so that only one copy of the weights is ever on the card
+  // - and for a while nothing was given to the panel to warm instead, so
+  // the model stopped preloading at all. Every card read "the local model
+  // has not started yet".
+  {
+    const panelSrc = fsx.readFileSync(
+      pathx.join(__dirname, "..", "popup", "panel-model.js"), "utf8");
+    const panelJs = fsx.readFileSync(
+      pathx.join(__dirname, "..", "popup", "popup.js"), "utf8");
+    ensure("the panel can warm its own model", /export function warm\(/.test(panelSrc),
+      "panel-model.js has no warm");
+    ensure("and it does so when it opens", /mod\.warm\(/.test(panelJs),
+      "nothing warms the panel's model");
+    ensure("while the worker still stands back when the panel is open",
+      /if \(await panelIsOpen\(\)\) return;/.test(worker),
+      "the worker warms the hidden document anyway");
+  }
+
   ensure("the shortlist can be built where the planner is",
     /panelEmbed/.test(embedFn), "embedding only ever asks the hidden document");
   ensure("and it asks there before waking the hidden document",

@@ -41,6 +41,18 @@ export async function release() {
   try { const e = await held; if (e && e.unload) await e.unload(); } catch (e) { /* gone */ }
 }
 
+// Start loading, without waiting for it.
+//
+// warmModel in the service worker stopped warming the hidden document while
+// the panel is open - rightly, since two copies of the weights on one card
+// is what made everything crawl. But nothing was given to the panel to warm
+// instead, so the model stopped preloading altogether: every card said "the
+// local model has not started yet", and the first instruction that needed it
+// would have paid the whole load.
+export function warm(modelId, onProgress) {
+  engineFor(modelId, onProgress).catch(() => { /* reported through status() */ });
+}
+
 export function status() {
   return { ready: engineReady, loading: !!enginePromise && !engineReady, model: engineModel };
 }
