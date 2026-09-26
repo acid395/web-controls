@@ -336,7 +336,16 @@
   };
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const waitFor = async (fnOrSel, { timeout = 8000, interval = 150 } = {}) => {
+  // Twenty seconds, not eight.
+  //
+  // This is how long a control is given to appear after something is
+  // pressed, and eight seconds is a fast machine's answer. On a slow one the
+  // same page, the same click and the same control produced "waitFor: timed
+  // out after 8000ms" - a failure that exists only on slower hardware, which
+  // is the whole class of bug this project has been chasing. Waiting longer
+  // for something that is coming costs a slow machine nothing it was not
+  // already spending; giving up early costs it the instruction.
+  const waitFor = async (fnOrSel, { timeout = 20000, interval = 150 } = {}) => {
     const end = Date.now() + timeout;
     while (Date.now() < end) {
       const v = typeof fnOrSel === "string" ? deepQuery(fnOrSel) : fnOrSel();

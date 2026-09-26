@@ -9336,6 +9336,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // same sentence ending in "enable snow depth" - which no
                   // manifest covers - went through the generic path and
                   // worked. Having a hand-written tool made the site worse.
+                  //
+                  // And it kept making it worse, because the tool's own
+                  // error became the clause's verdict: a four-step
+                  // instruction died on `pickRadio: no radio group
+                  // "locationGroupButtons"` - a group this manifest recorded
+                  // as live on 2026-09-05 and USGS has since renamed. Site
+                  // knowledge written down by hand goes stale on a schedule
+                  // nobody here controls, and when it does it must be worth
+                  // exactly nothing rather than less than nothing.
+                  //
+                  // So a failed tool is discarded and the clause is judged
+                  // the way a page with no manifest would judge it. The
+                  // page was asked first and had nothing; that, not the
+                  // tool's internals, is what happened.
+                  if (result && result.ok === false) result = null;
                 }
                 if (!result) {
                   const chased = own;

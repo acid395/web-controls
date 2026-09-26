@@ -1815,6 +1815,41 @@ else {
       src.indexOf(sets[0] || "") + 200)), sets[0]);
 }
 
+// A four-step instruction died on `pickRadio: no radio group
+// "locationGroupButtons"` - a group the USGS manifest recorded as live on
+// 2026-09-05 and USGS has since renamed. The page had already been asked and
+// offered nothing, the hand-written tool got its turn, threw, and its
+// internal error became the clause's verdict and stopped the sequence.
+//
+// Site knowledge written down by hand goes stale on a schedule nobody here
+// controls. When it does it has to be worth exactly nothing, not less than
+// nothing - and a tester on the same instruction never saw this, because his
+// model planned the step against the page and never reached the manifest.
+{
+  const staleHtml = `<!doctype html><html><body>
+    <label><input type="checkbox" name="wt"> Water temperature</label>
+    <a href="#next">Next thing</a>
+    </body></html>`;
+  const page = loadPage(staleHtml, { url: "https://waterdata.usgs.gov/state/Idaho/" });
+  if (page) {
+    const bgst = loadBackground({ page });
+    // The manifest is present and broken, exactly as a three-week-old one is.
+    bgst.planManifestTool = () => ({ fn: "usgsPickRadio", args: ["locationGroupButtons", "huc8"] });
+    bgst.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: true } : undefined);
+    runAsync(async () => {
+      const r = await bgst.__ask({ type: "smartAsk",
+        instruction: "select water temperature and then select huc08 subbasin" });
+      const said = `${(r.display || {}).subtitle || ""} ${r.error || ""}`;
+      ensure("a stale hand-written tool does not put its internals on the card",
+        !/no radio group|pickRadio/.test(said), said);
+      // The first clause names a control on the page and must still have run,
+      // whatever the manifest did with the second.
+      check("and the part the page could do is still done",
+        !!(page.document.querySelector('[name="wt"]') || {}).checked, true);
+    });
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the
