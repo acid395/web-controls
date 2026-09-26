@@ -2764,6 +2764,38 @@ else {
     "if this now checks target, the helper above can be simplified");
 }
 
+// A live 3B run: every action sent about twelve hundred tokens, which at the
+// prefill rate that machine measured is some fifteen seconds of each answer
+// spent on the whole control list. The shortlist that exists to prevent that
+// was never arriving, nothing recorded the failure, and every ask paid for
+// the attempt again - twice, since ranking embeds the labels and then the
+// request.
+{
+  const page = loadPage(`<!doctype html><html><body>${
+    Array.from({ length: 40 }, (_, i) => `<a href="#a${i}">Control number ${i}</a>`).join("")
+  }</body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page) {
+    const bgE = loadBackground({ page });
+    let embedCalls = 0;
+    let offscreenWoken = 0;
+    bgE.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmEmbed") { embedCalls++; return { ok: false, error: "out of memory" }; }
+      if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+      return undefined;
+    };
+    bgE.ensureOffscreenDocument = async () => { offscreenWoken++; };
+    runAsync(async () => {
+      // Three asks in a row against an embedder that cannot load.
+      for (let i = 0; i < 3; i++) {
+        await bgE.__ask({ type: "smartAsk", instruction: "model: show me the water level" });
+      }
+      ensure("a dead embedder is asked once, not once per ask",
+        embedCalls <= 1, `asked ${embedCalls} times across three instructions`);
+    });
+  }
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting

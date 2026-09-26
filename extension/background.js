@@ -5211,21 +5211,49 @@ function cosine(a, b) {
   return (na && nb) ? dot / Math.sqrt(na * nb) : 0;
 }
 
+/* Whether the shortlist can be had at all, remembered.
+ *
+ * The embedder is a second model - arctic-embed, 1023MB - and on a machine
+ * where it will not load, nothing remembered that. Every ask tried again:
+ * twice, because ranking embeds the labels and then the request. A live run
+ * on a 3B showed the cost of it - about sixteen seconds of a thirty-one
+ * second answer went somewhere that was not the model, and every prompt
+ * went out at twelve hundred tokens because no shortlist ever came back.
+ * Paying for a thing repeatedly and never receiving it is the worst of both.
+ *
+ * Held for the session rather than forever: a reload is how somebody retries
+ * after freeing memory, and that should work.
+ */
+let embedderFailedAt = 0;
+const EMBEDDER_RETRY_MS = 10 * 60 * 1000;
+function embedderIsOut() {
+  return embedderFailedAt > 0 && Date.now() - embedderFailedAt < EMBEDDER_RETRY_MS;
+}
+
 async function embedTexts(texts) {
-  await ensureOffscreenDocument();
-  // The panel first, for the same reason the planner is there: it is the
-  // window that is not throttled, and asking the hidden one would create the
-  // document whose second copy of the weights this arrangement exists to
-  // avoid. Losing the shortlist is not a small thing - it is the difference
-  // between a few hundred tokens of prompt and a few thousand.
+  if (embedderIsOut()) return null;
+  // The panel first, and the hidden document is not woken to ask. This
+  // called ensureOffscreenDocument() before anything else - creating, on
+  // every single ask, the very document whose second copy of the weights
+  // the panel arrangement exists to avoid, and which the comment below
+  // said it was avoiding.
   try {
     const fromPanel = await chrome.runtime.sendMessage(
       { target: "panel", type: "panelEmbed", texts });
     if (fromPanel && fromPanel.ok && fromPanel.vectors) return fromPanel.vectors;
-  } catch (e) { /* no panel: the hidden document answers, below */ }
+    // The panel is there and could not do it. Nothing else will do better:
+    // the hidden document would load a second copy on a machine that has
+    // just declined to load the first.
+    if (fromPanel && fromPanel.ok === false) {
+      embedderFailedAt = Date.now();
+      return null;
+    }
+  } catch (e) { /* no panel listening: the hidden document answers, below */ }
+  await ensureOffscreenDocument();
   const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmEmbed", texts })
     .catch(() => null);
-  return res && res.ok ? res.vectors : null;
+  if (!res || !res.ok) { embedderFailedAt = Date.now(); return null; }
+  return res.vectors;
 }
 
 // The controls this request is most likely about, best first. Returns null
@@ -8025,6 +8053,30 @@ async function runDiagnostics() {
       + (best && best.id !== id
         ? ` ${best.name} is the largest that does - say "use ${best.aliases[0]}"` : ""));
   }, { optional: true });
+  /* Whether the prompt is being narrowed, which decides what a turn costs.
+   *
+   * A live 3B run sent twelve hundred tokens on every action - the whole
+   * control list - because the shortlist embedder was never loading and
+   * nothing said so. At the prefill rate that machine measured, that is
+   * about fifteen seconds of every answer spent on controls the request had
+   * nothing to do with. It was invisible: no error, no card, just slow.
+   */
+  await step("shortlist", async () => {
+    if (embedderIsOut()) {
+      throw new Error("the embedder is not loading, so every prompt carries the whole"
+        + " control list - which is most of what a turn costs. Reload to retry it");
+    }
+    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
+    const controls = inv.ok ? controlsForModel(inv.result) : [];
+    if (controls.length <= 18) return `not needed - ${controls.length} controls on this page`;
+    const ranked = await rankByMeaning("gage height", controls).catch(() => null);
+    if (!ranked) {
+      throw new Error(`${controls.length} controls and no shortlist - the whole list goes to`
+        + " the model on every turn. Check the local model line above");
+    }
+    return `narrowing ${controls.length} controls to the closest few`;
+  }, { optional: true });
+
   await step("agency API", async () => {
     const res = await fetch("https://api.weather.gov/points/44.98,-93.26", { headers: { Accept: "application/geo+json" } });
     if (!res.ok) throw new Error(`NWS returned ${res.status}`);
