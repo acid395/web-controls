@@ -1917,6 +1917,41 @@ else {
   }
 }
 
+// The panel answers decisions now, because Chrome throttles what it cannot
+// see: the same twelve tokens took 40.7s in the hidden offscreen document
+// and 0.5s in the visible panel on one machine. Seventy-nine times, and
+// every decision this extension ever made was made in the hidden one.
+//
+// Two windows answering the same question means two ways to get the shape
+// wrong. The first version of the panel path did: it handed back the model's
+// raw text where the caller reads .step, so every decision the panel served
+// would have looked like the model planning nothing - silently, which is the
+// worst way for it to be wrong.
+if (typeof require === "undefined") skip("two windows, one answer", "no require");
+else {
+  const fsx = require("fs"), pathx = require("path");
+  const worker = fsx.readFileSync(pathx.join(__dirname, "..", "background.js"), "utf8");
+
+  ensure("the panel is asked before the hidden document",
+    worker.indexOf("panelStep") < worker.indexOf('type: "llmStep"'),
+    "the offscreen document is asked first");
+  ensure("and only one of them holds the weights",
+    /releaseOffscreenModel\(\)[\s\S]{0,200}panelHasModel = true/.test(worker)
+    || /panelHasModel[\s\S]{0,400}releaseOffscreenModel/.test(worker),
+    "both could be loaded at once");
+  ensure("the panel's reply is parsed into a step, not passed on as text",
+    /WC_FIRST_JSON_OBJECT\(said\.text/.test(worker), "raw text reaches the caller");
+
+  // One prompt and one parser, shared, so the two windows cannot drift.
+  const buildStepPrompt = loadOffscreenHelper("buildStepPrompt");
+  const firstJsonObject = loadOffscreenHelper("firstJsonObject");
+  const prompt = buildStepPrompt({ goal: "click gage height",
+    controls: [{ label: "Gage height", type: "checkbox", checked: false }] });
+  ensure("the shared prompt still names the control", /Gage height/.test(prompt), prompt.slice(0, 80));
+  const parsed = firstJsonObject('sure: {"name":"Gage height","do":"check","on":true} ok');
+  check("and the shared parser still finds the object", parsed && parsed.name, "Gage height");
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

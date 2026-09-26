@@ -56,6 +56,7 @@
 // (see scripts/build-bundles.js), with window.ENV_VOCAB's assignment
 // rewritten to globalThis.ENV_VOCAB since a service worker has no `window`.
 importScripts("lib/models.js");
+importScripts("lib/step-prompt.js");
 importScripts("lib/env-vocab.js");
 
 // Every ask and its result is logged to the service worker console, which is
@@ -4845,7 +4846,68 @@ async function rankByMeaning(goal, controls) {
     .sort((a, b) => b.score - a.score);
 }
 
+// The panel first, because Chrome throttles what it cannot see.
+//
+// Measured on one machine, same model, same twelve tokens: 40.7s inside the
+// offscreen document, 0.5s in the panel. Seventy-nine times. Every decision
+// this extension has ever made was made in the hidden one, and every
+// explanation offered for the slowness - memory, the adapter, the weights,
+// the prompt - was looking in the wrong place.
+//
+// Only one of them holds the weights at a time. Two engines on one card is
+// how the first attempt to measure this came back saying the panel was slow
+// too, which cost most of a day.
+let panelHasModel = false;
+async function panelIsOpen() {
+  try {
+    const said = await chrome.runtime.sendMessage({ target: "panel", type: "panelPing" });
+    return !!(said && said.ok && said.visible);
+  } catch (e) {
+    return false;   // nothing listening: the panel is shut
+  }
+}
+
 async function askModelForStep(payload) {
+  // Built here, so the panel and the offscreen document are given the same
+  // words. It used to be built inside the offscreen document, which was
+  // fine while that was the only thing that ever saw a model.
+  const prompt = globalThis.WC_BUILD_STEP_PROMPT
+    ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null;
+  if (prompt && await panelIsOpen()) {
+    if (!panelHasModel) {
+      // Give the hidden copy back first, or the two of them share a card.
+      await releaseOffscreenModel();
+      panelHasModel = true;
+    }
+    try {
+      const said = await chrome.runtime.sendMessage({
+        target: "panel", type: "panelStep", prompt,
+        model: (modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL,
+        timeoutMs: turnBudgetMs(),
+      });
+      if (said && said.ok) {
+        // Parsed here. The caller reads .step, and handing back raw text
+        // would have made every decision the panel served look like the
+        // model planning nothing - silently, which is the worst way.
+        const parsed = globalThis.WC_FIRST_JSON_OBJECT(said.text || "");
+        if (!parsed) {
+          return { ok: false, cost: said.cost,
+            error: `model did not return usable JSON: ${String(said.text || "").slice(0, 200)}` };
+        }
+        return { ok: true, step: parsed, cost: said.cost, ms: said.ms,
+          raw: String(said.text || "").slice(0, 300) };
+      }
+      if (said && said.error) return { ok: false, error: said.error };
+    } catch (e) {
+      panelHasModel = false;   // it closed mid-decision; fall back below
+    }
+  }
+  if (panelHasModel) {
+    // The panel is gone. Let it drop what it held before the hidden one
+    // loads, so they never overlap.
+    await chrome.runtime.sendMessage({ target: "panel", type: "panelRelease" }).catch(() => {});
+    panelHasModel = false;
+  }
   await ensureOffscreenDocument();
   const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStep", ...payload });
   if (!res) return { ok: false, error: "the model did not answer - it may still be loading" };

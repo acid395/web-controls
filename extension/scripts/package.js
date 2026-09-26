@@ -52,7 +52,8 @@ if (previous === version && changed !== head) {
 const RUNTIME = [
   "manifest.json", "background.js", "content/bridge.js",
   "offscreen/offscreen.html", "offscreen/offscreen.js", "offscreen/vendor/web-llm.js",
-  "popup/popup.html", "popup/popup.js", "popup/panel-bench.js", "README.md",
+  "popup/popup.html", "popup/popup.js", "popup/panel-bench.js",
+  "popup/panel-model.js", "README.md",
   ...fs.readdirSync(path.join(EXT, "page")).map((f) => "page/" + f),
   ...fs.readdirSync(path.join(EXT, "lib")).map((f) => "lib/" + f),
 ];

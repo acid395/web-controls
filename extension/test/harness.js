@@ -271,6 +271,18 @@ function loadPage(html, { url = "https://waterdata.usgs.gov/state/Idaho/" } = {}
 // offscreen.js is an ES module importing the WebLLM bundle, so it cannot be
 // required directly. Its pure helpers are lifted out and evaluated alone.
 function loadOffscreenHelper(name) {
+  // buildStepPrompt moved to lib/step-prompt.js when the panel started
+  // building the same prompt. Both files are searched so the marker can
+  // live wherever the function does.
+  // Both live in lib/step-prompt.js now: the panel answers decisions, so it
+  // needs the same prompt and the same parser as the offscreen document.
+  if (name === "buildStepPrompt" || name === "firstJsonObject") {
+    const lib = fs.readFileSync(path.join(EXT, "lib", "step-prompt.js"), "utf8");
+    const box = { JSON, console, globalThis: {} };
+    vm.createContext(box);
+    vm.runInContext(`${lib}\nthis.__fn = ${name};`, box);
+    return box.__fn;
+  }
   const src = fs.readFileSync(path.join(EXT, "offscreen", "offscreen.js"), "utf8");
   // Delimited by markers rather than by walking braces: the function being
   // extracted contains "{" and "}" as string literals, which defeats naive

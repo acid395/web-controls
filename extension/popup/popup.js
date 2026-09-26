@@ -547,6 +547,55 @@ on("smartInstruction", "keydown", (e) => {
 // the offscreen document, which is hidden, and Chrome throttles what it
 // cannot see. One measurement cannot tell a slow machine from a throttled
 // one; two can.
+// The panel answers decisions while it is open.
+//
+// Measured: twelve tokens in 40.7s inside the offscreen document and 0.5s
+// here, on the same machine and the same model. Chrome throttles what it
+// cannot see, and every decision this extension made was made somewhere it
+// could not see.
+let panelModel = null;
+async function panelModelModule() {
+  if (!panelModel) panelModel = await import("./panel-model.js");
+  return panelModel;
+}
+// Guarded, like everything else that reaches for a chrome API here. An
+// extension page is not guaranteed every namespace, and an unguarded
+// reference throws at the top level and takes every line after it with it -
+// which is what the panel's own regression test exists to catch.
+if (chrome.runtime && chrome.runtime.onMessage && chrome.runtime.onMessage.addListener) {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.target !== "panel") return undefined;
+  if (msg.type === "panelPing") {
+    // Says only that a visible window exists to ask. Whether it can load the
+    // model is found out by asking it to.
+    sendResponse({ ok: true, visible: document.visibilityState !== "hidden" });
+    return undefined;
+  }
+  if (msg.type === "panelStep") {
+    (async () => {
+      try {
+        const mod = await panelModelModule();
+        const out = await mod.step(msg.model, msg.prompt, { timeoutMs: msg.timeoutMs },
+          (t) => setStatus(`model loading - ${t}`, "load"));
+        clearStatus();
+        sendResponse({ ok: true, ...out });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
+  if (msg.type === "panelRelease") {
+    (async () => {
+      try { const mod = await panelModelModule(); await mod.release(); } catch (e) { /* nothing held */ }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+  return undefined;
+});
+}
+
 async function runSpeedTest() {
   const chosen = (modelChoice && modelChoice.value) || globalThis.WC_DEFAULT_MODEL;
   const name = globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(chosen) : chosen;
