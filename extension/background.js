@@ -7951,6 +7951,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "llmSwitchModel") {
     (async () => {
+      // Told, not closed. Closing the document and hoping the next one reads
+      // the new choice fails silently when the close fails - which it does
+      // while a large model is loading, the moment somebody is most likely
+      // to reach for the picker. Every card then went on naming the model
+      // they had just switched away from.
+      try {
+        const want = (await chrome.storage.local.get("llmModelId")).llmModelId;
+        if (want) {
+          await ensureOffscreenDocument();
+          const said = await chrome.runtime.sendMessage(
+            { target: "offscreen", type: "llmUseModel", model: want });
+          if (said && said.ok) {
+            modelStatusCache = { at: 0, value: null };
+            sendResponse({ ok: true, model: said.model });
+            return;
+          }
+        }
+      } catch (e) { /* fall back to closing it, below */ }
       await releaseOffscreenModel();
       // Started now, not on the next instruction. Eight billion parameters
       // is a five gigabyte download, and beginning it silently the next time

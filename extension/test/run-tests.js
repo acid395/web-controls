@@ -876,6 +876,18 @@ else {
     ensure("and the running ask is drawn, not filtered out",
       /still running/.test(logText()), logText().slice(0, 160));
 
+    // A status line that is not about an ask survives a redraw. The speed
+    // test writes no history entry, so "nothing is running" is true for the
+    // whole time it runs - and the rule below cleared it on the first
+    // redraw, which is why typing "speed test" looked like the words simply
+    // vanished from the box.
+    w.setStatus("speed test: asking for twelve tokens...", "test");
+    history = [];
+    fire(); flush(); flush();
+    ensure("a status that is not about an ask survives a redraw",
+      !!w.document.getElementById("modelStatus"), logText().slice(0, 120));
+    w.clearStatus();
+
     // When it finishes the line comes down on its own. Nobody was taking it
     // down: the panel ignores smartAsk's response by design, so "working
     // on ..." sat there under the finished card.
@@ -1821,12 +1833,25 @@ else {
   // stronger guarantee than the one this used to check - there is no longer
   // anywhere for the cache and the live value to come apart, which is what
   // reloaded the failing model without end.
-  const sets = lines.filter((l) => /\bMODEL_ID\s*=/.test(l)
-    && !/^\s*(const|let)\s/.test(l) && !/EMBED_MODEL_ID/.test(l));
-  check("MODEL_ID is set in exactly one place", sets.length, 1);
-  ensure("and that place is where the choice is cached",
-    /chosenModelId|modelChoice/.test(src.slice(Math.max(0, src.indexOf(sets[0] || "")) - 400,
-      src.indexOf(sets[0] || "") + 200)), sets[0]);
+  // The invariant is not "one place" - it is that the live value and the
+  // cached choice cannot come apart. They did once: stepping down set
+  // MODEL_ID and left the cache holding the model just stepped away from,
+  // so the next load read the cache, put MODEL_ID back, and reloaded the
+  // failing model without end.
+  const sets = [];
+  lines.forEach((l, i) => {
+    if (/\bMODEL_ID\s*=/.test(l) && !/^\s*(const|let)\s/.test(l) && !/EMBED_MODEL_ID/.test(l)) {
+      sets.push({ at: i + 1, line: l.trim() });
+    }
+  });
+  ensure("something sets the live model", sets.length > 0, sets.length);
+  for (const a of sets) {
+    const near = lines.slice(Math.max(0, a.at - 8), a.at + 8).join("\n");
+    // Either it drops the cache, or it is the cache being filled.
+    const safe = /forgetChosenModel/.test(near) || /modelChoice\s*=/.test(near)
+      || /\.then\(\(id\)\s*=>\s*\{\s*MODEL_ID/.test(near);
+    ensure(`the model set at line ${a.at} cannot outlive the cached choice`, safe, a.line);
+  }
 }
 
 // A four-step instruction died on `pickRadio: no radio group

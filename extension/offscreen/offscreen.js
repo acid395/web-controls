@@ -628,6 +628,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // Switch model, in place.
+  //
+  // Switching used to work by closing this whole document and letting the
+  // next request build a new one - which reads the stored choice and so
+  // picks up the change. But closeDocument can fail, and when it does the
+  // failure is swallowed: the old document lives on, ensureOffscreenDocument
+  // finds one already there, and every card goes on naming the model
+  // somebody just switched away from. It fails most reliably while a large
+  // model is mid-load, which is exactly when somebody reaches for the picker.
+  //
+  // So the document is told directly instead. No closing, nothing to fail
+  // silently, and the same path whether or not anything was loaded.
+  if (msg.type === "llmUseModel") {
+    (async () => {
+      const want = String(msg.model || "");
+      if (!want || !KNOWN_MODELS.includes(want)) {
+        sendResponse({ ok: false, error: `not a model this build offers: ${want}` });
+        return;
+      }
+      if (want === MODEL_ID && engineReady) { sendResponse({ ok: true, model: MODEL_ID }); return; }
+      MODEL_ID = want;
+      forgetChosenModel(want);
+      lastProgress = null;
+      await releaseEngine();
+      sendResponse({ ok: true, model: MODEL_ID });
+      // Loaded after answering, so the panel is not held open by a download.
+      getEngine((r) => {
+        chrome.runtime.sendMessage({ type: "llmProgress", text: r.text }).catch(() => {});
+      }).catch(() => {});
+    })();
+    return true;
+  }
+
   if (msg.type === "llmStatus") {
     // Ready or not is no longer enough to act on. The model is the planner
     // now, so when it is not used the first question is why - never started,

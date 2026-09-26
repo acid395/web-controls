@@ -266,6 +266,10 @@ function restoreHistory() {
     // the box was deleting it every time: the panel went blank the instant
     // after it said "working on ...", which is why a slow ask looked like a
     // click that had not registered.
+    // "ask" only. A speed test writes no history entry, so "nothing is
+    // running" is true the whole time it runs - and this cleared its status
+    // on the first redraw, which is why typing "speed test" looked like the
+    // words simply vanished.
     if (statusOwner === "ask" && !res.history.some((h) => h.status === "running")) clearStatus();
     else if (statusText) setStatus(statusText, statusOwner);
     box.scrollTop = box.scrollHeight;
@@ -546,7 +550,13 @@ on("smartInstruction", "keydown", (e) => {
 async function runSpeedTest() {
   const chosen = (modelChoice && modelChoice.value) || globalThis.WC_DEFAULT_MODEL;
   const name = globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(chosen) : chosen;
-  setStatus(`speed test: asking ${name} for twelve tokens in the background...`, "ask");
+  // Written into the log, not just the status line. The status line is
+  // transient by design and this can take minutes when the weights are not
+  // loaded yet; a blank panel for two minutes is indistinguishable from
+  // having swallowed the command.
+  logEcho(`speed test: ${name}. This loads the model if it is not already`
+    + " loaded, so it can take a few minutes the first time.");
+  setStatus(`speed test: asking ${name} for twelve tokens in the background...`, "test");
   const there = await new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: "llmBenchOffscreen" }, (r) => {
       void chrome.runtime.lastError;
@@ -559,11 +569,11 @@ async function runSpeedTest() {
   await new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: "llmRelease" }, () => { void chrome.runtime.lastError; resolve(); });
   });
-  setStatus(`speed test: now the same thing here, with the other copy unloaded...`, "ask");
+  setStatus(`speed test: now the same thing here, with the other copy unloaded...`, "test");
   let here = null;
   try {
     const mod = await import("./panel-bench.js");
-    here = await mod.benchHere(chosen, (t) => setStatus(`speed test: ${t}`, "ask"));
+    here = await mod.benchHere(chosen, (t) => setStatus(`speed test: ${t}`, "test"));
   } catch (e) {
     here = { error: String((e && e.message) || e) };
   }
