@@ -566,9 +566,17 @@ if (chrome.runtime && chrome.runtime.onMessage && chrome.runtime.onMessage.addLi
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.target !== "panel") return undefined;
   if (msg.type === "panelPing") {
-    // Says only that a visible window exists to ask. Whether it can load the
-    // model is found out by asking it to.
-    sendResponse({ ok: true, visible: document.visibilityState !== "hidden" });
+    // Answering at all is the answer. This used to report
+    // document.visibilityState, and a side panel calls itself hidden
+    // whenever the focus is in the page - which is exactly when somebody is
+    // asking it something. So the panel was open, fast, and never used: the
+    // worker asked, was told "hidden", and went back to the throttled
+    // document every time.
+    //
+    // Whether this window is actually quick is not a thing to reason about
+    // from a flag. It is measured, by "speed test", and it came back
+    // seventy-nine times quicker.
+    sendResponse({ ok: true, visible: true });
     return undefined;
   }
   if (msg.type === "panelStep") {
@@ -578,7 +586,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const out = await mod.step(msg.model, msg.prompt, { timeoutMs: msg.timeoutMs },
           (t) => setStatus(`model loading - ${t}`, "load"));
         clearStatus();
-        sendResponse({ ok: true, ...out });
+        // Which model actually answered, from the window that answered. A
+        // card naming the other one is how "use 3b" looked like it had not
+        // taken for an hour.
+        sendResponse({ ok: true, ...out, model: mod.status().model });
       } catch (e) {
         sendResponse({ ok: false, error: String((e && e.message) || e) });
       }

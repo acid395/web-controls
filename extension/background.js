@@ -4894,6 +4894,12 @@ async function askModelForStep(payload) {
           return { ok: false, cost: said.cost,
             error: `model did not return usable JSON: ${String(said.text || "").slice(0, 200)}` };
         }
+        // The model named by the window that answered, so a card cannot
+        // credit the one sitting unused in the other.
+        if (said.model) {
+          modelStatusCache = { at: Date.now(),
+            value: { ...(modelStatusCache.value || {}), ready: true, model: said.model } };
+        }
         return { ok: true, step: parsed, cost: said.cost, ms: said.ms,
           raw: String(said.text || "").slice(0, 300) };
       }
