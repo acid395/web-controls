@@ -61,6 +61,26 @@ only exists after the previous link has navigated.
     hand-written   42/44  95%
     generated      78/78  100%  (named 59, typed 5, span 3, absent 9, value 2)
     by site        74/78  95%   (same cases, no model at all)
+    chains         34/34  links carried out, with and without a planner
+    badly phrased  14/19  (was 6/19), no model at all
+
+Badly phrased is the newest of these and the least flattering, which is why
+it is worth keeping. Nineteen requests written the way people write them -
+typos, the domain's own synonyms, courtesy, vagueness, a chain, and two in
+Spanish - run with no model at all:
+
+    typo      5/5    was 3/5    clcik 30 dayz · shwo teh legend · clik compair two weks
+    synonym   4/4    was 1/4    the chart key · download the shapefiles · a logarithmic scale
+    polite    2/2    was 1/2    could you please click on 30 days for me
+    complex   2/2    was 1/2    open maps then map archive then data then time series
+    vague     1/4    was 0/4    I want to see a longer period
+    spanish   0/2    was 0/2    muestra el nivel del agua
+
+The last two rows are the honest limit of a grounding layer. A request whose
+difficulty is in words no vocabulary accounts for - a superlative, a
+condition, "what is going on here" - needs a model, and anything not in
+English needs a multilingual one. Both refuse cleanly rather than pressing
+something, which is the behaviour that matters when they cannot be answered.
 
 The split that matters is by route, not by kind:
 

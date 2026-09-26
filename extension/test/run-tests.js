@@ -953,6 +953,518 @@ else {
   }
 }
 
+// The shared libraries, as the panel and the service worker load them: as
+// plain scripts that put their functions on globalThis. The tests below read
+// them directly rather than through a page.
+{
+  const p2 = require("path");
+  require(p2.join(__dirname, "..", "lib", "models.js"));
+  require(p2.join(__dirname, "..", "lib", "step-prompt.js"));
+}
+
+// A question was being asked as though it were an operation: the model got
+// a hundred and fifteen control lines and twenty-five lines of rules about
+// pressing things, to answer a question whose whole input is the page's
+// values. Roughly eighteen hundred tokens of prefill, most of it about what
+// not to do - and prefill is most of what a turn costs on the machines this
+// has to run on. It also taught a 3B to press: "explain this data" came back
+// {"name":"Legend","do":"click"}.
+{
+  const data = `<!doctype html><html><body>
+    <h1>Potomac River at Little Falls</h1>
+    <table><tr><th>Parameter</th><th>Value</th></tr>
+    <tr><td>Discharge</td><td>4820 ft3/s</td></tr>
+    <tr><td>Gage height</td><td>3.41 ft</td></tr></table>
+    <a href="#l">Legend</a><a href="#m">Map</a><a href="#d">Download</a>
+    <label><input type="checkbox" id="c"> Continuous data</label>
+    </body></html>`;
+  for (const [what, instruction, wantRead] of [
+    ["a question gets the reading prompt", "explain this data", true],
+    ["so does a what-question", "what is the discharge", true],
+    ["and a summary", "summarize this page", true],
+    ["an instruction still gets the controls", "click legend", false],
+  ]) {
+    const page = loadPage(data, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!page) continue;
+    const bgd = loadBackground({ page });
+    const seen = [];
+    bgd.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      seen.push({ mode: m.mode || "step", controls: (m.controls || []).length,
+        observation: String(m.observation || "") });
+      return { ok: true, step: { do: "finish", answer: "Discharge is 4820 ft3/s." } };
+    };
+    runAsync(async () => {
+      await bgd.__ask({ type: "smartAsk", instruction: `model: ${instruction}` });
+      if (!seen.length) { check(`${what}: the model was asked`, "not asked", "asked"); return; }
+      if (wantRead) {
+        check(`${what}: mode`, seen[0].mode, "read");
+        check(`${what}: no controls are sent`, seen[0].controls, 0);
+        ensure(`${what}: the page's values are sent`,
+          /4820/.test(seen[0].observation), seen[0].observation.slice(0, 80));
+      } else {
+        check(`${what}: mode`, seen[0].mode, "step");
+        ensure(`${what}: controls are sent`, seen[0].controls > 0, seen[0].controls);
+      }
+    });
+  }
+
+  // The reading prompt says nothing about pressing, and does carry the values.
+  {
+    const built = globalThis.WC_BUILD_READ_PROMPT
+      ? globalThis.WC_BUILD_READ_PROMPT({ goal: "explain this data",
+          observation: "Discharge: 4820 ft3/s\nGage height: 3.41 ft" })
+      : null;
+    ensure("a reading prompt exists", !!built, built);
+    if (built) {
+      ensure("it carries the values", /4820/.test(built), built.slice(0, 120));
+      ensure("it asks for the question to be answered", /Question: explain this data/.test(built), built.slice(0, 120));
+      ensure("and says nothing about clicking", !/"do":"click"/.test(built), built);
+      // A reading prompt bigger than the operating one would defeat its
+      // purpose. Comfortably under a third of it, on this page.
+      const step = globalThis.WC_BUILD_STEP_PROMPT({ goal: "explain this data",
+        controls: Array.from({ length: 115 }, (_, i) => ({ label: `Control number ${i}`, kind: "a" })),
+        observation: "Discharge: 4820 ft3/s" });
+      ensure("and is far shorter than the operating prompt",
+        built.length * 3 < step.length, `${built.length} vs ${step.length}`);
+    }
+  }
+
+  // An explanation is prose, and the only place it was shown was a title cut
+  // at sixty characters - so a three-sentence answer ended mid-word.
+  {
+    const page = loadPage(data, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (page) {
+      const long = "Discharge is 4820 cubic feet per second. That is the volume of water"
+        + " passing the gauge each second, and the gage height of 3.41 feet is how high"
+        + " the water stands above the datum. Both are provisional.";
+      const bgd = loadBackground({ page });
+      bgd.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type !== "llmStep") return undefined;
+        return { ok: true, step: { do: "finish", answer: long } };
+      };
+      runAsync(async () => {
+        const r = await bgd.__ask({ type: "smartAsk", instruction: "model: explain this data" });
+        const d = (r && r.display) || {};
+        check("the whole answer is on the card", d.answer, long);
+        check("and the headline is its first sentence",
+          d.title, "Discharge is 4820 cubic feet per second.");
+      });
+    }
+  }
+}
+
+// A five gigabyte download reported as the word "loading" is the commonest
+// way this has been called broken. The percentage existed all along - WebLLM
+// reports it on every callback - and it went to the toolbar badge: four
+// characters in a corner, while the panel somebody was watching showed
+// nothing. And nothing announced the finish, which is the moment they are
+// waiting for.
+if (typeof require === "undefined") skip("the download, drawn", "no require");
+else {
+  const fsy = require("fs"), pathy = require("path");
+  const html = fsy.readFileSync(pathy.join(__dirname, "..", "popup", "popup.html"), "utf8");
+  const js = fsy.readFileSync(pathy.join(__dirname, "..", "popup", "popup.js"), "utf8");
+  const panel = fsy.readFileSync(pathy.join(__dirname, "..", "popup", "panel-model.js"), "utf8");
+
+  ensure("there is a bar to fill", /id="loadFill"/.test(html), "no progress bar");
+  ensure("and it is filled from a figure", /loadFill\.style\.width/.test(js), "the bar is never filled");
+  ensure("and it moves before the first figure arrives",
+    /loadfill unknown/.test(js) && /\.loadfill\.unknown/.test(html),
+    "a bar with no figure sits at zero, which reads as stalled");
+  ensure("the finish is announced", /function showReady/.test(js), "nothing says it finished");
+  ensure("and it is watched for rather than waited on",
+    /function watchLoad/.test(js), "warm() returns nothing, so the finish is never noticed");
+  ensure("a load that falls over says so",
+    /did not load/.test(js), "a failed load leaves a bar that never moves");
+
+  // The fraction has to survive every hop: the engine reports it, the panel
+  // passes it on, the hidden document broadcasts it, and the worker's status
+  // carries it back to a panel that opened part-way through.
+  ensure("the engine hands the fraction out",
+    /initProgressCallback[\s\S]{0,200}r\.progress/.test(panel), "only the words are passed on");
+  ensure("status carries it too", /fraction: engineReady \? 1 : lastProgress\.fraction/.test(panel),
+    "a panel opening mid-download has nothing to draw");
+  const worker = fsy.readFileSync(pathy.join(__dirname, "..", "background.js"), "utf8");
+  ensure("and the worker does not drop it",
+    /fraction: typeof fromPanel\.fraction === "number"/.test(worker),
+    "the worker drops the fraction on the way back");
+  const off = fsy.readFileSync(pathy.join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
+  ensure("the hidden document broadcasts it as well",
+    /llmProgress", text: report\.text, fraction: report\.progress/.test(off),
+    "the hidden document reports words without a figure");
+}
+
+// How much abuse an instruction can take and still land.
+//
+// Measured across typos, the domain's own synonyms, courtesy, and requests
+// that name a control in words the page does not use: 6 of 19 before this,
+// 13 of 19 after, with no model running at all. Every one of these is a way
+// somebody actually types, and every one of them used to buy a model turn
+// or a refusal.
+{
+  const rough = `<!doctype html><html><body>
+    <a id="lg" href="#lg">Show legend</a>
+    <a id="d30" href="#d30">30 days</a>
+    <a id="yr" href="#yr">1 year</a>
+    <a id="log" href="#log">Log</a>
+    <a id="tab" href="#tab">Data Tables</a>
+    <a id="gis" href="#gis">GIS Data</a>
+    <a id="cmp" href="#cmp">Compare Two Weeks</a>
+    <label><input type="checkbox" id="dis"> Discharge</label>
+    </body></html>`;
+  const noModel = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+  for (const [what, instruction, want] of [
+    // Courtesy is not content. "clcik 30 dayz" reached the page's own
+    // control and the same request politely did not, because the exact-name
+    // paths take a leading verb off and nothing else - so manners made the
+    // tool worse, which is the wrong way round.
+    ["courtesy at both ends", "could you please click 30 days for me", "d30"],
+    ["a greeting and a thanks", "hey can you click 1 year thanks", "yr"],
+    ["an opening hedge", "i want to see the 30 days", "d30"],
+    // A typo in the verb is still a verb. The floor was five letters, and a
+    // dropped letter makes a five-letter verb four.
+    ["a typo in the verb", "clik compair two weks", "cmp"],
+    ["typos throughout", "shwo teh legend", "lg"],
+    // The page's word is the stem of the word that was typed.
+    ["a word the page abbreviates", "click logarithmic", "log"],
+    // And the domain's own words for the same thing.
+    ["the page's own word for it", "show the chart key", "lg"],
+    // Courtesy in the middle of a sentence belongs to the clause it is in,
+    // so cleaning the whole instruction once cannot reach it.
+    ["courtesy inside a chain", "click 30 days and then could you show the legend", "d30"],
+    ["another", "download the shapefiles", "gis"],
+    ["and another", "show me the numbers", "tab"],
+  ]) {
+    const page = loadPage(rough, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!page) continue;
+    const pressed = [];
+    for (const a of page.document.querySelectorAll("a")) {
+      a.addEventListener("click", () => {
+        pressed.push(a.id);
+        page.document.body.appendChild(page.document.createElement("hr"));
+      });
+    }
+    const bgr = loadBackground({ page });
+    bgr.__model = noModel;
+    runAsync(async () => {
+      await bgr.__ask({ type: "smartAsk", instruction });
+      check(`${what}: "${instruction}" reaches it`, pressed[0], want);
+    });
+  }
+
+  // And what it must not do. A concept resolving is not a licence to act on
+  // a request whose difficulty is in the words the concept does not account
+  // for - "the layer with the longest name" names a layer and a puzzle.
+  for (const [what, instruction] of [
+    ["a superlative is not a name", "enable the layer with the longest name"],
+    ["nor is a condition", "if the legend is hidden then show it"],
+    ["nor a request naming nothing here", "show me the tidal predictions calibrator"],
+  ]) {
+    const page = loadPage(rough, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!page) continue;
+    const pressed = [];
+    for (const a of page.document.querySelectorAll("a")) {
+      a.addEventListener("click", () => pressed.push(a.id));
+    }
+    const bgr = loadBackground({ page });
+    bgr.__model = noModel;
+    runAsync(async () => {
+      await bgr.__ask({ type: "smartAsk", instruction });
+      check(`${what}: nothing is pressed`, pressed.length, 0);
+    });
+  }
+
+  // A word ending in a courtesy is not a courtesy. "find drought outlook"
+  // lost its last two letters to the "ok" alternative and searched for
+  // "drought outlo".
+  {
+    const bgp = loadBackground({ page: loadPage(rough, { url: "https://www.drought.gov/" }) });
+    check("a word ending in ok keeps its ok", bgp.plainlyPut("find drought outlook"),
+      "find drought outlook");
+    check("and courtesy really is removed", bgp.plainlyPut("could you please click 30 days for me"),
+      "click 30 days");
+    check("and a request made only of manners survives", bgp.plainlyPut("please"), "please");
+  }
+}
+
+// A door is opened only when nothing else wears its name. "Flood Inundation"
+// is both an accordion and the layer checkbox inside it, and opening the
+// accordion is not enabling the layer - but on water.noaa.gov "Forecasts and
+// Outlooks" is a dropdown and nothing else, and opening it is the whole of
+// what was asked for.
+{
+  const doors = `<!doctype html><html><body>
+    <button id="acc" aria-expanded="false" aria-controls="p">Flood Inundation</button>
+    <div id="p"><label><input type="checkbox" id="lay"> Flood Inundation</label></div>
+    <button id="solo" aria-expanded="false" aria-controls="q">Forecasts and Outlooks</button>
+    <div id="q" hidden><a href="#k">Key Messages</a></div>
+    </body></html>`;
+  const noModel = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+  {
+    const page = loadPage(doors, { url: "https://water.noaa.gov/" });
+    if (page) {
+      const bgd = loadBackground({ page });
+      bgd.__model = noModel;
+      runAsync(async () => {
+        await bgd.__ask({ type: "smartAsk", instruction: "enable flood inundation" });
+        check("the layer is ticked, not the accordion opened",
+          page.document.getElementById("lay").checked, true);
+      });
+    }
+  }
+  {
+    const page = loadPage(doors, { url: "https://water.noaa.gov/" });
+    if (page) {
+      let opened = 0;
+      page.document.getElementById("solo").addEventListener("click", () => {
+        opened++;
+        page.document.getElementById("q").hidden = false;
+      });
+      const bgd = loadBackground({ page });
+      bgd.__model = noModel;
+      runAsync(async () => {
+        await bgd.__ask({ type: "smartAsk", instruction: "forcasts and outlooks" });
+        ensure("a door nothing else is named after is opened", opened > 0, opened);
+      });
+    }
+  }
+}
+
+// Picking a model has to mean using that model - every one of them, not just
+// the ones somebody happened to try. An earlier version stepped down to a
+// smaller model when a load looked unpromising, without a word, and a card
+// then credited the answer to the model that had never been loaded. The
+// registry is walked here so a model added later is covered by default.
+{
+  const page = loadPage(`<!doctype html><html><body><a href="#a">Data</a></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page) {
+    for (const m of globalThis.WC_MODELS) {
+      const bgm = loadBackground({ page });
+      bgm.__model = (msg) => {
+        if (msg.type === "llmStatus") return { ready: false, hasGpu: true };
+        if (msg.type === "llmUseModel") return { ok: true, model: msg.model };
+        return undefined;
+      };
+      runAsync(async () => {
+        // Asked for by the words somebody would type.
+        const r = await bgm.__ask({ type: "smartAsk", instruction: `use ${m.aliases[0]}` });
+        const stored = await new Promise((res) =>
+          bgm.chrome.storage.local.get("llmModelId", (g) => res(g.llmModelId)));
+        check(`"use ${m.aliases[0]}" stores ${m.name}`, stored, m.id);
+        ensure(`"use ${m.aliases[0]}" is confirmed by name`,
+          String((r.display || {}).title || "").includes(m.name)
+          || String((r.display || {}).subtitle || "").includes(m.name),
+          JSON.stringify(r.display));
+      });
+    }
+    // And an id nobody registered is refused rather than quietly replaced.
+    const bgx = loadBackground({ page });
+    bgx.__model = () => undefined;
+    runAsync(async () => {
+      const r = await bgx.__ask({ type: "smartAsk", instruction: "use 900b" });
+      check("a model nobody has is refused, not swapped", r.ok, false);
+      const stored = await new Promise((res) =>
+        bgx.chrome.storage.local.get("llmModelId", (g) => res(g.llmModelId)));
+      ensure("and nothing is stored for it", !stored, stored);
+    });
+  }
+}
+
+// The embedder is a second model. 1023MB beside a 5GB planner is six
+// gigabytes of weights on a laptop that reports eight, and the paging that
+// follows gets blamed on the planner. Where the shortlist cannot be afforded
+// the caller does without it, which it is already written to do.
+{
+  const page0 = loadPage(`<!doctype html><html><body>
+    <a href="#a">Graph Gage height</a><a href="#b">Graph Discharge</a>
+    <a href="#c">Download data</a><a href="#d">Legend</a></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page0) {
+    // 8GB is what Chrome reports for everything from a laptop upward, so the
+    // planner is what decides: a 3B and the embedder is 3.3GB of weights and
+    // fits; the 8B and the embedder is 6GB and does not.
+    for (const [what, planner, gpu, wantEmbed] of [
+      ["a small planner leaves room for the shortlist",
+        "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+        { ok: true, deviceMemoryGB: 8, maxStorageMB: 8192, maxBufferMB: 8192 }, true],
+      ["a 5GB planner on the same machine does without it",
+        "Llama-3.1-8B-Instruct-q4f16_1-MLC",
+        { ok: true, deviceMemoryGB: 8, maxStorageMB: 8192, maxBufferMB: 8192 }, false],
+      ["and so does a 4GB machine, whatever is planning",
+        "Llama-3.2-1B-Instruct-q4f16_1-MLC",
+        { ok: true, deviceMemoryGB: 2, maxStorageMB: 2048, maxBufferMB: 2048 }, false],
+      ["nothing known about the machine is no objection",
+        "Llama-3.1-8B-Instruct-q4f16_1-MLC", null, true],
+    ]) {
+      const page = loadPage(page0.document.documentElement.outerHTML,
+        { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+      if (!page) continue;
+      const bgd = loadBackground({ page });
+      let embedded = 0;
+      bgd.__model = (m) => {
+        if (m.type === "llmStatus") {
+          return { ready: true, hasGpu: true, gpu, model: planner };
+        }
+        if (m.type === "llmEmbed") { embedded++; return { ok: true, vectors: [] }; }
+        if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgd.__ask({ type: "smartAsk", instruction: "model: show me the water level" });
+        if (wantEmbed) ensure(`${what}`, embedded > 0, `embedded ${embedded} times`);
+        else check(`${what}`, embedded, 0);
+      });
+    }
+  }
+}
+
+// "Works on every computer" and "the model you pick is the model you get"
+// only meet if a model that cannot run says so. Substituting a smaller one
+// is what an earlier version did, silently, and a card then credited an
+// answer to a model that had never been loaded.
+{
+  const big = "Llama-3.1-8B-Instruct-q4f16_1-MLC";     // 5001MB
+  const small = "Llama-3.2-1B-Instruct-q4f16_1-MLC";   // 879MB
+  check("a model bigger than the GPU's binding does not fit",
+    globalThis.WC_MODEL_FITS(big, { ok: true, maxStorageMB: 4096, maxBufferMB: 4096 }).fits, false);
+  check("a small one on the same GPU does",
+    globalThis.WC_MODEL_FITS(small, { ok: true, maxStorageMB: 4096, maxBufferMB: 4096 }).fits, true);
+  check("a 4GB machine cannot hold 5GB of weights",
+    globalThis.WC_MODEL_FITS(big, { ok: true, deviceMemoryGB: 4 }).fits, false);
+  check("a software renderer fits nothing",
+    globalThis.WC_MODEL_FITS(small, { ok: true, software: true, deviceMemoryGB: 8 }).fits, false);
+  check("nothing known about the machine means no objection",
+    globalThis.WC_MODEL_FITS(big, null).fits, true);
+  // The remedy names a real model, not the one that just failed.
+  {
+    const gpu = { ok: true, maxStorageMB: 4096, maxBufferMB: 4096, deviceMemoryGB: 8 };
+    const best = globalThis.WC_BIGGEST_THAT_FITS(gpu);
+    ensure("the largest that fits is a registered model",
+      globalThis.WC_MODEL_IDS.includes(best.id), best && best.id);
+    check("and it does fit", globalThis.WC_MODEL_FITS(best.id, gpu).fits, true);
+    ensure("and it is not the one that failed", best.id !== big, best.id);
+  }
+  // Every model in the registry runs somewhere. A model nothing can load is
+  // a model that should not be offered.
+  for (const m of globalThis.WC_MODELS) {
+    check(`${m.name} fits a machine with room`,
+      globalThis.WC_MODEL_FITS(m.id, { ok: true, maxStorageMB: 8192, maxBufferMB: 8192, deviceMemoryGB: 8 }).fits,
+      m.vramMB * 1.6 <= 8192);
+  }
+}
+
+// The inventory folds repeated rows into one control with a count - twenty
+// "View monitoring location" links become one - and kept only the first
+// one's selector, so "the second location" had nothing to point at. And the
+// ordinal words kept the request from matching the name at all: "click view
+// monitoring location for the first location" went to the model on a request
+// that was exact. The rows' selectors are kept now, and an ordinal in the
+// request picks among them - on its own, inside a chain, and where the model
+// names the control and the request says which.
+{
+  const rows = [1, 2, 3, 4].map((i) =>
+    `<li><a href="#s${i}">Site ${i}</a> <a id="v${i}" href="#v${i}">View monitoring location</a></li>`).join("");
+  const list = `<!doctype html><html><body>
+    <label><input type="checkbox" id="gh"> Gage height</label>
+    <label><input type="text" id="fn"> First name</label>
+    <ul>${rows}</ul></body></html>`;
+  const wire = (page) => {
+    const pressed = [];
+    for (const a of page.document.querySelectorAll("a")) {
+      a.addEventListener("click", () => {
+        pressed.push(a.id);
+        page.document.body.appendChild(page.document.createElement("hr"));  // a real change
+      });
+    }
+    return pressed;
+  };
+  const quiet = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+    return undefined;
+  };
+  for (const [what, instruction, want] of [
+    ["an ordinal at the tail picks the row", "click view monitoring location for the first location", "v1"],
+    ["the second", "click view monitoring location for the second location", "v2"],
+    ["an ordinal at the lead too", "click the third view monitoring location", "v3"],
+    ["written as a figure", "click the 2nd view monitoring location", "v2"],
+    ["the last", "click view monitoring location for the last one", "v4"],
+    ["a row the page does not have is not rounded down", "click the fifth view monitoring location", null],
+  ]) {
+    const page = loadPage(list, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (!page) continue;
+    const pressed = wire(page);
+    const bgd = loadBackground({ page });
+    bgd.__model = quiet;
+    runAsync(async () => {
+      const r = await bgd.__ask({ type: "smartAsk", instruction });
+      if (want) {
+        check(`${what}: ${want} is pressed`, pressed.join(","), want);
+        check(`${what}: without the model`, r.plannedBy, "exact-match");
+      } else {
+        check(`${what}: nothing is pressed`, pressed.length, 0);
+        ensure(`${what}: and it says how many there are`,
+          /4 of "View monitoring location"/.test(r.error || ""), r.error);
+      }
+    });
+  }
+  // A control whose name begins with an ordinal is that control, not the
+  // rest of its name with the ordinal taken off.
+  {
+    const page = loadPage(list, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (page) {
+      const pressed = wire(page);
+      const bgd = loadBackground({ page });
+      bgd.__model = quiet;
+      runAsync(async () => {
+        await bgd.__ask({ type: "smartAsk", instruction: "click first name" });
+        check("\"first name\" is a name, not an ordinal: nothing is pressed", pressed.length, 0);
+      });
+    }
+  }
+  // Inside a chain, where each clause runs without the model.
+  {
+    const page = loadPage(list, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (page) {
+      const pressed = wire(page);
+      const bgd = loadBackground({ page });
+      bgd.__model = quiet;
+      runAsync(async () => {
+        await bgd.__ask({ type: "smartAsk",
+          instruction: "click gage height and click view monitoring location for the second location" });
+        check("in a chain: gage height is set", page.document.getElementById("gh").checked, true);
+        check("in a chain: and the second row is pressed", pressed.join(","), "v2");
+      });
+    }
+  }
+  // Where the model names the control, the request still says which row.
+  {
+    const page = loadPage(list, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+    if (page) {
+      const pressed = wire(page);
+      const bgd = loadBackground({ page });
+      let turns = 0;
+      bgd.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") {
+          turns++;
+          if (turns > 2) return { ok: true, step: { do: "finish", answer: "" } };
+          return { ok: true, step: { name: "View monitoring location", do: "click" } };
+        }
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgd.__ask({ type: "smartAsk", instruction: "model: open the third location" });
+        check("the model names the control, the request picks the row", pressed[0], "v3");
+      });
+    }
+  }
+}
+
 // The model list lived in four places: the offscreen document's acceptance
 // check, the panel's HTML, the "use 3b" aliases and the display names. Adding
 // one meant finding all four, and missing the acceptance check made the
@@ -1974,6 +2486,21 @@ else {
   ensure("and it is told which model from the stored choice",
     /chosen && globalThis\.WC_MODEL_IDS\.includes\(chosen\)/.test(worker),
     "the panel is told from a cache");
+  // A failure has to name the model that failed. WebLLM says "Error: Out of
+  // memory" with no model in it, and a model too big for the machine fails
+  // that way every time it is asked - so a card carrying the message
+  // verbatim said nothing about the one thing worth changing.
+  ensure("a failed decision names the model",
+    /modelName\(useId\)\} could not answer/.test(worker),
+    "the model that failed is not named");
+  ensure("and where it cannot fit, says what does",
+    /WC_BIGGEST_THAT_FITS\(lastKnownGpu\)/.test(worker),
+    "no remedy is offered");
+  // Nothing substitutes a model for another. The words that would do it -
+  // a fallback to a smaller id when a load fails - must not be in here.
+  ensure("and nothing swaps in a different model",
+    !/stepDown|demote|fallbackModel|smallerModel/.test(worker),
+    "something steps the model down");
   // Asking for status must not wake the hidden document. It created it and
   // warmed it, so a second copy of the weights loaded in the throttled
   // window every time anything checked - two models on one card.
@@ -3305,7 +3832,18 @@ for (const b of budgets) {
     // part has to name one control word for word, and one unclear part sends
     // the whole sentence to the model untouched.
     ["click gage height and click discharge", 0, "exact-match", "each clause named word for word"],
-    ["click gage height and show me the flow", 1, null, "one clause is loose, so all of it is the model's"],
+    // "Flow" is not loose any more. The domain vocabulary has said since
+    // the beginning that flow is discharge, and nothing matching a control
+    // consulted it - so a page offering "Discharge" was unreachable to
+    // anyone who said flow, and a clause naming it exactly in the domain's
+    // own words was sent to the model as though it were vague. One control
+    // on this page means it and no other does, so there is nothing to
+    // decide.
+    ["click gage height and show me the flow", 0, "exact-match", "the domain's own word for a control is not loose"],
+    // Still loose, and still the model's. A request whose difficulty is in
+    // the words no vocabulary accounts for cannot be read by a table.
+    ["click gage height and show me what is going on", 1, null,
+      "a clause naming nothing is still the model's"],
     ["what is the gage height", 1, null, "a question, not an instruction"],
   ];
   for (const [instr, wantCalls, wantPlanner, why] of shapes) {

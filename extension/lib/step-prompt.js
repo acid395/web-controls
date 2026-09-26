@@ -145,6 +145,48 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note,
 
 globalThis.WC_BUILD_STEP_PROMPT = buildStepPrompt;
 
+/* A question is not an operation, and was being asked as one.
+ *
+ * "Explain this data" went to the model with a hundred and fifteen control
+ * lines, twenty-five lines of rules about clicking, checking, selecting and
+ * searching, and the page's values last - roughly eighteen hundred tokens of
+ * prefill to answer a question whose whole input is the values. Prefill is
+ * most of what a turn costs, so the reading was paying four hundred tokens
+ * of page and fourteen hundred of things it must not do.
+ *
+ * It also explains the answer a 3B kept giving. Told mostly about pressing,
+ * shown a list of things to press, it pressed: {"name":"Legend","do":"click"}
+ * to "explain this data". The prompt was asking for the wrong kind of answer
+ * and getting it.
+ *
+ * So a question gets its own prompt: the values, the question, and one shape
+ * to answer in. Nothing about controls, because none will be touched.
+ */
+function buildReadPrompt({ goal, observation, note }) {
+  return [
+    "Answer the question using only what this page shows.",
+    "Reply with one JSON object only.",
+    "",
+    `Question: ${goal}`,
+    "",
+    "What the page shows:",
+    String(observation || "nothing readable").slice(0, 1800),
+    note ? `\nNote: ${note}` : "",
+    "",
+    '{"answer":"YOUR ANSWER","do":"finish"}',
+    "",
+    "Rules:",
+    // Said outright, because the failure to guard against is a confident
+    // answer built out of what the model knows about rivers rather than out
+    // of this page.
+    "- Use the values above. Quote the actual numbers and their units.",
+    "- Two or three sentences. Say what the values mean, not what the page is.",
+    "- If the values do not answer the question, say that in the answer.",
+  ].filter(Boolean).join("\n");
+}
+
+globalThis.WC_BUILD_READ_PROMPT = buildReadPrompt;
+
 /* The model's reply, as an object.
  *
  * Shared for the same reason the prompt is: the panel answers decisions now,

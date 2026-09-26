@@ -2563,6 +2563,50 @@ function foldAccents(text) {
   catch (e) { return String(text || ""); }
 }
 
+/* The instruction, with the conversation taken off the front and back.
+ *
+ * "clcik 30 dayz" landed on the page's own control without the model. "Could
+ * you please click on 30 days for me" - the same request, politely - did
+ * not: the exact-name paths take a leading verb off and nothing else, so the
+ * courtesy became part of the name and matched nothing. It went to the model
+ * instead, which is slower and, on a 3B, likelier to be wrong. Manners made
+ * the tool worse, which is the wrong way round.
+ *
+ * Only framing is removed, never content. Everything here is a phrase that
+ * carries no information about what to do: a greeting, a hedge, a way of
+ * asking rather than a thing to ask for. The stripping repeats until nothing
+ * more comes off, because these stack - "hey, could you please just..." - and
+ * stops there; whatever is left is the request, untouched.
+ */
+const COURTESY_LEAD = new RegExp("^\\s*(?:"
+  + "hey|hi|hello|ok|okay|so|um|well|now|just|kindly|please|pls|plz|thanks"
+  + "|could\\s+(?:you|u)|can\\s+(?:you|u)|would\\s+(?:you|u)|will\\s+(?:you|u)"
+  + "|(?:i|id|i'd)\\s+(?:want|need|wanna|would\\s+like|like)(?:\\s+to)?"
+  + "|(?:i|id|i'd)\\s+(?:want|need)\\s+(?:to\\s+)?see"
+  + "|let(?:'|\u2019)?s|lets|help\\s+me|try\\s+to|go\\s+ahead\\s+and|for\\s+me"
+  + ")\\b[\\s,:]*", "i");
+// A separator is required before the tail, and "ok" is not in it. Without
+// the separator "find drought outlook" lost its last two letters to the
+// "ok" alternative and searched for "drought outlo" - a word ending in a
+// courtesy is not a courtesy.
+const COURTESY_TAIL = new RegExp("(?:^|[\\s,])+(?:"
+  + "for\\s+me|please|pls|plz|thanks|thank\\s+you|thx|if\\s+(?:you\\s+)?can"
+  + "|if\\s+possible|would\\s+you"
+  + ")\\s*[.!?]*\\s*$", "i");
+function plainlyPut(instruction) {
+  let t = String(instruction || "").trim();
+  // Bounded. A request made entirely of courtesy would otherwise strip to
+  // nothing and the loop would spin on the empty string.
+  for (let i = 0; i < 6; i++) {
+    const before = t;
+    t = t.replace(COURTESY_LEAD, "").replace(COURTESY_TAIL, "").trim();
+    if (t === before || !t) break;
+  }
+  // Nothing left means it was all manners. The original is better than the
+  // empty string - it at least reaches a path that can say so.
+  return t || String(instruction || "").trim();
+}
+
 function meaningfulWords(text) {
   return foldAccents(text || "")
     .toLowerCase()
@@ -2577,7 +2621,29 @@ function meaningfulWords(text) {
     // the federal estate, and dropping it left "click x" with no words at all
     // and nothing to match. Letters and digits both, since a lone "a" or "an"
     // is a stop word already.
-    .filter((w) => (w.length > 1 || /^[a-z0-9]$/.test(w)) && !STOP_WORDS.has(w));
+    // A transposed stop word is still a stop word. "shwo teh legend" kept
+    // "teh" as a content word, so the request had three words against a
+    // two-word label and could not match anything - a typo in the word that
+    // carries the least meaning was costing the whole request. Only
+    // transpositions, which is what these actually are; a general fuzzy
+    // match here would swallow "for" into "far" and "the" into "they".
+    .filter((w) => (w.length > 1 || /^[a-z0-9]$/.test(w))
+      && !STOP_WORDS.has(w) && !transposedStopWord(w));
+}
+
+let TRANSPOSED_STOPS = null;
+function transposedStopWord(word) {
+  if (!TRANSPOSED_STOPS) {
+    TRANSPOSED_STOPS = new Set();
+    for (const stop of STOP_WORDS) {
+      if (stop.length < 3) continue;
+      for (let i = 0; i + 1 < stop.length; i++) {
+        const swapped = stop.slice(0, i) + stop[i + 1] + stop[i] + stop.slice(i + 2);
+        if (swapped !== stop && !STOP_WORDS.has(swapped)) TRANSPOSED_STOPS.add(swapped);
+      }
+    }
+  }
+  return TRANSPOSED_STOPS.has(String(word || "").toLowerCase());
 }
 
 // How well one control's label answers the instruction. Whole-phrase hits
@@ -2608,6 +2674,23 @@ function scoreControl(control, words, phrase, opts = {}) {
     else if (hit === "fuzzy") score += 1.5; // below exact, never instead of it
   }
   if (label === phrase) score += 10;
+  // The domain's words for the same thing, as whole phrases. The loop above
+  // asks word by word and multi-word synonyms cannot answer it, so "show me
+  // the water level" scored nothing against "Gage height, feet" and "where
+  // are the numbers" nothing against "Data Tables" - both of them the
+  // page's own name for exactly what was asked for.
+  //
+  // Scored like a fuzzy word hit and no higher: a page using the word
+  // somebody typed must still beat one using a synonym of it.
+  if (phrase) {
+    const asked = conceptsInPhrase(phrase);
+    if (asked.size) {
+      const has = conceptsInPhrase(control.label || "");
+      let shared = 0;
+      for (const g of asked) if (has.has(g)) shared++;
+      if (shared) score += 1.5 * shared;
+    }
+  }
   // Compared the same way on both sides. The instruction's phrase has its
   // filler words stripped - "Secretary of Energy" arrives as "secretary
   // energy" - while the label kept its "of", so an exact match never
@@ -2732,7 +2815,11 @@ function synonymGroupsFor(word) {
     try {
       const v = (typeof ENV_VOCAB !== "undefined" && ENV_VOCAB) || {};
       SYNONYM_PHRASES = new Map();
-      for (const [group, words] of Object.entries(v.parameters || {})) {
+      // Both tables: what a gauge measures, and what the page itself
+      // offers. Only the first was indexed, so every request phrased in
+      // terms of the interface - the legend, the table, the download, the
+      // log scale - had no vocabulary at all behind it.
+      for (const [group, words] of Object.entries(v.conceptGroups || v.parameters || {})) {
         for (const phrase of words || []) {
           const t = String(phrase).toLowerCase().trim();
           // Single words go in the index. A multi-word synonym is kept whole
@@ -2748,6 +2835,64 @@ function synonymGroupsFor(word) {
     } catch (e) { /* no vocabulary loaded; matching carries on without it */ }
   }
   return SYNONYM_INDEX.get(String(word || "").toLowerCase()) || new Set();
+}
+
+/* Which concepts a whole phrase names, single words and multi-word names
+ * alike.
+ *
+ * synonymGroupsFor only ever saw one word. Multi-word synonyms - "water
+ * level", "the numbers", "chart key", "date range" - are kept whole on
+ * purpose, because splitting them would make "water" alone stand for water
+ * temperature, and they were only ever consulted once some *other* word in
+ * the request had already resolved. So a request made entirely of a
+ * multi-word synonym resolved to nothing at all: "show me the water level"
+ * found no concept, and the page's "Gage height" was unreachable to the
+ * commonest way of asking for it.
+ *
+ * Longest first, and a matched phrase consumes its words, so "water level"
+ * is one concept rather than "water" and "level" separately.
+ */
+// The request's own words that the concepts it named do not account for.
+// Framing words are not content: "where are the numbers" is the numbers,
+// asked as a question, and "the flow is doing" is not the flow.
+const CONCEPT_FRAMING = new Set([
+  "where", "what", "whats", "which", "how", "here", "there", "now", "today",
+  "page", "site", "map", "chart", "graph", "data", "value", "values", "current",
+]);
+function leftOverOfConcepts(text, groups) {
+  const covered = new Set();
+  for (const g of groups) {
+    for (const phrase of (SYNONYM_PHRASES && SYNONYM_PHRASES.get(g)) || []) {
+      for (const w of String(phrase).split(/\s+/)) covered.add(w);
+    }
+  }
+  return meaningfulWords(text).filter((w) => {
+    if (covered.has(w) || CONCEPT_FRAMING.has(w)) return false;
+    if (verbFamily(w) || CONTROL_VERB.test(w)) return false;
+    return !synonymGroupsFor(w).size;
+  });
+}
+
+function conceptsInPhrase(text) {
+  const found = new Set();
+  let flat = ` ${String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  if (flat.trim().length < 2) return found;
+  synonymGroupsFor("");                       // builds the indexes if needed
+  const phrases = [];
+  for (const [group, list] of (SYNONYM_PHRASES || new Map())) {
+    for (const phrase of list) phrases.push({ group, phrase });
+  }
+  phrases.sort((a, b) => b.phrase.length - a.phrase.length);
+  for (const { group, phrase } of phrases) {
+    if (flat.includes(` ${phrase} `)) {
+      found.add(group);
+      flat = flat.replace(` ${phrase} `, "  ");
+    }
+  }
+  for (const w of flat.split(/\s+/)) {
+    for (const g of synonymGroupsFor(w)) found.add(g);
+  }
+  return found;
 }
 
 function wordMatchesText(rawWord, rawText) {
@@ -3166,7 +3311,31 @@ function planGenericTool(instruction, inventory) {
     });
     const duplicates = tied.length > 1
       && (sameControlRepeated(tied.map((x) => x.control)) || oneLabel || nested || sameTarget);
-    const rivals = !duplicates && runnerUp && best.score - runnerUp.score < 2 && sameWords(best.control, runnerUp.control);
+    // One of them is the request, word for word; the others merely contain
+    // it. "tiem seires" tied "Time Series" against "OCONUS Time Series" and
+    // asked which was meant - but only one of the two is what was typed, and
+    // the other is that plus a qualifier nobody used. A whole-label match
+    // beats a label that happens to hold it.
+    const askedFlat = String(instruction || "").toLowerCase()
+      .replace(/^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|check|tick|open|show|hide)\s+/i, "")
+      .replace(/[^a-z0-9]+/g, " ").trim();
+    const isWholeRequest = (c) => {
+      const l = String(c.label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      return !!l && (l === askedFlat || closeName(askedFlat, l));
+    };
+    const whole = tied.filter((x) => isWholeRequest(x.control));
+    if (whole.length === 1 && tied.length > 1) {
+      // Not a tie after all. Put it at the front and let the normal path act.
+      const pick = whole[0];
+      scored.splice(scored.indexOf(pick), 1);
+      scored.unshift(pick);
+      tied.length = 0;
+      tied.push(pick);
+    }
+    const bestNow = scored[0];
+    const runnerUpNow = scored[1];
+    const rivals = !duplicates && runnerUpNow && whole.length !== 1
+      && bestNow.score - runnerUpNow.score < 2 && sameWords(bestNow.control, runnerUpNow.control);
     if (rivals) {
       if (!calls.length) {
         // "look up 8443970" tied three unrelated links on a real site, and
@@ -4249,6 +4418,17 @@ function closeName(said, label) {
       // while nothing was misspelt - which the slip count alone cannot see.
       return false;
     }
+    // The page's word is the stem of the word that was typed. "Switch to a
+    // logarithmic scale" found nothing on a page whose control is called
+    // "Log", and the two are the same word - one of them finished. Only this
+    // way round: the page's own label is the authority, so a label that is a
+    // prefix of what somebody typed is that label said at greater length.
+    // Three characters at least, or every label beginning "da" matches
+    // "data", and only where everything else in the phrase matched exactly.
+    if (b[i].length >= 3 && a[i].startsWith(b[i]) && a.length === 1) {
+      slips += 1;
+      continue;
+    }
     const room = Math.min(a[i].length, b[i].length) <= 4 ? 1 : 2;
     const d = editDistance(a[i], b[i]);
     if (d > room) return false;
@@ -4261,7 +4441,13 @@ function closeName(said, label) {
 }
 
 function looksLikeMisspelledVerb(word) {
-  if (!word || word.length < 5 || verbFamily(word)) return false;
+  // Four, not five. A dropped letter makes a five-letter verb four letters
+  // long - "clik", "pres", "slect" - and the length floor was rejecting
+  // exactly the typo it was written to catch: "clik compair two weks" was
+  // not read as an instruction at all, while "clcik", which keeps its
+  // length, was. The verb it is compared against still has to be a long
+  // one, so nothing here turns a short word into a verb.
+  if (!word || word.length < 4 || verbFamily(word)) return false;
   return VERB_FAMILIES.some((family) =>
     family.some((verb) => verb.length >= 5
       && ((Math.abs(verb.length - word.length) <= 1 && editDistance(verb, word) === 1)
@@ -4663,7 +4849,163 @@ function splitIntoSteps(instruction) {
     // "turn on 30 days and plot the discharge" read as one clause, so
     // neither half got the treatment a named control gets.
     .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check)\b)/i)
-    .map((t) => t.trim()).filter(Boolean);
+    // Each clause loses its own manners too. The whole instruction is
+    // cleaned before it gets here, which handles courtesy at the ends -
+    // but "click 30 days and then could you show the legend" carries it in
+    // the middle, where only the clause it belongs to can see it.
+    .map((t) => plainlyPut(t.trim())).filter(Boolean);
+}
+
+// "The second location", "the last one": an ordinal says which row of a
+// pattern the inventory has folded into one control with a count. The words
+// are taken out so what is left can be matched against a name, and the
+// number kept so the right member is the one pressed.
+//
+// Two shapes, both the way people write it: a tail - "view monitoring
+// location for the first location" - and a lead - "click the second view
+// monitoring location". Nothing comes back unless a phrase was actually
+// removed, so a clause without one is untouched, and an ordinal followed by
+// a figure ("the first 30 days") is a span rather than a position and is
+// left alone.
+const ORDINAL_WORDS = {
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7,
+  eighth: 8, ninth: 9, tenth: 10, last: -1,
+};
+const ORD = "(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|\\d{1,2}(?:st|nd|rd|th))";
+const ORDINAL_TAIL = new RegExp(
+  `\\s+(?:for|of|on|in|at|from|under)\\s+the\\s+${ORD}(?!\\s+\\d)(?:\\s+[a-z']+){0,2}\\s*$`, "i");
+const ORDINAL_LEAD = new RegExp(
+  `^(\\s*(?:please\\s+)?(?:(?!the\\b)[a-z]+\\s+)?)(?:the\\s+)?${ORD}(?!\\s+\\d)\\s+`, "i");
+function ordinalIn(text) {
+  const t = String(text || "");
+  let m = t.match(ORDINAL_TAIL);
+  if (m) return { n: ordinalNumber(m[1]), word: m[1].toLowerCase(), rest: t.slice(0, m.index).trim() };
+  m = t.match(ORDINAL_LEAD);
+  if (m) {
+    return { n: ordinalNumber(m[2]), word: m[2].toLowerCase(),
+      rest: (m[1] + t.slice(m.index + m[0].length)).trim() };
+  }
+  return null;
+}
+function ordinalNumber(word) {
+  const w = String(word).toLowerCase();
+  if (ORDINAL_WORDS[w] !== undefined) return ORDINAL_WORDS[w];
+  const n = parseInt(w, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// The control's nth member, or null where there is no such member. A
+// pattern of one row has a first and nothing else; "the last" of a pattern
+// too big to have kept every row is not known, and is not guessed.
+function nthOf(control, n) {
+  if (!control || !n) return null;
+  const members = control.members && control.members.length ? control.members : [control.selector];
+  const total = Number(control.count) || members.length;
+  if (n === -1) return members.length === total ? { ...control, selector: members[members.length - 1] } : null;
+  return n <= members.length ? { ...control, selector: members[n - 1] } : null;
+}
+
+// The controls a clause names word for word and, where the clause says
+// which of several, the one member meant. Plain matching first: "click
+// first name" is the control called First name, not a control called Name
+// with the ordinal taken off.
+const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide)\s+/i;
+function namedByClause(all, clause) {
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  let exactly = false;
+  const match = (text) => {
+    const whole = flat(text);
+    // "clik compair two weks" kept its misspelled verb as part of the name,
+    // so a request with a typo in the verb could never name a control - the
+    // one case this whole path exists to cover.
+    let lead = String(text).replace(CLAUSE_LEAD, "");
+    if (lead === String(text)) {
+      const first = lead.trim().split(/\s+/)[0] || "";
+      if (first && looksLikeMisspelledVerb(first.toLowerCase())) {
+        lead = lead.trim().slice(first.length).trim();
+      }
+    }
+    const bare = flat(lead);
+    if (!bare && !whole) return [];
+    const named = all.filter((c) => {
+      if (c.disabled || c.confidence === "low") return false;
+      const l = flat(c.label);
+      return !!l && (l === bare || l === whole || closeName(bare, l));
+    });
+    // A panel opener is skipped while anything else wears the name, because
+    // pressing the thing that holds what you asked for is not doing what
+    // you asked - "Flood Inundation" is both an accordion and the layer
+    // checkbox inside it, and opening the accordion is not enabling the
+    // layer.
+    //
+    // Where the opener is the only thing with that name, opening it is the
+    // whole of what was asked for: "forcasts and outlooks" on
+    // water.noaa.gov names a dropdown and nothing else.
+    const notDoors = named.filter((c) => !c.opensPanel);
+    const kept = notDoors.length ? notDoors : named;
+    // Whether the name was worn exactly or reached for. The caller needs to
+    // know: an exact name is already handled richly elsewhere, and this only
+    // has to step in where that would miss.
+    exactly = kept.some((c) => {
+      const l = flat(c.label);
+      return l === bare || l === whole;
+    });
+    return kept;
+  };
+  const plain = match(clause);
+  if (plain.length) {
+    return { named: plain, n: null, word: null, how: exactly ? "exact" : "close" };
+  }
+  const ord = ordinalIn(clause);
+  if (ord && ord.rest && ord.n !== null) {
+    const byOrd = match(ord.rest);
+    if (byOrd.length) return { named: byOrd, n: ord.n, word: ord.word, how: "ordinal" };
+  }
+  // The page's own word for the thing that was asked for.
+  //
+  // "Switch to a logarithmic scale" names the control called "Log"; "the
+  // chart key" names "Show legend"; "download the shapefiles" names "GIS
+  // Data". None of them share a word with it, and all three are the only
+  // control on their page that means it - so there is nothing to decide and
+  // no reason to spend a model turn deciding it.
+  //
+  // Held to the same contract as the rest of this: exactly one control, or
+  // nothing. Two controls meaning the same thing is a choice, and choices
+  // are not made here.
+  const said = String(clause).replace(CLAUSE_LEAD, "");
+  const asked = conceptsInPhrase(said);
+  // Only where the request is that concept and nothing else.
+  //
+  // Without this the tier answers sentences it has no business answering:
+  // "enable the layer with the longest name" resolves "layer" and presses
+  // one, and "show me what the flow is doing" resolves "flow" and presses
+  // the discharge graph - both of them requests whose difficulty is in the
+  // words the concept does not account for. A word left over is a request
+  // this cannot read, and an unread request belongs to the model.
+  const spare = asked.size ? leftOverOfConcepts(said, asked) : ["x"];
+  // "Download" and "search" say what to do with a thing, not which thing.
+  // Requiring the label to carry them meant "download the shapefiles" could
+  // not reach "GIS Data", because the page names the thing and the verb is
+  // the person's. They still count as accounted-for words, so the request
+  // is not treated as carrying something unread.
+  const ACTION_CONCEPTS = new Set(["download", "search"]);
+  const wanted = new Set([...asked].filter((g) => !ACTION_CONCEPTS.has(g)));
+  if (wanted.size && !spare.length) {
+    const byMeaning = all.filter((c) => {
+      if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
+      if (!String(c.label || "").trim()) return false;
+      const has = conceptsInPhrase(c.label);
+      if (!has.size) return false;
+      // Every concept the request named, and no more. A label meaning one
+      // half of a two-part request is not that request.
+      for (const g of wanted) if (!has.has(g)) return false;
+      return true;
+    });
+    if (byMeaning.length === 1) {
+      return { named: byMeaning, n: null, word: null, how: "concept" };
+    }
+  }
+  return { named: [], n: null, word: null, how: null };
 }
 
 // Whether the model can answer, asked at most once every few seconds. Every
@@ -4684,6 +5026,16 @@ function modelName(id) {
   return globalThis.WC_MODEL_NAME(id);
 }
 
+// A card's headline, from an answer that may be a paragraph. The first
+// sentence where there is one, because a sentence cut at sixty characters
+// reads as a fault in the extension rather than a long answer.
+function headlineOf(text) {
+  const t = String(text || "").trim().replace(/\s+/g, " ");
+  const stop = t.search(/[.!?](\s|$)/);
+  const first = stop > 0 ? t.slice(0, stop + 1) : t;
+  return first.length <= 90 ? first : `${first.slice(0, 87)}...`;
+}
+
 // The words somebody would type to ask for this one back, so advice names
 // the model they chose rather than a different one.
 function shortNameFor(id) {
@@ -4695,6 +5047,12 @@ let lastTurnMs = 0;
 let lastTurnCost = null;
 let modelStatusCache = { at: 0, value: null };
 let warmedOnce = false;
+function rememberMachine(value) {
+  if (value && value.gpu) lastKnownGpu = value.gpu;
+  if (value && value.model) lastKnownPlanner = value.model;
+  return value;
+}
+
 async function modelStatus({ maxAgeMs = 4000 } = {}) {
   if (modelStatusCache.value && Date.now() - modelStatusCache.at < maxAgeMs) {
     return modelStatusCache.value;
@@ -4729,10 +5087,15 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
         // made the diagnostic announce a mismatch against a model that had
         // never been loaded.
         model: fromPanel.model || null,
+        // How far along, so the panel can draw a bar rather than the word
+        // "loading". Dropped here before, which is why a panel reopened
+        // part-way through a download had nothing to show.
+        progress: fromPanel.progress || null,
+        fraction: typeof fromPanel.fraction === "number" ? fromPanel.fraction : null,
         where: "panel",
       };
       modelStatusCache = { at: Date.now(), value };
-      return value;
+      return rememberMachine(value);
     }
   } catch (e) { /* no panel: the hidden document answers, below */ }
 
@@ -4748,6 +5111,10 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" }).catch(() => null),
     new Promise((r) => setTimeout(() => r(null), 1500)),
   ]);
+  // What it said about the machine is worth keeping whatever it said about
+  // the model: the graphics card does not change between one status call and
+  // the next, and it is what decides whether a second model has room.
+  rememberMachine(value);
   // Only a definite answer is worth remembering. "Not loaded yet" changes.
   if (value && value.ready) modelStatusCache = { at: Date.now(), value };
   // No WebGPU is not a "not yet" - it cannot become true without a reload,
@@ -4878,9 +5245,35 @@ async function decisiveByMeaning(goal, controls) {
   return { control: c, score: first.score, clearBy: first.score - second.score };
 }
 
+// The embedder is a second model, and on a small machine it is the one that
+// breaks it. arctic-embed is 1023MB and loads beside the planner, so a 5GB
+// planner on an 8GB laptop is six gigabytes of weights on a card that has to
+// hold the page as well - which is paging, and paging is the slowness that
+// then gets blamed on the planner.
+//
+// So it is asked for only where there is room for both. Where there is not,
+// ranking by meaning returns nothing and the caller carries on without it,
+// which it is already written to do.
+const EMBEDDER_MB = 1023;
+// What the last status call said about the machine. Read rather than asked
+// for: this is consulted from inside a run, and a status call from there can
+// end up waiting on the same window the run is waiting on.
+let lastKnownGpu = null;
+let lastKnownPlanner = null;
+function roomForEmbedder() {
+  const gpu = lastKnownGpu;
+  if (!gpu || gpu.ok === false) return true;        // nothing known, no objection
+  const both = (globalThis.WC_MODEL_VRAM(lastKnownPlanner || WC_DEFAULT_MODEL) || 0) + EMBEDDER_MB;
+  const ram = (gpu.deviceMemoryGB || 0) * 1024;
+  if (ram > 0 && both * 1.6 > ram) return false;
+  const binding = Math.min(gpu.maxStorageMB || Infinity, gpu.maxBufferMB || Infinity);
+  return !(Number.isFinite(binding) && binding > 0 && EMBEDDER_MB > binding);
+}
+
 async function rankByMeaning(goal, controls) {
   const labels = controls.map((c) => String(c.label || "").slice(0, 80));
   if (!labels.length) return null;
+  if (!roomForEmbedder()) return null;
   const key = labels.join("\u0000");
   if (meaningCache.key !== key) {
     const vectors = await embedTexts(labels);
@@ -4937,8 +5330,12 @@ async function askModelForStep(payload) {
   // Built here, so the panel and the offscreen document are given the same
   // words. It used to be built inside the offscreen document, which was
   // fine while that was the only thing that ever saw a model.
-  const prompt = globalThis.WC_BUILD_STEP_PROMPT
-    ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null;
+  // A question gets the reading prompt: the page's values and one shape to
+  // answer in, with nothing about controls. Everything else gets the
+  // operating prompt.
+  const prompt = payload.mode === "read"
+    ? (globalThis.WC_BUILD_READ_PROMPT ? globalThis.WC_BUILD_READ_PROMPT(payload) : null)
+    : (globalThis.WC_BUILD_STEP_PROMPT ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null);
   if (prompt && await panelIsOpen()) {
     if (!panelHasModel) {
       // Give the hidden copy back first, or the two of them share a card.
@@ -4981,7 +5378,22 @@ async function askModelForStep(payload) {
       }
       if (said && said.error) {
         lastDecisionBy = `the panel, which failed: ${String(said.error).slice(0, 60)}`;
-        return { ok: false, error: said.error };
+        // Which model failed, and whether it could ever have worked here.
+        // WebLLM's own message is "Error: Out of memory" or a device-lost
+        // line with no model in it, so a card carrying it verbatim said
+        // nothing about the one thing worth changing - and a model that
+        // cannot fit on this machine will fail identically every time it is
+        // asked, silently, for as long as it stays chosen.
+        const verdict = lastKnownGpu
+          ? globalThis.WC_MODEL_FITS(useId, lastKnownGpu) : { fits: true };
+        const remedy = verdict.fits ? "" : (() => {
+          const best = globalThis.WC_BIGGEST_THAT_FITS(lastKnownGpu);
+          return ` - ${verdict.why}`
+            + (best && best.id !== useId
+              ? `. Say "use ${best.aliases[0]}" for ${best.name}, the largest that fits` : "");
+        })();
+        return { ok: false,
+          error: `${modelName(useId)} could not answer: ${String(said.error).slice(0, 120)}${remedy}` };
       }
     } catch (e) {
       lastDecisionBy = `the panel went away: ${String((e && e.message) || e).slice(0, 50)}`;
@@ -5377,8 +5789,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     }
 
     const thoughtAt = Date.now();
+    // A question whose page has already been read is a reading, not a
+    // decision. Sending the controls as well cost about fourteen hundred
+    // tokens of prefill per turn and taught the model to press something:
+    // "explain this data" came back {"name":"Legend","do":"click"} from a
+    // 3B that had been shown a hundred and fifteen things to press and
+    // twenty-five lines of rules about pressing them.
+    const readingOnly = !!observation && ASKING_TO_READ.test(goal);
     const asked = await Promise.race([
-      askModelForStep({
+      askModelForStep(readingOnly ? {
+        goal, observation, note, mode: "read",
+      } : {
         goal,
         controls: offered.map((c) => ({
           label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
@@ -6035,6 +6456,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     //
     // So the model picks the control and the request decides the state. A
     // request that plainly says to turn something off still turns it off.
+    // Which of several. The inventory folds repeated rows into one control
+    // with a count, and the model names the control - it has no way to say
+    // "the third one". The request does, and the request decides. A row the
+    // page does not have is said so, not rounded down to the first.
+    if (target.count > 1) {
+      const ord = ordinalIn(goal);
+      if (ord && ord.n !== null && ord.n !== 1) {
+        const member = nthOf(target, ord.n);
+        if (!member) {
+          return giveUp(`this page has ${target.count} of "${String(target.label).slice(0, 40)}"`
+            + ` and no ${ord.word}`);
+        }
+        target = member;
+      }
+    }
     const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
       .test(goal);
     const isSwitch = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
@@ -6585,6 +7021,14 @@ async function runVerified(routeGlobal, toolCall) {
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   const result = await executeToolCall(routeGlobal, toolCall);
   if (!before.ok || result.ok === false) return result;
+
+  // A press that is already taking the page somewhere else is waited for
+  // here, before anything reads the page, not only once the reading below
+  // has proved a navigation. Read during the change-over, the after-signature
+  // was the old page's, or a half-arrived new one's - and the next clause of
+  // a chain read its controls the same way and found none. Costs nothing on
+  // a page that has finished loading, which is the usual case.
+  await waitForPageLoad();
 
   // Actions are asynchronous far more often than not - a click starts a
   // fetch or a re-render - so comparing immediately would report a working
@@ -7475,7 +7919,10 @@ async function runDiagnostics() {
   // model that was simply slow.
   await step("model chosen", async () => {
     const { llmModelId } = await chrome.storage.local.get("llmModelId");
-    if (!llmModelId) return "none set - using the default, Llama 3.2 3B";
+    // Named from the registry. This said "Llama 3.2 3B" long after the
+    // default became the 8B, so the one diagnostic somebody runs to find
+    // out what is loaded was telling them about a different model.
+    if (!llmModelId) return `none set - using the default, ${modelName(WC_DEFAULT_MODEL)}`;
     const st = await modelStatus({ maxAgeMs: 0 });
     // Only what is actually running. Status reports the model that *would*
     // load when none has, so this compared the choice against a default and
@@ -7489,6 +7936,28 @@ async function runDiagnostics() {
     }
     return `${modelName(llmModelId)}${running ? " · loaded"
       : st && st.loading ? " · loading" : " · loads on next use"}`;
+  }, { optional: true });
+  // Whether the model somebody chose can run on the machine they chose it
+  // on. Nothing anywhere said this: a 5GB model picked on a 4GB machine
+  // loaded, paged, and came back as "one decision takes 180s", which reads
+  // as the extension being slow rather than as the choice being impossible.
+  //
+  // It reports and never acts. Substituting a smaller model here is what an
+  // earlier version did, silently, and a card then credited an answer to a
+  // model that was never loaded.
+  await step("model fits this machine", async () => {
+    const st = await modelStatus({ maxAgeMs: 0 });
+    const gpu = st && st.gpu;
+    if (!gpu || gpu.ok === false) return "n/a - nothing known about the graphics card";
+    const chosen = await chrome.storage.local.get("llmModelId")
+      .then((g) => g.llmModelId).catch(() => null);
+    const id = (chosen && WC_MODEL_IDS.includes(chosen)) ? chosen : WC_DEFAULT_MODEL;
+    const verdict = globalThis.WC_MODEL_FITS(id, gpu);
+    if (verdict.fits) return `${modelName(id)} fits`;
+    const best = globalThis.WC_BIGGEST_THAT_FITS(gpu);
+    throw new Error(`${modelName(id)} does not fit: ${verdict.why}.`
+      + (best && best.id !== id
+        ? ` ${best.name} is the largest that does - say "use ${best.aliases[0]}"` : ""));
   }, { optional: true });
   await step("agency API", async () => {
     const res = await fetch("https://api.weather.gov/points/44.98,-93.26", { headers: { Accept: "application/geo+json" } });
@@ -7746,20 +8215,13 @@ async function certainClausePlan(routeGlobal, clause) {
 
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
-  const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide)\s+/i;
-  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const whole = flat(clause);
-  const bare = flat(String(clause).replace(LEAD, ""));
-  if (!bare && !whole) return null;
-  const named = all.filter((c) => {
-    if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
-    const l = flat(c.label);
-    return !!l && (l === bare || l === whole || closeName(bare, l));
-  });
   // One, and only one. Two controls wearing the name is the ambiguity that
-  // sent "Interactive Map" to a radio while the link went unpressed.
+  // sent "Interactive Map" to a radio while the link went unpressed. Several
+  // rows of the same one, with the clause saying which, is not.
+  const { named, n } = namedByClause(all, clause);
   if (named.length !== 1) return null;
-  const only = named[0];
+  const only = n === null ? named[0] : nthOf(named[0], n);
+  if (!only) return null;
   if (TEXT_INPUT_KINDS.has(String(only.type || "").toLowerCase())) return null;
   return {
     label: only.label,
@@ -7794,22 +8256,21 @@ async function searchClause(routeGlobal, clause) {
 
 async function actOnExactlyNamedClause(routeGlobal, clause) {
   const inv = await readInventory();
-  const LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
-  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const whole = flat(clause);
-  const bare = flat(String(clause).replace(LEAD, ""));
   // Hidden is not out of reach. On a monitoring-location page the Continuous
   // data checkbox sits inside a collapsed section, and the single-instruction
   // path reaches it and sets it without trouble; excluding it here is why the
   // same words worked alone and failed as the second half of a sentence.
-  const named = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => {
-    if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
-    const l = flat(c.label);
-    return !!l && (l === bare || l === whole || closeName(bare, l));
-  });
+  const { named, n } = namedByClause(((inv.ok && inv.result && inv.result.controls) || []), clause);
   if (named.length !== 1) return null;
-  const only = named[0];
+  // "The second location" on a page with one is a request for something
+  // that is not there, and is left for a path that can say so.
+  const only = n === null ? named[0] : nthOf(named[0], n);
+  if (!only) return null;
   const isSwitch = /^(checkbox|radio)$/.test(String(only.type || "").toLowerCase());
+  // A list is chosen from, not pressed; pressing one proves nothing.
+  if (!isSwitch && (String(only.kind || "").toLowerCase() === "select" || (only.options || []).length)) {
+    return null;
+  }
   if (!isSwitch) {
     // Presses too. This returned null for anything that was not a switch, so
     // a clause naming a link word for word fell through to a path that does
@@ -8590,8 +9051,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // a model that operates a site are different claims, and only one of
         // them generalises past phrasings somebody anticipated.
         const forceBaseline = /^\s*baseline:\s*/i.test(msg.instruction || "");
-        const wanted = String(msg.instruction || "")
-          .replace(/^\s*model:\s*/i, "").replace(/^\s*baseline:\s*/i, "");
+        const wanted = plainlyPut(String(msg.instruction || "")
+          .replace(/^\s*model:\s*/i, "").replace(/^\s*baseline:\s*/i, ""));
 
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
@@ -8739,6 +9200,65 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 source: "this page",
               },
             });
+            return;
+          }
+        }
+
+        // One control, named - and the sequence runner could already act on
+        // that while a single instruction could not.
+        //
+        // "Click A and click B" reached actOnExactlyNamedClause for each
+        // half; "click B" on its own went to the scorer, then the model.
+        // So the same words worked as part of a sentence and not alone,
+        // which is the inverse of the bug fixed when the sequence runner
+        // got this - and it is the same fix. Whatever a clause can do, the
+        // whole instruction can do when it is one clause.
+        //
+        // It carries everything namedByClause knows: the exact label, a
+        // misspelling of it, a label that is the stem of the word typed, and
+        // an ordinal saying which of several rows. A request for a row the
+        // page does not have is answered with how many there are, rather
+        // than handed on to be guessed at.
+        // A bare name counts as an instruction here, where it does not
+        // elsewhere. "Time Series" with no verb is not obviously a command -
+        // it could be a question about a chart - but a phrase that is one
+        // control's own name and nothing else on the page is not ambiguous
+        // whatever mood it is in, and typing a control's name is how most
+        // people ask for it. Questions are excluded outright, so "what is
+        // the time series" still reads rather than presses.
+        const bareName = !ASKING_TO_READ.test(wanted) && !CONTROL_VERB.test(wanted);
+        if (!forceBaseline && !forceModel && (isCommand(wanted) || bareName)
+            && splitIntoSteps(wanted).length === 1) {
+          const rinv = await readInventory();
+          const { named, n, word, how } = namedByClause(
+            ((rinv.ok && rinv.result && rinv.result.controls) || []), wanted);
+          if (named.length === 1 && n !== null && word && !nthOf(named[0], n)) {
+            const label = String(named[0].label || "").slice(0, 40);
+            const count = Number(named[0].count) || 1;
+            respond({ ok: false, error: `this page has ${count} of "${label}" and no ${word}`,
+              display: { title: `no ${word}`, subtitle: `this page has ${count} of "${label}"`,
+                stats: [], rows: [], source: "this page" } });
+            return;
+          }
+          // A name worn exactly is already handled below, and handled more
+          // fully: those paths report the control's own before and after,
+          // which this cannot. So this steps in only where they would miss -
+          // a misspelling, a stem, an ordinal, or the page's own word for
+          // what was asked for.
+          const did = (named.length === 1 && how && how !== "exact")
+            ? await actOnExactlyNamedClause(route.global, wanted).catch(() => null)
+            : null;
+          if (did) {
+            respond({ ok: true, plannedBy: "exact-match",
+              display: {
+                title: String(did.label || wanted).slice(0, 60),
+                subtitle: did.unconfirmed
+                  ? `${did.label} pressed - the page did not visibly change`
+                  : `${did.label} done`,
+                stats: [], rows: [],
+                note: "the request names this control word for word, so this did not wait for the model",
+                source: "this page",
+              } });
             return;
           }
         }
@@ -9207,6 +9727,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 ? `${which} is still loading${status.progress ? ` - ${status.progress}` : ""}`
                   + " - this answer came from the page's own controls"
               : `${which} has not started yet`;
+            // Why it will not start, where the machine is the reason. "Has
+            // not started yet" is true of a model that is loading and of one
+            // that cannot load at all, and only the second needs a different
+            // model chosen.
+            const gpu = status && status.gpu;
+            if (gpu && gpu.ok !== false && !(status && (status.loading || status.ready))) {
+              const id = (status && status.model) || WC_DEFAULT_MODEL;
+              const verdict = globalThis.WC_MODEL_FITS(id, gpu);
+              if (!verdict.fits) {
+                const best = globalThis.WC_BIGGEST_THAT_FITS(gpu);
+                modelSkipped = `${modelName(id)} will not run here - ${verdict.why}`
+                  + (best && best.id !== id
+                    ? `. Say "use ${best.aliases[0]}" for ${best.name}, the largest that fits` : "");
+              }
+            }
           }
           // Asked for the model by name and it cannot answer: say so. Quietly
           // handing the request to the page defeats the only purpose the
@@ -9339,8 +9874,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 ok: true, plannedBy: "model", steps: agent.history, answer: agent.answer || undefined,
                 display: {
                   title: agent.answer
-                    ? String(agent.answer).slice(0, 60)
+                    // The first sentence as the headline, the whole thing
+                    // below it. An explanation is three sentences and this
+                    // was the only place it was shown, cut at sixty
+                    // characters - so "read the data off the page and
+                    // explain it" ended mid-word, every time.
+                    ? headlineOf(agent.answer)
                     : String((acted[acted.length - 1] || {}).label || "Done").slice(0, 60),
+                  answer: agent.answer ? String(agent.answer).slice(0, 1200) : undefined,
                   // Every turn counted, reads included: a turn is a turn of
                   // the model, and hiding the reads makes a two-action run
                   // read as one and understates what it cost.

@@ -739,7 +739,15 @@
     const groups = [...bySig.values()].map((rows) => {
       const r = rows[0];
       const { _sig, ...rest } = r;
-      return { ...rest, count: rows.length };
+      const group = { ...rest, count: rows.length };
+      // The other rows' selectors, in page order. Folding twenty "View
+      // monitoring location" links into one pattern kept only the first
+      // one's selector, so "the second location" and "the last one" had
+      // nothing to point at - the nineteen others were thrown away at the
+      // fold. The model never sees these (the prompt prints labels), so
+      // they cost it nothing; they are here for an ordinal in a request.
+      if (rows.length > 1) group.members = rows.slice(0, 100).map((x) => x.selector);
+      return group;
     });
 
     return { url: location.href, controlCount: all.length, patternCount: groups.length, controls: groups };

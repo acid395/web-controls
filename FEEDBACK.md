@@ -23,14 +23,21 @@ a difference of two orders of magnitude, on a model that loaded perfectly and
 reported ready on both. The slow one was an Apple laptop where every other
 check passed. If yours reads under a token a second, the 8B cannot run there
 and nothing about the instruction will change that; say `use 3b` or
-`use qwen`. The extension now measures this on load and drops to the small
-model by itself, but it is worth seeing the number.
+`use qwen`.
+
+Nothing switches models for you. An earlier build did, silently, and a card
+then credited an answer to a model that had never been loaded - so the model
+you pick is the model you get, always. What the extension will do is tell
+you: `diagnose` has a **`model fits this machine`** line that weighs the
+model you chose against the memory and the GPU limits this machine reports,
+and where it does not fit, it names the largest one that does.
 
 1. `chrome://extensions` → turn on **Developer mode** (top right).
 2. **Load unpacked** → choose the `extension/` folder.
 3. Open the extension, turn on **Enable the local model for Ask**, and wait
-   for it to finish loading. The panel reports progress. Do this once before
-   timing anything — a first-run download is not inference.
+   for it to finish loading. A bar under the model picker shows how far
+   through it is, and says **"<model> is ready"** when it finishes — that
+   is the moment to start timing. A first-run download is not inference.
 4. Go to a site. On one it has not seen, press **Enable on this site** once.
 5. Type an instruction and press **Ask**.
 
@@ -65,6 +72,24 @@ chooses best and has crashed Chrome on smaller GPUs.
 - `change map to satellite` — a control that is not a form control.
 - `click about and then click nwps user guide` — two steps, the second only
   reachable after the first.
+- `click view monitoring location for the second location` — on a search
+  results page, one of several links wearing the same name, picked by
+  position. `the last one` and `the 3rd` work the same way.
+- `explain this data` / `what is the discharge here` - a question, not an
+  instruction. These read the page and answer in prose; the answer appears
+  in full on the card rather than squeezed into its heading. Nothing gets
+  pressed, on any model.
+- **Type it badly on purpose.** `clik compair two weks`, `shwo teh legend`,
+  `could you please click on 30 days for me`, `switch to a logarithmic
+  scale`, `show the chart key`, `download the shapefiles`. Typos, courtesy,
+  and the domain's own words for a thing are all handled without the model
+  now - so if one of these waits for a decision or presses the wrong thing,
+  that is a bug worth reporting and not a limitation.
+- **Where it is still weak, and known:** a request whose difficulty is in
+  words no vocabulary accounts for - "the layer with the longest name",
+  "if X then Y", "what is going on here" - goes to the model, and a small
+  model often will not get it. Anything not in English relies entirely on
+  the model. Both are honest gaps, not regressions.
 - Then your own. Vague, domain-specific, badly typed, several steps: that is
   where it is weakest and where we know least.
 

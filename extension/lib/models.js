@@ -111,3 +111,58 @@ globalThis.WC_MODEL_BY_WORDS = function (words) {
 globalThis.WC_MODEL_SIZE = function (m) {
   return m.vramMB >= 1024 ? `~${(m.vramMB / 1024).toFixed(1)}GB` : `~${m.vramMB}MB`;
 };
+
+/* Whether a model can run here, and which one can.
+ *
+ * "Works on every computer" and "the model you pick is the model you get"
+ * pull in opposite directions the moment a five-gigabyte model is chosen on
+ * a machine that cannot hold it. Silently loading a smaller one honours the
+ * first and breaks the second, and that is what an earlier version of this
+ * did - a ladder that demoted the 8B without a word, so a card credited an
+ * answer to a model that had never been loaded.
+ *
+ * The rule here is: never substitute, always say. A choice is carried out
+ * whatever the machine looks like, and if it fails, the failure names the
+ * largest model that would have fitted. The only time this picks for
+ * somebody is the first run, before anybody has chosen.
+ *
+ * Deliberately conservative about what it claims to know. navigator's memory
+ * figure is rounded to a power of two and capped at 8, so it cannot tell a
+ * 32GB workstation from an 8GB laptop - it can only tell 4GB from 8GB, and
+ * that is the distinction that decides whether five gigabytes of weights
+ * will page. Where it says nothing, this says nothing either.
+ */
+globalThis.WC_MODEL_FITS = function (id, gpu) {
+  const need = globalThis.WC_MODEL_VRAM(id);
+  if (!need || !gpu || gpu.ok === false) return { fits: true, why: null };
+  if (gpu.software) {
+    return { fits: false,
+      why: "Chrome is drawing on the CPU here, so every model runs about ten times slow" };
+  }
+  // The weights are one allocation as far as the adapter is concerned, and
+  // a binding smaller than the model is a load that fails outright rather
+  // than one that runs slowly.
+  const binding = Math.min(gpu.maxStorageMB || Infinity, gpu.maxBufferMB || Infinity);
+  if (Number.isFinite(binding) && binding > 0 && need > binding) {
+    return { fits: false,
+      why: `this GPU will not hand out more than ${binding}MB at once and this model needs ${need}MB` };
+  }
+  // Weights plus the runtime plus the page. Below about 1.6x the weights,
+  // loading succeeds and then pages - which is the slowness that gets
+  // blamed on the model.
+  const ram = (gpu.deviceMemoryGB || 0) * 1024;
+  if (ram > 0 && need * 1.6 > ram) {
+    return { fits: false,
+      why: `this machine reports about ${gpu.deviceMemoryGB}GB and this model needs ${need}MB of it` };
+  }
+  return { fits: true, why: null };
+};
+
+// The largest that fits, for naming a remedy - never for substituting one.
+globalThis.WC_BIGGEST_THAT_FITS = function (gpu) {
+  const ordered = [...globalThis.WC_MODELS].sort((a, b) => b.vramMB - a.vramMB);
+  for (const m of ordered) {
+    if (globalThis.WC_MODEL_FITS(m.id, gpu).fits) return m;
+  }
+  return ordered[ordered.length - 1];
+};

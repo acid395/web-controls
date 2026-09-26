@@ -19,6 +19,9 @@
 let enginePromise = null;
 let engineReady = false;
 let engineModel = null;
+// The last thing the loader said, kept so a panel that opens mid-download
+// can show where it is rather than a bare "loading".
+let lastProgress = { text: "", fraction: null };
 
 async function engineFor(modelId, onProgress) {
   if (enginePromise && engineModel === modelId) return enginePromise;
@@ -26,7 +29,17 @@ async function engineFor(modelId, onProgress) {
   engineModel = modelId;
   const { CreateMLCEngine } = await import("../offscreen/vendor/web-llm.js");
   enginePromise = CreateMLCEngine(modelId, {
-    initProgressCallback: (r) => onProgress && onProgress(String((r && r.text) || "")),
+    // The fraction as well as the words. WebLLM reports both and only the
+    // words were passed on, so the panel could say "loading" and never how
+    // far along - which on a five gigabyte download is the difference
+    // between waiting and assuming it has hung.
+    initProgressCallback: (r) => {
+      lastProgress = {
+        text: String((r && r.text) || ""),
+        fraction: typeof (r && r.progress) === "number" ? r.progress : null,
+      };
+      if (onProgress) onProgress(lastProgress.text, lastProgress.fraction);
+    },
   }, (globalThis.WC_MODEL_VRAM && WC_MODEL_VRAM(modelId) >= 4000)
     ? { context_window_size: 3072 } : undefined)
     .then((e) => { engineReady = true; return e; })
@@ -38,6 +51,7 @@ export async function release() {
   if (!enginePromise) return;
   const held = enginePromise;
   enginePromise = null; engineReady = false; engineModel = null;
+  lastProgress = { text: "", fraction: null };
   try { const e = await held; if (e && e.unload) await e.unload(); } catch (e) { /* gone */ }
 }
 
@@ -54,7 +68,13 @@ export function warm(modelId, onProgress) {
 }
 
 export function status() {
-  return { ready: engineReady, loading: !!enginePromise && !engineReady, model: engineModel };
+  return {
+    ready: engineReady,
+    loading: !!enginePromise && !engineReady,
+    model: engineModel,
+    progress: lastProgress.text || null,
+    fraction: engineReady ? 1 : lastProgress.fraction,
+  };
 }
 
 // One decision. The same shape the offscreen document answers with, so the

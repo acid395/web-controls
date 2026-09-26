@@ -386,7 +386,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         if (!("gpu" in navigator)) throw new Error("no WebGPU here");
         const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text }).catch(() => {});
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress }).catch(() => {});
         });
         const began = Date.now();
         const reply = await whileBusy(() => Promise.race([
@@ -424,7 +424,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
         }
         const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
         });
         const reply = await engine.chat.completions.create({
           messages: [{ role: "user", content: msg.prompt || "Say hello in exactly five words." }],
@@ -527,7 +527,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (err) { /* it never finished loading; nothing to give back */ }
         return buildEngine(want, (r) => {
           lastProgress = String((r && r.text) || "").slice(0, 120);
-          chrome.runtime.sendMessage({ type: "llmProgress", text: r.text }).catch(() => {});
+          chrome.runtime.sendMessage({ type: "llmProgress", text: r.text, fraction: r.progress }).catch(() => {});
         });
       })().then((e) => { engineReady = true; return e; })
         .catch((err) => { enginePromise = null; engineReady = false; throw err; });
@@ -568,7 +568,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
         }
         const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
         });
         const numbered = (msg.tools || [])
           .map((t, i) => `${i + 1}. ${t.name}${t.gist ? " - " + t.gist : ""}`).join("\n");
@@ -630,9 +630,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
         }
         const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
         });
-        const prompt = globalThis.WC_BUILD_STEP_PROMPT(msg);
+        // The same two prompts the panel is given. A question asked here
+        // would otherwise still get the operating prompt, so which window
+        // answered would change the kind of answer.
+        const prompt = msg.mode === "read" && globalThis.WC_BUILD_READ_PROMPT
+          ? globalThis.WC_BUILD_READ_PROMPT(msg)
+          : globalThis.WC_BUILD_STEP_PROMPT(msg);
         chrome.runtime.sendMessage({ type: "llmGenerating" });
         // Shorter than the two minutes the planning paths allow, because a
         // step is one small JSON object and the caller only waits the length
@@ -708,7 +713,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
         }
         const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
         });
 
         // Compact: every token of schema is prefill time on a small model,
@@ -774,7 +779,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
         }
         const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
         });
         // background.js optionally supplies context (env-vocab synonyms,
         // and for GENERIC-route asks, the live inventory() output) - this is
@@ -840,7 +845,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     getEngine((report) => {
-      chrome.runtime.sendMessage({ type: "llmProgress", text: report.text });
+      chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
     }).then(async (engine) => {
       chrome.runtime.sendMessage({ type: "llmProgress", text: "model ready" });
       // Loaded is not the same as usable. Measured on this machine: twelve

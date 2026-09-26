@@ -26,7 +26,13 @@
     // canonical concept -> the words a person actually types for it
     parameters: {
       discharge: ["discharge", "streamflow", "flow", "flow rate", "cfs", "cubic feet per second"],
-      gageHeight: ["gage height", "gauge height", "stage", "water surface elevation", "ft", "feet"],
+      // "Water level" belongs here as well as under groundwater. On a river
+      // page it is the gage height and nothing else, which is what anybody
+      // typing it means; on a well page it is the groundwater level. Both
+      // groups claim it, so the page decides which one is on it - and where
+      // a page carries both, it genuinely is ambiguous and is treated so.
+      gageHeight: ["gage height", "gauge height", "stage", "water surface elevation",
+        "water level", "river level", "how high the water is", "ft", "feet"],
       waterTemperature: ["water temperature", "water temp", "temperature", "temp"],
       airTemperature: ["air temperature", "air temp"],
       dissolvedOxygen: ["dissolved oxygen", "do", "oxygen"],
@@ -36,8 +42,40 @@
       precipitation: ["precipitation", "precip", "rainfall"],
       snowDepth: ["snow depth"],
       snowWaterEquivalent: ["snow water equivalent", "swe"],
-      groundwaterLevel: ["groundwater level", "depth to water level", "water level", "well level"],
+      groundwaterLevel: ["groundwater level", "depth to water level", "well level"],
       soilMoisture: ["soil moisture"],
+    },
+
+    // The page's own furniture, in the words people use for it.
+    //
+    // The parameters table above is about what a gauge measures. Most of
+    // what anybody actually asks for is not a measurement at all - it is the
+    // legend, the table, the download, the log scale - and none of those had
+    // a synonym anywhere, so "show the chart key" reached nothing on a page
+    // with a button called "Show legend", and "download the shapefiles"
+    // reached nothing on one offering "GIS Data".
+    //
+    // These are deliberately not site-specific. Every one of them was seen
+    // spelled at least two ways across waterdata.usgs.gov, water.noaa.gov,
+    // droughtmonitor.unl.edu and weather.gov.
+    interface: {
+      legend: ["legend", "key", "chart key", "map key", "color key", "colour key", "what the colors mean"],
+      gisData: ["gis data", "gis", "shapefile", "shapefiles", "shp", "geospatial", "geodata"],
+      logScale: ["log", "logarithmic", "log scale", "logarithmic scale"],
+      linearScale: ["linear", "linear scale"],
+      download: ["download", "export", "save", "get the data", "grab the data"],
+      dataTable: ["table", "tabular", "tabular data", "data table", "data tables", "spreadsheet",
+        "the numbers", "raw numbers", "the figures", "csv"],
+      chart: ["chart", "graph", "plot", "hydrograph", "the picture"],
+      map: ["map", "the map", "basemap"],
+      timeSpan: ["time span", "timespan", "period", "date range", "range", "how far back"],
+      statistics: ["statistics", "stats", "summary statistics", "summary"],
+      archive: ["archive", "past maps", "older maps", "history", "historical"],
+      forecast: ["forecast", "outlook", "prediction", "what is expected"],
+      alert: ["alert", "alerts", "warning", "warnings", "notification", "notifications"],
+      search: ["search", "find", "look up", "lookup", "locate"],
+      settings: ["settings", "options", "preferences", "configure"],
+      layers: ["layer", "layers", "overlay", "overlays"],
     },
 
     // ISO-8601 durations, which is what a lot of federal sites use as the
@@ -81,6 +119,11 @@
   for (const [canonical, synonyms] of Object.entries(ENV_VOCAB.parameters)) {
     for (const s of synonyms) lookup.set(s.toLowerCase(), canonical);
   }
+  // The interface words resolve the same way. They are not parameters, so
+  // they are kept out of resolveParameter - a caller asking which
+  // measurement "legend" is must still get null - but anything matching
+  // labels wants both tables.
+  ENV_VOCAB.conceptGroups = { ...ENV_VOCAB.parameters, ...ENV_VOCAB.interface };
   ENV_VOCAB.resolveParameter = (text) => lookup.get((text || "").trim().toLowerCase()) || null;
 
   const durLookup = new Map();

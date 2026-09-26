@@ -1299,6 +1299,172 @@ The caveat tells you to name a state, so naming one had to work: it did not,
 because the tool took no state at all. It does now, and the summary comes back
 once the answer is one river.
 
+## The download, drawn
+
+A five gigabyte download reported as the word "loading" is the commonest way
+this has been called broken. The percentage existed all along - WebLLM hands
+it to `initProgressCallback` on every step - and it went to the toolbar
+badge: four characters in the corner of the screen, while the panel somebody
+was actually watching showed a pulsing dot and a sentence.
+
+There is a bar now, under the model picker, and it carries the figure. Before
+the first figure arrives it slides rather than sitting at zero, because a bar
+stuck at 0% reads as stalled. The line beside it says whether this is a
+download or a read from the cache, since saying "downloading" over a cache
+read makes a short wait feel like a long one.
+
+The finish is the part that was missing entirely. `warm()` deliberately does
+not hand back its promise - so that a failed load reports through `status()`
+rather than becoming an unhandled rejection - which meant nothing ever
+learned the load had completed: the bar sat at whatever the last report said
+and the line above it kept saying "loading" until something else happened to
+redraw. It is watched for directly now, and when it lands the panel says
+**"<model> is ready - took Ns"**, the state line turns green with a tick, and
+the main status line says to ask it something. The bar clears itself after a
+few seconds; the state line keeps saying it is loaded.
+
+A load that neither finishes nor keeps loading has fallen over, and that says
+so too, rather than leaving a bar that never moves again.
+
+The fraction has to survive four hops to be drawn - the engine reports it,
+the panel passes it on, the hidden document broadcasts it, and the worker's
+status carries it back to a panel opened part-way through a download. Each
+hop dropped it before; a test now pins all four.
+
+## A question is not an operation
+
+"Explain this data" went to the model as though it were a button press: a
+hundred and fifteen control lines, then twenty-five lines of rules about
+clicking, checking, selecting and searching, and the page's actual values
+last. Roughly eighteen hundred tokens of prefill to answer a question whose
+entire input is the values, and prefill is most of what a turn costs on the
+machines this has to run on.
+
+It also explains the answer a 3B kept giving. Told mostly about pressing and
+shown a list of things to press, it pressed - `{"name":"Legend","do":"click"}`
+to "explain this data". The prompt was asking for the wrong kind of answer and
+getting exactly that.
+
+So a question gets its own prompt: the question, the page's values, and one
+shape to answer in. Nothing about controls, because none will be touched.
+
+```
+Answer the question using only what this page shows.
+Reply with one JSON object only.
+
+Question: explain this data
+
+What the page shows:
+Discharge: 4820 ft3/s
+Gage height: 3.41 ft
+
+{"answer":"YOUR ANSWER","do":"finish"}
+
+Rules:
+- Use the values above. Quote the actual numbers and their units.
+- Two or three sentences. Say what the values mean, not what the page is.
+- If the values do not answer the question, say that in the answer.
+```
+
+About a twentieth of the prefill, and the only action it offers is the one a
+question can end in. Both windows that can hold a model build it, so which one
+answered cannot change the kind of answer.
+
+The answer then has somewhere to go. It was being shown in the card's title,
+cut at sixty characters, which is the whole feature failing at the last step:
+a three-sentence explanation ended mid-word every time. The card now carries
+the answer in full, with its first sentence as the heading.
+
+## Typed badly, said differently, asked politely
+
+Measured across nineteen requests phrased the way people actually phrase
+them - typos, the domain's own synonyms, courtesy, vagueness, a chain, and
+two in Spanish - **6 of 19 landed. After the work below, 13 of 19, with no
+model running at all.**
+
+Four things were wrong, and all four had the same shape: the request carried
+something the matcher could not read, so it fell through to the model, which
+is slower and on a 3B likelier to be wrong.
+
+**Manners.** `clcik 30 dayz` reached the page's own control without waiting
+for anything. `Could you please click on 30 days for me` did not, because the
+exact-name paths take a leading verb off and nothing else, so the courtesy
+became part of the name and matched nothing. Politeness made the tool worse,
+which is the wrong way round. `plainlyPut` takes the conversation off both
+ends - greetings, hedges, "for me", "thanks" - and never touches content. It
+repeats until nothing more comes off, because these stack.
+
+**Typos in the words that carry least meaning.** `shwo teh legend` failed on
+"teh": a typo of a stop word stayed in as a content word, so a three-word
+request was compared against a two-word label and could not match. A
+transposition of a stop word is now that stop word - transpositions only,
+since a general fuzzy match would swallow "for" into "far". Separately, the
+misspelled-verb check had a five-letter floor, and a dropped letter makes a
+five-letter verb four: `clik` was not a verb, while `clcik` was.
+
+**The page's word versus the person's.** `Switch to a logarithmic scale` on a
+page whose control is called `Log`; `the chart key` where it says `Show
+legend`; `download the shapefiles` where it says `GIS Data`; `show me the
+numbers` where it says `Data Tables`. None share a word with the control, and
+each is the only thing on its page that means it. Two mechanisms: a label
+that is the stem of a word somebody typed is that label said at greater
+length, and the domain vocabulary - which has existed since the beginning and
+which nothing matching a control had ever consulted - now indexes the page's
+own furniture as well as what a gauge measures.
+
+Multi-word synonyms needed their own pass. They are deliberately kept whole,
+because splitting "water level" would make "water" alone stand for water
+temperature - but they were only consulted once some *other* word had already
+resolved, so a request made entirely of one resolved to nothing. `show me the
+water level` found no concept at all on a page offering `Gage height`.
+
+**And the guard that makes it safe.** A concept resolving is not a licence to
+act. The request has to be that concept and nothing else: every content word
+must be one the concept accounts for. Otherwise `enable the layer with the
+longest name` resolves "layer" and presses one, and `show me what the flow is
+doing` presses the discharge graph - both requests whose difficulty is
+entirely in the words the concept does not explain. A word left over means
+the request has not been read, and an unread request belongs to the model.
+
+What remains weak is stated rather than papered over: a superlative, a
+condition, or a question about the situation rather than a control still
+needs a model, and anything not in English relies on the model entirely.
+
+## The model you pick is the model you get
+
+An earlier version watched loads and stepped down to a smaller model when one
+looked unpromising. It did it silently, it did it upward once - 1B to 1.5B -
+and it overrode a choice somebody had just made in the picker. Worse, the card
+went on crediting the answer to the model that had been chosen rather than the
+one that had answered, which is the same dishonesty as claiming an action that
+did not happen.
+
+All of it is gone. Nothing substitutes one model for another, ever, and a test
+asserts the words that would do it are not in the worker.
+
+What replaced it is reporting. `WC_MODEL_FITS` weighs a model against what the
+machine says about itself - the storage-buffer binding, which decides whether
+a load fails outright, and the memory figure, which decides whether it loads
+and then pages. Where the chosen model does not fit, three places say so in
+the same words: the `model fits this machine` line in `diagnose`, the card
+when the model cannot answer, and the error when a decision fails. Each of
+them names the largest model that would fit and the words to switch to it.
+
+The figures are read for what they are worth and no more. Chrome rounds its
+memory report to a power of two and caps it at 8, so it cannot tell a 32GB
+workstation from an 8GB laptop - it can tell 4GB from 8GB, which is the
+distinction that decides whether five gigabytes of weights will page. Where it
+says nothing, this says nothing.
+
+One consequence is worth stating plainly, because it is measured rather than
+assumed: the shortlist embedder is a second model. arctic-embed is 1023MB and
+loads beside the planner, so a 5GB planner on an 8GB laptop is six gigabytes
+of weights on a card that also holds the page. There, the shortlist is not
+asked for at all and the model sees the whole control list - slower per turn,
+but not paging. A 3B on the same machine leaves room for both and gets the
+shortlist, which is a quarter of the prefill. That is the honest trade between
+the two, and it is now visible instead of being felt.
+
 ## Following the site to the answer
 
 Everything else here is one step: pick a tool, run it, report. A site is not

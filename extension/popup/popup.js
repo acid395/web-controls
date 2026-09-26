@@ -63,6 +63,12 @@ function buildCard(display, raw) {
   if (display.subtitle) head.appendChild(el("div", "card-sub", display.subtitle));
   card.appendChild(head);
 
+  // The answer in full, where there is one. A reading is prose - three
+  // sentences about what the numbers mean - and the only place it appeared
+  // was the title, cut at sixty characters. Asking a page to explain itself
+  // and getting back half a sentence is the feature not working.
+  if (display.answer) card.appendChild(el("div", "answer", display.answer));
+
   if (display.stats && display.stats.length) {
     const stats = el("div", "stats");
     for (const s of display.stats) {
@@ -805,14 +811,14 @@ function clearStatus() {
 
 if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "llmProgress") {
-    setStatus("model loading - " + msg.text, "load");
+    const done = /ready|finish|completed loading|using |smallest there is/i.test(msg.text);
     const ms = document.getElementById("modelState");
-    if (ms) {
-      ms.textContent = msg.text;
-      // Unmistakable while it is happening. A five gigabyte download that
-      // looks like nothing is the commonest way this appears broken.
-      const done = /ready|finish|completed loading|using |smallest there is/i.test(msg.text);
-      ms.className = done ? "modelstate" : "modelstate loading";
+    if (done) {
+      showReady(msg.model || (modelChoice && modelChoice.value));
+    } else {
+      setStatus("model loading - " + msg.text, "load");
+      if (ms) { ms.textContent = msg.text; ms.className = "modelstate loading"; }
+      showLoading(msg.text, msg.fraction);
     }
   }
   if (msg.type === "llmGenerating") setStatus("model is thinking...");
@@ -842,6 +848,126 @@ chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
 // whoever is waiting rather than to a default nobody can reach.
 const modelChoice = document.getElementById("modelChoice");
 const modelState = document.getElementById("modelState");
+const loadWrap = document.getElementById("loadWrap");
+const loadFill = document.getElementById("loadFill");
+const loadWhat = document.getElementById("loadWhat");
+const loadPct = document.getElementById("loadPct");
+
+/* The download, drawn.
+ *
+ * What existed was the word "loading" with a pulsing dot, and the
+ * percentage - which WebLLM reports all along - went to the toolbar badge:
+ * four characters in the corner of the screen, while the panel somebody was
+ * actually looking at showed nothing. A five gigabyte download reported
+ * that way is indistinguishable from a hang, and that is the single
+ * commonest way this has been reported broken.
+ *
+ * Three states, and the last one is the point: a bar that fills and then
+ * disappears leaves nothing behind saying it finished. It says so.
+ */
+let readyTimer = null;
+let loadingSince = null;
+function showLoading(text, fraction) {
+  if (!loadWrap) return;
+  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+  if (loadingSince === null) loadingSince = Date.now();
+  loadWrap.className = "loadwrap on";
+  // WebLLM's own line carries the percentage inside it where the fraction
+  // is not given separately, so it is read back out rather than lost.
+  const said = String(text || "");
+  const inText = said.match(/(\d{1,3})\s*%/);
+  const pct = typeof fraction === "number" && fraction >= 0 && fraction <= 1
+    ? Math.round(fraction * 100)
+    : inText ? Number(inText[1]) : null;
+  if (pct === null) {
+    loadFill.className = "loadfill unknown";
+    loadFill.style.width = "";
+    if (loadPct) loadPct.textContent = "";
+  } else {
+    loadFill.className = "loadfill";
+    loadFill.style.width = `${Math.max(2, Math.min(100, pct))}%`;
+    if (loadPct) loadPct.textContent = `${pct}%`;
+  }
+  // The first load is a download and later ones are a read from the cache.
+  // Saying "downloading" over a cache read is a small lie that makes the
+  // wait feel worse than it is, so the model's own words are preferred
+  // where it gives any.
+  if (loadWhat) {
+    const name = modelChoice && globalThis.WC_MODEL_NAME
+      ? WC_MODEL_NAME(modelChoice.value) : "the model";
+    loadWhat.textContent = /fetch|download/i.test(said) ? `downloading ${name}`
+      : /cache|load/i.test(said) ? `loading ${name} from cache`
+      : `loading ${name}`;
+  }
+}
+
+function showReady(modelId) {
+  if (!loadWrap) return;
+  const name = globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(modelId) : "the model";
+  const took = loadingSince ? Math.round((Date.now() - loadingSince) / 1000) : null;
+  loadFill.className = "loadfill";
+  loadFill.style.width = "100%";
+  if (loadPct) loadPct.textContent = "100%";
+  if (loadWhat) loadWhat.textContent = `${name} is ready${took ? ` - took ${took}s` : ""}`;
+  if (modelState) {
+    modelState.className = "modelstate ready";
+    modelState.textContent = `${name} is loaded and answering`;
+  }
+  setStatus(`${name} is ready - ask it something`, "load");
+  loadingSince = null;
+  // Left up long enough to be read, then out of the way. The state line
+  // above keeps saying it is loaded, so nothing is lost when the bar goes.
+  if (readyTimer) clearTimeout(readyTimer);
+  readyTimer = setTimeout(() => {
+    loadWrap.className = "loadwrap";
+    if (statusOwner === "load") clearStatus();
+  }, 6000);
+}
+
+/* Warm the model and watch it all the way to ready.
+ *
+ * warm() starts the load and returns nothing, so the panel drew progress
+ * and then never learned it had finished - the bar sat at whatever the last
+ * report said and the line above it kept saying "loading" until something
+ * else happened to redraw. The finish is the moment somebody is waiting
+ * for, so it is watched for directly.
+ */
+function watchLoad(mod, modelId) {
+  if (mod.status().ready) { showReady(mod.status().model || modelId); return; }
+  showLoading("starting", null);
+  mod.warm(modelId, (t, fraction) => {
+    setStatus(`model loading - ${t}`, "load");
+    if (modelState) { modelState.textContent = t; modelState.className = "modelstate loading"; }
+    showLoading(t, fraction);
+  });
+  // Polled rather than awaited: warm() deliberately does not hand back the
+  // promise, so that a failed load reports through status() instead of
+  // becoming an unhandled rejection here.
+  const began = Date.now();
+  const tick = setInterval(() => {
+    const st = mod.status();
+    if (st.ready) { clearInterval(tick); showReady(st.model || modelId); return; }
+    if (!st.loading) {
+      // Neither loading nor ready: it fell over. Say so rather than leaving
+      // a bar that never moves again.
+      clearInterval(tick);
+      hideLoading();
+      if (modelState) {
+        modelState.className = "modelstate warn";
+        modelState.textContent = "the model did not load - run diagnose";
+      }
+      return;
+    }
+    if (Date.now() - began > 30 * 60 * 1000) clearInterval(tick);
+  }, 700);
+}
+
+function hideLoading() {
+  if (!loadWrap) return;
+  if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+  loadWrap.className = "loadwrap";
+  loadingSince = null;
+}
 
 // What is actually loaded, next to what is chosen. A picker you cannot
 // confirm is worse than none: two switches to a smaller model looked like
@@ -854,7 +980,10 @@ function showModelState() {
     const want = modelChoice ? modelChoice.value : null;
     const have = res.model || null;
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
-    modelState.className = res.loading ? "modelstate loading" : "modelstate";
+    modelState.className = res.loading ? "modelstate loading"
+      : (have && have === want) ? "modelstate ready" : "modelstate";
+    if (res.loading) showLoading(res.progress, res.fraction);
+    else if (have && have === want) { if (loadWrap) loadWrap.className = "loadwrap"; }
     modelState.textContent = !have ? "nothing loaded yet - the next instruction loads it"
       // The figure it is already at, not just that it is loading. A panel
       // opened part-way through a five gigabyte download used to say
@@ -894,11 +1023,7 @@ if (modelChoice) {
         const mod = await panelModelModule();
         if (mod.status().ready || mod.status().loading) return;
         setStatus("model loading...", "load");
-        mod.warm(modelChoice.value, (t) => {
-          setStatus(`model loading - ${t}`, "load");
-          const ms = document.getElementById("modelState");
-          if (ms) { ms.textContent = t; ms.className = "modelstate loading"; }
-        });
+        watchLoad(mod, modelChoice.value);
       } catch (e) { /* it loads on the first instruction instead */ }
     });
   });
@@ -920,13 +1045,8 @@ if (modelChoice) {
       });
       // Loaded here too, for the same reason: this window is the one that
       // will answer with it.
-      panelModelModule().then((mod) => {
-        mod.warm(modelChoice.value, (t) => {
-          setStatus(`model loading - ${t}`, "load");
-          const ms = document.getElementById("modelState");
-          if (ms) { ms.textContent = t; ms.className = "modelstate loading"; }
-        });
-      }).catch(() => { /* it loads on the first instruction instead */ });
+      panelModelModule().then((mod) => watchLoad(mod, modelChoice.value))
+        .catch(() => { /* it loads on the first instruction instead */ });
       logEcho(`model set to ${chosen} - loading now, watch the line under the picker`);
     });
   });
