@@ -1470,6 +1470,28 @@ else {
     .find((x) => String(x.name) === name) || {};
 
   runAsync(async () => {
+    // Nothing loaded is not a mismatch. Status reports the model that would
+    // load when none has, so the check compared a choice against a default
+    // and announced "Llama 3.2 3B was chosen but Llama 3.1 8B is loaded" on
+    // a card whose line above it read "not started". Nothing was loaded at
+    // all, and the advice named a third model.
+    {
+      const idle = await new Promise((resolve) => {
+        bgb2.__model = (m) => (m.type === "llmStatus"
+          ? { ready: false, loading: false, hasGpu: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC" }
+          : undefined);
+        bgb2.chrome.storage.local.set({ llmModelId: "Llama-3.2-3B-Instruct-q4f16_1-MLC" }, () => {
+          bgb2.__ask({ type: "smartAsk", instruction: "diagnose" }).then(resolve, () => resolve(null));
+        });
+      });
+      const line = (((idle || {}).display || {}).rows || [])
+        .find((x) => String(x.name) === "model chosen") || {};
+      ensure("nothing loaded is not reported as the wrong model",
+        !/is loaded/.test(String(line.meta || "")), line.meta);
+      ensure("and it says the chosen one loads on next use",
+        /loads on next use/.test(String(line.meta || "")), line.meta);
+    }
+
     // A machine that cannot hold the model: nothing about the prompt will fix
     // this, and saying "try a shorter instruction" would be a lie.
     const slow = await bench({ ok: true, model: "Llama-3.1-8B-Instruct-q4f16_1-MLC",

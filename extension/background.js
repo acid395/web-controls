@@ -4684,6 +4684,13 @@ function modelName(id) {
   return globalThis.WC_MODEL_NAME(id);
 }
 
+// The words somebody would type to ask for this one back, so advice names
+// the model they chose rather than a different one.
+function shortNameFor(id) {
+  const m = (globalThis.WC_MODELS || []).find((x) => x.id === id);
+  return m && m.aliases && m.aliases[0] ? m.aliases[0] : "qwen";
+}
+
 let lastTurnMs = 0;
 let lastTurnCost = null;
 let modelStatusCache = { at: 0, value: null };
@@ -4718,7 +4725,10 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
         loading: !!fromPanel.loading,
         started: !!(fromPanel.ready || fromPanel.loading),
         hasGpu: fromPanel.hasGpu !== false,
-        model: fromPanel.model || WC_DEFAULT_MODEL,
+        // Null when it holds nothing. Reporting the default here is what
+        // made the diagnostic announce a mismatch against a model that had
+        // never been loaded.
+        model: fromPanel.model || null,
         where: "panel",
       };
       modelStatusCache = { at: Date.now(), value };
@@ -7410,12 +7420,18 @@ async function runDiagnostics() {
     const { llmModelId } = await chrome.storage.local.get("llmModelId");
     if (!llmModelId) return "none set - using the default, Llama 3.2 3B";
     const st = await modelStatus({ maxAgeMs: 0 });
-    const loaded = st && st.model;
-    if (loaded && loaded !== llmModelId) {
-      throw new Error(`${modelName(llmModelId)} was chosen but ${modelName(loaded)} is loaded`
-        + " - reload the extension, or say \"use qwen\" again");
+    // Only what is actually running. Status reports the model that *would*
+    // load when none has, so this compared the choice against a default and
+    // announced a mismatch while the line above it said "not started" -
+    // nothing was loaded at all. It also told people to say "use qwen",
+    // which is not the model they had chosen.
+    const running = st && (st.ready || st.loading) ? st.model : null;
+    if (running && running !== llmModelId) {
+      throw new Error(`${modelName(llmModelId)} was chosen but ${modelName(running)} is`
+        + ` ${st.loading ? "loading" : "loaded"} - say "use ${shortNameFor(llmModelId)}" again`);
     }
-    return `${modelName(llmModelId)}${loaded ? " · loaded" : " · loads on next use"}`;
+    return `${modelName(llmModelId)}${running ? " · loaded"
+      : st && st.loading ? " · loading" : " · loads on next use"}`;
   }, { optional: true });
   await step("agency API", async () => {
     const res = await fetch("https://api.weather.gov/points/44.98,-93.26", { headers: { Accept: "application/geo+json" } });
