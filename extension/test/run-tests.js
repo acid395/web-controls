@@ -2741,6 +2741,27 @@ else {
   }
   ensure("and it refuses to run while the model is still loading",
     /if \(!status\.ready\)/.test(panel), "a run with the model loading measures the download");
+
+  // ...but it has to ask the window that would know. `{type:"llmStatus"}` is
+  // answered by the offscreen document, whose handler never checks who the
+  // message was for - and that document is by design the one place holding
+  // no model while the panel is open. Live, with a 3B loaded and answering
+  // at 13 tokens a second in the panel, diagnose said "ready" and bench said
+  // "not loaded yet" about the same engine, in the same second.
+  ensure("readiness is read from the window that hosts the engine",
+    /async function currentModelStatus/.test(panel), "no authoritative status helper");
+  ensure("and bench uses it rather than the message",
+    /const status = await currentModelStatus\(\)/.test(panel),
+    "bench still asks whichever window answers first");
+  ensure("so does the line under the picker, which had the same fault",
+    /currentModelStatus\(\)\.then/.test(panel), "showModelState still messages for status");
+  // The offscreen document answering a message addressed to nobody is the
+  // root of it; pinned so a future reader knows the helper is load-bearing.
+  const off2 = fsb.readFileSync(pathb.join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
+  const at = off2.indexOf('msg.type === "llmStatus"');
+  ensure("the offscreen llmStatus handler still answers regardless of target",
+    at > -1 && !/msg\.target/.test(off2.slice(Math.max(0, at - 300), at)),
+    "if this now checks target, the helper above can be simplified");
 }
 
 // Picking a model has to mean using that model. watchLoad's own first check

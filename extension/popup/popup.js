@@ -740,6 +740,33 @@ async function runSpeedTest() {
  * figure transcribed from a screenshot is not a measurement anybody can
  * re-derive.
  */
+/* What the model is doing, asked of the window that would know.
+ *
+ * `{type:"llmStatus"}` is answered by the offscreen document, whose handler
+ * does not check who the message was addressed to - and the offscreen
+ * document is, by design, the one place guaranteed not to hold the model
+ * while this panel is open. So the panel asked the only window that could
+ * not answer, and got "not ready" back about an engine that was loaded and
+ * running at thirteen tokens a second in this very document.
+ *
+ * The panel hosts the engine. It can simply look.
+ */
+async function currentModelStatus() {
+  try {
+    const mod = await panelModelModule();
+    const st = mod.status();
+    if (st && (st.ready || st.loading)) {
+      return { ...st, gpu: panelGpuInfo, where: "panel" };
+    }
+  } catch (e) { /* no module here; the worker's view is the fallback */ }
+  return await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "llmStatus" }, (res) => {
+      void chrome.runtime.lastError;
+      resolve(res || {});
+    });
+  });
+}
+
 function benchSiteFor(url) {
   const sets = globalThis.WC_BENCH_PROMPTS || {};
   const host = (() => { try { return new URL(url).host; } catch (e) { return ""; } })();
@@ -780,12 +807,11 @@ async function runBench() {
     return;
   }
   const { site, meta } = found;
-  const status = await new Promise((r) => chrome.runtime.sendMessage({ type: "llmStatus" }, (x) => {
-    void chrome.runtime.lastError; r(x || {});
-  }));
+  const status = await currentModelStatus();
   if (!status.ready) {
-    logEcho("bench: the model is not loaded yet - wait for \"is ready\" under the picker,"
-      + " because a run with it still loading measures the download.");
+    logEcho(`bench: the model is not loaded yet (${status.loading ? "still loading" : "nothing loaded"})`
+      + " - wait for \"is ready\" under the picker, because a run started now"
+      + " would measure the download.");
     return;
   }
 
@@ -1171,8 +1197,12 @@ function hideLoading() {
 // again until a card came back naming the old one.
 function showModelState() {
   if (!modelState) return;
-  chrome.runtime.sendMessage({ type: "llmStatus" }, (res) => {
-    if (chrome.runtime.lastError || !res) { modelState.textContent = ""; return; }
+  // Asked of this window first. Routing this through a message meant the
+  // offscreen document answered - the one place that deliberately holds no
+  // model while the panel is open - so the line under the picker was
+  // reporting on the wrong engine whenever the right one was in use.
+  currentModelStatus().then((res) => {
+    if (!res) { modelState.textContent = ""; return; }
     const want = modelChoice ? modelChoice.value : null;
     const have = res.model || null;
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
