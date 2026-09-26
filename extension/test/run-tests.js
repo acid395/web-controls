@@ -1783,12 +1783,19 @@ else {
   ensure("there is a way to know something is mid-answer",
     /function whileBusy\s*\(/.test(src) && /function whenIdle\s*\(/.test(src),
     "no whileBusy/whenIdle");
-  // Every unload waits first. Counted rather than eyeballed, because this is
-  // three call sites that each looked harmless alone.
+  // Guarding the unloads was tried twice and the error came back both times.
+  // There is no moment at which it is safe to dispose something another
+  // request may be about to touch, so nothing unloads on a timer or in the
+  // middle of an instruction any more: the weights stay until the model is
+  // deliberately changed, which closes the document and takes everything.
   const unloads = lines.reduce((n, l) => n + (/\.unload\(\)/.test(l) ? 1 : 0), 0);
-  const waits = lines.reduce((n, l) => n + (/await whenIdle\(/.test(l) ? 1 : 0), 0);
-  ensure(`each of the ${unloads} unloads waits for the work to finish`,
-    unloads > 0 && waits >= unloads, `${unloads} unloads, ${waits} waits`);
+  check("there is one place that unloads, not several", unloads, 1);
+  ensure("and it refuses while something is running",
+    /if \(!\(await whenIdle\([^)]*\)\)\) return;/.test(src), "it waits and unloads anyway");
+  ensure("nothing unloads on a timer",
+    !/setTimeout\([^)]*\n?[^}]*unload/.test(src), "an idle release is back");
+  ensure("and the embedder is not handed back mid-instruction",
+    !/releaseEmbedder/.test(src), "releaseEmbedder is back");
   // And the generating paths say when they are busy, or the waiting is a
   // no-op that looks like a fix.
   const busy = (src.match(/whileBusy\(/g) || []).length;

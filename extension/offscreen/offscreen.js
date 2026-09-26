@@ -356,31 +356,23 @@ let engineReady = false; // a Promise can't be asked "are you resolved yet?" dir
 // available memory the next thing to ask for some is what falls over. The
 // cache keeps the download, so coming back costs a load rather than a
 // fetch.
-// How long an idle model is worth keeping, against what reloading it costs.
-// A flat five minutes was right for a one gigabyte model and exactly wrong
-// for an eight billion parameter one: the second ask of the afternoon paid
-// the whole five gigabyte load again, which is the opposite of the reason
-// somebody chose the big one. The bigger it is, the longer it stays.
-function idleReleaseMs() {
-  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
-  return mb >= 4000 ? 60 * 60 * 1000 : 5 * 60 * 1000;
-}
+// Nothing unloads on a timer any more.
+//
+// The idle release and the embedder hand-back were both added here for
+// memory pressure that was reasoned about rather than measured, and both
+// produced "Object has already been disposed" on real instructions - an
+// engine pulled out from under a live generation, which reads from a card as
+// the model failing. Guarding them was tried twice and the error came back
+// both times, because there is no moment at which it is safe to dispose
+// something another request may be about to touch.
+//
+// So the weights stay until the model is deliberately changed, which closes
+// the whole document and takes everything with it. Holding a model while the
+// browser is open is what every other WebLLM application does; disposing it
+// underneath somebody is not.
 let idleTimer = null;
 function touchEngine() {
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(async () => {
-    if (!enginePromise) return;
-    // Idle means idle. Unloading under a live generation is what produces
-    // "Object has already been disposed" on a card.
-    if (!(await whenIdle())) { touchEngine(); return; }
-    try {
-      const engine = await enginePromise;
-      if (engine && typeof engine.unload === "function") await engine.unload();
-    } catch (e) { /* already gone */ }
-    enginePromise = null;
-    engineReady = false;
-    lastProgress = null;
-  }, idleReleaseMs());
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
 }
 
 // Meaning, as distinct from judgment.
@@ -422,21 +414,6 @@ let embedReady = false;
 // symptom is a decision that will not finish in three minutes on a machine
 // whose adapter reports a 4096MB maximum buffer. Keeping it loaded bought
 // nothing: it is asked once per instruction and reloads from cache.
-async function releaseEmbedder() {
-  if (!embedPromise) return;
-  await whenIdle();
-  const held = embedPromise;
-  embedPromise = null;
-  embedReady = false;
-  try {
-    const engine = await held;
-    if (engine && typeof engine.unload === "function") await engine.unload();
-  } catch (e) { /* already gone */ }
-}
-function plannerIsLarge() {
-  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
-  return mb >= 4000;
-}
 
 function getEmbedder(onProgress) {
   if (!embedPromise) {
@@ -589,7 +566,11 @@ async function demoteTo(small, from, why) {
 // Let go of the planner, so the next request builds whichever one is chosen.
 async function releaseEngine() {
   if (!enginePromise) return;
-  await whenIdle();
+  // Refuses rather than proceeds. This waited and then unloaded anyway, and
+  // waiting five seconds for a decision that takes thirteen is not waiting -
+  // it is a pause before the same disposal. Something still running keeps
+  // its engine; stepping down can happen when it is done.
+  if (!(await whenIdle({ waitMs: 20000 }))) return;
   const held = enginePromise;
   enginePromise = null;
   engineReady = false;
@@ -754,15 +735,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           vectors: (out && out.data ? out.data : []).map((d) => d.embedding),
           ms: Date.now() - began,
         });
-        // Answered, so give the memory back. Beside a large planner this is
-        // the difference between one model on the GPU and two - 5001MB plus
-        // another 1023MB, on a machine whose adapter grants a 4096MB buffer.
-        // It is asked once per instruction and reloads from cache, so
-        // holding it bought nothing.
-        if (plannerIsLarge()) releaseEmbedder().catch(() => {});
+        // Not unloaded here. Handing it back mid-instruction is what
+        // "Object has already been disposed" was: the next model step
+        // reached for something this had just torn down. A gigabyte held is
+        // worth less than an instruction that dies.
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
-        if (plannerIsLarge()) releaseEmbedder().catch(() => {});
       }
     })();
     return true;
