@@ -103,12 +103,38 @@ function loadBackground({ onFetch, page } = {}) {
       storage: {
         local: {
           _data: {},
-          async get(key) {
-            if (key == null) return { ...this._data };
-            if (typeof key === "string") return key in this._data ? { [key]: this._data[key] } : {};
-            return Object.fromEntries(Object.keys(key).map((k) => [k, k in this._data ? this._data[k] : key[k]]));
+          // Both shapes, because chrome.storage supports both and this
+          // extension uses both - the panel passes a callback, the service
+          // worker awaits. Promise-only here meant a callback was simply
+          // dropped, and the caller waited for something that could never
+          // arrive: one test hung the whole suite that way, with no failure
+          // to point at. An array of keys is a real shape too; reading it
+          // with Object.keys gave back "0", "1", "2".
+          get(key, cb) {
+            const read = () => {
+              if (key == null) return { ...this._data };
+              if (typeof key === "string") return key in this._data ? { [key]: this._data[key] } : {};
+              if (Array.isArray(key)) {
+                return Object.fromEntries(key.filter((k) => k in this._data)
+                  .map((k) => [k, this._data[k]]));
+              }
+              return Object.fromEntries(Object.keys(key)
+                .map((k) => [k, k in this._data ? this._data[k] : key[k]]));
+            };
+            const out = read();
+            if (typeof cb === "function") { cb(out); return undefined; }
+            return Promise.resolve(out);
           },
-          async set(obj) { Object.assign(this._data, obj); },
+          set(obj, cb) {
+            Object.assign(this._data, obj);
+            if (typeof cb === "function") { cb(); return undefined; }
+            return Promise.resolve();
+          },
+          remove(key, cb) {
+            for (const k of (Array.isArray(key) ? key : [key])) delete this._data[k];
+            if (typeof cb === "function") { cb(); return undefined; }
+            return Promise.resolve();
+          },
         },
         onChanged: { addListener() {} },
       },

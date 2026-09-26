@@ -1,7 +1,12 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
+const path = require("path");
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const OUT = "/private/tmp/claude-501/-Users-vincenthuang-hydro-harvester/c2d60a91-5920-44b6-96bc-dd2166f69279/scratchpad/pages";
+// Beside the scorers that read them. This pointed at one machine's temporary
+// directory, so "node capture.js refreshes pages/" - which the README says
+// and which is the whole point of the script - has never once been true. The
+// pages in the repo were put there by hand.
+const OUT = path.join(__dirname, "pages");
 const PORT = 9334;
 // Two of these have hand-written manifests - usgs (SITE) and noaa (NOAA).
 // The other six have no site-specific code anywhere in this repo and go
@@ -12,6 +17,10 @@ const PAGES = {
   usgs: "https://waterdata.usgs.gov/monitoring-location/01646500/",
   noaa: "https://water.noaa.gov/",
   drought: "https://www.drought.gov/",
+  // The page a tester actually used. "select data and select gis data and
+  // select shp" runs here on someone else's machine and did not on ours, and
+  // a case that only exists in a screenshot cannot be fixed twice.
+  droughtmap: "https://droughtmonitor.unl.edu/CurrentMap.aspx",
   usgsstate: "https://waterdata.usgs.gov/nwis/rt",
   quakes: "https://earthquake.usgs.gov/earthquakes/map/",
   airnow: "https://www.airnow.gov/",

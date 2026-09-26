@@ -50,7 +50,7 @@
   
   <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
 </head>
-<body class="page-node-type-front-page">
+<body class="page-node-type-front-page" data-once="fire-0">
 <a href="#main-content" class="usa-sr-only focusable">
   Skip to main content
 </a>
@@ -151,7 +151,7 @@
                         <label class="usa-sr-only text-white" for="header-site-search-button">Search</label>
                         <input type="submit" name="commit" value="Search" id="header-site-search-button" class="position-absolute left-0 width-4 height-4 header-site-search-button">
                       </form>
-                    </div><div class="display-none desktop:display-flex header-social-links grid-row"><div class="grid-col-auto"><a class="usa-social-link" href="https://www.facebook.com/noaadrought/" target="_blank"><svg class="usa-social-icon height-3" aria-labelledby="facebook-header-label" role="img"><title id="facebook-header-label">Drought.gov Facebook account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#facebook" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.instagram.com/noaadrought/" target="_blank"><svg class="usa-social-icon height-3" aria-labelledby="instagram-header-label" role="img"><title id="instagram-header-label">Drought.gov Instagram account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#instagram" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.linkedin.com/showcase/droughtgov/" target="_blank"><svg class="usa-social-icon height-3" aria-labelledby="linkedin-header-label" role="img"><title id="linkedin-header-label">Drought.gov LinkedIn account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#linkedin" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://twitter.com/noaadrought" target="_blank"><svg class="usa-social-icon height-3" aria-labelledby="x-header-label" role="img"><title id="x-header-label">Drought.gov X account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#x" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.youtube.com/@noaadrought" target="_blank"><svg class="usa-social-icon height-3" aria-labelledby="youtube-header-label" role="img"><title id="youtube-header-label">Drought.gov YouTube account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#youtube" fill="white"></use></svg></a></div></div></div>
+                    </div><div class="display-none desktop:display-flex header-social-links grid-row"><div class="grid-col-auto"><a class="usa-social-link" href="https://www.facebook.com/noaadrought/" target="_blank" rel="noreferrer"><svg class="usa-social-icon height-3" aria-labelledby="facebook-header-label" role="img"><title id="facebook-header-label">Drought.gov Facebook account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#facebook" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.instagram.com/noaadrought/" target="_blank" rel="noreferrer"><svg class="usa-social-icon height-3" aria-labelledby="instagram-header-label" role="img"><title id="instagram-header-label">Drought.gov Instagram account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#instagram" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.linkedin.com/showcase/droughtgov/" target="_blank" rel="noreferrer"><svg class="usa-social-icon height-3" aria-labelledby="linkedin-header-label" role="img"><title id="linkedin-header-label">Drought.gov LinkedIn account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#linkedin" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://twitter.com/noaadrought" target="_blank" rel="noreferrer"><svg class="usa-social-icon height-3" aria-labelledby="x-header-label" role="img"><title id="x-header-label">Drought.gov X account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#x" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.youtube.com/@noaadrought" target="_blank" rel="noreferrer"><svg class="usa-social-icon height-3" aria-labelledby="youtube-header-label" role="img"><title id="youtube-header-label">Drought.gov YouTube account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#youtube" fill="white"></use></svg></a></div></div></div>
   </div>
 <div id="block-headermobilesearchblock" class="block block-custom-blocks block-header-mobile-search-block">
   
@@ -549,10 +549,14 @@
                   <div class="usa-nav__submenu-item desktop:padding-0 padding-2">
             <span>Select a Location</span>
                                       <div class="main-menu-location-search-wrapper position-relative">
-          <select class="location-search" id="menu-location-search" autocomplete="off" aria-label="Input location">
+          <select class="location-search tomselected ts-hidden-accessible" id="menu-location-search" autocomplete="off" aria-label="Input location" placeholder="Enter Zip Code, City, County, or State" tabindex="-1">
             <option value="" label="Enable JavaScript to select a location." disabled=""></option>
-          </select>
-          <label class="usa-sr-only" for="menu-location-search">Location Search</label>
+          </select><div class="ts-wrapper location-search single plugin-dropdown_header has-options"><div class="ts-control"><input type="text" autocomplete="off" size="1" tabindex="0" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="menu-location-search-ts-dropdown" id="menu-location-search-ts-control" aria-labelledby="menu-location-search-ts-label" placeholder="Enter Zip Code, City, County, or State"></div><div class="ts-dropdown single plugin-dropdown_header" style="display: none;"><div class="dropdown-header">
+                  <div class="dropdown-header-title">
+                    <span class="dropdown-header-label font-sans-3xs">Select a location from the list below</span>
+                  </div>
+                </div><div role="listbox" tabindex="-1" class="ts-dropdown-content" id="menu-location-search-ts-dropdown" aria-labelledby="menu-location-search-ts-label"></div></div></div>
+          <label class="usa-sr-only" for="menu-location-search-ts-control" id="menu-location-search-ts-label">Location Search</label>
         </div>
                       </div>
               
@@ -1275,7 +1279,7 @@
       
       
                       <span>Mobile Social</span>
-                          <div class="header-social-links grid-row display-flex desktop:display-none"><div class="grid-col-auto"><a class="usa-social-link" href="https://www.facebook.com/noaadrought/" target="_blank" rel="noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="facebook-menu-label" role="img"><title id="facebook-menu-label">Drought.gov Facebook account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#facebook" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.instagram.com/noaadrought/" target="_blank" rel="noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="instagram-menu-label" role="img"><title id="instagram-menu-label">Drought.gov Instagram account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#instagram" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.linkedin.com/showcase/droughtgov/" target="_blank" rel="noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="linkedin-menu-label" role="img"><title id="linkedin-menu-label">Drought.gov LinkedIn account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#linkedin" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://twitter.com/noaadrought" target="_blank" rel="noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="x-menu-label" role="img"><title id="x-menu-label">Drought.gov Twitter account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#x" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.youtube.com/@noaadrought" target="_blank" rel="noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="youtube-menu-label" role="img"><title id="youtube-menu-label">Drought.gov Youtube account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#youtube" fill="white"></use></svg></a></div></div>
+                          <div class="header-social-links grid-row display-flex desktop:display-none"><div class="grid-col-auto"><a class="usa-social-link" href="https://www.facebook.com/noaadrought/" target="_blank" rel="noreferrer noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="facebook-menu-label" role="img"><title id="facebook-menu-label">Drought.gov Facebook account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#facebook" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.instagram.com/noaadrought/" target="_blank" rel="noreferrer noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="instagram-menu-label" role="img"><title id="instagram-menu-label">Drought.gov Instagram account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#instagram" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.linkedin.com/showcase/droughtgov/" target="_blank" rel="noreferrer noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="linkedin-menu-label" role="img"><title id="linkedin-menu-label">Drought.gov LinkedIn account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#linkedin" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://twitter.com/noaadrought" target="_blank" rel="noreferrer noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="x-menu-label" role="img"><title id="x-menu-label">Drought.gov Twitter account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#x" fill="white"></use></svg></a></div><div class="grid-col-auto"><a class="usa-social-link" href="https://www.youtube.com/@noaadrought" target="_blank" rel="noreferrer noreferrer"><svg class="usa-social-icon usa-icon--size-3" aria-labelledby="youtube-menu-label" role="img"><title id="youtube-menu-label">Drought.gov Youtube account</title><use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#youtube" fill="white"></use></svg></a></div></div>
                       
               </li>
       
@@ -1347,11 +1351,15 @@
             <div class="field field--name-dynamic-block-field:node-drought-in-your-neighborhood field--type-ds field--label-hidden"><div class="bg-base-lighter padding-y-4 text-center">
   <div class="grid-container grid-container--standard">
     <div class="front-page-location-search-wrapper position-relative">
-      <label for="front-page-location-search" class="font-body-md text-bold tablet:display-block mobile-lg:display-inline tablet:padding-right-0 mobile-lg:padding-right-2">How is drought affecting your neighborhood?</label>
+      <label for="front-page-location-search-ts-control" class="font-body-md text-bold tablet:display-block mobile-lg:display-inline tablet:padding-right-0 mobile-lg:padding-right-2" id="front-page-location-search-ts-label">How is drought affecting your neighborhood?</label>
       <div class="padding-top-1">
-        <select id="front-page-location-search" class="location-search width-card-lg margin-x-auto" autocomplete="off" placeholder="" aria-label="Input location">
+        <select id="front-page-location-search" class="location-search width-card-lg margin-x-auto tomselected ts-hidden-accessible" autocomplete="off" placeholder="Enter Zip Code, City, County, or State" aria-label="Input location" tabindex="-1">
           <option value="" label="Enable JavaScript to select a location" disabled=""></option>
-        </select>
+        </select><div class="ts-wrapper location-search width-card-lg margin-x-auto single plugin-dropdown_header has-options"><div class="ts-control"><input type="text" autocomplete="off" size="1" tabindex="0" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="front-page-location-search-ts-dropdown" id="front-page-location-search-ts-control" aria-labelledby="front-page-location-search-ts-label" placeholder="Enter Zip Code, City, County, or State"></div><div class="ts-dropdown single plugin-dropdown_header" style="display: none;"><div class="dropdown-header">
+                  <div class="dropdown-header-title">
+                    <span class="dropdown-header-label font-sans-3xs">Select a location from the list below</span>
+                  </div>
+                </div><div role="listbox" tabindex="-1" class="ts-dropdown-content" id="front-page-location-search-ts-dropdown" aria-labelledby="front-page-location-search-ts-label"></div></div></div>
       </div>
     </div>
   </div>
@@ -1374,19 +1382,19 @@
       
 <div class="margin-bottom-3">
     
-            <div class="padding-105 bg-white border border-base-lightest radius-lg field field--name-field-paragraph-reference-single field--type-entity-reference-revisions field--label-hidden">  <div class="paragraph paragraph--type--tabbed-map paragraph--view-mode--default interactive-map-panel bg-white position-relative">
+            <div class="padding-105 bg-white border border-base-lightest radius-lg field field--name-field-paragraph-reference-single field--type-entity-reference-revisions field--label-hidden">  <div class="paragraph paragraph--type--tabbed-map paragraph--view-mode--default interactive-map-panel bg-white position-relative" data-once="lazy-1">
     <div>
       <div class="float-right tablet:display-block display-none">
                                                                     </div>
       <div class="margin-top-1 c--tab-group c--flag-avoid">
-                  <a class="map-tab c--tab active text-bold" aria-current="" tabindex="0" href="#" data-layer="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/json/v1/us/usdm/USDM-current.json" data-type="openlayers" data-class="" data-usdm="none" data-projection="epsg5070" data-missing="none" data-basemap="gray" data-opacity="" data-legend-index="1" data-missing-text="" data-alt="" data-minimum-map-height="500" data-download-label="U.S. Drought Monitor" data-download-icons="/sites/default/files/maps/partner-icons/USDA-logo-color-png.png,U.S. Department of Agriculture.;/sites/default/files/maps/partner-icons/nasa-logo-web-rgb_3.png,National Aeronautics and Space Administration.;/sites/default/files/maps/partner-icons/NDMC-logo-color-png.png,National Drought Mitigation Center." data-valid-start="" data-valid-end="" data-alt-file="">U.S. Drought Monitor</a>
+                  <a class="map-tab c--tab active text-bold" aria-current="" tabindex="0" href="#" data-layer="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/json/v1/us/usdm/USDM-current.json" data-type="openlayers" data-class="" data-usdm="none" data-projection="epsg5070" data-missing="none" data-basemap="gray" data-opacity="" data-legend-index="1" data-missing-text="" data-alt="" data-minimum-map-height="500" data-download-label="U.S. Drought Monitor" data-download-icons="/sites/default/files/maps/partner-icons/USDA-logo-color-png.png,U.S. Department of Agriculture.;/sites/default/files/maps/partner-icons/nasa-logo-web-rgb_3.png,National Aeronautics and Space Administration.;/sites/default/files/maps/partner-icons/NDMC-logo-color-png.png,National Drought Mitigation Center." data-valid-start="" data-valid-end="" data-alt-file="" data-validated-date-range="true">U.S. Drought Monitor</a>
                   <a class="map-tab c--tab text-bold" aria-current="" tabindex="0" href="#" data-layer="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/tile/v1/precip-prcntnorm-30d/{z}/{x}/{y}.png" data-type="openlayers" data-class="" data-usdm="" data-projection="epsg5070" data-missing="alaska, hawaii, puertorico, vi, mariana, guam" data-basemap="transparent" data-opacity="1" data-legend-index="2" data-missing-text="" data-alt="" data-minimum-map-height="" data-download-label="30-Day Percent of Normal Precipitation" data-download-icons="" data-valid-start="" data-valid-end="" data-alt-file="">30-Day Precipitation</a>
                   <a class="map-tab c--tab text-bold" aria-current="" tabindex="0" href="#" data-layer="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/tile/v1/temp-anom-30d/{z}/{x}/{y}.png" data-type="openlayers" data-class="" data-usdm="" data-projection="epsg5070" data-missing="alaska, hawaii, puertorico, vi, mariana, guam" data-basemap="transparent" data-opacity="1" data-legend-index="3" data-missing-text="" data-alt="" data-minimum-map-height="" data-download-label="30-Day Departure from Normal Maximum Temperature (°F)" data-download-icons="" data-valid-start="" data-valid-end="" data-alt-file="">30-Day Temperature</a>
               </div>
       <div class="map-content">
         <div class="margin-bottom-2">
           <div class=" u--border-active border-2px" style="min-height:300px;">
-            <div class="skeleton"></div>
+            
             <div class="interactive-map position-relative" style="min-height:500px"></div>
           </div>
         </div>
@@ -1419,7 +1427,7 @@
                                   </div>
                           </div>
                                           <div class="grid-col-12 padding-bottom-05 display-none mobile-lg:display-inline-block map-toggle-item active" data-toggle-index="1">
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Drought Index
@@ -1431,7 +1439,7 @@
                                                   </div>
                                             <span class="c--tag-status" role="status"></span>
                     </div>
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Water Supply
@@ -1443,7 +1451,7 @@
                                                   </div>
                                             <span class="c--tag-status" role="status"></span>
                     </div>
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Agriculture
@@ -1457,7 +1465,7 @@
                     </div>
                                   </div>
                                                         <div class="grid-col-12 padding-bottom-05 display-none mobile-lg:display-inline-block map-toggle-item" data-toggle-index="2">
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Precipitation
@@ -1469,7 +1477,7 @@
                                                   </div>
                                             <span class="c--tag-status" role="status"></span>
                     </div>
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Water Supply
@@ -1481,7 +1489,7 @@
                                                   </div>
                                             <span class="c--tag-status" role="status"></span>
                     </div>
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Agriculture
@@ -1495,7 +1503,7 @@
                     </div>
                                   </div>
                                                         <div class="grid-col-12 padding-bottom-05 display-none mobile-lg:display-inline-block map-toggle-item" data-toggle-index="3">
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Temperature
@@ -1507,7 +1515,7 @@
                                                   </div>
                                             <span class="c--tag-status" role="status"></span>
                     </div>
-                                      <div class="c--tag">
+                                      <div class="c--tag" style="--tag-notch: block;">
                       <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                         <span class="usa-sr-only">tag:</span>
                         Agriculture
@@ -1542,7 +1550,7 @@
                 <span class="legend-label" id="legend-label-4371-1">D0 - Abnormally Dry</span>
               </button>
             </div>
-                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-1" role="cell">19.4</span>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-1" role="cell">17.2</span>
                                             <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
               <div class="" id="legend-details-4371-1" data-popover="4371-1" aria-modal="true" tabindex="-1">
                 <button class="dialog-close font-body-3xs text-uppercase">Close</button>
@@ -1559,7 +1567,7 @@
                 <span class="legend-label" id="legend-label-4371-2">D1 - Moderate Drought</span>
               </button>
             </div>
-                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-2" role="cell">21.4</span>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-2" role="cell">21.5</span>
                                             <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
               <div class="" id="legend-details-4371-2" data-popover="4371-2" aria-modal="true" tabindex="-1">
                 <button class="dialog-close font-body-3xs text-uppercase">Close</button>
@@ -1576,7 +1584,7 @@
                 <span class="legend-label" id="legend-label-4371-3">D2 - Severe Drought</span>
               </button>
             </div>
-                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-3" role="cell">17.8</span>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-3" role="cell">17.9</span>
                                             <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
               <div class="" id="legend-details-4371-3" data-popover="4371-3" aria-modal="true" tabindex="-1">
                 <button class="dialog-close font-body-3xs text-uppercase">Close</button>
@@ -1593,7 +1601,7 @@
                 <span class="legend-label" id="legend-label-4371-4">D3 - Extreme Drought</span>
               </button>
             </div>
-                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-4" role="cell">8.8</span>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-4" role="cell">8.4</span>
                                             <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
               <div class="" id="legend-details-4371-4" data-popover="4371-4" aria-modal="true" tabindex="-1">
                 <button class="dialog-close font-body-3xs text-uppercase">Close</button>
@@ -1610,7 +1618,7 @@
                 <span class="legend-label" id="legend-label-4371-5">D4 - Exceptional Drought</span>
               </button>
             </div>
-                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-5" role="cell">1.7</span>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-5" role="cell">1.8</span>
                                             <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
               <div class="" id="legend-details-4371-5" data-popover="4371-5" aria-modal="true" tabindex="-1">
                 <button class="dialog-close font-body-3xs text-uppercase">Close</button>
@@ -1627,7 +1635,7 @@
                 <span class="legend-label" id="legend-label-4371-6">Total Area in Drought (D1–D4)</span>
               </button>
             </div>
-                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-6" role="cell">49.7</span>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-6" role="cell">49.6</span>
                                             <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
               <div class="" id="legend-details-4371-6" data-popover="4371-6" aria-modal="true" tabindex="-1">
                 <button class="dialog-close font-body-3xs text-uppercase">Close</button>
@@ -1729,7 +1737,7 @@
   </div>
 </div>
               <div>  <div class="paragraph paragraph--type--legend-ramp paragraph--view-mode--default position-relative">
-        <div class="legend-ramp c--legend c--legend-horizontal c--legend-offset" role="table" aria-label="Map legend">
+        <div class="legend-ramp c--legend c--legend-horizontal c--legend-offset" role="table" aria-label="Map legend" style="--pop-top: 54px;">
               <div role="row">
                       <div role="cell">
               <button class="c--legend-cell legend-item" aria-label="100%" data-legend="23551-1" tabindex="0">
@@ -1941,7 +1949,7 @@
   </div>
 </div>
               <div>  <div class="paragraph paragraph--type--legend-ramp paragraph--view-mode--default position-relative">
-        <div class="legend-ramp c--legend c--legend-horizontal c--legend-offset" role="table" aria-label="Map legend">
+        <div class="legend-ramp c--legend c--legend-horizontal c--legend-offset" role="table" aria-label="Map legend" style="--pop-top: 54px;">
               <div role="row">
                       <div role="cell">
               <button class="c--legend-cell legend-item" aria-label="0" data-legend="14128-1" tabindex="0">
@@ -2135,7 +2143,7 @@
         </div>
                               <div class="mobile-lg:display-none">
               <div class="map-toggle-item active" data-toggle-index="1">
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Drought Index
@@ -2147,7 +2155,7 @@
                                               </div>
                                         <span class="c--tag-status" role="status"></span>
                   </div>
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Water Supply
@@ -2159,7 +2167,7 @@
                                               </div>
                                         <span class="c--tag-status" role="status"></span>
                   </div>
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Agriculture
@@ -2175,7 +2183,7 @@
             </div>
                                         <div class="mobile-lg:display-none">
               <div class="map-toggle-item" data-toggle-index="2">
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Precipitation
@@ -2187,7 +2195,7 @@
                                               </div>
                                         <span class="c--tag-status" role="status"></span>
                   </div>
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Water Supply
@@ -2199,7 +2207,7 @@
                                               </div>
                                         <span class="c--tag-status" role="status"></span>
                   </div>
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Agriculture
@@ -2215,7 +2223,7 @@
             </div>
                                         <div class="mobile-lg:display-none">
               <div class="map-toggle-item" data-toggle-index="3">
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Temperature
@@ -2227,7 +2235,7 @@
                                               </div>
                                         <span class="c--tag-status" role="status"></span>
                   </div>
-                                  <div class="c--tag">
+                                  <div class="c--tag" style="--tag-notch: block;">
                     <button type="button" class="c--tag-opener" style="background-color:#CCEBFF; color:#000000;" aria-description="Click for details" tabindex="0">
                       <span class="usa-sr-only">tag:</span>
                       Agriculture
@@ -2250,19 +2258,19 @@
                       </div>
           <div class="c--last-updated map-toggle-item active" data-toggle-index="1">
                           <span>Updates Weekly:</span>
-                                      <span>09/15/26</span>
+                                      <span>09/22/26</span>
                       </div>
                   <div class="map-toggle-item" data-toggle-index="2">
                       </div>
           <div class="c--last-updated map-toggle-item" data-toggle-index="2">
                           <span>Data Valid:</span>
-                                      <span>09/19/26</span>
+                                      <span>09/21/26</span>
                       </div>
                   <div class="map-toggle-item" data-toggle-index="3">
                       </div>
           <div class="c--last-updated map-toggle-item" data-toggle-index="3">
                           <span>Data Valid:</span>
-                                      <span>09/19/26</span>
+                                      <span>09/21/26</span>
                       </div>
               </div>
       <div class="tablet:grid-col-10 desktop:grid-col-9 grid-col-12 padding-top-05 print-display-block text-align-right grid-row order-1 tablet:order-2 c--btn-group">
@@ -2309,7 +2317,7 @@
     
   <div class="field field--name-dynamic-block-field:node-drought-by-sector field--type-ds field--label-above">
     <div class="field--label">Drought by Sector</div>
-                          <div><div class="views-element-container"><div class="grid-row grid-gap js-view-dom-id-587eba661d47a96e941aee37f7d5221604183e2fe9bd83d2bb9f9da1e9e45239">
+                          <div><div class="views-element-container"><div class="grid-row grid-gap js-view-dom-id-c895f0cae0ca01ad949b7c47567f09efa74b1495aca86a277e85408e0ea06b55">
   
   
   
@@ -2379,7 +2387,7 @@
     
   <div class="field field--name-dynamic-block-field:node-upcoming-events field--type-ds field--label-above">
     <div class="field--label">Upcoming Events</div>
-                          <div><div class="views-element-container"><div class="position-relative grid-row grid-gap padding-top-1 js-view-dom-id-472aa12f0f9ad3034c6e67160a873ef97106f607b7d280a389acf9e0a4dbedff">
+                          <div><div class="views-element-container"><div class="position-relative grid-row grid-gap padding-top-1 js-view-dom-id-b028e6c8edc691b56e69e51cb4f432a74ca065c4c882984530e06186a1efeb5f">
   
   
   
@@ -2715,7 +2723,7 @@
   </div>
   <div class="field field--name-dynamic-block-field:node-news field--type-ds field--label-above">
     <div class="field--label">News</div>
-                          <div><div class="views-element-container"><div class="grid-row grid-gap position-relative padding-top-1 js-view-dom-id-1c6bf31ea2886d52606b72ae4c24419e7cdf525d0bd9e93ea991bf189708332b">
+                          <div><div class="views-element-container"><div class="grid-row grid-gap position-relative padding-top-1 js-view-dom-id-79d570c7ca69e79cbcc4558516a7414b245c354306262c085cbdc493d55d0bb1">
   
   
   
@@ -2912,7 +2920,392 @@
     </button>
   </h4>
   <div class="c--feedback-body">
-    <div id="touchpoints-survey"></div>
+    <div id="touchpoints-survey"><div id="fba-modal-dialog" class="fba-modal-dialog" role="dialog" aria-label="Feedback modal dialog" aria-modal="false">
+  <div class="touchpoints-form-wrapper " id="touchpoints-form-4bf6443e" data-touchpoints-form-id="4bf6443e" tabindex="-1">
+  <div class="wrapper">
+    <h2 class="word-break fba-modal-title">
+  <div class="margin-bottom-2 text-center">
+      <img alt="National Oceanic and Atmospheric Administration banner" class="form-header-logo" src="https://cg-1b082c1b-3db7-477f-9ca5-bd51a786b41e.s3-us-gov-west-1.amazonaws.com/uploads/form/logo/4642/tag_combined-noaa-nidis-logo(2).png">
+  </div>
+  Drought.gov Customer Experience Feedback
+</h2>
+
+    <div class="fba-instructions">
+      This survey is designed to measure your level of satisfaction with the U.S. Drought Portal (www.drought.gov). It consists of eight questions and should take approximately two to five minutes to complete. <br><br>Please do not use this survey to provide comments on or responses to rules, notices, solicitations or other official agency actions. Any information you provide will be used for the sole purpose of improving NOAA's digital products and services. You may also send us an email at <a href="mailto:drought.portal@noaa.gov">drought.portal@noaa.gov</a>.
+
+<br><br>
+
+If you have comments concerning the accessibility of our website, please submit your feedback on our <a href="https://www.noaa.gov/accessibility">accessibility page</a>.
+    </div>
+    <p class="required-questions-notice">
+      <small>
+        A red asterisk (<abbr title="required" class="usa-hint--required">*</abbr>) indicates a required field.
+      </small>
+    </p>
+    <div class="fba-alert usa-alert usa-alert--success" role="status" hidden="">
+  <div class="usa-alert__body">
+    <h3 class="usa-alert__heading">
+      Success
+    </h3>
+    <div class="usa-alert__text">
+      Thank you! Your feedback has been received.
+    </div>
+  </div>
+</div>
+<div class="fba-alert-error usa-alert usa-alert--error" role="alert" hidden="">
+  <div class="usa-alert__body">
+    <h3 class="usa-alert__heading">
+      Error
+    </h3>
+    <p class="usa-alert__text">
+      alert message
+    </p>
+  </div>
+</div>
+
+    
+<form action="https://touchpoints.app.cloud.gov/touchpoints/4bf6443e/submissions.json" class="usa-form usa-form--large margin-bottom-2" method="POST">
+  <div class="touchpoints-form-body">
+        <input type="hidden" name="fba_location_code" id="fba_location_code" autocomplete="off">
+    <input type="text" name="fba_directive" id="fba_directive" class="display-none" title="fba_directive" aria-hidden="true" tabindex="-1" autocomplete="off">
+      <div class="section visible">
+
+
+
+        <div class="questions">
+
+          <div class="question white-bg">
+              <fieldset class="usa-fieldset radios margin-top-3">
+  <legend class="usa-legend" id="question-label-46504">
+  It was easy to complete what I needed to do.
+  <abbr title="required" class="usa-hint--required">*</abbr>
+</legend>
+
+  <div class="question-options" id="answer_01">
+    <div class="radio-button usa-radio" id="question_option_53068" data-id="53068">
+      <input type="radio" name="answer_01" id="answer_01_1" value="1" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_01_1">👍 Yes</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53069" data-id="53069">
+      <input type="radio" name="answer_01" id="answer_01_2" value="0" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_01_2">👎 No</label>
+    </div>
+  </div>
+</fieldset>
+
+          </div>
+
+          <div class="question white-bg">
+              <fieldset class="usa-fieldset radios margin-top-3">
+  <legend class="usa-legend" id="question-label-46505">
+  It took a reasonable amount of time to do what I needed to do.
+  <abbr title="required" class="usa-hint--required">*</abbr>
+</legend>
+
+  <div class="question-options" id="answer_02">
+    <div class="radio-button usa-radio" id="question_option_53070" data-id="53070">
+      <input type="radio" name="answer_02" id="answer_02_1" value="Strongly Disagree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_02_1">Strongly Disagree</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53071" data-id="53071">
+      <input type="radio" name="answer_02" id="answer_02_2" value="Disagree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_02_2">Disagree</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53072" data-id="53072">
+      <input type="radio" name="answer_02" id="answer_02_3" value="Neutral" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_02_3">Neutral</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53073" data-id="53073">
+      <input type="radio" name="answer_02" id="answer_02_4" value="Agree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_02_4">Agree</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53074" data-id="53074">
+      <input type="radio" name="answer_02" id="answer_02_5" value="Strongly Agree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_02_5">Strongly Agree</label>
+    </div>
+  </div>
+</fieldset>
+
+          </div>
+
+          <div class="question white-bg">
+              <fieldset class="usa-fieldset radios margin-top-3">
+  <legend class="usa-legend" id="question-label-46506">
+  I am satisfied with the information/service I received from Drought.gov.
+  <abbr title="required" class="usa-hint--required">*</abbr>
+  <p id="question-id-#{question.id}-help-text" class="help-text">
+    <small>
+      You can describe what info/service you are referring to here if needed.
+    </small>
+  </p>
+</legend>
+
+  <div class="question-options" id="answer_03">
+    <div class="radio-button usa-radio" id="question_option_53075" data-id="53075" aria-describedby="question-id-46506-help-text">
+      <input type="radio" name="answer_03" id="answer_03_1" value="Strongly Disagree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_03_1">Strongly Disagree</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53076" data-id="53076" aria-describedby="question-id-46506-help-text">
+      <input type="radio" name="answer_03" id="answer_03_2" value="Disagree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_03_2">Disagree</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53077" data-id="53077" aria-describedby="question-id-46506-help-text">
+      <input type="radio" name="answer_03" id="answer_03_3" value="Neutral" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_03_3">Neutral</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53078" data-id="53078" aria-describedby="question-id-46506-help-text">
+      <input type="radio" name="answer_03" id="answer_03_4" value="Agree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_03_4">Agree</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53079" data-id="53079" aria-describedby="question-id-46506-help-text">
+      <input type="radio" name="answer_03" id="answer_03_5" value="Strongly Agree" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_03_5">Strongly Agree</label>
+    </div>
+  </div>
+</fieldset>
+
+          </div>
+
+          <div class="question white-bg">
+              
+<div role="group">
+  <label class="usa-label" for="answer_09">
+  How do you plan to use the information provided on Drought.gov?
+  <abbr title="required" class="usa-hint--required">*</abbr>
+  <p id="question-id-46509-help-text">
+    <small>
+      Please be as specific as possible.
+    </small>
+  </p>
+</label>
+
+  <input type="text" name="answer_09" id="answer_09" class="usa-input" required="required" maxlength="500" aria-describedby="question-id-46509-help-text">
+
+  <span class="counter-msg usa-hint usa-character-count__message" aria-live="polite">
+    500
+    characters allowed
+  </span>
+</div>
+
+          </div>
+
+          <div class="question white-bg">
+              
+<div role="group">
+  <label class="usa-label" for="answer_06">
+  Do you have suggestions about how we can improve our website?
+  <abbr title="required" class="usa-hint--required">*</abbr>
+</label>
+
+  <input type="text" name="answer_06" id="answer_06" class="usa-input" required="required" maxlength="500">
+
+  <span class="counter-msg usa-hint usa-character-count__message" aria-live="polite">
+    500
+    characters allowed
+  </span>
+</div>
+
+          </div>
+
+          <div class="question white-bg">
+              <fieldset class="usa-fieldset margin-top-3">
+  <legend class="usa-legend" id="question-label-46512">
+  Which category best describes you? 
+  <abbr title="required" class="usa-hint--required">*</abbr>
+  <p id="question-id-#{question.id}-help-text" class="help-text">
+    <small>
+      Select all that apply.
+    </small>
+  </p>
+</legend>
+
+  <div class="question-options" id="answer_08">
+    <div class="usa-checkbox" id="question_option_53306" data-id="53306" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_1" value="University Faculty/Staff" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_1" class="usa-checkbox__label">University Faculty/Staff</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53307" data-id="53307" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_2" value="Teacher (K-12)" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_2" class="usa-checkbox__label">Teacher (K-12)</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53308" data-id="53308" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_3" value="Student (K-12)" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_3" class="usa-checkbox__label">Student (K-12)</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53309" data-id="53309" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_4" value="Student (University)" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_4" class="usa-checkbox__label">Student (University)</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53310" data-id="53310" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_5" value="Federal Government" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_5" class="usa-checkbox__label">Federal Government</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53311" data-id="53311" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_6" value="Tribal Government" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_6" class="usa-checkbox__label">Tribal Government</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53312" data-id="53312" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_7" value="State Government" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_7" class="usa-checkbox__label">State Government</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53313" data-id="53313" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_8" value="County/Local Government" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_8" class="usa-checkbox__label">County/Local Government</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53314" data-id="53314" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_9" value="Non-Profit Organization" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_9" class="usa-checkbox__label">Non-Profit Organization</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53315" data-id="53315" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_10" value="Agriculture" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_10" class="usa-checkbox__label">Agriculture</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53316" data-id="53316" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_11" value="News Media" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_11" class="usa-checkbox__label">News Media</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53317" data-id="53317" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_12" value="Researcher/Scientist" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_12" class="usa-checkbox__label">Researcher/Scientist</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53330" data-id="53330" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_13" value="Policymaker" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_13" class="usa-checkbox__label">Policymaker</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53331" data-id="53331" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_14" value="Other Business/Industry" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_14" class="usa-checkbox__label">Other Business/Industry</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_53332" data-id="53332" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_15" value="General Public" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_15" class="usa-checkbox__label">General Public</label>
+    </div>
+    <div class="usa-checkbox" id="question_option_54241" data-id="54241" aria-describedby="question-id-46512-help-text">
+      <input type="checkbox" name="answer_08" id="answer_08_16" value="OTHER" class="usa-checkbox__input usa-checkbox__input--tile" required="required">
+      <label for="answer_08_16" class="usa-checkbox__label">Other</label>
+        <label for="answer_08_other" class="usa-input__label">Enter other text</label>
+        <input type="text" name="answer_08_other" id="answer_08_other" data-option-id="answer_08_16" placeholder="Enter other text" maxlength="10000" class="usa-input other-option">
+        <br>
+    </div>
+  </div>
+</fieldset>
+
+          </div>
+
+          <div class="question white-bg">
+              <fieldset class="usa-fieldset radios margin-top-3">
+  <legend class="usa-legend" id="question-label-46511">
+  How likely is it that you would recommend Drought.gov to a friend or colleague?
+  <abbr title="required" class="usa-hint--required">*</abbr>
+</legend>
+
+  <div class="question-options" id="answer_07">
+    <div class="radio-button usa-radio" id="question_option_53320" data-id="53320">
+      <input type="radio" name="answer_07" id="answer_07_1" value="1 - Not at all likely" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_1">1 - Not at all likely</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53321" data-id="53321">
+      <input type="radio" name="answer_07" id="answer_07_2" value="2" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_2">2</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53322" data-id="53322">
+      <input type="radio" name="answer_07" id="answer_07_3" value="3" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_3">3</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53323" data-id="53323">
+      <input type="radio" name="answer_07" id="answer_07_4" value="4" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_4">4</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53324" data-id="53324">
+      <input type="radio" name="answer_07" id="answer_07_5" value="5" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_5">5</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53325" data-id="53325">
+      <input type="radio" name="answer_07" id="answer_07_6" value="6" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_6">6</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53326" data-id="53326">
+      <input type="radio" name="answer_07" id="answer_07_7" value="7" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_7">7</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53327" data-id="53327">
+      <input type="radio" name="answer_07" id="answer_07_8" value="8" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_8">8</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53328" data-id="53328">
+      <input type="radio" name="answer_07" id="answer_07_9" value="9" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_9">9</label>
+    </div>
+    <div class="radio-button usa-radio" id="question_option_53329" data-id="53329">
+      <input type="radio" name="answer_07" id="answer_07_10" value="10 - Extremely likely" class="usa-radio__input usa-radio__input--tile" required="required">
+      <label class="usa-radio__label" for="answer_07_10">10 - Extremely likely</label>
+    </div>
+  </div>
+</fieldset>
+
+          </div>
+
+          <div class="question white-bg">
+              
+<div role="group">
+  <label class="usa-label" for="answer_04">
+  Optional: To provide other feedback about your experience using Drought.gov, please provide your email address. 
+</label>
+
+  <input type="email" name="answer_04" id="answer_04" class="usa-input">
+</div>
+
+          </div>
+        </div>
+
+          <button type="submit" class="usa-button submit_form_button">Submit</button>
+      </div>
+  </div>
+</form>
+
+  </div>
+  
+    <div class="touchpoints-form-disclaimer">
+  <hr class="border-0 border-gray-10 border-top">
+  <div class="grid-container">
+    <div class="grid-row">
+      <div class="grid-col-12">
+        <small class="fba-dialog-privacy">
+          This survey is designed to measure your level of satisfaction with the U.S. Drought Portal (Drought.gov) website. It consists of eight questions and should take approximately two to five minutes to complete. Please do not use this survey to provide comments on or responses to rules, notices, solicitations or other official agency actions. Any information you provide will be used to for the sole purpose of improving NOAA's digital products and services.
+
+If you wish to provide feedback outside of the scope of this survey, please contact us at drought.portal@noaa.gov.
+        </small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="usa-banner">
+  <footer class="usa-banner__header touchpoints-footer-banner">
+    <div class="usa-banner__inner">
+      <div class="grid-col-auto">
+        <img aria-hidden="true" class="usa-banner__header-flag" src="https://touchpoints.app.cloud.gov/img/us_flag_small.png" alt="U.S. flag">
+      </div>
+      <div class="grid-col-fill tablet:grid-col-auto" aria-hidden="true">
+        <p class="usa-banner__header-text">
+          An official form of the United States government.
+          Provided by
+          <a href="https://touchpoints.digital.gov" target="_blank" rel="noopener" class="usa-link--external">Touchpoints</a>
+          <br>
+            OMB Approval #<span class="omb-approval-number">0690-0030</span>
+
+            ·
+            Expiration Date 07/31/2026
+        </p>
+      </div>
+    </div>
+  </footer>
+</div>
+
+
+</div>
+</div>
+</div>
   </div>
 </section>
 
@@ -2938,7 +3331,7 @@
 
                       <div class="usa-footer__social-links padding-top-2 grid-row grid-gap-1">
                               <div class="grid-col-auto">
-                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.facebook.com/noaadrought/" target="_blank">
+                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.facebook.com/noaadrought/" target="_blank" rel="noreferrer">
                     <svg class="usa-social-icon usa-icon--size-3 margin-x-auto" src="/themes/custom/uswds_drought/assets/img/sprite.svg#facebook" aria-labelledby="facebook-footer-label" role="img">
                       <title id="facebook-footer-label">Drought.gov Facebook account.</title>
                       <use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#facebook" fill="#162e51"></use>
@@ -2947,7 +3340,7 @@
                 </div>
               
                               <div class="grid-col-auto">
-                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.instagram.com/noaadrought/" target="_blank">
+                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.instagram.com/noaadrought/" target="_blank" rel="noreferrer">
                     <svg class="usa-social-icon usa-icon--size-3 margin-x-auto" src="/themes/custom/uswds_drought/assets/img/sprite.svg#instagram" aria-labelledby="instagram-footer-label" role="img">
                       <title id="instagram-footer-label">Drought.gov Instagram account.</title>
                       <use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#instagram" fill="#162e51"></use>
@@ -2956,7 +3349,7 @@
                 </div>
               
                               <div class="grid-col-auto">
-                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.linkedin.com/showcase/droughtgov/" target="_blank">
+                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.linkedin.com/showcase/droughtgov/" target="_blank" rel="noreferrer">
                     <svg class="usa-social-icon usa-icon--size-3 margin-x-auto" src="/themes/custom/uswds_drought/assets/img/sprite.svg#linkedin" aria-labelledby="linkedin-footer-label" role="img">
                       <title id="linkedin-footer-label">Drought.gov LinkedIn account.</title>
                       <use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#linkedin" fill="#162e51"></use>
@@ -2965,7 +3358,7 @@
                 </div>
               
                               <div class="grid-col-auto">
-                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://twitter.com/noaadrought" target="_blank">
+                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://twitter.com/noaadrought" target="_blank" rel="noreferrer">
                     <svg class="usa-social-icon usa-icon--size-3 margin-x-auto" src="/themes/custom/uswds_drought/assets/img/sprite.svg#x" aria-labelledby="x-footer-label" role="img">
                       <title id="x-footer-label">Drought.gov X account.</title>
                       <use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#x" fill="#162e51"></use>
@@ -2974,7 +3367,7 @@
                 </div>
               
                               <div class="grid-col-auto">
-                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.youtube.com/@noaadrought" target="_blank">
+                  <a class="usa-social-link bg-nidis-accent radius-pill" href="https://www.youtube.com/@noaadrought" target="_blank" rel="noreferrer">
                     <svg class="usa-social-icon usa-icon--size-3 margin-x-auto" src="/themes/custom/uswds_drought/assets/img/sprite.svg#youtube" aria-labelledby="youtube-footer-label" role="img">
                       <title id="youtube-footer-label">Drought.gov YouTube account.</title>
                       <use xlink:href="/themes/custom/uswds_drought/assets/img/sprite.svg#youtube" fill="#162e51"></use>
@@ -3064,4 +3457,313 @@
 
 
 
-</body></html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div><div class="map-screenshot-overlay position-fixed top-0 left-0 width-full height-full z-bottom opacity-0 padding-4" style="background: rgba(0, 0, 0, 0.5);">
+  <div class="map-screenshow-ui-wrapper grid-container grid-container--standard background-white position-relative bg-white usa-form height-full" style="padding: 0;">
+    <div class="position-absolute top-05 right-2 width-4 height-4"><button id="map-screenshot-close-button" style="width: 100%; height: 100%; padding: 0; border: 0; background: transparent;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" id="cancel" class="usa-icon-close width-full height-full position-relative z-100">
+          <path d="M0 0h24v24H0z" fill="none"></path>
+          <path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"></path>
+        </svg>
+        <span class="usa-sr-only">Close</span>
+      </button></div>
+    <div class="grid-row height-full overflow-y-scroll" style="background: rgba(22, 46, 81, .75)">
+      <div class="map-screenshot-ui-col grid-col-3 bg-base-lightest padding-top-2 position-relative">
+        <div class="padding-x-1" style="height: 94%;">
+          <div class="map-screenshot-active-layer-wrapper margin-bottom-3">
+            <label for="map-screenshot-active-layer" class="font-body-md text-bold">Current Data Layer</label>
+            <select id="map-screenshot-active-layer" class="usa-select form-select"><option value="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/json/v1/us/usdm/USDM-current.json" selected="selected">U.S. Drought Monitor</option><option value="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/tile/v1/precip-prcntnorm-30d/{z}/{x}/{y}.png">30-Day Percent of Normal Precipitation</option><option value="https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/tile/v1/temp-anom-30d/{z}/{x}/{y}.png">30-Day Departure from Normal Maximum Temperature (°F)</option></select>
+          </div>
+          <div class="map-screenshot-description-wrapper margin-bottom-3">
+            <input class="usa-checkbox__input" id="map-screenshot-description" type="checkbox">
+            <label class="usa-checkbox__label" for="map-screenshot-description">Show Map Description</label>
+          </div>
+          <div class="map-screenshot-transparency-wrapper margin-bottom-3">
+            <label for="map-screenshot-transparency" class="font-body-md text-bold">Layer Transparency</label>
+            <input id="map-screenshot-transparency" type="range" min="0" max="100" step="1" value="0" class="usa-range margin-top-0" style="background: transparent;">
+            <div class="map-screenshot-transparency-ticks position-relative font-body-3xs margin-top-neg-1">
+              <span class="position-absolute top-0 left-0">0</span>
+              <span class="position-absolute top-0 right-0">100</span>
+            </div>
+          </div>
+          <div class="map-screenshot-background-layer-wrapper margin-bottom-3">
+            <label for="map-screenshot-background-layer" class="font-body-md text-bold">Background Layer</label>
+            <select id="map-screenshot-background-layer" class="usa-select form-select">
+              <option value="transparent" selected="">White Background</option>
+              <option value="gray">Simple Gray Background</option>
+              <option value="esri" hidden="">ESRI NatGeo World Map</option>
+              <option value="esrilightgraytiles" hidden="">ESRI Light Gray Tiles</option>
+              
+            </select>
+          </div>
+          <div class="map-screenshot-usdm-layer-wrapper margin-bottom-3">
+            <label class="font-body-md text-bold display-block margin-bottom-1" for="map-screenshot-usdm-selector">Overlay Current U.S. Drought Monitor</label>
+            <select id="map-screenshot-usdm-selector" class="usa-select form-select">
+              <option value="hidden" selected="">Do not display</option>
+              <option value="above">Standard display (above)</option>
+              <option value="below">Standard display (under)</option>
+              <option value="abovelines">Categorical border lines</option>
+              <option value="abovelinesfill">Categorical border lines with light fill</option>
+            </select>
+          </div>
+          <div class="map-screenshot-usdm-transparency-wrapper margin-bottom-3">
+            <label for="map-screenshot-usdm-transparency" class="font-body-md text-bold">USDM Transparency</label>
+            <input id="map-screenshot-usdm-transparency" type="range" min="0" max="100" step="1" value="0" class="usa-range margin-top-0" style="background: transparent;">
+            <div class="map-screenshot-transparency-ticks position-relative font-body-3xs margin-top-neg-1">
+              <span class="position-absolute top-0 left-0">0%</span>
+              <span class="position-absolute top-0 right-0">100%</span>
+            </div>
+          </div>
+          <div class="map-screenshot-state-lines-wrapper margin-bottom-3">
+            <label class="font-body-md text-bold display-block margin-bottom-1">Border Outlines</label>
+            <div class="usa-checkbox">
+              <input class="usa-checkbox__input" id="map-screenshot-tribal-lines" type="checkbox" data-type="tribal">
+              <label class="usa-checkbox__label" for="map-screenshot-tribal-lines">Show Tribal Nation Lines</label>
+            </div>
+            <div class="usa-checkbox">
+              <input class="usa-checkbox__input" id="map-screenshot-state-lines" type="checkbox" checked="" data-type="states">
+              <label class="usa-checkbox__label" for="map-screenshot-state-lines">Show State Lines</label>
+            </div>
+            <div class="usa-checkbox">
+              <input class="usa-checkbox__input" id="map-screenshot-county-lines" type="checkbox" data-type="allCounties">
+              <label class="usa-checkbox__label" for="map-screenshot-county-lines">Show County Lines</label>
+            </div>
+          </div>
+          <div class="map-screenshot-map-cutouts-wrapper">
+            <label class="font-body-md text-bold display-block margin-bottom-1">Display Multiple Regions</label>
+            <div class="usa-checkbox">
+              <input class="usa-checkbox__input" id="map-screenshot-map-cutouts-alaska" type="checkbox" checked="" data-region="alaska">
+              <label class="usa-checkbox__label" for="map-screenshot-map-cutouts-alaska">Show Alaska map area</label>
+            </div>
+            <div class="usa-checkbox">
+              <input class="usa-checkbox__input" id="map-screenshot-map-cutouts-hawaii" type="checkbox" checked="" data-region="hawaii">
+              <label class="usa-checkbox__label" for="map-screenshot-map-cutouts-hawaii">Show Hawaii map area</label>
+            </div>
+            <div class="usa-checkbox">
+              <input class="usa-checkbox__input" id="map-screenshot-map-cutouts-pr" type="checkbox" checked="" data-region="pr">
+              <label class="usa-checkbox__label" for="map-screenshot-map-cutouts-pr">Show Puerto Rico map area</label>
+            </div>
+          </div>
+        </div>
+        <div class="position-sticky bottom-0 left-0 bg-base-lightest padding-top-1 padding-x-1 padding-bottom-1" style="box-shadow: 0px -3px 0px rgba(0,0,0,.1), 0px -2px 0px rgb(0 0 0 / 30%), 0px -1px 0px rgb(0 0 0 / 40%);">
+          <button class="c--sbtn width-full position-relative">Save Map<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" id="launch" style="padding: 2px;fill: #ffffff;border-radius: 2px;z-index: 10;width: 100%;height: 100%;position: absolute;right: 3px;top: 0;width: 26px;">
+              <path d="M0 0h24v24H0z" fill="none"></path>
+              <path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"></path>
+            </svg></button>
+          <a href="./data" class="font-body-3xs display-block map-screenshot-data-link display-none">Learn more about these data</a>
+        </div>
+      </div>
+      <div class="map-container-map-wrapper grid-col-9 padding-2">
+        <div class="map-container-map-panel padding-2 bg-white position-relative" style="min-width: 723px;">
+          <div class="opacity-0 position-absolute top-0 left-0 width-full height-full">
+            <canvas id="map-container-screenshot-canvas" class="width-full height-full">
+          </canvas></div>
+          <div class="map-screenshot-title-wrapper position-relative minh-6">
+            <h3 class="map-screenshot-wrapper font-body-lg padding-right-15 margin-0" style="padding-right: 217.344px;">U.S. Drought Monitor</h3>
+            <div class="map-screenshot-icons position-absolute top-0 right-0" style="font-size: 0;">
+              <img id="map-screenshot-noaa" class="height-5" src="/themes/custom/uswds_drought/images/noaa_logo.svg" alt="National Oceanic and Atmospheric Administration logo">
+              <img id="map-screenshot-nidis" class="height-5 display-none" src="/themes/custom/uswds_drought/images/nidis_logo_orig.jpg" alt="Home">
+              <div class="display-inline map-screenshot-extra-icons"><div><img src="/sites/default/files/maps/partner-icons/USDA-logo-color-png.png" alt="U.S. Department of Agriculture." class="height-5 padding-left-1"><img src="/sites/default/files/maps/partner-icons/nasa-logo-web-rgb_3.png" alt="National Aeronautics and Space Administration." class="height-5 padding-left-1"><img src="/sites/default/files/maps/partner-icons/NDMC-logo-color-png.png" alt="National Drought Mitigation Center." class="height-5 padding-left-1"></div></div>
+            </div>
+          </div>
+          <div class="map-screenshot-map-wrappers position-relative margin-bottom-2">
+            <div class="map-screenshot-map-conus no-ol-eb position-relative" style="height: 493px">
+              <div class="interactive-map height-full width-full" tabindex="0" style="min-height: 300px; overflow: hidden;"><div class="ol-viewport" style="position: relative; overflow: hidden; width: 100%; height: 100%;"><div class="ol-unselectable ol-layers" style="position: absolute; width: 100%; height: 100%; z-index: 0;"><div class="ol-layer" style="position: absolute; width: 100%; height: 100%;"><canvas width="691" height="493" style="position: absolute; left: 0px; transform-origin: left top; transform: matrix(1, 0, 0, 1, 0, 0);"></canvas></div></div><div class="ol-overlaycontainer" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"></div><div class="ol-overlaycontainer-stopevent" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"><div class="ol-overlay-container ol-selectable" style="position: absolute; pointer-events: auto; display: none;"><div class="ol-popup"><a class="ol-popup-closer" href="#" title="Close"><span class="usa-sr-only">Close</span></a><div class="popup-content"></div></div></div><div class="ol-zoom ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-zoom-in" type="button" title="Zoom in">+</button><button class="ol-zoom-out" type="button" title="Zoom out">–</button></div><div class="ol-rotate ol-unselectable ol-control ol-hidden" style="pointer-events: auto;"><button class="ol-rotate-reset" type="button" title="Reset rotation"><span class="ol-compass" style="transform: rotate(0rad);">⇧</span></button></div><div class="ol-attribution ol-unselectable ol-control ol-collapsed" style="pointer-events: auto; display: none;"><button type="button" aria-expanded="false" title="Attributions"><span class="ol-attribution-expand">i</span></button><ul></ul></div><div class="ol-extra-buttons ol-unselectable" style="pointer-events: auto;"><button class="ol-jump-options" title="Select Locations"><svg height="24" width="24" viewbox="0 0 24 24"><path d="m20.5 3-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"></path></svg></button><button data-key="conus" data-rotation="0" data-abv="us" title="Continental United States" class="ol-jump-button">CONUS</button><button data-key="alaska" data-rotation="-0.5" data-abv="AK" class="ol-jump-button">Alaska</button><button data-key="hawaii" data-rotation="-0.785" data-abv="HI" class="ol-jump-button">Hawaiʻi</button><button data-key="puertorico" data-rotation="0.262" data-abv="PRVIBTN" title="Puerto Rico &amp; United States Virgin Islands" class="ol-jump-button">PR/USVI</button><button title="Hide Locations" class="ol-jump-close">▼</button></div></div></div></div>
+              <div class="position-absolute map-screenshot-jump-buttons">
+                <button class="map-screenshot-jump-button map-screenshot-jump-button-conus display-block" title="Jump to CONUS" data-key="conus"><span></span></button>
+                <button class="map-screenshot-jump-button map-screenshot-jump-button-alaska display-block" title="Jump to Alaska" data-key="alaska"><span></span></button>
+                <button class="map-screenshot-jump-button map-screenshot-jump-button-hawaii display-block" title="Jump to Hawaii" data-key="hawaii"><span></span></button>
+                <button class="map-screenshot-jump-button map-screenshot-jump-button-pr display-block" title="Jump to Puerto Rico" data-key="puertorico"><span></span></button>
+              </div>
+            </div>
+            <div class="map-screenshot-map-alaska bg-white no-ol-ui position-absolute bottom-0 left-0 border-base border-right-1px border-top-1px" style="width: 26%; height: 26%;">
+              <div class="interactive-map height-full width-full" tabindex="0" style="min-height: 300px; overflow: hidden;"><div class="ol-viewport" style="position: relative; overflow: hidden; width: 100%; height: 100%;"><div class="ol-unselectable ol-layers" style="position: absolute; width: 100%; height: 100%; z-index: 0;"><div class="ol-layer" style="position: absolute; width: 100%; height: 100%;"><canvas width="218" height="197" style="position: absolute; left: 0px; transform-origin: left top; transform: matrix(0.877583, -0.479426, 0.479426, 0.877583, -53.3799, 29.3155);"></canvas></div></div><div class="ol-overlaycontainer" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"></div><div class="ol-overlaycontainer-stopevent" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"><div class="ol-overlay-container ol-selectable" style="position: absolute; pointer-events: auto; display: none;"><div class="ol-popup"><a class="ol-popup-closer" href="#" title="Close"><span class="usa-sr-only">Close</span></a><div class="popup-content"></div></div></div><div class="ol-zoom ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-zoom-in" type="button" title="Zoom in">+</button><button class="ol-zoom-out" type="button" title="Zoom out">–</button></div><div class="ol-rotate ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-rotate-reset" type="button" title="Reset rotation"><span class="ol-compass" style="transform: rotate(-0.5rad);">⇧</span></button></div><div class="ol-attribution ol-unselectable ol-control ol-collapsed" style="pointer-events: auto; display: none;"><button type="button" aria-expanded="false" title="Attributions"><span class="ol-attribution-expand">i</span></button><ul></ul></div><div class="ol-extra-buttons ol-unselectable" style="pointer-events: auto;"><button class="ol-jump-options" title="Select Locations"><svg height="24" width="24" viewbox="0 0 24 24"><path d="m20.5 3-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"></path></svg></button><button data-key="conus" data-rotation="0" data-abv="us" title="Continental United States" class="ol-jump-button">CONUS</button><button data-key="alaska" data-rotation="-0.5" data-abv="AK" class="ol-jump-button">Alaska</button><button data-key="hawaii" data-rotation="-0.785" data-abv="HI" class="ol-jump-button">Hawaiʻi</button><button data-key="puertorico" data-rotation="0.262" data-abv="PRVIBTN" title="Puerto Rico &amp; United States Virgin Islands" class="ol-jump-button">PR/USVI</button><button title="Hide Locations" class="ol-jump-close">▼</button></div></div></div></div>
+            </div>
+            <div class="map-screenshot-map-hawaii bg-white no-ol-ui position-absolute bottom-0 border-base border-right-1px border-top-1px border-left-1px margin-left-neg-1px" style="width: 14%; height: 16%; left: 26%;">
+              <div class="interactive-map height-full width-full" tabindex="0" style="min-height: 300px; overflow: hidden;"><div class="ol-viewport" style="position: relative; overflow: hidden; width: 100%; height: 100%;"><div class="ol-unselectable ol-layers" style="position: absolute; width: 100%; height: 100%; z-index: 0;"><div class="ol-layer" style="position: absolute; width: 100%; height: 100%;"><canvas width="122" height="122" style="position: absolute; left: 0px; transform-origin: left top; transform: matrix(0.707388, -0.706825, 0.706825, 0.707388, -38.767, 38.9657);"></canvas></div></div><div class="ol-overlaycontainer" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"></div><div class="ol-overlaycontainer-stopevent" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"><div class="ol-overlay-container ol-selectable" style="position: absolute; pointer-events: auto; display: none;"><div class="ol-popup"><a class="ol-popup-closer" href="#" title="Close"><span class="usa-sr-only">Close</span></a><div class="popup-content"></div></div></div><div class="ol-zoom ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-zoom-in" type="button" title="Zoom in">+</button><button class="ol-zoom-out" type="button" title="Zoom out">–</button></div><div class="ol-rotate ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-rotate-reset" type="button" title="Reset rotation"><span class="ol-compass" style="transform: rotate(-0.785rad);">⇧</span></button></div><div class="ol-attribution ol-unselectable ol-control ol-collapsed" style="pointer-events: auto; display: none;"><button type="button" aria-expanded="false" title="Attributions"><span class="ol-attribution-expand">i</span></button><ul></ul></div><div class="ol-extra-buttons ol-unselectable" style="pointer-events: auto;"><button class="ol-jump-options" title="Select Locations"><svg height="24" width="24" viewbox="0 0 24 24"><path d="m20.5 3-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"></path></svg></button><button data-key="conus" data-rotation="0" data-abv="us" title="Continental United States" class="ol-jump-button">CONUS</button><button data-key="alaska" data-rotation="-0.5" data-abv="AK" class="ol-jump-button">Alaska</button><button data-key="hawaii" data-rotation="-0.785" data-abv="HI" class="ol-jump-button">Hawaiʻi</button><button data-key="puertorico" data-rotation="0.262" data-abv="PRVIBTN" title="Puerto Rico &amp; United States Virgin Islands" class="ol-jump-button">PR/USVI</button><button title="Hide Locations" class="ol-jump-close">▼</button></div></div></div></div>
+            </div>
+            <div class="map-screenshot-map-pr bg-white no-ol-ui position-absolute bottom-0 right-0 border-base border-left-1px border-top-1px" style="width: 13%; height: 12.45%;">
+              <div class="interactive-map height-full width-full" tabindex="0" style="min-height: 300px; overflow: hidden;"><div class="ol-viewport" style="position: relative; overflow: hidden; width: 100%; height: 100%;"><div class="ol-unselectable ol-layers" style="position: absolute; width: 100%; height: 100%; z-index: 0;"><div class="ol-layer" style="position: absolute; width: 100%; height: 100%;"><canvas width="102" height="81" style="position: absolute; left: 0px; transform-origin: left top; transform: matrix(0.965874, 0.259013, -0.259013, 0.965874, 5.73045, -22.3275);"></canvas></div></div><div class="ol-overlaycontainer" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"></div><div class="ol-overlaycontainer-stopevent" style="position: absolute; z-index: 0; width: 100%; height: 100%; pointer-events: none;"><div class="ol-overlay-container ol-selectable" style="position: absolute; pointer-events: auto; display: none;"><div class="ol-popup"><a class="ol-popup-closer" href="#" title="Close"><span class="usa-sr-only">Close</span></a><div class="popup-content"></div></div></div><div class="ol-zoom ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-zoom-in" type="button" title="Zoom in">+</button><button class="ol-zoom-out" type="button" title="Zoom out">–</button></div><div class="ol-rotate ol-unselectable ol-control" style="pointer-events: auto;"><button class="ol-rotate-reset" type="button" title="Reset rotation"><span class="ol-compass" style="transform: rotate(0.262rad);">⇧</span></button></div><div class="ol-attribution ol-unselectable ol-control ol-collapsed" style="pointer-events: auto; display: none;"><button type="button" aria-expanded="false" title="Attributions"><span class="ol-attribution-expand">i</span></button><ul></ul></div><div class="ol-extra-buttons ol-unselectable" style="pointer-events: auto;"><button class="ol-jump-options" title="Select Locations"><svg height="24" width="24" viewbox="0 0 24 24"><path d="m20.5 3-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"></path></svg></button><button data-key="conus" data-rotation="0" data-abv="us" title="Continental United States" class="ol-jump-button">CONUS</button><button data-key="alaska" data-rotation="-0.5" data-abv="AK" class="ol-jump-button">Alaska</button><button data-key="hawaii" data-rotation="-0.785" data-abv="HI" class="ol-jump-button">Hawaiʻi</button><button data-key="puertorico" data-rotation="0.262" data-abv="PRVIBTN" title="Puerto Rico &amp; United States Virgin Islands" class="ol-jump-button">PR/USVI</button><button title="Hide Locations" class="ol-jump-close">▼</button></div></div></div></div>
+            </div>
+          </div>
+          <div class="map-screenshot-map-legend margin-bottom-1"><div class="map-toggle-item active" data-toggle-index="1">
+                                            <div class="paragraph paragraph--type--legend-ramp paragraph--view-mode--default position-relative">
+          <div class="legend-label position-relative grid-row">
+                  <h5 class="h4 margin-top-0 margin-bottom-1 grid-col">U.S. Drought Monitor Category</h5>
+                          <span class="text-bold grid-col-auto">% of U.S.</span>
+              </div>
+        <div class="legend-ramp c--legend c--legend-vertical" role="table" aria-label="Map legend - U.S. Drought Monitor Category">
+              <div role="row">
+                      <div role="cell">
+              <button class="c--legend-cell legend-item" aria-label="D0 - Abnormally Dry" data-legend="4371-1" tabindex="0">
+                <span class="legend-color" style=" background-color:#ffff00; ">
+                                  </span>
+                <span class="legend-label" id="legend-label-4371-1">D0 - Abnormally Dry</span>
+              </button>
+            </div>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-1" role="cell">17.2</span>
+                                            <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
+              <div class="" id="legend-details-4371-1" data-popover="4371-1" aria-modal="true" tabindex="-1">
+                <button class="dialog-close font-body-3xs text-uppercase">Close</button>
+                                  <h6 class="h4 margin-top-3 margin-bottom-1" id="legend-title-4371-1">Abnormally Dry</h6>
+                                <div class="font-body-2xs" id="legend-content-4371-1"><p>Abnormally Dry (D0) indicates a region that is going into or coming out of drought.&nbsp;</p></div>
+              </div>
+            </div>
+                  </div>
+              <div role="row">
+                      <div role="cell">
+              <button class="c--legend-cell legend-item" aria-label="D1 - Moderate Drought" data-legend="4371-2" tabindex="0">
+                <span class="legend-color" style=" background-color:#fcd37f; ">
+                                  </span>
+                <span class="legend-label" id="legend-label-4371-2">D1 - Moderate Drought</span>
+              </button>
+            </div>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-2" role="cell">21.5</span>
+                                            <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
+              <div class="" id="legend-details-4371-2" data-popover="4371-2" aria-modal="true" tabindex="-1">
+                <button class="dialog-close font-body-3xs text-uppercase">Close</button>
+                                  <h6 class="h4 margin-top-3 margin-bottom-1" id="legend-title-4371-2">Moderate Drought</h6>
+                                <div class="font-body-2xs" id="legend-content-4371-2"><p>Moderate Drought (D1) is the first of four drought categories (D1–D4), according to the U.S. Drought Monitor.</p></div>
+              </div>
+            </div>
+                  </div>
+              <div role="row">
+                      <div role="cell">
+              <button class="c--legend-cell legend-item" aria-label="D2 - Severe Drought" data-legend="4371-3" tabindex="0">
+                <span class="legend-color" style=" background-color:#ffaa00; ">
+                                  </span>
+                <span class="legend-label" id="legend-label-4371-3">D2 - Severe Drought</span>
+              </button>
+            </div>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-3" role="cell">17.9</span>
+                                            <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
+              <div class="" id="legend-details-4371-3" data-popover="4371-3" aria-modal="true" tabindex="-1">
+                <button class="dialog-close font-body-3xs text-uppercase">Close</button>
+                                  <h6 class="h4 margin-top-3 margin-bottom-1" id="legend-title-4371-3">Severe Drought</h6>
+                                <div class="font-body-2xs" id="legend-content-4371-3"><p>Severe Drought (D2) is the second of four drought categories (D1–D4), according to the U.S. Drought Monitor.</p></div>
+              </div>
+            </div>
+                  </div>
+              <div role="row">
+                      <div role="cell">
+              <button class="c--legend-cell legend-item" aria-label="D3 - Extreme Drought" data-legend="4371-4" tabindex="0">
+                <span class="legend-color" style=" background-color:#e60000; ">
+                                  </span>
+                <span class="legend-label" id="legend-label-4371-4">D3 - Extreme Drought</span>
+              </button>
+            </div>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-4" role="cell">8.4</span>
+                                            <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
+              <div class="" id="legend-details-4371-4" data-popover="4371-4" aria-modal="true" tabindex="-1">
+                <button class="dialog-close font-body-3xs text-uppercase">Close</button>
+                                  <h6 class="h4 margin-top-3 margin-bottom-1" id="legend-title-4371-4">Extreme Drought</h6>
+                                <div class="font-body-2xs" id="legend-content-4371-4"><p>Extreme Drought (D3) is the third of four drought categories (D1–D4), according to the U.S. Drought Monitor.</p></div>
+              </div>
+            </div>
+                  </div>
+              <div role="row">
+                      <div role="cell">
+              <button class="c--legend-cell legend-item" aria-label="D4 - Exceptional Drought" data-legend="4371-5" tabindex="0">
+                <span class="legend-color" style=" background-color:#730000; ">
+                                  </span>
+                <span class="legend-label" id="legend-label-4371-5">D4 - Exceptional Drought</span>
+              </button>
+            </div>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-5" role="cell">1.8</span>
+                                            <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
+              <div class="" id="legend-details-4371-5" data-popover="4371-5" aria-modal="true" tabindex="-1">
+                <button class="dialog-close font-body-3xs text-uppercase">Close</button>
+                                  <h6 class="h4 margin-top-3 margin-bottom-1" id="legend-title-4371-5">Exceptional Drought</h6>
+                                <div class="font-body-2xs" id="legend-content-4371-5"><p>Exceptional Drought (D4) is the most intense drought category, according to the U.S. Drought Monitor.</p></div>
+              </div>
+            </div>
+                  </div>
+              <div role="row">
+                      <div role="cell">
+              <button class="c--legend-cell legend-item" aria-label="Total Area in Drought (D1–D4)" data-legend="4371-6" tabindex="0">
+                <span class="legend-color" style=" background-image:url('/modules/custom/general_page_js_css/js/screenshot/icons/dm-total.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat; background-color: #fff; box-shadow: inset 0 0 0 3px #fff;">
+                                  </span>
+                <span class="legend-label" id="legend-label-4371-6">Total Area in Drought (D1–D4)</span>
+              </button>
+            </div>
+                          <span class="legend-stat text-bold u--percent-after" id="legend-stat-4371-6" role="cell">49.6</span>
+                                            <div class="c--legend-pop display-none" role="dialog" aria-label="legend item details">
+              <div class="" id="legend-details-4371-6" data-popover="4371-6" aria-modal="true" tabindex="-1">
+                <button class="dialog-close font-body-3xs text-uppercase">Close</button>
+                                  <h6 class="h4 margin-top-3 margin-bottom-1" id="legend-title-4371-6">Total Area in Drought (D1–D4)</h6>
+                                <div class="font-body-2xs" id="legend-content-4371-6"><p>Percent area of the 50 U.S. states and Puerto Rico that is currently in drought (D1–D4), according to the U.S. Drought Monitor.</p></div>
+              </div>
+            </div>
+                  </div>
+                </div>
+    <span class="c--legend-status" role="status"></span>
+  </div>
+
+                                      </div></div>
+          <div class="map-screenshot-map-description margin-bottom-1 display-none">
+            <p class="margin-0">The U.S. Drought Monitor&nbsp;depicts the location and intensity of drought across the country&nbsp;using 5 classifications: Abnormally Dry (D0), showing areas that may be going into or are coming out of drought, and four levels of drought (D1–D4).The U.S. Drought Monitor&nbsp;is a joint effort of the National Drought Mitigation Center, U.S. Department of Agriculture, National Oceanic and Atmospheric Administration, and National Aeronautics and Space Administration.
+                    
+                                                        Source(s):
+                    
+                    NDMC, NOAA, USDA, NASA</p>
+          </div>
+          <div class="map-screenshot-footer position-relative" style="margin-top: 17px; margin-bottom: 5px;">
+            <div class="map-screenshot-map-metadata text-base" style="padding-right: 25%;">
+              <div class="map-screenshot-data-source-wrapper">
+                <span class="map-screenshot-data-source display-inline">
+                  <p>Source(s): NDMC, NOAA, USDA, NASA</p>
+                </span>
+              </div>
+              <div class="map-screenshot-last-updated-wrapper">
+                <span class="map-screenshot-last-updated display-inline">Updates Weekly: 09/22/26</span>
+              </div>
+              <div class="map-screenshot-experimental-wrapper">
+                <span class="map-screenshot-experimental display-inline"></span>
+              </div>
+            </div>
+            <div class="position-absolute bottom-0 right-0">
+              <span class="font-body-xl text-bold" style="color: #162E51;">Drought.gov</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+
+
+
+
+
+
+
+
+
+<div class="usa-toast-container"></div>
+
+
+
+<div><ul class="custom-menu">
+  <li data-action="save">Save Map</li>
+</ul>
+</div></body></html>

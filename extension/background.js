@@ -7910,6 +7910,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // The offscreen half of the speed test. The panel runs the same prompt in
+  // its own visible window and compares, which is the only way to tell a slow
+  // machine from a throttled hidden document - and every number this
+  // extension had was measured in the hidden one.
+  if (msg.type === "llmBenchOffscreen") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const r = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmBench" });
+        sendResponse(r || { ok: false, error: "the offscreen document did not answer" });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "llmSwitchModel") {
     (async () => {
       await releaseOffscreenModel();
@@ -8388,7 +8405,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 stats: [], rows: [], source: "settings" } });
             return;
           } else {
-          await chrome.storage.local.set({ llmModelId: pick });
+          // Asked for by name, so this is a choice and not a fall-back. It
+          // clears the record of having been stepped down, which is also how
+          // somebody retries the model that was stepped down from.
+          await chrome.storage.local.set({ llmModelId: pick, llmDemotedFrom: null, llmDemotedWhy: null });
           await releaseOffscreenModel();
           const now = await modelStatus();
           respond({ ok: true, plannedBy: "settings",
@@ -8462,6 +8482,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const oinv = await readInventory();
           const flatO = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
           const said = flatO(wanted);
+          // A control named word for word beats a value found inside a list.
+          //
+          // weather.gov has a link called "Puerto Rico/Virgin Islands" and,
+          // elsewhere on the same page, a "Warnings By State" dropdown with
+          // an option called "Virgin Islands". "Click Puerto Rico/Virgin
+          // Islands" matched the option, set that unrelated dropdown, and
+          // reported it as done - a confident wrong action, which is worse
+          // than the miss it looks like, because the page really did change.
+          //
+          // Part of a name matching part of a value is a guess. The whole
+          // name matching a control is not, and it wins.
+          const LEAD_O = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|check|tick|open|show|hide)\s+/i;
+          const bareO = flatO(String(wanted).replace(LEAD_O, ""));
+          const namedExactly = ((oinv.ok && oinv.result && oinv.result.controls) || [])
+            .some((c) => {
+              if (c.disabled || c.hidden || c.confidence === "low") return false;
+              const l = flatO(c.label);
+              return !!l && (l === bareO || l === said);
+            });
           const saidWords = said.split(" ").filter(Boolean);
           // "clcik 30 days" is a click. The verb list is matched exactly
           // everywhere, so one typo in it left no path matching at all.
@@ -8486,7 +8525,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const distinct = [...new Set(hits.map((h) => h.text))];
           if (distinct.length === 1) {
             const holders = [...new Set(hits.map((h) => h.control.selector))];
-            if (holders.length === 1) instantOption = hits[0];
+            // Only where the value is part of what was said rather than all
+            // of it. "Select alaska" against an option called Alaska is the
+            // whole request, and a button also called Alaska does not make
+            // it ambiguous - both are that one word, and the list is the
+            // older and better-tested answer. "Click Puerto Rico/Virgin
+            // Islands" against an option called Virgin Islands is a fragment
+            // matching a fragment, and there a control wearing the whole
+            // name is plainly the thing meant.
+            const wholeThing = distinct[0] === bareO || distinct[0] === said;
+            if (holders.length === 1 && (wholeThing || !namedExactly)) instantOption = hits[0];
           }
         }
         if (instantOption) {

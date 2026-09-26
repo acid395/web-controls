@@ -1683,6 +1683,74 @@ else {
   }
 }
 
+// Three places stepped the model down and none of them wrote it anywhere.
+// The panel went on saying Llama 3.1 8B while Qwen2.5 1.5B did the work, the
+// stored choice still said 8B, and the next offscreen document loaded five
+// gigabytes, failed again, and stepped down again - a demotion paid for
+// every session. It is recorded now, and recorded as a demotion rather than
+// a preference, so it can be explained and undone.
+{
+  const bgu = loadBackground({});
+  runAsync(async () => {
+    const stored = () => new Promise((r) => bgu.chrome.storage.local.get(
+      ["llmModelId", "llmDemotedFrom", "llmDemotedWhy"], r));
+
+    // Asking for one by name is a choice, so it clears any demotion.
+    await bgu.chrome.storage.local.set({ llmModelId: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+      llmDemotedFrom: "Llama-3.1-8B-Instruct-q4f16_1-MLC", llmDemotedWhy: "was too slow" });
+    const page = loadPage("<!doctype html><html><body><a href=\"#a\">x</a></body></html>",
+      { url: "https://water.noaa.gov/" });
+    const bgv = loadBackground({ page });
+    await bgv.chrome.storage.local.set({ llmModelId: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+      llmDemotedFrom: "Llama-3.1-8B-Instruct-q4f16_1-MLC", llmDemotedWhy: "was too slow" });
+    bgv.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: true } : undefined);
+    await bgv.__ask({ type: "smartAsk", instruction: "use 8b" });
+    const after = await new Promise((r) => bgv.chrome.storage.local.get(
+      ["llmModelId", "llmDemotedFrom"], r));
+    check("asking for a model by name stores it",
+      after.llmModelId, "Llama-3.1-8B-Instruct-q4f16_1-MLC");
+    ensure("and clears the demotion, so it is retried rather than stepped over",
+      !after.llmDemotedFrom, after.llmDemotedFrom);
+    void stored;
+  });
+}
+
+// weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
+// on the same page, a "Warnings By State" dropdown with an option called
+// "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
+// set that unrelated dropdown and reported it done - worse than the miss it
+// looked like, because the page really did change. Part of a name matching
+// part of a value is a guess; the whole name matching a control is not.
+{
+  const bothHtml = `<!doctype html><html><body>
+    <a href="#pr">Puerto Rico/Virgin Islands</a>
+    <form><select name="st">
+      <option>Alabama</option><option>Virgin Islands</option><option>Wyoming</option>
+    </select></form>
+    </body></html>`;
+  for (const [what, instr, wantClicked, wantSelected] of [
+    ["a control named word for word", "click Puerto Rico/Virgin Islands", true, "Alabama"],
+    // With no control of that name, the value in the list is the answer.
+    ["a value only a list has", "select wyoming", false, "Wyoming"],
+  ]) {
+    const page = loadPage(bothHtml, { url: "https://www.weather.gov/" });
+    if (!page) continue;
+    let clicked = false;
+    page.document.querySelector('[href="#pr"]').addEventListener("click", () => {
+      clicked = true;
+      page.document.body.appendChild(page.document.createElement("hr"));
+    });
+    const bgw = loadBackground({ page });
+    bgw.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: true } : undefined);
+    runAsync(async () => {
+      await bgw.__ask({ type: "smartAsk", instruction: instr });
+      check(`${what}: the link is pressed`, clicked, wantClicked);
+      check(`${what}: and the unrelated list is left alone`,
+        page.document.querySelector("select").value, wantSelected);
+    });
+  }
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

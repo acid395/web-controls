@@ -23,6 +23,7 @@ const PAGES = {
   usgs: "https://waterdata.usgs.gov/monitoring-location/01646500/",
   noaa: "https://water.noaa.gov/",
   drought: "https://www.drought.gov/",
+  droughtmap: "https://droughtmonitor.unl.edu/CurrentMap.aspx",
   usgsstate: "https://waterdata.usgs.gov/nwis/rt",
   quakes: "https://earthquake.usgs.gov/earthquakes/map/",
   airnow: "https://www.airnow.gov/",

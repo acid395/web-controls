@@ -537,9 +537,60 @@ on("smartInstruction", "keydown", (e) => {
   }
 });
 
+// "speed test" - the same twelve tokens, measured here and there.
+//
+// Every number the extension had about how fast the model runs was taken in
+// the offscreen document, which is hidden, and Chrome throttles what it
+// cannot see. One measurement cannot tell a slow machine from a throttled
+// one; two can.
+async function runSpeedTest() {
+  const chosen = (modelChoice && modelChoice.value) || globalThis.WC_DEFAULT_MODEL;
+  const name = globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(chosen) : chosen;
+  setStatus(`speed test: asking ${name} for twelve tokens in the background...`, "ask");
+  const there = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "llmBenchOffscreen" }, (r) => {
+      void chrome.runtime.lastError;
+      resolve(r || { ok: false, error: "no answer from the background" });
+    });
+  });
+  setStatus(`speed test: now the same thing here, where the window is visible...`, "ask");
+  let here = null;
+  try {
+    const mod = await import("./panel-bench.js");
+    here = await mod.benchHere(chosen, (t) => setStatus(`speed test: ${t}`, "ask"));
+  } catch (e) {
+    here = { error: String((e && e.message) || e) };
+  }
+  clearStatus();
+  const rate = (x) => (x && x.decodePerS ? `${x.decodePerS.toFixed(1)} tok/s` : "unmeasured");
+  const secs = (x) => (x && x.ms ? `${(x.ms / 1000).toFixed(1)}s` : "-");
+  const lines = [
+    `${name}, twelve tokens:`,
+    `  hidden (offscreen):  ${there.ok ? `${secs(there)} · ${rate(there)}` : `failed - ${there.error}`}`,
+    `  visible (this panel): ${here && !here.error ? `${secs(here)} · ${rate(here)}` : `failed - ${here && here.error}`}`,
+  ];
+  if (there.ok && here && here.ms) {
+    const ratio = there.ms / here.ms;
+    lines.push(ratio >= 3
+      ? `  the visible window is ${ratio.toFixed(1)}x quicker - the offscreen document is being throttled,`
+        + " and that is the whole problem rather than the model or the machine"
+      : ratio <= 0.33
+        ? `  the hidden one is quicker, which is not what anyone expected - worth reporting`
+        : `  both about the same, so this machine is simply slow at running the model;`
+          + " moving it would not help");
+  }
+  logEcho(lines.join("\n"));
+}
+
 on("smartAsk", "click", () => {
   const instruction = document.getElementById("smartInstruction").value.trim();
   if (!instruction) return;
+  // Answered here, because it needs this window to be the visible one.
+  if (/^\s*speed\s*test\s*$/i.test(instruction)) {
+    document.getElementById("smartInstruction").value = "";
+    runSpeedTest().catch((e) => logEcho(`speed test failed: ${(e && e.message) || e}`));
+    return;
+  }
 
   // No echo and no direct render: background.js records the ask immediately,
   // and the storage listener above draws it. Rendering here as well would
@@ -680,6 +731,15 @@ function showModelState() {
   if (!modelState) return;
   chrome.runtime.sendMessage({ type: "llmStatus" }, (res) => {
     if (chrome.runtime.lastError || !res) { modelState.textContent = ""; return; }
+    // A model the extension chose, not the person. The picker kept showing
+    // Llama 3.1 8B while Qwen2.5 1.5B did the work, because stepping down
+    // changed what was running and told nobody.
+    chrome.storage.local.get(["llmDemotedFrom", "llmDemotedWhy"], (g) => {
+      if (!g || !g.llmDemotedFrom || !modelChoice) return;
+      const name = globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(g.llmDemotedFrom) : g.llmDemotedFrom;
+      modelState.textContent = `${name} ${g.llmDemotedWhy || "would not run here"}`
+        + ` - using ${WC_MODEL_NAME(modelChoice.value)}. Choose it again to retry.`;
+    });
     const want = modelChoice ? modelChoice.value : null;
     const have = res.model || null;
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
@@ -718,7 +778,10 @@ if (modelChoice) {
   modelChoice.addEventListener("change", () => {
     const chosen = modelChoice.options[modelChoice.selectedIndex].text;
     modelState.textContent = `switching to ${chosen.split(" - ")[0]}...`;
-    chrome.storage.local.set({ llmModelId: modelChoice.value }, () => {
+    // Chosen deliberately, so it is no longer a demotion - and picking the
+    // one that was stepped down from is how somebody asks to try it again.
+    chrome.storage.local.set({ llmModelId: modelChoice.value,
+      llmDemotedFrom: null, llmDemotedWhy: null }, () => {
       // The offscreen document keeps the weights it loaded, so it has to be
       // let go of before another model can take its place. Then it is warmed
       // straight away rather than on the next instruction: a 5GB download

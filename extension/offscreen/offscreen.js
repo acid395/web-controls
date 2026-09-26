@@ -385,21 +385,13 @@ function touchEngine() {
 // gigabyte, and this machine has already had Chrome fall over once.
 //
 // "Small" stopped being the whole story when the default became an eight
-// billion parameter model. This wants a gigabyte of its own, on top of the
-// planner's five, and it is loaded lazily - in the middle of an instruction,
-// on a card where running out of video memory would read as the model
-// refusing. Narrowing the control list is an optimisation and the caller
-// already copes with not getting it, so where the planner is large this
-// stands down rather than competing with it for the GPU.
+// billion parameter model: this wants a gigabyte of its own on top of the
+// planner's five. Standing it down was tried and was worse - it is the only
+// thing that narrows a long page, and without it a 163-control page went to
+// the model whole. It is handed back the moment it has answered instead.
 const EMBED_MODEL_ID = "snowflake-arctic-embed-s-q0f32-MLC";
-const EMBED_VRAM_MB = 1023;
-const BIG_PLANNER_MB = 4000;
 let embedPromise = null;
 let embedReady = false;
-function embedderWouldCrowdThePlanner() {
-  const planner = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(MODEL_ID) : 0;
-  return planner >= BIG_PLANNER_MB;
-}
 // Tried, not refused. Standing this down beside a large planner removed the
 // only thing that narrows a long page, and a 163-control page then went to
 // the 8B whole: forty-seven seconds and an unusable reply, which is worse
@@ -442,6 +434,29 @@ function getEmbedder(onProgress) {
 
 let fellBackTo = null;   // reported, so a card never silently names the wrong one
 
+// Stepping down, once, and remembered.
+//
+// Three places changed MODEL_ID and none of them wrote it anywhere, so the
+// panel went on saying Llama 3.1 8B while Qwen2.5 1.5B was doing the work,
+// the stored choice still said 8B, and the next offscreen document loaded
+// five gigabytes, failed again and stepped down again. A demotion nobody
+// records is a demotion paid for every session.
+//
+// Recorded as a demotion rather than a preference, so the panel can say it
+// was not the person's choice and "use 8b" can undo it.
+async function demoteTo(small, from, why) {
+  fellBackTo = { from, to: small, why };
+  MODEL_ID = small;
+  try {
+    await chrome.storage.local.set({ llmModelId: small, llmDemotedFrom: from, llmDemotedWhy: why });
+  } catch (e) { /* the switch still holds for this session */ }
+  await releaseEngine();
+  chrome.runtime.sendMessage({
+    type: "llmProgress",
+    text: `${WC_MODEL_NAME(from)} ${why} - using ${WC_MODEL_NAME(small)}. Say "use 8b" to put it back`,
+  }).catch(() => {});
+}
+
 // Let go of the planner, so the next request builds whichever one is chosen.
 async function releaseEngine() {
   if (!enginePromise) return;
@@ -454,6 +469,24 @@ async function releaseEngine() {
   } catch (e) { /* already gone */ }
 }
 
+// A shorter context, where the weights are already large.
+//
+// The 8B is 5001MB of weights and, separately, a key-value cache sized by
+// the context window: thirty-two layers, eight key-value heads, 128 wide,
+// two bytes a number, twice over for keys and values - about 128KB a token,
+// so 4096 tokens is another half a gigabyte. That is half a gigabyte of the
+// scarcest thing on the machine, held for a window nothing here fills: the
+// prompt is a few hundred tokens once the shortlist has narrowed the page,
+// and twenty-five hundred at its very worst.
+//
+// Only for the large ones. A 1.5B's cache is small enough that trimming it
+// buys nothing and could truncate a long page for no reason.
+const LARGE_CONTEXT = 3072;
+function chatOptsFor(id) {
+  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(id) : 0;
+  return mb >= 4000 ? { context_window_size: LARGE_CONTEXT } : undefined;
+}
+
 function buildEngine(id, onProgress) {
   return CreateMLCEngine(id, {
     initProgressCallback: (report) => {
@@ -463,7 +496,7 @@ function buildEngine(id, onProgress) {
       lastProgress = String((report && report.text) || "").slice(0, 120);
       if (onProgress) onProgress(report);
     },
-  });
+  }, chatOptsFor(id));
 }
 
 function getEngine(onProgress) {
@@ -484,6 +517,10 @@ function getEngine(onProgress) {
         fellBackTo = { from: id, to: small, why: String((err && err.message) || err).slice(0, 160) };
         lastProgress = `${id} would not load here - falling back to ${small}`;
         MODEL_ID = small;
+        // Recorded, but not released: this is inside building the engine, and
+        // it cannot let go of the one it is in the middle of constructing.
+        chrome.storage.local.set({ llmModelId: small, llmDemotedFrom: id,
+          llmDemotedWhy: "would not load on this machine" }).catch(() => {});
         return buildEngine(small, onProgress);
       }))
       .then((engine) => {
@@ -773,9 +810,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const from = MODEL_ID;
           const small = globalThis.WC_FALLBACK_MODEL;
           const allowed = Math.round(inferenceTimeoutMs() / 1000);
-          fellBackTo = { from, to: small, why: `${from} could not finish a decision here` };
-          MODEL_ID = small;
-          await releaseEngine();
+          await demoteTo(small, from, `could not finish a decision in ${allowed}s here`);
           sendResponse({ ok: false, switchedTo: small, from,
             error: `${from} could not finish one decision in ${allowed}s on this machine,`
               + ` so it has been switched to ${WC_MODEL_NAME(small)}.`
@@ -956,13 +991,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const small = globalThis.WC_FALLBACK_MODEL;
         if (!small || MODEL_ID === small) return;
         const from = MODEL_ID;
-        fellBackTo = { from, to: small, why: `${from} is far too slow on this machine` };
-        MODEL_ID = small;
-        await releaseEngine();
-        chrome.runtime.sendMessage({
-          type: "llmProgress",
-          text: `${WC_MODEL_NAME(from)} runs far too slowly here - using ${WC_MODEL_NAME(small)}`,
-        }).catch(() => {});
+        await demoteTo(small, from, "runs far too slowly on this machine");
         // Loaded straight away, so the first instruction does not pay for it.
         getEngine(() => {}).catch(() => {});
       }
