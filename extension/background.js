@@ -4704,6 +4704,28 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
   // because nothing had loaded, and nothing loaded because status said not
   // ready. Creating it here also begins the download, which is the thing
   // that has to happen first anyway.
+  // The panel, if it is there. Asking the hidden document for its status
+  // created it and warmed it - so a second copy of the model loaded in the
+  // throttled window every time anything checked, competing with the panel's
+  // copy for the same card. Two models of two gigabytes each, on a machine
+  // with eight, is why the panel timed out at 180s in a window that had
+  // measured 13 tokens a second minutes earlier.
+  try {
+    const fromPanel = await chrome.runtime.sendMessage({ target: "panel", type: "panelStatus" });
+    if (fromPanel && fromPanel.ok) {
+      const value = {
+        ready: !!fromPanel.ready,
+        loading: !!fromPanel.loading,
+        started: !!(fromPanel.ready || fromPanel.loading),
+        hasGpu: fromPanel.hasGpu !== false,
+        model: fromPanel.model || WC_DEFAULT_MODEL,
+        where: "panel",
+      };
+      modelStatusCache = { at: Date.now(), value };
+      return value;
+    }
+  } catch (e) { /* no panel: the hidden document answers, below */ }
+
   try {
     await ensureOffscreenDocument();
     if (!warmedOnce) {
@@ -4795,6 +4817,16 @@ function cosine(a, b) {
 
 async function embedTexts(texts) {
   await ensureOffscreenDocument();
+  // The panel first, for the same reason the planner is there: it is the
+  // window that is not throttled, and asking the hidden one would create the
+  // document whose second copy of the weights this arrangement exists to
+  // avoid. Losing the shortlist is not a small thing - it is the difference
+  // between a few hundred tokens of prompt and a few thousand.
+  try {
+    const fromPanel = await chrome.runtime.sendMessage(
+      { target: "panel", type: "panelEmbed", texts });
+    if (fromPanel && fromPanel.ok && fromPanel.vectors) return fromPanel.vectors;
+  } catch (e) { /* no panel: the hidden document answers, below */ }
   const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmEmbed", texts })
     .catch(() => null);
   return res && res.ok ? res.vectors : null;
@@ -4897,10 +4929,19 @@ async function askModelForStep(payload) {
       panelHasModel = true;
     }
     try {
+      // The stored choice, not a cached status. The cache can hold whatever
+      // was loaded before a switch, and handing that to the panel makes it
+      // load the model somebody just switched away from - which is how a
+      // run that had chosen the 3B timed out at 180 seconds, the 8B's
+      // allowance, in a window measured at 13 tokens a second.
+      const chosen = await chrome.storage.local.get("llmModelId")
+        .then((g) => g.llmModelId).catch(() => null);
+      const useId = (chosen && globalThis.WC_MODEL_IDS.includes(chosen))
+        ? chosen : WC_DEFAULT_MODEL;
       const said = await chrome.runtime.sendMessage({
         target: "panel", type: "panelStep", prompt,
-        model: (modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL,
-        timeoutMs: turnBudgetMs(),
+        model: useId,
+        timeoutMs: turnBudgetFor(useId),
       });
       if (said && said.ok) {
         // Parsed here. The caller reads .step, and handing back raw text
@@ -7037,6 +7078,9 @@ async function isLocalModelEnabled() {
 // later browser launch.
 async function warmModel() {
   if (!(await isLocalModelEnabled())) return; // no download, no GPU, until asked for
+  // Not while the panel is open. It hosts the model now, and warming the
+  // hidden one as well puts two copies of the same weights on one card.
+  if (await panelIsOpen()) return;
   try {
     await ensureOffscreenDocument();
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmWarm" });

@@ -73,3 +73,29 @@ export async function step(modelId, prompt, { timeoutMs = 45000 } = {}, onProgre
     },
   };
 }
+
+/* The shortlist, in the same window as the planner.
+ *
+ * Narrowing a page to the dozen controls closest to the request is what
+ * keeps a prompt at a few hundred tokens instead of a few thousand, and the
+ * embedder that does it lived only in the offscreen document. When that
+ * document stopped being created - because it was loading a second copy of
+ * the planner and starving the card - the shortlist went with it, silently.
+ * A 475-control page then went to the model whole, and "explain this page"
+ * took 88 seconds in a window measured at 13 tokens a second.
+ *
+ * arctic-embed-s is 1023MB and answers once per instruction.
+ */
+const EMBED_ID = "snowflake-arctic-embed-s-q0f32-MLC";
+let embedPromise = null;
+
+export async function embed(texts) {
+  if (!embedPromise) {
+    const { CreateMLCEngine } = await import("../offscreen/vendor/web-llm.js");
+    embedPromise = CreateMLCEngine(EMBED_ID, {})
+      .catch((err) => { embedPromise = null; throw err; });
+  }
+  const engine = await embedPromise;
+  const out = await engine.embeddings.create({ input: texts });
+  return (out && out.data ? out.data : []).map((d) => d.embedding);
+}

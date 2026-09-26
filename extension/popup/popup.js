@@ -596,6 +596,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg.type === "panelEmbed") {
+    (async () => {
+      try {
+        const mod = await panelModelModule();
+        sendResponse({ ok: true, vectors: await mod.embed(msg.texts || []) });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
+  if (msg.type === "panelStatus") {
+    (async () => {
+      try {
+        const mod = await panelModelModule();
+        const st = mod.status();
+        sendResponse({ ok: true, ...st, hasGpu: "gpu" in navigator });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
   if (msg.type === "panelRelease") {
     (async () => {
       try { const mod = await panelModelModule(); await mod.release(); } catch (e) { /* nothing held */ }

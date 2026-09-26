@@ -1941,6 +1941,38 @@ else {
     "both could be loaded at once");
   ensure("the panel's reply is parsed into a step, not passed on as text",
     /WC_FIRST_JSON_OBJECT\(said\.text/.test(worker), "raw text reaches the caller");
+  // The panel is told which model from the stored choice, not from a cached
+  // status. The cache holds whatever was loaded before a switch, and handing
+  // that over makes the panel load the model somebody just switched away
+  // from - which is how a run that had chosen the 3B timed out at 180
+  // seconds, the 8B's allowance, in a window measured at 13 tokens a second.
+  ensure("and it is told which model from the stored choice",
+    /chosen && globalThis\.WC_MODEL_IDS\.includes\(chosen\)/.test(worker),
+    "the panel is told from a cache");
+  // Asking for status must not wake the hidden document. It created it and
+  // warmed it, so a second copy of the weights loaded in the throttled
+  // window every time anything checked - two models on one card.
+  const statusAt = worker.indexOf("async function modelStatus");
+  const statusFn = worker.slice(statusAt, statusAt + 4000);
+  const asksPanel = statusFn.indexOf("panelStatus");
+  const wakesHidden = statusFn.indexOf("ensureOffscreenDocument");
+  ensure("checking status asks the panel at all", asksPanel > -1, "it never asks the panel");
+  // The shortlist has to come from wherever the planner is. It lived only in
+  // the offscreen document, and when that document stopped being created -
+  // to stop it loading a second copy of the weights - narrowing went with
+  // it, silently. A 475-control page then went to the model whole and
+  // "explain this page" took 88 seconds in a window measured at 13 tokens a
+  // second. Nothing failed; the prompt just quietly grew tenfold.
+  const embedAt = worker.indexOf("async function embedTexts");
+  const embedFn = worker.slice(embedAt, embedAt + 1200);
+  ensure("the shortlist can be built where the planner is",
+    /panelEmbed/.test(embedFn), "embedding only ever asks the hidden document");
+  ensure("and it asks there before waking the hidden document",
+    embedFn.indexOf("panelEmbed") < embedFn.indexOf('target: "offscreen"'),
+    "the hidden document is asked first");
+  ensure("and it asks before waking the hidden one",
+    wakesHidden === -1 || asksPanel < wakesHidden,
+    `panel at ${asksPanel}, hidden at ${wakesHidden}`);
 
   // One prompt and one parser, shared, so the two windows cannot drift.
   const buildStepPrompt = loadOffscreenHelper("buildStepPrompt");
