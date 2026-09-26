@@ -1952,6 +1952,43 @@ else {
   check("and the shared parser still finds the object", parsed && parsed.name, "Gage height");
 }
 
+// A 3B replied {"why":"selecting a state",name":"Alaska","do":"select"} and
+// the whole instruction failed. The answer was entirely correct - the right
+// control, the right action - and one opening quote was missing from a key.
+// The model had read the page and chosen properly; a parser threw it away
+// over a typo, which is the most damaging pattern here: the model is right
+// and the layer around it discards the answer.
+//
+// The stray quote also breaks the scan that finds the object, because it
+// opens a string that runs to the end of the text - so it looked
+// unterminated rather than malformed, and there was nothing to repair.
+{
+  const firstJsonObject = loadOffscreenHelper("firstJsonObject");
+  for (const [what, text, want] of [
+    ["a key missing its opening quote",
+      '{"why":"selecting a state",name":"Alaska","do":"select"}', "Alaska"],
+    ["keys with no quotes at all", '{name:"Alaska",do:"select"}', "Alaska"],
+    ["a trailing comma", '{"name":"Alaska","do":"select",}', "Alaska"],
+    ["prose either side", 'sure thing {"name":"Alaska","do":"select"} done', "Alaska"],
+    ["and valid json, untouched", '{"name":"Alaska","do":"select"}', "Alaska"],
+  ]) {
+    const got = firstJsonObject(text);
+    check(`${what} is still read`, got && got.name, want);
+  }
+  // Repair is not invention. Something with no answer in it is still refused,
+  // because a guess presented as the model's decision is worse than nothing.
+  for (const [what, text] of [
+    ["an object that never closes", '{"name":'],
+    ["a sentence with no object", "I think you should click Alaska"],
+    ["nothing at all", ""],
+  ]) {
+    ensure(`${what} is refused`, firstJsonObject(text) === null, firstJsonObject(text));
+  }
+  // Braces inside an answer are not structure.
+  const withBraces = firstJsonObject('{"do":"finish","answer":"use {this} form"}');
+  check("braces inside an answer survive", withBraces && withBraces.answer, "use {this} form");
+}
+
 section("the model drives");
 // The keyword scorer decides in one shot from words alone and cannot revise.
 // A loop can act, read what came back, and choose differently - which is the

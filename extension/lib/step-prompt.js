@@ -175,10 +175,52 @@ function firstJsonObject(text) {
     if (ch === '"') inString = true;
     else if (ch === "{") depth++;
     else if (ch === "}" && --depth === 0) {
-      try { return JSON.parse(text.slice(start, i + 1)); } catch (e) { return null; }
+      const slice = text.slice(start, i + 1);
+      const ok = (() => { try { return JSON.parse(slice); } catch (e) { return null; } })();
+      return ok || repairJson(slice);
     }
   }
-  return null;
+  // The walk never closed. A missing quote does that: in
+  // {"why":"...",name":"Alaska",...} the stray quote opens a string that
+  // runs to the end, so the closing brace is never seen as one and the
+  // object looks unterminated rather than malformed. Repair what is there,
+  // up to the last brace in the text.
+  const lastBrace = text.lastIndexOf("}");
+  return lastBrace > start ? repairJson(text.slice(start, lastBrace + 1)) : null;
+}
+
+/* One character short of right.
+ *
+ * A 3B replied {"why":"selecting a state",name":"Alaska","do":"select"} -
+ * the answer entirely correct, one opening quote missing from a key - and it
+ * was thrown away as unusable. The model had understood the page and chosen
+ * the right control; a parser gave up over a typo. That is the most damaging
+ * pattern this project has: the model is right and the layer around it
+ * discards the answer.
+ *
+ * Small models drop and double punctuation. Repairing that is not guessing
+ * at meaning - the structure says where a quote belongs - and anything that
+ * still will not parse is still refused.
+ */
+function repairJson(slice) {
+  const tries = [
+    // A key missing its opening quote: ,name": -> ,"name":
+    (t) => t.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)"\s*:/g, '$1"$2":'),
+    // A key with no quotes at all: ,name: -> ,"name":
+    (t) => t.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":'),
+    // Single quotes where double belong.
+    (t) => t.replace(/'/g, '"'),
+    // A trailing comma before the close.
+    (t) => t.replace(/,\s*([}\]])/g, "$1"),
+  ];
+  // Each repair alone, then all of them together: one is usually enough, and
+  // applying them all to something already valid can make it worse.
+  for (const fix of tries) {
+    try { return JSON.parse(fix(slice)); } catch (e) { /* next */ }
+  }
+  try {
+    return JSON.parse(tries.reduce((t, fix) => fix(t), slice));
+  } catch (e) { return null; }
 }
 
 globalThis.WC_FIRST_JSON_OBJECT = firstJsonObject;

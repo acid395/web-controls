@@ -2587,6 +2587,12 @@ function meaningfulWords(text) {
 // until the layer is on, where "click the button" is done when it is pressed.
 const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|off)|switch\s+(on|off))\b/i;
 
+// Asking to be told something, rather than asking for something to be done.
+// These end in an answer or in nothing; they never end in a list of buttons,
+// and "explain this data" came back offering five links to press.
+const ASKING_TO_READ =
+  /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
+
 function scoreControl(control, words, phrase, opts = {}) {
   const label = foldAccents(control.label || "").toLowerCase();
   if (!label) return 0;
@@ -4858,12 +4864,23 @@ async function rankByMeaning(goal, controls) {
 // how the first attempt to measure this came back saying the panel was slow
 // too, which cost most of a day.
 let panelHasModel = false;
+// Which window answered the last decision, and why not the other one.
+//
+// Instrumented rather than reasoned about. The panel was moved to twice and
+// used neither time - once because the prompt was built in the wrong place,
+// once because it called itself hidden - and both times the only evidence
+// was that instructions were still slow. A card that says where the decision
+// came from turns that into one line instead of an afternoon.
+let lastDecisionBy = null;
 async function panelIsOpen() {
   try {
     const said = await chrome.runtime.sendMessage({ target: "panel", type: "panelPing" });
-    return !!(said && said.ok && said.visible);
+    if (said && said.ok) return true;
+    lastDecisionBy = `panel answered but not ok: ${JSON.stringify(said).slice(0, 60)}`;
+    return false;
   } catch (e) {
-    return false;   // nothing listening: the panel is shut
+    lastDecisionBy = `no panel listening (${String((e && e.message) || e).slice(0, 50)})`;
+    return false;
   }
 }
 
@@ -4900,11 +4917,16 @@ async function askModelForStep(payload) {
           modelStatusCache = { at: Date.now(),
             value: { ...(modelStatusCache.value || {}), ready: true, model: said.model } };
         }
+        lastDecisionBy = "the panel";
         return { ok: true, step: parsed, cost: said.cost, ms: said.ms,
           raw: String(said.text || "").slice(0, 300) };
       }
-      if (said && said.error) return { ok: false, error: said.error };
+      if (said && said.error) {
+        lastDecisionBy = `the panel, which failed: ${String(said.error).slice(0, 60)}`;
+        return { ok: false, error: said.error };
+      }
     } catch (e) {
+      lastDecisionBy = `the panel went away: ${String((e && e.message) || e).slice(0, 50)}`;
       panelHasModel = false;   // it closed mid-decision; fall back below
     }
   }
@@ -4915,6 +4937,8 @@ async function askModelForStep(payload) {
     panelHasModel = false;
   }
   await ensureOffscreenDocument();
+  if (!lastDecisionBy) lastDecisionBy = "the hidden document";
+  else lastDecisionBy += " - so the hidden document, which Chrome throttles";
   const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStep", ...payload });
   if (!res) return { ok: false, error: "the model did not answer - it may still be loading" };
   return res;
@@ -8283,6 +8307,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // independent of whether any popup was still open to receive it.
       // Recorded before the work starts, so a popup opened mid-ask sees it
       // running rather than seeing nothing.
+      lastDecisionBy = null;
       const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       recordAsk(askId, msg.instruction, { status: "running" });
 
@@ -8364,6 +8389,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The shape of the wait, not just its length. A turn spent reading
         // the prompt and a turn spent writing the answer look identical from
         // outside and want different fixes.
+        // Where the decision came from. The panel is seventy-nine times
+        // quicker than the hidden document on the machine that measured it,
+        // and twice now the panel has been wired up and silently not used -
+        // with nothing to show for it but instructions still being slow.
+        if (display && lastDecisionBy && (res.plannedBy === "model" || modelTried)) {
+          display.stats = [...(display.stats || [])];
+          display.stats.push({ label: "decided in", value: String(lastDecisionBy).slice(0, 70) });
+        }
         if (display && lastTurnCost && res.plannedBy === "model") {
           const c = lastTurnCost;
           display.stats = [...(display.stats || [])];
@@ -10406,7 +10439,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "What does this page say" is a different request from "click
         // something on it", and the control matcher would only ever find a
         // button whose label happened to share a word.
-        if (/\bread\b.*\b(page|this|site)\b|\bwhat('?s| is| does)\b.*\b(page|shown|displayed|say)\b|\bon (this|the) (page|screen)\b|\bsummari[sz]e\b/i.test(wanted)) {
+        // "Explain" belongs here with "summarise".
+        //
+        // Measured, same page, same broken model: "summarize this page" came
+        // back with the river, the gauge and its figures, and "explain this
+        // data" came back with nothing. One word apart, asking the same
+        // thing, and only one of them fell back to reading the page. Where
+        // the model cannot answer, the page's own numbers are not an
+        // interpretation but they are not nothing either.
+        if (/\bread\b.*\b(page|this|site)\b|\bwhat('?s| is| does)\b.*\b(page|shown|displayed|say)\b|\bon (this|the) (page|screen)\b|\bsummari[sz]e\b|^\s*(?:please\s+)?explain\b.*\b(page|data|this|chart|graph|table|it)\b/i.test(wanted)) {
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           if (read.ok) {
             const d = read.result;
@@ -10643,6 +10684,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 });
                 return;
               }
+            }
+            // A question is not a choice of buttons. "Explain this data"
+            // came back as "Which one did you mean?" with five links to
+            // press, one of them a map control and one a provisional-data
+            // notice. Nothing in that list answers the question, and
+            // offering it is the control matcher answering something that
+            // was never addressed to it.
+            if (ASKING_TO_READ.test(wanted)) {
+              respond({
+                ok: false,
+                error: "I could not read an answer to that from this page.",
+                display: {
+                  title: "nothing here answers that",
+                  subtitle: "this page was read, and nothing in it answers the question",
+                  stats: [], rows: [],
+                  note: "the model reads and explains; it could not this time."
+                    + " Pressing one of this page's controls would not answer it either",
+                  source: "this page",
+                },
+              });
+              return;
             }
             respond({
               ok: false,
