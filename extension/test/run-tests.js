@@ -2690,6 +2690,59 @@ else {
   }
 }
 
+// A live run has to be the same experiment as the offline one, or the two
+// numbers cannot be put beside each other. The prompt set is frozen in the
+// extension for exactly that reason, and a measurement that cannot be
+// re-derived from what it recorded is not a measurement.
+if (typeof require === "undefined") skip("the live benchmark is reproducible", "no require");
+else {
+  const fsb = require("fs"), pathb = require("path");
+  const worker = fsb.readFileSync(pathb.join(__dirname, "..", "background.js"), "utf8");
+  const panel = fsb.readFileSync(pathb.join(__dirname, "..", "popup", "popup.js"), "utf8");
+  require(pathb.join(__dirname, "..", "lib", "bench-prompts.js"));
+  const sets = globalThis.WC_BENCH_PROMPTS || {};
+
+  const sites = Object.keys(sets);
+  ensure("the prompt set ships with the extension", sites.length >= 5, sites.join(","));
+  let total = 0;
+  for (const s2 of sites) total += (sets[s2].prompts || []).length;
+  check("and it is the same 120 prompts the offline table reports", total, 120);
+  // Every prompt carries what the offline pass did with it, so a live result
+  // can be compared row by row and not only in total.
+  const missing = [];
+  for (const s2 of sites) {
+    for (const p2 of sets[s2].prompts) {
+      if (typeof p2.offline !== "boolean" || !p2.say || !p2.kind) missing.push(`${s2}:${p2.say}`);
+    }
+  }
+  check("each prompt records its offline outcome to compare against", missing.length, 0);
+
+  // The numbers have to survive as numbers. Everything needed to write a run
+  // up existed only inside strings formatted for a card - "258 tok @ 53/s" -
+  // and a figure read back out of its own presentation is one nobody can
+  // re-derive.
+  ensure("a run reports structured metrics, not card text",
+    /res\.metrics = \{/.test(worker), "no metrics object is attached");
+  for (const field of ["tookMs", "model", "decidedIn", "promptTokens", "replyTokens",
+    "decodePerS", "plannedBy", "route", "url"]) {
+    ensure(`metrics carry ${field}`, new RegExp(`${field}:`).test(worker.slice(
+      worker.indexOf("res.metrics = {"), worker.indexOf("res.metrics = {") + 2200)), field);
+  }
+
+  // Each prompt from a clean page. Half of these press links, so without a
+  // reset every row after the first would be measured against whatever page
+  // the previous one navigated to.
+  ensure("the live run reloads the page between prompts",
+    /async function resetTo/.test(panel) && /await resetTo\(meta\.url\)/.test(panel),
+    "prompts would run on whatever the last one navigated to");
+  // A run whose conditions are not recorded cannot be repeated.
+  for (const field of ["extensionVersion", "model", "temperature", "gpu", "userAgent", "startedAt"]) {
+    ensure(`the run records ${field}`, new RegExp(`${field}[,:]`).test(panel), field);
+  }
+  ensure("and it refuses to run while the model is still loading",
+    /if \(!status\.ready\)/.test(panel), "a run with the model loading measures the download");
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting

@@ -721,6 +721,144 @@ async function runSpeedTest() {
   logEcho(lines.join("\n"));
 }
 
+/* The same prompts, live, with the model on.
+ *
+ * Everything measured so far replays captured HTML in jsdom with the model
+ * switched off - which measures the grounding layer and says nothing about
+ * the thing that actually ships. The prompt set is frozen in
+ * lib/bench-prompts.js precisely so this run and that one are the same
+ * experiment, and the only difference between the two numbers is the
+ * condition being tested rather than a difference in what was asked.
+ *
+ * Every prompt starts from a fresh load of the site. Half of these press
+ * links, and without a reset the second prompt would run on whatever page
+ * the first navigated to - each row would be measured against a different
+ * document and the run would mean nothing. The offline harness gets this
+ * for free by building a new page per case; here it costs a navigation.
+ *
+ * Results are written out as JSON rather than read off cards, because a
+ * figure transcribed from a screenshot is not a measurement anybody can
+ * re-derive.
+ */
+function benchSiteFor(url) {
+  const sets = globalThis.WC_BENCH_PROMPTS || {};
+  const host = (() => { try { return new URL(url).host; } catch (e) { return ""; } })();
+  for (const [site, meta] of Object.entries(sets)) {
+    try { if (new URL(meta.url).host === host) return { site, meta }; } catch (e) { /* skip */ }
+  }
+  return null;
+}
+
+async function resetTo(url) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) throw new Error("no active tab");
+  await chrome.tabs.update(tab.id, { url });
+  // Loaded, then given a moment to build itself: several of these pages
+  // assemble their controls in JavaScript after the document is complete,
+  // and reading one mid-build measures the wait rather than the page.
+  await new Promise((resolve) => {
+    const began = Date.now();
+    const done = (id, info) => {
+      if (id !== tab.id || info.status !== "complete") return;
+      chrome.tabs.onUpdated.removeListener(done);
+      setTimeout(resolve, 1200);
+    };
+    chrome.tabs.onUpdated.addListener(done);
+    setTimeout(() => { try { chrome.tabs.onUpdated.removeListener(done); } catch (e) {} resolve(); },
+      Math.max(4000, 20000 - (Date.now() - began)));
+  });
+  return tab.id;
+}
+
+async function runBench() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const found = benchSiteFor((tab && tab.url) || "");
+  if (!found) {
+    logEcho("bench: no frozen prompt set for this site."
+      + ` Open one of: ${Object.values(globalThis.WC_BENCH_PROMPTS || {}).map((m) => {
+        try { return new URL(m.url).host; } catch (e) { return "?"; } }).join(", ")}`);
+    return;
+  }
+  const { site, meta } = found;
+  const status = await new Promise((r) => chrome.runtime.sendMessage({ type: "llmStatus" }, (x) => {
+    void chrome.runtime.lastError; r(x || {});
+  }));
+  if (!status.ready) {
+    logEcho("bench: the model is not loaded yet - wait for \"is ready\" under the picker,"
+      + " because a run with it still loading measures the download.");
+    return;
+  }
+
+  const rows = [];
+  const began = Date.now();
+  setStatus(`bench: 0/${meta.prompts.length} on ${site}`, "test");
+  for (let i = 0; i < meta.prompts.length; i++) {
+    const p = meta.prompts[i];
+    setStatus(`bench: ${i + 1}/${meta.prompts.length} - ${p.say.slice(0, 40)}`, "test");
+    let res = null;
+    try {
+      await resetTo(meta.url);
+      res = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve({ ok: false, error: "no answer in 240s" }), 240000);
+        chrome.runtime.sendMessage({ type: "smartAsk", instruction: p.say }, (r) => {
+          void chrome.runtime.lastError; clearTimeout(timer); resolve(r || { ok: false, error: "no response" });
+        });
+      });
+    } catch (e) {
+      res = { ok: false, error: String((e && e.message) || e) };
+    }
+    rows.push({
+      i, site, say: p.say, kind: p.kind, on: p.on, want: p.want,
+      offlineLanded: p.offline,
+      // Whatever the run reported about itself. Not re-derived here: this
+      // file's job is to collect, and judging a row from inside the thing
+      // being judged is how a benchmark flatters itself.
+      metrics: (res && res.metrics) || { ok: res && res.ok !== false, error: res && res.error },
+    });
+    logEcho(`bench ${i + 1}/${meta.prompts.length}: ${p.say.slice(0, 44)} -> `
+      + `${rows[i].metrics.ok ? "ok" : "no"}`
+      + `${rows[i].metrics.plannedBy ? ` (${rows[i].metrics.plannedBy})` : ""}`);
+  }
+
+  const gpu = (status && status.gpu) || null;
+  const out = {
+    what: "web-controls live benchmark, model on, in Chrome",
+    site,
+    url: meta.url,
+    startedAt: new Date(began).toISOString(),
+    tookMs: Date.now() - began,
+    extensionVersion: (chrome.runtime.getManifest() || {}).version,
+    model: status.model || null,
+    modelWhere: status.where || null,
+    // Fixed at zero in panel-model.js, recorded so a reader does not have to
+    // take that on trust.
+    temperature: 0,
+    gpu,
+    userAgent: navigator.userAgent,
+    promptSetSize: meta.prompts.length,
+    rows,
+  };
+  const landed = rows.filter((r) => r.metrics && r.metrics.ok).length;
+  logEcho(`bench done: ${landed}/${rows.length} on ${site}, `
+    + `${((Date.now() - began) / 1000 / 60).toFixed(1)} min`);
+  clearStatus();
+
+  try {
+    const blob = new Blob([JSON.stringify(out, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `web-controls-bench-${site}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    logEcho(`bench: saved ${a.download}`);
+  } catch (e) {
+    // A download that will not start must not lose the run.
+    logEcho(`bench: could not save a file (${(e && e.message) || e}) - raw JSON follows`);
+    logEcho(JSON.stringify(out));
+  }
+}
+
 on("smartAsk", "click", () => {
   const instruction = document.getElementById("smartInstruction").value.trim();
   if (!instruction) return;
@@ -728,6 +866,11 @@ on("smartAsk", "click", () => {
   if (/^\s*speed\s*test\s*$/i.test(instruction)) {
     document.getElementById("smartInstruction").value = "";
     runSpeedTest().catch((e) => logEcho(`speed test failed: ${(e && e.message) || e}`));
+    return;
+  }
+  if (/^\s*bench\s*$/i.test(instruction)) {
+    document.getElementById("smartInstruction").value = "";
+    runBench().catch((e) => logEcho(`bench failed: ${(e && e.message) || e}`));
     return;
   }
 

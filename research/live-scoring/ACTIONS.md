@@ -3,10 +3,19 @@
 120 actions across 5 sites, every one of them run.
 
 Each action is derived from that page's own controls, so the coverage is the
-site's rather than ours. **The model is switched off for all of it** - this is
-the grounding layer alone, which is what runs on any machine. A row that lands
-here lands regardless of which model is loaded, or whether one is loaded at
-all; model size only decides the rows this layer cannot reach.
+site's rather than ours.
+
+**This is one half of the measurement, and the lesser half.** The model is
+switched off for all of it, so what is reported here is the grounding layer
+alone - deterministic, and re-runnable by anyone with the repo. It is not the
+system: the thing that ships decides with a model loaded, and a component
+measured on its own does not stand in for that. The same 120 prompts are
+frozen in `extension/lib/bench-prompts.js` so they can be run live, in
+Chrome, with the model on - see `LIVE-BENCH.md`. Put the two columns beside
+each other; neither replaces the other.
+
+What this half does establish is a floor. A row that lands here lands with any
+model or none, so model size only decides the rows this layer cannot reach.
 
 ## What this is not
 

@@ -9055,6 +9055,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         const took = Date.now() - askBegan;
+        /* The same facts as the card's stats, as numbers.
+         *
+         * Everything a run needs to be written up - which model answered,
+         * where it decided, how long it took, how many tokens at what rate -
+         * existed only as strings formatted for a card: "258 tok @ 53/s".
+         * Reading a result back out of its own presentation is how a table
+         * in a paper ends up with a number nobody can re-derive, so the
+         * measurements travel separately from the words describing them.
+         */
+        res.metrics = {
+          instruction: String(msg.instruction || ""),
+          at: new Date().toISOString(),
+          tookMs: took,
+          ok: res.ok !== false,
+          plannedBy: res.plannedBy || null,
+          modelTried,
+          model: modelUsed || null,
+          decidedIn: lastDecisionBy || null,
+          modelSaid: modelSaid ? String(modelSaid).slice(0, 300) : null,
+          error: res.error ? String(res.error).slice(0, 200) : null,
+          answer: (res.display && res.display.answer) ? String(res.display.answer).slice(0, 800) : null,
+          turnMs: lastTurnMs || null,
+          promptTokens: (lastTurnCost && lastTurnCost.promptTokens) ?? null,
+          replyTokens: (lastTurnCost && lastTurnCost.replyTokens) ?? null,
+          prefillPerS: (lastTurnCost && lastTurnCost.prefillPerS) ?? null,
+          decodePerS: (lastTurnCost && lastTurnCost.decodePerS) ?? null,
+          firstTokenS: (lastTurnCost && lastTurnCost.firstTokenS) ?? null,
+          route: (() => { try { return (route && route.global) || null; } catch (e) { return null; } })(),
+          url: (() => { try { return (tab && tab.url) || null; } catch (e) { return null; } })(),
+          steps: Array.isArray(res.steps) ? res.steps.length : null,
+          changed: !!(res.verified && res.verified.changed),
+        };
         if (display && took > 1500) {
           display.stats = [...(display.stats || [])];
           if (!display.stats.some((x) => x.label === "took")) {
