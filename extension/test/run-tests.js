@@ -956,20 +956,23 @@ else {
   ensure("there is more than one model to choose from", MODELS.length >= 4, MODELS.length);
   ensure("exactly one is the default",
     MODELS.filter((m) => m.default).length === 1, MODELS.filter((m) => m.default).length);
-  // Defaulting to five gigabytes is only safe because there is somewhere to
-  // land. Without a fallback, every machine that cannot hold the default gets
-  // a load failure instead of a working extension, over a choice it never
-  // made.
-  ensure("exactly one is the fallback",
-    MODELS.filter((m) => m.fallback).length === 1, MODELS.filter((m) => m.fallback).length);
+  // Nothing switches models on anybody's behalf any more. A ladder, a
+  // step-down on a slow turn and a fall-back on a failed load were all here,
+  // and between them they reloaded the failing model without end, overruled a
+  // model somebody had chosen by hand, and once stepped from the 1B to the
+  // larger 1.5B. The picker is at the top of the panel; choosing is theirs.
   const dflt = MODELS.find((m) => m.default);
-  const back = MODELS.find((m) => m.fallback);
-  ensure("and the fallback is the smaller of the two", back.vramMB < dflt.vramMB,
-    `${back.name} ${back.vramMB} vs ${dflt.name} ${dflt.vramMB}`);
-  ensure("the fallback fits an ordinary GPU", back.vramMB <= 2048, back.vramMB);
   check("WC_DEFAULT_MODEL is that default", globalThis.WC_DEFAULT_MODEL, dflt.id);
-  check("WC_FALLBACK_MODEL is that fallback", globalThis.WC_FALLBACK_MODEL, back.id);
   check("and a model's size is readable by id", globalThis.WC_MODEL_VRAM(dflt.id), dflt.vramMB);
+  ensure("nothing picks a model for you", typeof globalThis.WC_NEXT_SMALLER === "undefined"
+    && typeof globalThis.WC_FALLBACK_MODEL === "undefined", "a ladder is back");
+  {
+    const fsx2 = require("fs"), pathx2 = require("path");
+    const off = fsx2.readFileSync(
+      pathx2.join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
+    ensure("and the offscreen document does not switch models either",
+      !/demoteTo|proveOrStepDown|WC_FALLBACK_MODEL/.test(off), "a step-down is back");
+  }
 
   // The one that cannot be caught by reading the code: an id that is not a
   // real WebLLM model loads fine in every test here and fails only on a real
@@ -1709,8 +1712,6 @@ else {
       ["llmModelId", "llmDemotedFrom"], r));
     check("asking for a model by name stores it",
       after.llmModelId, "Llama-3.1-8B-Instruct-q4f16_1-MLC");
-    ensure("and clears the demotion, so it is retried rather than stepped over",
-      !after.llmDemotedFrom, after.llmDemotedFrom);
     void stored;
   });
 }
@@ -1799,24 +1800,19 @@ else {
   // And the generating paths say when they are busy, or the waiting is a
   // no-op that looks like a fix.
   const busy = (src.match(/whileBusy\(/g) || []).length;
-  ensure("and the generating paths mark themselves busy", busy >= 4, busy);
+  ensure("and the generating paths mark themselves busy", busy >= 3, busy);
 
-  const assigns = [];
-  lines.forEach((line, i) => {
-    if (/^\s*MODEL_ID\s*=/.test(line)) assigns.push({ at: i + 1, line: line.trim() });
-  });
-  ensure("something does set it", assigns.length > 0, assigns.length);
-  for (const a of assigns) {
-    // Within a few lines either way: the two belong together and reading
-    // them apart is how they came apart.
-    const near = lines.slice(Math.max(0, a.at - 6), a.at + 6).join("\n");
-    const safe = /forgetChosenModel/.test(near)
-      // The one inside chosenModelId itself is the cache being filled, not
-      // bypassed.
-      || /modelChoice\s*=/.test(near)
-      || /\.then\(\(id\)\s*=>\s*\{\s*MODEL_ID/.test(near);
-    ensure(`MODEL_ID set at line ${a.at} also drops the cached choice`, safe, a.line);
-  }
+  // Now that nothing steps the model down, MODEL_ID is set in exactly one
+  // place: inside chosenModelId, where the cache is being filled. That is a
+  // stronger guarantee than the one this used to check - there is no longer
+  // anywhere for the cache and the live value to come apart, which is what
+  // reloaded the failing model without end.
+  const sets = lines.filter((l) => /\bMODEL_ID\s*=/.test(l)
+    && !/^\s*(const|let)\s/.test(l) && !/EMBED_MODEL_ID/.test(l));
+  check("MODEL_ID is set in exactly one place", sets.length, 1);
+  ensure("and that place is where the choice is cached",
+    /chosenModelId|modelChoice/.test(src.slice(Math.max(0, src.indexOf(sets[0] || "")) - 400,
+      src.indexOf(sets[0] || "") + 200)), sets[0]);
 }
 
 section("the model drives");

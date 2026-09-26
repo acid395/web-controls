@@ -426,7 +426,6 @@ function getEmbedder(onProgress) {
   return embedPromise;
 }
 
-let fellBackTo = null;   // reported, so a card never silently names the wrong one
 
 // How many requests are inside the engine right now.
 //
@@ -449,118 +448,6 @@ async function whenIdle({ waitMs = 5000 } = {}) {
     await new Promise((r) => setTimeout(r, 100));
   }
   return inFlight === 0;
-}
-
-// Down the ladder until one of them is quick enough.
-//
-// There is no reading a machine and knowing what it can run. One laptop here
-// reports a real Metal adapter, a 4096MB storage binding and memory to
-// spare, and manages a tenth of a token a second on an 8B - and a 1.5B on
-// that same machine timed out at forty-five seconds. Nothing in its own
-// description predicted either, and six explanations built on its hardware
-// were all wrong.
-//
-// So it is tried instead. Twelve tokens, no page and no control list: quick
-// enough and this is the model; too slow and the next one down gets the same
-// test, until something passes or the smallest is reached. Finding out costs
-// seconds. Finding out from an instruction costs minutes and reads as the
-// model refusing to answer.
-const PROVE_TOKENS = 12;
-const PROVE_LIMIT_MS = 8000;      // twelve tokens is nothing; this is generous
-const PROVE_TIMEOUT_MS = 25000;
-
-async function proveOrStepDown(engine) {
-  // A choice is a choice. Stepping down exists so a machine nobody has
-  // configured lands somewhere usable - not to overrule somebody who went to
-  // the picker and said 8B. Asked for by hand, it is measured and reported
-  // and left alone; the number is the useful part, and what to do about it
-  // belongs to whoever chose.
-  let byHand = false;
-  try {
-    const g = await chrome.storage.local.get(["llmChosenByHand"]);
-    byHand = !!(g && g.llmChosenByHand);
-  } catch (e) { byHand = false; }
-
-  let current = engine;
-  for (;;) {
-    const id = MODEL_ID;
-    let took = null;
-    try {
-      const began = Date.now();
-      await whileBusy(() => Promise.race([
-        current.chat.completions.create({
-          messages: [{ role: "user", content: "Reply with the single word: ready" }],
-          temperature: 0, max_tokens: PROVE_TOKENS,
-        }),
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error("did not finish")), PROVE_TIMEOUT_MS)),
-      ]));
-      took = Date.now() - began;
-      if (took <= PROVE_LIMIT_MS) {
-        chrome.runtime.sendMessage({
-          type: "llmProgress",
-          text: `${WC_MODEL_NAME(id)} ready - ${(took / 1000).toFixed(1)}s for twelve tokens`,
-        }).catch(() => {});
-        return;
-      }
-    } catch (e) { took = null; }
-
-    const next = globalThis.WC_NEXT_SMALLER ? globalThis.WC_NEXT_SMALLER(id) : null;
-    const why = took === null
-      ? `could not manage twelve tokens in ${Math.round(PROVE_TIMEOUT_MS / 1000)}s here`
-      : `took ${(took / 1000).toFixed(1)}s for twelve tokens here`;
-    if (byHand) {
-      chrome.runtime.sendMessage({
-        type: "llmProgress",
-        text: `${WC_MODEL_NAME(id)} ${why} - keeping it because you chose it.`
-          + (next ? ` ${WC_MODEL_NAME(next)} would be quicker.` : ""),
-      }).catch(() => {});
-      return;
-    }
-    if (!next) {
-      // The smallest there is, and still slow. Say so rather than stepping
-      // down to nothing: every model will be slow on this machine, and
-      // knowing that is worth more than another attempt.
-      chrome.runtime.sendMessage({
-        type: "llmProgress",
-        text: `${WC_MODEL_NAME(id)} ${why}, and it is the smallest there is`,
-      }).catch(() => {});
-      return;
-    }
-    await demoteTo(next, id, why);
-    try {
-      current = await getEngine((r) => {
-        chrome.runtime.sendMessage({ type: "llmProgress", text: r.text }).catch(() => {});
-      });
-    } catch (e) { return; }
-  }
-}
-
-// Stepping down, once, and remembered.
-//
-// Three places changed MODEL_ID and none of them wrote it anywhere, so the
-// panel went on saying Llama 3.1 8B while Qwen2.5 1.5B was doing the work,
-// the stored choice still said 8B, and the next offscreen document loaded
-// five gigabytes, failed again and stepped down again. A demotion nobody
-// records is a demotion paid for every session.
-//
-// Recorded as a demotion rather than a preference, so the panel can say it
-// was not the person's choice and "use 8b" can undo it.
-async function demoteTo(small, from, why) {
-  fellBackTo = { from, to: small, why };
-  MODEL_ID = small;
-  // Before anything reloads. Without this the next load reads the cached
-  // choice, gets the model just stepped away from, and starts the whole
-  // thing again.
-  forgetChosenModel(small);
-  try {
-    await chrome.storage.local.set({ llmModelId: small, llmDemotedFrom: from, llmDemotedWhy: why });
-  } catch (e) { /* the switch still holds for this session */ }
-  await releaseEngine();
-  chrome.runtime.sendMessage({
-    type: "llmProgress",
-    text: `${WC_MODEL_NAME(from)} ${why} - using ${WC_MODEL_NAME(small)}. Say "use 8b" to put it back`,
-  }).catch(() => {});
 }
 
 // Let go of the planner, so the next request builds whichever one is chosen.
@@ -618,24 +505,14 @@ function getEngine(onProgress) {
     // download and every decision after it.
     enginePromise = chosenModelId()
       .then((id) => buildEngine(id, onProgress).catch((err) => {
-        // The default is five gigabytes and plenty of machines cannot hold
-        // it. Failing outright would make the extension worse for everyone
-        // whose GPU is ordinary, over a choice they never made - so it lands
-        // on the small one and says so, rather than leaving a person to
-        // discover a picker they did not know existed.
-        const small = globalThis.WC_FALLBACK_MODEL;
-        if (!small || id === small) throw err;
-        fellBackTo = { from: id, to: small, why: String((err && err.message) || err).slice(0, 160) };
-        lastProgress = `${id} would not load here - falling back to ${small}`;
-        MODEL_ID = small;
-        // And the cached choice with it, or the next load reads the one that
-        // just refused to load and starts over.
-        forgetChosenModel(small);
-        // Recorded, but not released: this is inside building the engine, and
-        // it cannot let go of the one it is in the middle of constructing.
-        chrome.storage.local.set({ llmModelId: small, llmDemotedFrom: id,
-          llmDemotedWhy: "would not load on this machine" }).catch(() => {});
-        return buildEngine(small, onProgress);
+        // Said, not worked around. Switching models on somebody's behalf is
+        // what all of this used to do, and between the ladder, the
+        // step-downs and the reload loop it did more damage than the problem
+        // it was for. The picker is at the top of the panel; choosing is
+        // theirs.
+        lastProgress = `${WC_MODEL_NAME(id)} would not load here`
+          + ` - ${String((err && err.message) || err).slice(0, 120)}`;
+        throw err;
       }))
       .then((engine) => {
         engineReady = true;
@@ -666,7 +543,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           chrome.runtime.sendMessage({ type: "llmProgress", text: report.text }).catch(() => {});
         });
         const began = Date.now();
-        const reply = await Promise.race([
+        const reply = await whileBusy(() => Promise.race([
           engine.chat.completions.create({
             messages: [{ role: "user", content: "Reply with the single word: ready" }],
             temperature: 0,
@@ -674,7 +551,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error("even a twelve-token reply did not finish in 60s")), 60000)),
-        ]);
+        ]));
         const u = (reply && reply.usage) || {};
         const x = u.extra || {};
         sendResponse({
@@ -764,10 +641,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       progress: lastProgress || null,
       model: MODEL_ID,
       gpu: gpuInfo,
-      // MODEL_ID already reads as the one that loaded, but not why. A card
-      // saying Qwen2.5 1.5B when the panel says Llama 3.1 8B is a bug report
-      // waiting to happen unless it also says the big one would not fit.
-      fellBack: fellBackTo,
     });
     return; // synchronous, no need to keep the channel open
   }
@@ -907,28 +780,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, step: parsed, cost, raw: text.slice(0, 300) });
       } catch (err) {
         const why = String((err && err.message) || err);
-        // A model that cannot finish one decision inside its whole allowance
-        // is not slow, it is unusable - and every retry costs that allowance
-        // again. Three minutes, then three more, is how "zoom in and search
-        // alaska" took four minutes to do what the page does at once.
-        //
-        // The cause does not have to be known to act on it. Weights larger
-        // than the machine will hold, a GPU shared with a heavy page, a
-        // second model loaded beside this one: the evidence is identical and
-        // so is the remedy.
-        if (/timed out/i.test(why) && globalThis.WC_FALLBACK_MODEL
-            && MODEL_ID !== globalThis.WC_FALLBACK_MODEL) {
-          const from = MODEL_ID;
-          const small = globalThis.WC_FALLBACK_MODEL;
-          const allowed = Math.round(inferenceTimeoutMs() / 1000);
-          await demoteTo(small, from, `could not finish a decision in ${allowed}s here`);
-          sendResponse({ ok: false, switchedTo: small, from,
-            error: `${from} could not finish one decision in ${allowed}s on this machine,`
-              + ` so it has been switched to ${WC_MODEL_NAME(small)}.`
-              + " Say \"use 8b\" to put it back." });
-          return;
-        }
-        sendResponse({ ok: false, error: why });
+        // Reported as it is. This used to switch models here, and switching
+        // from the 1B to the 1.5B - a larger one - is what that came to.
+        sendResponse({ ok: false, error: /timed out/i.test(why)
+          ? `${WC_MODEL_NAME(MODEL_ID)} did not finish a decision in`
+            + ` ${Math.round(inferenceTimeoutMs() / 1000)}s here`
+            + " - a smaller model from the picker at the top of the panel will be quicker"
+          : why });
       }
     })();
     return true;
@@ -1085,7 +943,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // of ours in it. Finding this out now costs a few seconds; finding it
       // out from an instruction costs three minutes and looks like the model
       // refusing to answer.
-      await proveOrStepDown(engine);
     }).catch((err) => {
       chrome.runtime.sendMessage({ type: "llmProgress", text: "warm-load failed: " + String((err && err.message) || err) });
     });

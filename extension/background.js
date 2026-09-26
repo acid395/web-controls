@@ -8419,11 +8419,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 stats: [], rows: [], source: "settings" } });
             return;
           } else {
-          // Asked for by name, so this is a choice and not a fall-back. It
-          // clears the record of having been stepped down, which is also how
-          // somebody retries the model that was stepped down from.
-          await chrome.storage.local.set({ llmModelId: pick, llmDemotedFrom: null,
-            llmDemotedWhy: null, llmChosenByHand: true });
+          await chrome.storage.local.set({ llmModelId: pick });
           await releaseOffscreenModel();
           const now = await modelStatus();
           respond({ ok: true, plannedBy: "settings",

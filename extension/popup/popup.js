@@ -743,23 +743,11 @@ function showModelState() {
   if (!modelState) return;
   chrome.runtime.sendMessage({ type: "llmStatus" }, (res) => {
     if (chrome.runtime.lastError || !res) { modelState.textContent = ""; return; }
-    // A model the extension chose, not the person. The picker kept showing
-    // Llama 3.1 8B while Qwen2.5 1.5B did the work, because stepping down
-    // changed what was running and told nobody.
-    chrome.storage.local.get(["llmDemotedFrom", "llmDemotedWhy"], (g) => {
-      if (!g || !g.llmDemotedFrom || !modelChoice) return;
-      const name = globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(g.llmDemotedFrom) : g.llmDemotedFrom;
-      modelState.textContent = `${name} ${g.llmDemotedWhy || "would not run here"}`
-        + ` - using ${WC_MODEL_NAME(modelChoice.value)}. Choose it again to retry.`;
-    });
     const want = modelChoice ? modelChoice.value : null;
     const have = res.model || null;
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
-    modelState.className = res.loading ? "modelstate loading"
-      : res.fellBack ? "modelstate warn" : "modelstate";
-    modelState.textContent = res.fellBack
-      ? `${name(res.fellBack.from)} would not load on this machine - using ${name(res.fellBack.to)}`
-      : !have ? "nothing loaded yet - the next instruction loads it"
+    modelState.className = res.loading ? "modelstate loading" : "modelstate";
+    modelState.textContent = !have ? "nothing loaded yet - the next instruction loads it"
       // The figure it is already at, not just that it is loading. A panel
       // opened part-way through a five gigabyte download used to say
       // "loading..." and sit there until the next broadcast happened to
@@ -795,7 +783,7 @@ if (modelChoice) {
     // Chosen deliberately, so it is no longer a demotion - and picking the
     // one that was stepped down from is how somebody asks to try it again.
     chrome.storage.local.set({ llmModelId: modelChoice.value,
-      llmDemotedFrom: null, llmDemotedWhy: null, llmChosenByHand: true }, () => {
+      }, () => {
       // The offscreen document keeps the weights it loaded, so it has to be
       // let go of before another model can take its place. Then it is warmed
       // straight away rather than on the next instruction: a 5GB download

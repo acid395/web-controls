@@ -28,8 +28,7 @@ globalThis.WC_MODELS = [
     name: "Qwen2.5 1.5B",
     vramMB: 1630,
     aliases: ["qwen", "15b", "qwen15b", "qwen2515b"],
-    note: "small and quick; the fallback where a big one will not fit",
-    fallback: true,
+    note: "small and quick",
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
@@ -75,13 +74,6 @@ globalThis.WC_MODELS = [
 globalThis.WC_DEFAULT_MODEL =
   (globalThis.WC_MODELS.find((m) => m.default) || globalThis.WC_MODELS[0]).id;
 
-// Where the default will not fit. Defaulting to five gigabytes means every
-// machine that cannot hold it gets a load failure instead of a working
-// extension, so there has to be somewhere to land - and landing somewhere is
-// better than a picker nobody knew they had to touch.
-globalThis.WC_FALLBACK_MODEL =
-  (globalThis.WC_MODELS.find((m) => m.fallback) || globalThis.WC_MODELS[0]).id;
-
 globalThis.WC_MODEL_VRAM = function (id) {
   const hit = globalThis.WC_MODELS.find((m) => m.id === id);
   return hit ? hit.vramMB : 0;
@@ -114,21 +106,6 @@ globalThis.WC_MODEL_BY_WORDS = function (words) {
     }
   }
   return best ? best.model : null;
-};
-
-// Biggest first. A machine gets the largest model it can actually run, found
-// by trying rather than guessed from its hardware: one laptop here has a real
-// Metal adapter, a 4096MB storage binding and memory to spare, and manages a
-// tenth of a token a second on the 8B - nothing about the machine's own
-// report predicted that.
-globalThis.WC_LADDER = globalThis.WC_MODELS
-  .slice().sort((a, b) => b.vramMB - a.vramMB).map((m) => m.id);
-
-// The next one down from here, or null at the bottom.
-globalThis.WC_NEXT_SMALLER = function (id) {
-  const at = globalThis.WC_LADDER.indexOf(id);
-  if (at === -1) return globalThis.WC_FALLBACK_MODEL;
-  return at + 1 < globalThis.WC_LADDER.length ? globalThis.WC_LADDER[at + 1] : null;
 };
 
 globalThis.WC_MODEL_SIZE = function (m) {
