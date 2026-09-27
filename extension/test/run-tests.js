@@ -3021,6 +3021,31 @@ else {
   }
 }
 
+// A card must not argue with itself. Four rows of a live run read "nothing
+// on the page changed - so this may not have been the right control" over a
+// note saying "your words named one control on this page exactly". Both
+// cannot be true, and the first is the one that is wrong: the control was
+// named exactly or this path would not have run. What is unknown is the
+// effect - a link away, an external tab, a handler no signature can see.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <a id="ext" href="https://example.gov/elsewhere">Ag in Drought</a>
+    </body></html>`, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+  if (page) {
+    const bgV = loadBackground({ page });
+    bgV.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      const r = await bgV.__ask({ type: "smartAsk", instruction: "click Ag in Drought" });
+      const sub = String(((r || {}).display || {}).subtitle || "");
+      const note = String(((r || {}).display || {}).note || "");
+      if (/named one control on this page exactly/.test(note)) {
+        ensure("a card that says the name was exact does not then doubt the control",
+          !/may not have been the right control/.test(sub), `${sub} || ${note}`);
+      }
+    });
+  }
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting

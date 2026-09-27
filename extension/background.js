@@ -9880,7 +9880,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     // evidence rather than the absence of it - a dead link
                     // is a real outcome and saying so is the honest report.
                     : "nothing on the page changed",
-                  proved ? null : "so this may not have been the right control",
+                  // Not "so this may not have been the right control". The
+                  // note directly beneath this says the request named one
+                  // control on this page exactly - which it did, or this
+                  // path would not be running - so casting doubt on the
+                  // choice contradicts it in the same card. What is unknown
+                  // is the effect, not the control: a link to another page,
+                  // an external tab, a handler this cannot see. Four of the
+                  // twenty-four rows in a live run read as doubtful when
+                  // the press was right and only the outcome was invisible,
+                  // which is a false negative in every benchmark built on
+                  // these cards.
+                  proved ? null : "which a link away from here or an external"
+                    + " tab would also look like",
                 ].filter(Boolean).join(" \u00b7 "),
                 stats: [],
                 rows: [],
