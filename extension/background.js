@@ -443,7 +443,31 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
     // Dropping it turned Pine Level into Pine and searched for the wrong town.
     return NAMEABLE_FILLER.has(w) && i > 0 && !PLACE_FILLER.has(raw[i - 1]);
   });
-  return words.length ? words.join(" ") : null;
+  if (!words.length) return null;
+  /* A place has to look like a name.
+   *
+   * On water.noaa.gov, "how to stay safe in a flood" became a search for
+   * gauges named flood and returned fourteen of them - FLOOD BROOK NEAR
+   * LONDONDERRY, FLOOD CONTROL STATION C-4/6.5 - to somebody asking how to
+   * stay safe. "Notify me when the river rises" became a search for a place
+   * called "notify when river". Both got there honestly: the first has a
+   * locational preposition in front of it, the second contains a waterbody
+   * word, and those are the two ways in.
+   *
+   * What neither has is a name. Every word in them is either the domain's
+   * own noun - flood, river, water - or a word out of the request itself.
+   * A real place carries something distinctive: Potomac, Londonderry, Big
+   * Sandy. So one word has to be neither generic nor grammar, and where
+   * none is, this was never a place and the question belongs to the page.
+   */
+  const GENERIC_WATER = new Set([...WATERBODY_GENERICS,
+    "flood", "flooding", "water", "waters", "rain", "rainfall", "snow", "ice",
+    "drought", "gauge", "gage", "river", "stream", "level", "levels", "stage"]);
+  const distinctive = words.some((w) => !GENERIC_WATER.has(w)
+    && !STOP_WORDS.has(w) && !verbFamily(w) && !CONTROL_VERB.test(w)
+    && !/^(notify|tell|stay|safe|when|how|where|what|why|much|many|me|my|please)$/.test(w));
+  if (!distinctive) return null;
+  return words.join(" ");
 }
 
 // Which kind of measurement a bare word like "temperature" means depends on

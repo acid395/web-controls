@@ -3142,6 +3142,42 @@ else {
   }
 }
 
+// "How to stay safe in a flood", asked on water.noaa.gov, came back as
+// fourteen gauges named flood - FLOOD BROOK NEAR LONDONDERRY, FLOOD CONTROL
+// STATION C-4/6.5 - to somebody asking how to stay safe. "Notify me when
+// the river rises" became a search for a place called "notify when river".
+// Both reached the gauge lookup honestly: one has a locational preposition
+// in front of it, the other contains a waterbody word, and those are the
+// two ways a place is recognised.
+//
+// What neither has is a name. Every word is the domain's own noun or a word
+// out of the request. A real place carries something distinctive.
+{
+  const bgP = loadBackground({ page: loadPage(
+    `<!doctype html><html><body><a href="#a">Flood and Safety Resources</a></body></html>`,
+    { url: "https://water.noaa.gov/" }) });
+  for (const [what, ask] of [
+    ["a hydrology noun is not a place", "how to stay safe in a flood"],
+    ["nor is the request's own grammar", "notify me when the river rises"],
+    ["nor a bare waterbody word", "show me the river"],
+  ]) {
+    check(`${what}: "${ask}"`, bgP.planDataTool(ask), null);
+  }
+  // And the lookups that made this path worth having still work.
+  for (const [what, ask, expect] of [
+    ["a named river still resolves", "gage height on the potomac river", "potomac river"],
+    ["and a multi-word one", "discharge at big sandy river", "big sandy river"],
+  ]) {
+    const plan = bgP.planDataTool(ask);
+    ensure(`${what}`, !!plan && plan.args && plan.args.place === expect,
+      JSON.stringify(plan));
+  }
+  // A place whose only distinctive word sits beside a generic one is still a
+  // place - which is most real gauge names.
+  const named = bgP.planDataTool("flooding near londonderry vermont");
+  ensure("a generic word beside a real name is still a place", !!named, JSON.stringify(named));
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting
