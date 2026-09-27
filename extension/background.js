@@ -6398,14 +6398,36 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           + " Do the next thing the request asks for, or finish with an answer.";
         continue;
       }
-      // Counted, not remembered in the note - which is cleared a few lines
-      // above on every valid action, so the guard never tripped and the loop
-      // ran its full six turns clicking one button.
-      if (!correct(`You already tried to ${act} "${String(target.label).slice(0, 40)}"`
-        + " and nothing changed. Choose a different control, or finish.")) {
-        return giveUp("the model kept going back to controls that did nothing");
-      }
-      continue;
+      /* Saying it again is insisting, and insisting is judgment.
+       *
+       * "Hide the extra detail" on a monitoring location: the shortlist put
+       * two controls in front of a 3B, it chose "Hide graph details", which
+       * is the right one, and this rejected it - because pressing it moved
+       * no page signature, so it was recorded as having done nothing, and
+       * the model was told to choose something else. It said the same thing
+       * again. Sixty-two seconds later the card read "nothing here clearly
+       * does that" about a correct answer the model had given three times.
+       *
+       * Nothing changed is not the same as nothing happened. A disclosure
+       * that hides a section, a link that opens a tab, a handler this cannot
+       * see - every one of them presses correctly and moves nothing
+       * measurable, and every other path in this extension already says so
+       * rather than calling it a failure. One nudge is worth it in case the
+       * model simply looped; a second naming of the same control is the
+       * model disagreeing with the verdict, and on this evidence it is
+       * right more often than the verdict is.
+       */
+      // Taken at its word the second time it says so, not the third. The
+      // nudge was buying one more turn - fifteen seconds on the machine
+      // this was measured on - to ask a model that had already answered
+      // correctly to answer differently. The press is already in the
+      // history; this marks it rather than recording it twice, so a run
+      // that did one thing still reports one step.
+      already.ok = true;
+      already.unconfirmed = true;
+      already.outcome = "pressed, though nothing on the page visibly changed";
+      return { ok: true, answer: null, history, steps: history.length,
+        unconfirmed: true, tookMs: Date.now() - began, said: lastSaid };
     }
 
     // A toggle whose label names an action rather than a state: "Show

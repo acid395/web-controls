@@ -3100,6 +3100,48 @@ else {
   }
 }
 
+// Live, on a monitoring location: "hide the extra detail". The shortlist
+// put two controls in front of a 3B, it chose "Hide graph details" - the
+// right one - and this rejected it, because pressing that moved no page
+// signature so it was recorded as having done nothing. Told to choose
+// something else, the model said the same thing again. Sixty-two seconds
+// later the card read "nothing here clearly does that" about a correct
+// answer given three times.
+{
+  const quiet = `<!doctype html><html><body>
+    <button id="hd">Hide graph details</button>
+    <button id="sl">Show location details</button>
+    </body></html>`;
+  const page = loadPage(quiet, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page) {
+    // Pressed, and deliberately changing nothing this can measure - which is
+    // what a disclosure, an external tab, or a handler behind a framework
+    // all look like from here.
+    const bgQ = loadBackground({ page });
+    let turns = 0;
+    bgQ.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmEmbed") return { ok: false };
+      if (m.type === "llmStep") {
+        turns++;
+        return { ok: true, step: { name: "Hide graph details", do: "click" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const out = await bgQ.runModelAgent("GENERIC", "hide the extra detail");
+      ensure("a control the model insists on is not thrown away", out.ok === true,
+        JSON.stringify({ ok: out.ok, error: out.error }));
+      ensure("and it says the effect was not visible rather than that nothing matched",
+        out.unconfirmed === true || (out.history || []).some((h) => h.unconfirmed),
+        JSON.stringify(out.history));
+      // Three turns to reject a right answer was the cost. One nudge, then
+      // take the model at its word.
+      ensure("and it stops asking after one nudge", turns <= 2, `${turns} turns`);
+    });
+  }
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting
