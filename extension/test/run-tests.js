@@ -3160,6 +3160,14 @@ else {
     ["a hydrology noun is not a place", "how to stay safe in a flood"],
     ["nor is the request's own grammar", "notify me when the river rises"],
     ["nor a bare waterbody word", "show me the river"],
+    // Both of these were answered with gauges on weather.gov: FLYING H
+    // RANCH PUMPING PLANT NR HAMMETT ID, and AIRPORT WASH TRIB AT CELL
+    // PHONE LOT AT TUCSON AZ. A locational preposition takes whatever word
+    // follows it, and neither of these is a hydrology noun or a verb, so
+    // the distinctiveness rule let them straight through.
+    ["a preposition does not make a place", "conditions for flying"],
+    ["nor does a possessive", "alerts on my phone"],
+    ["nor an ordinary noun after for", "brochures for schools"],
   ]) {
     check(`${what}: "${ask}"`, bgP.planDataTool(ask), null);
   }
@@ -3176,6 +3184,31 @@ else {
   // place - which is most real gauge names.
   const named = bgP.planDataTool("flooding near londonderry vermont");
   ensure("a generic word beside a real name is still a place", !!named, JSON.stringify(named));
+  // A national search by name has only the name to go on, and USGS names a
+  // gauge after what it sits on - so the kind of water has to be in there.
+  const noPrep = bgP.planDataTool("north fork elkhorn river discharge");
+  ensure("a river named without any preposition still resolves",
+    !!noPrep && noPrep.args.place === "north fork elkhorn river", JSON.stringify(noPrep));
+}
+
+// A bench run is up to forty-one prompts on one site. The history cap was
+// thirty, so the first eleven scrolled out of the panel before the run had
+// finished - every row was still in the file, but somebody watching saw the
+// start of their own run disappear and reasonably read that as truncation.
+if (typeof require === "undefined") skip("a whole run fits in the panel", "no require");
+else {
+  const fsr = require("fs"), pathr = require("path");
+  const w2 = fsr.readFileSync(pathr.join(__dirname, "..", "background.js"), "utf8");
+  const cap = (w2.match(/const HISTORY_LIMIT = (\d+)/) || [])[1];
+  require(pathr.join(__dirname, "..", "lib", "bench-prompts.js"));
+  require(pathr.join(__dirname, "..", "lib", "bench-hard.js"));
+  let biggest = 0;
+  for (const [site, meta] of Object.entries(globalThis.WC_BENCH_PROMPTS || {})) {
+    const hard = (globalThis.WC_BENCH_HARD || {})[site];
+    biggest = Math.max(biggest, meta.prompts.length + ((hard && hard.prompts.length) || 0));
+  }
+  ensure("the history holds the longest run there is",
+    Number(cap) >= biggest, `cap ${cap}, longest run ${biggest}`);
 }
 
 // Picking a model has to mean using that model. watchLoad's own first check
@@ -10455,7 +10488,10 @@ section("ask history survives the popup closing");
 
   for (let i = 0; i < 40; i++) await sb.recordAsk(`b${i}`, `q${i}`, { status: "done" });
   h = await sb.readHistory();
-  ensure("history is capped", h.length <= 30, h.length);
+  // Capped, at whatever the cap is - which moved from thirty to sixty so a
+  // whole bench run fits in the panel. The property worth pinning is that
+  // it is bounded, not the number.
+  ensure("history is capped", h.length <= 60, h.length);
   check("and keeps the newest", h[h.length - 1].instruction, "q39");
   finishHistory();
 })();

@@ -391,6 +391,13 @@ const PLACE_FILLER = new Set([
 // whatever meaningful words remain are the river or town being asked about.
 // "gage height in wyoming at big sandy river" -> "big sandy river", which is
 // exactly what USGS's gauge names contain, so it works as a name filter.
+// Whether a phrase names the kind of thing a gauge sits on. A national
+// search by name has nothing else to go on.
+function namesAWaterbodyKind(place) {
+  const words = String(place || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.some((w) => WATERBODY_GENERICS.has(w));
+}
+
 function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMatched } = {}) {
   let t = (instruction || "").toLowerCase();
   // "Boise River" is a river, not the city of Boise. Stripping the recognised
@@ -522,6 +529,23 @@ function planDataTool(instruction, route) {
     const parameter = findParameterInText(text);
     const place = extractPlaceHint(text, { parameterMatched: parameter && parameter.matched });
     if (!place) return null;
+    /* With no state, this searches every gauge in the country by name - and
+     * a name is the only thing keeping that honest.
+     *
+     * "Conditions for flying" came back as FLYING H RANCH PUMPING PLANT NR
+     * HAMMETT ID and three more; "alerts on my phone" as AIRPORT WASH TRIB
+     * AT CELL PHONE LOT AT TUCSON, AZ. Both got here through the locational
+     * preposition - "for flying", "on my phone" - which will take whatever
+     * word follows it, and neither word is disqualified by being a
+     * hydrology noun or a verb, so the guard above let them through.
+     *
+     * USGS names its gauges after what they sit on, so a request that means
+     * a gauge says so: river, creek, lake, bayou, fork. Requiring one is
+     * what separates "the potomac river" from "my phone", and it is the
+     * same convention this file already relies on to find a waterbody
+     * without a preposition at all.
+     */
+
 
     // Checked here too: a question naming only a river has no state, and
     // returned from this branch before ever reaching the check below.
@@ -543,6 +567,13 @@ function planDataTool(instruction, route) {
         ? { name: "weatherForecast", args: { place, when } }
         : { name: "weatherConditions", args: { place } };
     }
+    // Only this one. Weather resolves a place itself and a history lookup
+    // already has a parameter to anchor it; it is the national search by
+    // gauge name that has nothing but the name, so it is the one that needs
+    // the name to be of a waterbody. Guarding the whole branch instead
+    // broke "min temperature of hermantown on wednesday", which is a town
+    // and a weather question and no kind of river.
+    if (!namesAWaterbodyKind(place)) return null;
     return {
       name: "waterFindGauges",
       args: { place, ...(parameter ? { parameter: parameter.canonical } : {}) },
@@ -7877,7 +7908,12 @@ function keepAlive() {
  * mid-flight shows it in progress rather than showing nothing at all.
  */
 const HISTORY_KEY = "askHistory";
-const HISTORY_LIMIT = 30;
+// Sixty, not thirty. A bench run is up to forty-one prompts on one site,
+// so the first eleven scrolled out of the panel before the run had
+// finished - the file kept every row, but somebody watching could not see
+// the start of what they had just run and reasonably thought it had been
+// cut off. A whole run has to fit.
+const HISTORY_LIMIT = 60;
 
 async function readHistory() {
   const got = await chrome.storage.local.get(HISTORY_KEY);
