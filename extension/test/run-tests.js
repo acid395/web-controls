@@ -2030,8 +2030,15 @@ else {
       /cannot run on this machine/.test(String(((slow || {}).display || {}).title || "")),
       ((slow || {}).display || {}).title);
     const slowLine = lineOf(slow, "model speed");
-    ensure("twelve tokens taking forty seconds is called out",
-      /too large for this machine/.test(String(slowLine.meta || slowLine.value || "")),
+    // Worded as speed rather than size, and judged on the rate rather than
+    // the clock. A live run measured "12 tokens took 8.9s (13.8 tokens/s)"
+    // and called that too large for the machine - a sentence contradicting
+    // itself in its own width, about a model doing thirteen tokens a second
+    // on a machine already running it. The eight seconds were warm-up. Rate
+    // is what decides whether this is usable; the clock also contains the
+    // first call's shader compilation.
+    ensure("a tenth of a token a second is called out",
+      /too slow to work with/.test(String(slowLine.meta || slowLine.value || "")),
       slowLine);
     ensure("and it names a way out", /use 3b|use qwen/.test(String(slowLine.meta || "")), slowLine);
     ensure("and does not blame the prompt",
@@ -2905,6 +2912,69 @@ else {
   const code = body.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
   ensure("and it does not embed anything to find out",
     !/rankByMeaning|embedTexts/.test(code), "diagnose provokes an embedder load");
+}
+
+// A healthy engine must not be condemned by the clock. Live: "12 tokens
+// took 8.9s (13.8 tokens/s) - too large for this machine; say use 3b" - on
+// a machine with the 3B already loaded, doing thirteen tokens a second. The
+// eight seconds were the first call after an idle engine paying for shader
+// compilation, which is not what anybody means by how fast the model is.
+{
+  const bgs = loadBackground({ page: loadPage(
+    `<!doctype html><html><body><a href="#a">Data</a></body></html>`,
+    { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" }) });
+  let calls = 0;
+  bgs.__model = (m) => {
+    if (m.type === "llmStatus") {
+      return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+        gpu: { ok: true, deviceMemoryGB: 8, maxBufferMB: 4096, maxStorageMB: 4096 } };
+    }
+    if (m.type === "llmBench") {
+      calls++;
+      // Cold first, warm second - exactly the shape the live run showed.
+      return calls === 1
+        ? { ok: true, ms: 8945, replyTokens: 12, decodePerS: 13.8, firstTokenS: 8.0 }
+        : { ok: true, ms: 900, replyTokens: 12, decodePerS: 13.5, firstTokenS: 0.2 };
+    }
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bgs.__ask({ type: "smartAsk", instruction: "diagnose" });
+    const rows = ((r.display || {}).rows) || [];
+    const speed = rows.find((x) => String(x.name) === "model speed") || {};
+    const said = String(speed.meta || speed.value || "");
+    ensure("thirteen tokens a second is not called unusable",
+      !/too slow|cannot run|too large/.test(said), said);
+    ensure("and the rate is what gets reported", /13\.[0-9] tokens\/s/.test(said), said);
+    ensure("measured warm, not on the first call after idling",
+      calls >= 2, `benched ${calls} time(s)`);
+    ensure("and the headline does not condemn the machine",
+      !/cannot run on this machine/.test(String((r.display || {}).title || "")),
+      (r.display || {}).title);
+  });
+}
+
+// Advice that changes nothing is not advice. This told a machine with the
+// 3B loaded to "use 3b".
+{
+  const bgt = loadBackground({ page: loadPage(
+    `<!doctype html><html><body><a href="#a">Data</a></body></html>`,
+    { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" }) });
+  bgt.__model = (m) => {
+    if (m.type === "llmStatus") {
+      return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+    }
+    if (m.type === "llmBench") return { ok: true, ms: 40000, replyTokens: 12, decodePerS: 0.3 };
+    return undefined;
+  };
+  runAsync(async () => {
+    const r = await bgt.__ask({ type: "smartAsk", instruction: "diagnose" });
+    const rows = ((r.display || {}).rows) || [];
+    const said = String((rows.find((x) => String(x.name) === "model speed") || {}).meta || "");
+    ensure("a genuinely slow model is still called out", /too slow to work with/.test(said), said);
+    ensure("and it does not suggest the model already loaded",
+      !/use 3b\b/.test(said), said);
+  });
 }
 
 // Picking a model has to mean using that model. watchLoad's own first check

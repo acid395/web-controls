@@ -7926,29 +7926,56 @@ async function runDiagnostics() {
     // offscreen document, so on a machine whose panel does 25 tokens a
     // second it reported 54 seconds for twelve tokens and announced "the
     // model cannot run on this machine" - about a window nothing uses.
-    let r = null;
-    if (await panelIsOpen()) {
-      r = await chrome.runtime.sendMessage({ target: "panel", type: "panelBench",
-        model: st.model || WC_DEFAULT_MODEL }).catch(() => null);
-    }
-    if (!r) {
+    const bench = async () => {
+      if (await panelIsOpen()) {
+        const said = await chrome.runtime.sendMessage({ target: "panel", type: "panelBench",
+          model: st.model || WC_DEFAULT_MODEL }).catch(() => null);
+        if (said) return said;
+      }
       await ensureOffscreenDocument();
-      r = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmBench" })
+      return await chrome.runtime.sendMessage({ target: "offscreen", type: "llmBench" })
         .catch(() => null);
+    };
+    // Twice, and the second one counts.
+    //
+    // The first call after the engine has been sitting idle pays for shader
+    // compilation and a fresh KV cache, and that is not what anybody means
+    // by how fast the model is. Measured once, this reported "12 tokens took
+    // 8.9s (13.8 tokens/s) - too large for this machine" - a sentence that
+    // contradicts itself in its own width, about a model doing thirteen
+    // tokens a second, on a machine already running it.
+    let r = await bench();
+    if (r && r.ok) {
+      const again = await bench();
+      if (again && again.ok) r = again;
     }
-    if (!r) throw new Error("the offscreen document did not answer");
+    if (!r) throw new Error("nothing answered the benchmark");
     if (!r.ok) throw new Error(r.error || "the benchmark did not finish");
     const decode = r.decodePerS ? `${r.decodePerS.toFixed(1)} tokens/s` : "unmeasured";
     const first = r.firstTokenS != null ? `${r.firstTokenS.toFixed(1)}s to first token` : null;
-    // Twelve tokens is nothing. Anything over a few seconds for it means the
-    // weights are not really on the graphics card, whatever the adapter says.
-    // Kept short: this line is truncated at ninety characters, and the way
-    // out is the part that must survive.
-    if (r.ms > 8000) {
-      throw new Error(`12 tokens took ${(r.ms / 1000).toFixed(1)}s (${decode})`
-        + " - too large for this machine; say \"use 3b\" or \"use qwen\"");
+    /* Judged on the rate, which is what decides whether this is usable, and
+     * not on the clock, which also contains the warm-up.
+     *
+     * A model turning out ten tokens a second answers an instruction; one
+     * turning out a tenth of a token a second cannot, and that is a
+     * difference of two orders of magnitude, not of a few seconds. Judging
+     * total milliseconds put a healthy engine and a hopeless one on the
+     * same side of one threshold.
+     */
+    const TOO_SLOW = 3;
+    if (r.decodePerS != null && r.decodePerS < TOO_SLOW) {
+      // Named from what is actually loaded, and only where something
+      // smaller exists. This said 'say "use 3b"' to a machine with the 3B
+      // already loaded, which is advice to change nothing.
+      const now = st.model || WC_DEFAULT_MODEL;
+      const smaller = (globalThis.WC_MODELS || [])
+        .filter((m) => m.vramMB < (globalThis.WC_MODEL_VRAM(now) || Infinity))
+        .sort((a, b) => b.vramMB - a.vramMB)[0];
+      throw new Error(`${decode} - too slow to work with`
+        + (smaller ? `; try a smaller one, say "use ${smaller.aliases[0]}"`
+          : "; this is already the smallest, so the graphics card is the limit"));
     }
-    return [`${(r.ms / 1000).toFixed(1)}s for twelve tokens`, decode, first,
+    return [decode, first, `${(r.ms / 1000).toFixed(1)}s for twelve tokens`,
       r.where ? `in ${r.where}` : null].filter(Boolean).join(" \u00b7 ");
   }, { optional: true });
 
