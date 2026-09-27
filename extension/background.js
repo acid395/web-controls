@@ -8069,10 +8069,15 @@ async function runDiagnostics() {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
     const controls = inv.ok ? controlsForModel(inv.result) : [];
     if (controls.length <= 18) return `not needed - ${controls.length} controls on this page`;
-    const ranked = await rankByMeaning("gage height", controls).catch(() => null);
-    if (!ranked) {
-      throw new Error(`${controls.length} controls and no shortlist - the whole list goes to`
-        + " the model on every turn. Check the local model line above");
+    // Reported, never provoked. Asking rankByMeaning here would try to load
+    // a 1023MB embedder beside a model already holding most of the memory -
+    // and it did: the run that first showed this line also reported the
+    // planner at 1.3 tokens a second, a figure nothing else in that same
+    // run came close to. A diagnostic that causes the fault it measures is
+    // worse than no diagnostic, because the number it prints is its own.
+    if (!meaningCache.vectors) {
+      return `${controls.length} controls, no shortlist yet - the whole list goes to the model`
+        + " until the embedder has loaded once, which is most of what a turn costs";
     }
     return `narrowing ${controls.length} controls to the closest few`;
   }, { optional: true });
@@ -9395,7 +9400,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // which this cannot. So this steps in only where they would miss -
           // a misspelling, a stem, an ordinal, or the page's own word for
           // what was asked for.
-          const did = (named.length === 1 && how && how !== "exact")
+          //
+          // And one more: a control behind a menu. Those paths only consider
+          // what is on the page now, so an exactly-named control that is
+          // hidden until something is opened falls past all of them to the
+          // model. On droughtmonitor that is the whole navigation - a live
+          // run spent eleven to fifteen seconds of a 3B on each of ten
+          // requests that named their control word for word, and got them
+          // all right, which is ten decisions bought at full price for
+          // nothing that needed deciding.
+          const onlyOne = named.length === 1 ? named[0] : null;
+          const behindADoor = !!(onlyOne && onlyOne.hidden && onlyOne.revealedBy);
+          const did = (onlyOne && how && (how !== "exact" || behindADoor))
             ? await actOnExactlyNamedClause(route.global, wanted).catch(() => null)
             : null;
           if (did) {

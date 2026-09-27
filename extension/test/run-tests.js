@@ -2854,6 +2854,59 @@ else {
   }
 }
 
+// Ten requests in a live run named their control word for word and each one
+// still bought a full decision from the 3B - eleven to fifteen seconds
+// apiece - because the control sat behind a hover menu. Every fast path
+// considers only what is on the page now, so an exactly-named control that
+// is hidden until something is opened fell past all of them to the model,
+// which then got it right. Nothing about that needed deciding.
+{
+  const behindMenu = `<!doctype html><html><head><style>
+    .dropdown-menu, .dropdown-menu a, .dropdown-menu li { display: none; }
+    </style></head><body>
+    <a href="#top" id="plain">Current</a>
+    <ul><li class="nav-item">
+      <a href="/Maps.aspx" class="nav-link">Maps</a>
+      <ul class="dropdown-menu"><li><a id="arch" href="#arch">Map Archive</a></li></ul>
+    </li></ul></body></html>`;
+  const page = loadPage(behindMenu, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+  if (page) {
+    let turns = 0;
+    const bgM = loadBackground({ page });
+    bgM.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+      if (m.type === "llmEmbed") return { ok: false };
+      if (m.type === "llmStep") { turns++; return { ok: true, step: { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgM.__ask({ type: "smartAsk", instruction: "click Map Archive" });
+      check("a control behind a menu is reached without the model", turns, 0);
+      ensure("and it is the page that answered", r.plannedBy === "exact-match", r.plannedBy);
+    });
+  }
+}
+
+// A diagnostic must not cause the fault it reports. The shortlist line asked
+// rankByMeaning, which tries to load a 1023MB embedder beside a model that
+// already holds most of the memory - and the run that first showed that line
+// also reported the planner at 1.3 tokens a second, a figure nothing else in
+// the same run came close to.
+if (typeof require === "undefined") skip("diagnose does not disturb what it measures", "no require");
+else {
+  const fsd = require("fs"), pathd = require("path");
+  const w = fsd.readFileSync(pathd.join(__dirname, "..", "background.js"), "utf8");
+  const at = w.indexOf('await step("shortlist"');
+  const body = w.slice(at, w.indexOf("}, { optional: true });", at));
+  ensure("the shortlist check exists", at > -1, "no shortlist line in diagnose");
+  // Comments stripped first: the reason this step must not embed is written
+  // inside it, and a check that greps prose would fail on the explanation
+  // for its own rule.
+  const code = body.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  ensure("and it does not embed anything to find out",
+    !/rankByMeaning|embedTexts/.test(code), "diagnose provokes an embedder load");
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting
