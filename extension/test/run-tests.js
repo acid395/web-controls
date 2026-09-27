@@ -2977,6 +2977,50 @@ else {
   });
 }
 
+// Narrowing without an embedder. The 1023MB one will not load beside a 3B
+// on eight gigabytes, so on that machine every prompt carried the whole
+// control list: measured live at about nine seconds of prefill and a third
+// of the decode rate on every decision. Word overlap alone was tried here
+// before and reverted for costing two of the hand-written forty-four.
+{
+  const many = `<!doctype html><html><body>${
+    Array.from({ length: 40 }, (_, i) => `<a href="#a${i}">Unrelated thing ${i}</a>`).join("")
+  }<label><input type="checkbox" id="gh"> Gage height</label>
+   <label><input type="checkbox" id="dis"> Discharge</label></body></html>`;
+  const page = loadPage(many, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (page) {
+    const bgN = loadBackground({ page });
+    const all = bgN.controlsForModel(page.GENERIC.inventory({ includeHidden: true }));
+    ensure("the page really is big enough to need narrowing", all.length > 30, all.length);
+
+    // The case that broke the previous attempt: no word of the request
+    // appears in the control's name. The vocabulary is what closes it.
+    const ranked = bgN.rankByWords("show me the water level", all);
+    ensure("a request sharing no word with the control still ranks it first",
+      !!ranked && /Gage height/.test(String(ranked[0].control.label || "")),
+      ranked ? String(ranked[0].control.label) : "nothing ranked");
+
+    // The other case that broke it declines instead, and that is the whole
+    // reason the hand-written forty-four still scores what it did. The
+    // vocabulary lists "flow" and the request says "flowing"; nothing here
+    // stems, so no word and no concept matches and the ranker returns
+    // nothing rather than a guess. The full list goes to the model and the
+    // model gets it right, exactly as before.
+    //
+    // So the narrowing is partial by construction: it speeds up the
+    // requests it can read and leaves the rest alone. Declining is the
+    // property that makes it safe to ship at all - a shortlist built on a
+    // guess is what cost two cases last time.
+    check("a request the vocabulary cannot read is not narrowed on a guess",
+      bgN.rankByWords("how much water is flowing", all), null);
+
+    // No signal at all means no shortlist - the whole list goes over, as
+    // before. A guess dressed as a shortlist is what made this dangerous.
+    check("a request touching nothing narrows nothing",
+      bgN.rankByWords("xyzzy plugh", all), null);
+  }
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting

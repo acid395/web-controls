@@ -5317,6 +5317,56 @@ function roomForEmbedder() {
   return !(Number.isFinite(binding) && binding > 0 && EMBEDDER_MB > binding);
 }
 
+/* Narrowing when there is no embedder, which on a small machine is always.
+ *
+ * A word-overlap shortlist was tried here once and reverted: it cost two of
+ * the forty-four hand-written cases, because ranking by shared words is the
+ * keyword scorer's judgement, and putting that between the page and the
+ * model hands the model the scorer's mistakes to choose from.
+ *
+ * Three things are different now. The domain vocabulary is indexed, so
+ * "water level" and "Gage height" are one concept rather than two unrelated
+ * strings - which is exactly the case that broke it before. It keeps
+ * twenty-four rather than twelve, because the cost of carrying a control
+ * the request does not need is a few tokens and the cost of dropping the
+ * one it does need is the whole answer. And the prompt already tells the
+ * model this is a shortlist and offers {"do":"find"} to see the rest, so a
+ * wrong shortlist is recoverable in a way a wrong answer is not.
+ *
+ * Still only where there is real signal: no word of the request touching
+ * anything means no shortlist, and the whole list goes as before. Measured
+ * against all four offline sets before being kept.
+ */
+function rankByWords(goal, controls) {
+  const asked = conceptsInPhrase(goal);
+  const words = meaningfulWords(goal)
+    .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 1);
+  if (!words.length && !asked.size) return null;
+  const scored = controls.map((c) => {
+    const label = String(c.label || "");
+    let score = 0;
+    for (const w of words) {
+      const hit = wordMatchesText(w, label);
+      if (hit === "exact") score += 3;
+      else if (hit) score += 2;
+    }
+    // The page's own word for the thing asked for, which is the half that
+    // plain overlap cannot see.
+    if (asked.size && label) {
+      const has = conceptsInPhrase(label);
+      for (const g of asked) if (has.has(g)) score += 3;
+    }
+    // A value inside a list counts for the list holding it: "select alaska"
+    // names no control, and the dropdown carrying Alaska is the answer.
+    for (const o of (c.options || []).slice(0, 40)) {
+      const t = String(o.text || o.value || "");
+      if (t && words.some((w) => wordMatchesText(w, t) === "exact")) { score += 2; break; }
+    }
+    return { control: c, score };
+  }).sort((a, b) => b.score - a.score);
+  return scored[0] && scored[0].score > 0 ? scored : null;
+}
+
 async function rankByMeaning(goal, controls) {
   const labels = controls.map((c) => String(c.label || "").slice(0, 80));
   if (!labels.length) return null;
@@ -5758,13 +5808,22 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           narrowedFrom = controls.length;
         }
       }
-      // A word-overlap shortlist was tried here, for when the embedder is
-      // unavailable. It cost two of the forty-four hand-written cases -
-      // "plot the water level" and "how much water is flowing" both started
-      // pressing things - because ranking by shared words is the keyword
-      // scorer's judgement, and putting it between the page and the model
-      // hands the model the scorer's mistakes to choose from. Meaning or
-      // everything; a bad shortlist is worse than none.
+      // Meaning first, words second. Where the embedder cannot load - which
+      // on an eight gigabyte machine holding a 3B is every time - the
+      // choice is no longer "meaning or everything": everything means an
+      // eight hundred token prompt, and a live run measured that costing
+      // about nine seconds of prefill and a third of the decode rate on
+      // every single decision.
+      if (!narrowedFrom && controls.length > 30) {
+        const byWord = rankByWords(goal, controls);
+        if (byWord && byWord[0].score >= 3) {
+          const keep = byWord.filter((r) => r.score > 0).slice(0, 24);
+          if (keep.length >= 3 && keep.length < controls.length) {
+            offered = keep.map((r) => r.control);
+            narrowedFrom = controls.length;
+          }
+        }
+      }
     }
 
     // A question is read first, not asked about.
