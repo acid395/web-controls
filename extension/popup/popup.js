@@ -797,8 +797,47 @@ async function resetTo(url) {
   return tab.id;
 }
 
-async function runBench() {
+/* Three runs, and only two of them say anything about intelligence.
+ *
+ *   bench        the frozen set, as shipped        - what a user gets
+ *   bench hard   prompts that name nothing         - does it understand
+ *   bench model  the hard set, model forced        - does the model itself
+ *
+ * The first measures the fast path, because the frozen set is every
+ * control's own label and that is precisely what the fast path catches: a
+ * live run of it sent three prompts of twenty-four to the model. Reporting
+ * that as a result was measuring the wrong thing - the claim this project
+ * makes is that a model operates the page, and a benchmark the model barely
+ * touches cannot support or refute it.
+ *
+ * The hard set shares no word with any control it should reach. "bench
+ * hard" runs it the way a user would, so the vocabulary and the meaning
+ * layer get their turn first; "bench model" puts model: in front of every
+ * one, so nothing but the model can answer. The difference between those
+ * two columns is what the grounding layer contributes, and the second
+ * column on its own is the model's own score.
+ */
+async function runBench(mode = "set") {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (mode !== "set") {
+    const sets = globalThis.WC_BENCH_HARD || {};
+    const host = (() => { try { return new URL(tab.url).host; } catch (e) { return ""; } })();
+    let picked = null;
+    for (const [site, meta] of Object.entries(sets)) {
+      try { if (new URL(meta.url).host === host) picked = { site, meta }; } catch (e) { /* skip */ }
+    }
+    if (!picked) {
+      logEcho(`bench ${mode}: no hard set for this site. Open one of: ${
+        Object.values(sets).map((m) => { try { return new URL(m.url).host; }
+          catch (e) { return "?"; } }).join(", ")}`);
+      return;
+    }
+    return runPromptSet(picked.site, picked.meta.url,
+      picked.meta.prompts.map((p) => ({
+        say: mode === "model" ? `model: ${p.say}` : p.say,
+        kind: p.kind, on: p.target, want: { reaches: p.target },
+      })), mode);
+  }
   const found = benchSiteFor((tab && tab.url) || "");
   if (!found) {
     logEcho("bench: no frozen prompt set for this site."
@@ -806,7 +845,10 @@ async function runBench() {
         try { return new URL(m.url).host; } catch (e) { return "?"; } }).join(", ")}`);
     return;
   }
-  const { site, meta } = found;
+  return runPromptSet(found.site, found.meta.url, found.meta.prompts, "set");
+}
+
+async function runPromptSet(site, url, prompts, mode) {
   const status = await currentModelStatus();
   if (!status.ready) {
     logEcho(`bench: the model is not loaded yet (${status.loading ? "still loading" : "nothing loaded"})`
@@ -817,13 +859,13 @@ async function runBench() {
 
   const rows = [];
   const began = Date.now();
-  setStatus(`bench: 0/${meta.prompts.length} on ${site}`, "test");
-  for (let i = 0; i < meta.prompts.length; i++) {
-    const p = meta.prompts[i];
-    setStatus(`bench: ${i + 1}/${meta.prompts.length} - ${p.say.slice(0, 40)}`, "test");
+  setStatus(`bench ${mode}: 0/${prompts.length} on ${site}`, "test");
+  for (let i = 0; i < prompts.length; i++) {
+    const p = prompts[i];
+    setStatus(`bench ${mode}: ${i + 1}/${prompts.length} - ${p.say.slice(0, 40)}`, "test");
     let res = null;
     try {
-      await resetTo(meta.url);
+      await resetTo(url);
       res = await new Promise((resolve) => {
         const timer = setTimeout(() => resolve({ ok: false, error: "no answer in 240s" }), 240000);
         chrome.runtime.sendMessage({ type: "smartAsk", instruction: p.say }, (r) => {
@@ -841,16 +883,17 @@ async function runBench() {
       // being judged is how a benchmark flatters itself.
       metrics: (res && res.metrics) || { ok: res && res.ok !== false, error: res && res.error },
     });
-    logEcho(`bench ${i + 1}/${meta.prompts.length}: ${p.say.slice(0, 44)} -> `
+    logEcho(`${mode} ${i + 1}/${prompts.length}: ${p.say.slice(0, 44)} -> `
       + `${rows[i].metrics.ok ? "ok" : "no"}`
       + `${rows[i].metrics.plannedBy ? ` (${rows[i].metrics.plannedBy})` : ""}`);
   }
 
   const gpu = (status && status.gpu) || null;
   const out = {
-    what: "web-controls live benchmark, model on, in Chrome",
+    what: `web-controls live benchmark (${mode}), model on, in Chrome`,
     site,
-    url: meta.url,
+    url,
+    mode,
     startedAt: new Date(began).toISOString(),
     tookMs: Date.now() - began,
     extensionVersion: (chrome.runtime.getManifest() || {}).version,
@@ -861,7 +904,7 @@ async function runBench() {
     temperature: 0,
     gpu,
     userAgent: navigator.userAgent,
-    promptSetSize: meta.prompts.length,
+    promptSetSize: prompts.length,
     rows,
   };
   const landed = rows.filter((r) => r.metrics && r.metrics.ok).length;
@@ -873,7 +916,7 @@ async function runBench() {
     const blob = new Blob([JSON.stringify(out, null, 1)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `web-controls-bench-${site}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `web-controls-bench-${mode}-${site}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -894,9 +937,11 @@ on("smartAsk", "click", () => {
     runSpeedTest().catch((e) => logEcho(`speed test failed: ${(e && e.message) || e}`));
     return;
   }
-  if (/^\s*bench\s*$/i.test(instruction)) {
+  const asBench = String(instruction).match(/^\s*bench(?:\s+(hard|model))?\s*$/i);
+  if (asBench) {
     document.getElementById("smartInstruction").value = "";
-    runBench().catch((e) => logEcho(`bench failed: ${(e && e.message) || e}`));
+    runBench((asBench[1] || "set").toLowerCase())
+      .catch((e) => logEcho(`bench failed: ${(e && e.message) || e}`));
     return;
   }
 

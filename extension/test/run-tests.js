@@ -2740,8 +2740,17 @@ else {
   // reset every row after the first would be measured against whatever page
   // the previous one navigated to.
   ensure("the live run reloads the page between prompts",
-    /async function resetTo/.test(panel) && /await resetTo\(meta\.url\)/.test(panel),
+    /async function resetTo/.test(panel) && /await resetTo\(/.test(panel),
     "prompts would run on whatever the last one navigated to");
+  // One runner, three modes. The shipped set measures the fast path; the
+  // hard set is what says whether anything understands. Sharing the loop is
+  // what keeps them comparable - two loops would drift and the columns
+  // would stop meaning the same thing.
+  ensure("the hard set exists and shares the runner",
+    /WC_BENCH_HARD/.test(panel) && /async function runPromptSet/.test(panel),
+    "no hard set, or it runs through a second loop");
+  ensure("and one mode forces the model so it can be scored alone",
+    /model: \$\{p\.say\}/.test(panel), "nothing forces the model");
   // A run whose conditions are not recorded cannot be repeated.
   for (const field of ["extensionVersion", "model", "temperature", "gpu", "userAgent", "startedAt"]) {
     ensure(`the run records ${field}`, new RegExp(`${field}[,:]`).test(panel), field);
@@ -3043,6 +3052,52 @@ else {
           !/may not have been the right control/.test(sub), `${sub} || ${note}`);
       }
     });
+  }
+}
+
+// The hard set is only hard if it does not contain its own answers.
+//
+// The shipped set is every control's own label, so a live run of it sent
+// three prompts of twenty-four to the model and measured the fast path.
+// These are written so that cannot happen: a paraphrase must share no word
+// with the control it should reach, or the name matcher answers it and the
+// model is never consulted.
+if (typeof require === "undefined") skip("the hard set is actually hard", "no require");
+else {
+  const pathh = require("path");
+  require(pathh.join(__dirname, "..", "lib", "bench-hard.js"));
+  const hard = globalThis.WC_BENCH_HARD || {};
+  const flath = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const leaks = [];
+  let count = 0;
+  for (const [site, meta] of Object.entries(hard)) {
+    for (const p2 of meta.prompts) {
+      count++;
+      // A chain names its steps - the difficulty there is doing two things
+      // in order, not working out what they are. A vocabulary case may
+      // contain the stem of its target ("log" inside "logarithmic"), which
+      // is the thing being tested. Only a paraphrase must be clean.
+      if (p2.kind !== "paraphrase") continue;
+      if (flath(p2.say).includes(flath(p2.target))) leaks.push(`${site}: ${p2.say}`);
+    }
+  }
+  ensure("there are enough of them to mean anything", count >= 25, count);
+  check("no paraphrase contains the control it should reach", leaks.join(" | "), "");
+  // And every target has to be a real control, or the case is unscoreable.
+  const fsh = require("fs");
+  for (const [site, meta] of Object.entries(hard)) {
+    const file = pathh.join(__dirname, "..", "..", "research", "live-scoring", "pages",
+      `${site}.html`);
+    if (!fsh.existsSync(file)) continue;
+    const pg = loadPage(fsh.readFileSync(file, "utf8"), { url: meta.url });
+    if (!pg) continue;
+    const bgh = loadBackground({ page: pg });
+    const labels = bgh.controlsForModel(pg.GENERIC.inventory({ includeHidden: true }))
+      .map((c) => flath(c.label));
+    const missing = meta.prompts
+      .filter((p2) => !labels.some((l) => l.includes(flath(p2.target))))
+      .map((p2) => p2.target);
+    check(`every ${site} target is a control that page has`, missing.join(" | "), "");
   }
 }
 
