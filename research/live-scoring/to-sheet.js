@@ -1,68 +1,49 @@
-/* to-sheet.js - run output, as rows for the tracking sheet.
+/* to-sheet.js - a live run, as rows for the tracking sheet.
  *
- * The sheet is the shared record of what works, so what goes in it must
- * come out of a run rather than out of somebody reading cards and typing.
- * A status transcribed by hand is a status nobody can re-derive, and three
- * of the numbers in this project turned out wrong precisely because they
- * were read off a screen rather than off a measurement.
+ * What goes in the sheet must come out of a run. A status somebody read off
+ * a card and retyped is one nobody can re-derive, and three figures in this
+ * project were wrong for exactly that reason: an offline 68% that was a
+ * broken checker, a "too large for this machine" that was warm-up, and a
+ * "cannot run" the diagnostic itself caused.
  *
- * Takes either shape:
- *   the offline enumerator's JSON   (research/live-scoring/act-<site>.json)
- *   the live bench's JSON           (web-controls-bench-<mode>-<site>-<date>.json)
+ * Live runs only. The offline snapshot numbers are useful while developing
+ * and misleading in a shared record - on droughtmonitor the same actions
+ * scored 100% against a snapshot and a third of that in a browser, because
+ * jsdom applies no stylesheet and every hidden menu is wide open there.
+ * Two conditions in one column get totalled as one number.
  *
- *   node research/live-scoring/to-sheet.js run1.json run2.json > rows.tsv
+ *   node research/live-scoring/to-sheet.js ~/Downloads/web-controls-bench-*.json > rows.tsv
  *
- * Emits TSV, which pastes into Google Sheets as columns without an import
- * step. Status is PASS or FAIL and nothing else, because a sheet column
- * that sometimes says "unverifiable" gets counted as a pass by whoever
- * totals it; anything that could not be confirmed is FAIL with the reason
- * beside it, which is the conservative direction.
+ * TSV, which pastes into Sheets as columns with no import step.
  */
 const fs = require("fs");
 
-const COLS = ["Site", "Action", "Kind", "Should reach", "Status", "Why",
-  "Decided by", "Took (s)", "Model", "Condition", "Version"];
+const COLS = ["Site", "Action", "Status", "Notes"];
 
-function fromOffline(rows, file) {
-  return rows.map((r) => ({
-    Site: r.site,
-    Action: r.say,
-    Kind: r.kind,
-    "Should reach": r.on,
-    Status: r.ok ? "PASS" : "FAIL",
-    Why: r.ok ? "" : String(r.why || ""),
-    "Decided by": "grounding layer (no model)",
-    "Took (s)": "",
-    Model: "none",
-    Condition: "offline snapshot, jsdom, model off",
-    Version: "",
-  }));
-}
-
-function fromLive(run) {
-  const cond = `live in Chrome, ${run.mode === "model" ? "model forced" : run.mode === "hard"
-    ? "hard set" : "shipped set"}`;
+// PASS or FAIL and nothing else. A column that sometimes says
+// "unverifiable" is totalled as a pass by whoever adds it up, so anything
+// unconfirmed is FAIL with the reason beside it - wrong in the
+// conservative direction, which is the only safe one.
+function rowsFrom(run) {
   return (run.rows || []).map((r) => {
     const m = r.metrics || {};
+    const notes = [
+      m.ok ? null : String(m.error || "no reason given").slice(0, 90),
+      m.plannedBy === "model" ? "model decided" : null,
+      m.tookMs != null && m.tookMs > 4000 ? `${(m.tookMs / 1000).toFixed(0)}s` : null,
+    ].filter(Boolean).join("; ");
     return {
       Site: r.site || run.site,
       Action: r.say,
-      Kind: r.kind,
-      "Should reach": r.on,
       Status: m.ok ? "PASS" : "FAIL",
-      Why: m.ok ? "" : String(m.error || "").slice(0, 120),
-      "Decided by": m.plannedBy ? `${m.plannedBy}${m.decidedIn ? ` (${m.decidedIn})` : ""}` : "",
-      "Took (s)": m.tookMs != null ? (m.tookMs / 1000).toFixed(1) : "",
-      Model: run.model || "",
-      Condition: cond,
-      Version: run.extensionVersion || "",
+      Notes: notes,
     };
   });
 }
 
 const files = process.argv.slice(2);
 if (!files.length) {
-  console.error("usage: node to-sheet.js <run.json> [more.json ...] > rows.tsv");
+  console.error("usage: node to-sheet.js <bench-run.json> [more.json ...] > rows.tsv");
   process.exit(1);
 }
 const out = [];
@@ -70,11 +51,15 @@ for (const f of files) {
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(f, "utf8")); }
   catch (e) { console.error(`skipping ${f}: ${(e && e.message) || e}`); continue; }
-  if (Array.isArray(parsed)) out.push(...fromOffline(parsed, f));
-  else if (parsed && parsed.rows) out.push(...fromLive(parsed));
-  else console.error(`skipping ${f}: not a run this understands`);
+  if (Array.isArray(parsed)) {
+    console.error(`skipping ${f}: that is an offline run, which does not belong in the sheet`);
+    continue;
+  }
+  if (!parsed || !parsed.rows) { console.error(`skipping ${f}: not a run this understands`); continue; }
+  out.push(...rowsFrom(parsed));
 }
 const esc = (v) => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
 console.log(COLS.join("\t"));
 for (const r of out) console.log(COLS.map((c) => esc(r[c])).join("\t"));
-console.error(`${out.length} rows, ${out.filter((r) => r.Status === "PASS").length} PASS`);
+const pass = out.filter((r) => r.Status === "PASS").length;
+console.error(`${out.length} rows, ${pass} PASS, ${out.length - pass} FAIL`);

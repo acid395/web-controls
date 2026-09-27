@@ -2749,8 +2749,7 @@ else {
   ensure("the hard set exists and shares the runner",
     /WC_BENCH_HARD/.test(panel) && /async function runPromptSet/.test(panel),
     "no hard set, or it runs through a second loop");
-  ensure("and one mode forces the model so it can be scored alone",
-    /model: \$\{p\.say\}/.test(panel), "nothing forces the model");
+
   // A run whose conditions are not recorded cannot be repeated.
   for (const field of ["extensionVersion", "model", "temperature", "gpu", "userAgent", "startedAt"]) {
     ensure(`the run records ${field}`, new RegExp(`${field}[,:]`).test(panel), field);

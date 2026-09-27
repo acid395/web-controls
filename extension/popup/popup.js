@@ -797,25 +797,16 @@ async function resetTo(url) {
   return tab.id;
 }
 
-/* Three runs, and only two of them say anything about intelligence.
+/* Two runs.
  *
- *   bench        the frozen set, as shipped        - what a user gets
- *   bench hard   prompts that name nothing         - does it understand
- *   bench model  the hard set, model forced        - does the model itself
+ *   bench        the frozen set, as shipped   - what a user gets
+ *   bench hard   prompts that name nothing    - the harder half
  *
- * The first measures the fast path, because the frozen set is every
- * control's own label and that is precisely what the fast path catches: a
- * live run of it sent three prompts of twenty-four to the model. Reporting
- * that as a result was measuring the wrong thing - the claim this project
- * makes is that a model operates the page, and a benchmark the model barely
- * touches cannot support or refute it.
- *
- * The hard set shares no word with any control it should reach. "bench
- * hard" runs it the way a user would, so the vocabulary and the meaning
- * layer get their turn first; "bench model" puts model: in front of every
- * one, so nothing but the model can answer. The difference between those
- * two columns is what the grounding layer contributes, and the second
- * column on its own is the model's own score.
+ * The frozen set is every control's own label, which is what the fast path
+ * is built to catch - a live run of it sent three prompts of twenty-four to
+ * the model. The hard set shares no word with any control it should reach,
+ * so the same page has to be worked out rather than matched. Both are run
+ * the way somebody would actually type them; neither forces a path.
  */
 async function runBench(mode = "set") {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -834,8 +825,7 @@ async function runBench(mode = "set") {
     }
     return runPromptSet(picked.site, picked.meta.url,
       picked.meta.prompts.map((p) => ({
-        say: mode === "model" ? `model: ${p.say}` : p.say,
-        kind: p.kind, on: p.target, want: { reaches: p.target },
+        say: p.say, kind: p.kind, on: p.target, want: { reaches: p.target },
       })), mode);
   }
   const found = benchSiteFor((tab && tab.url) || "");
@@ -937,7 +927,7 @@ on("smartAsk", "click", () => {
     runSpeedTest().catch((e) => logEcho(`speed test failed: ${(e && e.message) || e}`));
     return;
   }
-  const asBench = String(instruction).match(/^\s*bench(?:\s+(hard|model))?\s*$/i);
+  const asBench = String(instruction).match(/^\s*bench(?:\s+(hard))?\s*$/i);
   if (asBench) {
     document.getElementById("smartInstruction").value = "";
     runBench((asBench[1] || "set").toLowerCase())

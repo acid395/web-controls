@@ -20,32 +20,27 @@ difference in what was asked, and the comparison would measure nothing.
 Each entry also records what the offline pass did with it, so a live result
 can be read row by row against it rather than only in total.
 
-## Three runs, and only two say anything about intelligence
+## Two runs
 
     bench          the frozen set, as shipped     what a user gets
-    bench hard     prompts that name nothing      does anything understand
-    bench model    the hard set, model forced     does the model itself
+    bench hard     prompts that name nothing      the harder half
 
 The frozen set is every control's own label - which is exactly what the
 grounding layer is built to catch. A live run of it on droughtmonitor sent
-three prompts out of twenty-four to the model. That is a fine measurement of
-the fast path and close to useless as evidence about intelligence, which is
-the claim this project actually makes.
+three prompts out of twenty-four to the model, so on its own it measures
+the fast path more than anything else.
 
-So the hard set shares no word with the control it should reach. "Compare
-this week with last week" for Compare Two Weeks; "where do I download the
+The hard set shares no word with the control it should reach. "Compare this
+week with last week" for Compare Two Weeks; "where do I download the
 shapefiles" for GIS Data; "show the whole lower 48" for Continental U.S.,
 which needs to know what the lower 48 is. A test refuses to let a
 paraphrase contain its own target, and another checks every target is a
 control the page really has, because a case that cannot be scored is not a
 case.
 
-Run `bench hard` and `bench model` on the same page. The first lets the
-vocabulary and the meaning layer answer what they can; the second puts
-`model:` in front of every prompt so nothing else can. The second column is
-the model's own score. The gap between them is what the grounding layer
-contributes - and if the second column is poor, no amount of work on the
-first makes the system intelligent, it only makes it quick.
+Both are run the way somebody would actually type them. Neither forces a
+path, because what matters is whether the request is answered, not which
+part of the system answered it.
 
 ## What to do
 
