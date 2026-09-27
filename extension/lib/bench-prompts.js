@@ -1116,5 +1116,208 @@ globalThis.WC_BENCH_PROMPTS = {
     "offline": false
    }
   ]
+ },
+ "drought": {
+  "url": "https://www.drought.gov/",
+  "prompts": [
+   {
+    "say": "click Home",
+    "kind": "press",
+    "on": "Home",
+    "want": {
+     "clicked": "Home"
+    },
+    "offline": true
+   },
+   {
+    "say": "click Menu",
+    "kind": "press",
+    "on": "Menu",
+    "want": {
+     "clicked": "Menu"
+    },
+    "offline": true
+   },
+   {
+    "say": "click Close",
+    "kind": "press",
+    "on": "Close",
+    "want": {
+     "clicked": "Close"
+    },
+    "offline": true
+   },
+   {
+    "say": "click U.S. Drought Monitor",
+    "kind": "press",
+    "on": "U.S. Drought Monitor",
+    "want": {
+     "clicked": "U.S. Drought Monitor"
+    },
+    "offline": false
+   },
+   {
+    "say": "click NDMC",
+    "kind": "press",
+    "on": "NDMC",
+    "want": {
+     "clicked": "NDMC"
+    },
+    "offline": true
+   },
+   {
+    "say": "click NOAA",
+    "kind": "press",
+    "on": "NOAA",
+    "want": {
+     "clicked": "NOAA"
+    },
+    "offline": true
+   },
+   {
+    "say": "click USDA",
+    "kind": "press",
+    "on": "USDA",
+    "want": {
+     "clicked": "USDA"
+    },
+    "offline": true
+   },
+   {
+    "say": "click NASA",
+    "kind": "press",
+    "on": "NASA",
+    "want": {
+     "clicked": "NASA"
+    },
+    "offline": true
+   },
+   {
+    "say": "click UC Merced",
+    "kind": "press",
+    "on": "UC Merced",
+    "want": {
+     "clicked": "UC Merced"
+    },
+    "offline": true
+   },
+   {
+    "say": "click tag: Drought Index",
+    "kind": "press",
+    "on": "tag: Drought Index",
+    "want": {
+     "clicked": "tag: Drought Index"
+    },
+    "offline": true
+   },
+   {
+    "say": "click Learn More",
+    "kind": "press",
+    "on": "Learn More",
+    "want": {
+     "clicked": "Learn More"
+    },
+    "offline": true
+   },
+   {
+    "say": "click tag: Precipitation",
+    "kind": "press",
+    "on": "tag: Precipitation",
+    "want": {
+     "clicked": "tag: Precipitation"
+    },
+    "offline": true
+   },
+   {
+    "say": "click tag: Temperature",
+    "kind": "press",
+    "on": "tag: Temperature",
+    "want": {
+     "clicked": "tag: Temperature"
+    },
+    "offline": true
+   },
+   {
+    "say": "click D1 - Moderate Drought",
+    "kind": "press",
+    "on": "D1 - Moderate Drought",
+    "want": {
+     "clicked": "D1 - Moderate Drought"
+    },
+    "offline": true
+   },
+   {
+    "say": "click UC Mecred",
+    "kind": "misspelt",
+    "on": "UC Merced",
+    "want": {
+     "clicked": "UC Merced"
+    },
+    "offline": true
+   },
+   {
+    "say": "click tag: Tepmerature",
+    "kind": "misspelt",
+    "on": "tag: Temperature",
+    "want": {
+     "clicked": "tag: Temperature"
+    },
+    "offline": true
+   },
+   {
+    "say": "could you please click Home for me",
+    "kind": "polite",
+    "on": "Home",
+    "want": {
+     "clicked": "Home"
+    },
+    "offline": true
+   },
+   {
+    "say": "could you please click tag: Drought Index for me",
+    "kind": "polite",
+    "on": "tag: Drought Index",
+    "want": {
+     "clicked": "tag: Drought Index"
+    },
+    "offline": true
+   },
+   {
+    "say": "search potomac",
+    "kind": "search",
+    "on": "Query",
+    "want": {
+     "typed": "potomac"
+    },
+    "offline": true
+   },
+   {
+    "say": "explain this data",
+    "kind": "read",
+    "on": "(the page's own values)",
+    "want": {
+     "read": true
+    },
+    "offline": true
+   },
+   {
+    "say": "what does this page show",
+    "kind": "read",
+    "on": "(the page's own values)",
+    "want": {
+     "read": true
+    },
+    "offline": true
+   },
+   {
+    "say": "click the tidal predictions calibrator",
+    "kind": "absent",
+    "on": "(nothing - should refuse)",
+    "want": {
+     "refuse": true
+    },
+    "offline": true
+   }
+  ]
  }
 };

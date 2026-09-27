@@ -27,6 +27,11 @@ const SITES = {
   droughtmap: { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx", name: "droughtmonitor.unl.edu" },
   weather: { url: "https://www.weather.gov/", name: "weather.gov" },
   airnow: { url: "https://www.airnow.gov/", name: "airnow.gov" },
+  // Added when airnow.gov stopped resolving - and kept, because it is the
+  // only page in this set that is a data page rather than a portal: four
+  // tables, nine readouts, seventy-nine labelled numbers and five canvases.
+  // Everything else here is navigation.
+  drought: { url: "https://www.drought.gov/", name: "drought.gov" },
 };
 
 // Read off the capture files, never typed in: a date in a results table that

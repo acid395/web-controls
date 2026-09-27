@@ -371,5 +371,85 @@ globalThis.WC_BENCH_HARD = {
     "kind": "world-knowledge"
    }
   ]
+ },
+ "drought": {
+  "url": "https://www.drought.gov/",
+  "prompts": [
+   {
+    "say": "how dry is it right now",
+    "target": "Current Conditions",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "what is expected in the months ahead",
+    "target": "Outlooks and Forecasts",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how far back do the records go",
+    "target": "Paleoclimate",
+    "kind": "world-knowledge"
+   },
+   {
+    "say": "effects on growing crops",
+    "target": "Agriculture",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how wet is the ground",
+    "target": "Soil Moisture",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "is there enough in the reservoirs",
+    "target": "Water Supply",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "risk of things burning",
+    "target": "Wildfire Management",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how are the plants doing",
+    "target": "Vegetation",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "effects on people's wellbeing",
+    "target": "Public Health",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "not enough snow in the mountains",
+    "target": "Snow Drought",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "narrow it to one state",
+    "target": "Select a State",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "what does drought mean",
+    "target": "Drought Basics",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "a drought that comes on suddenly",
+    "target": "Flash Drought",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "impact on shipping and barges",
+    "target": "Navigation and Transportation",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "papers and studies",
+    "target": "All Documents and Reports",
+    "kind": "paraphrase"
+   }
+  ]
  }
 };
