@@ -24,18 +24,49 @@ const COLS = ["Site", "Action", "Status", "Notes"];
 // "unverifiable" is totalled as a pass by whoever adds it up, so anything
 // unconfirmed is FAIL with the reason beside it - wrong in the
 // conservative direction, which is the only safe one.
+/* What the row was asking for decides whether it passed.
+ *
+ * Scoring on `ok` alone marked two kinds of correct behaviour as failures.
+ * Nine of the prompts ask for a control no page carries, where the right
+ * answer is to refuse and say so - and a refusal is `ok:false`, so doing
+ * exactly the right thing scored FAIL. A request that would start a file
+ * download is held for confirmation rather than performed, which is also
+ * `ok:false` and also correct: it found the control and stopped on purpose.
+ *
+ * Under-reporting is as wrong as over-reporting. A sheet that counts a
+ * correct refusal as a failure argues for work that does not need doing.
+ */
+function verdict(r) {
+  const m = r.metrics || {};
+  const want = r.want || {};
+  const err = String(m.error || "");
+  if (want.refuse) {
+    // Refusing is the whole task here. Anything that acted instead failed.
+    return m.ok ? { status: "FAIL", note: "acted on a control that is not there" }
+      : { status: "PASS", note: "refused, as asked" };
+  }
+  // Held for confirmation: the control was found and deliberately not
+  // pressed, which is the designed behaviour for anything irreversible.
+  if (!m.ok && /starts a file download|confirm/i.test(err)) {
+    return { status: "PASS", note: "found it and asked to confirm first" };
+  }
+  return m.ok ? { status: "PASS", note: "" }
+    : { status: "FAIL", note: err.slice(0, 90) || "no reason given" };
+}
+
 function rowsFrom(run) {
   return (run.rows || []).map((r) => {
     const m = r.metrics || {};
+    const v = verdict(r);
     const notes = [
-      m.ok ? null : String(m.error || "no reason given").slice(0, 90),
+      v.note,
       m.plannedBy === "model" ? "model decided" : null,
       m.tookMs != null && m.tookMs > 4000 ? `${(m.tookMs / 1000).toFixed(0)}s` : null,
     ].filter(Boolean).join("; ");
     return {
       Site: r.site || run.site,
       Action: r.say,
-      Status: m.ok ? "PASS" : "FAIL",
+      Status: v.status,
       Notes: notes,
     };
   });
