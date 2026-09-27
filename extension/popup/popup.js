@@ -810,23 +810,19 @@ async function resetTo(url) {
  */
 async function runBench(mode = "set") {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (mode !== "set") {
-    const sets = globalThis.WC_BENCH_HARD || {};
-    const host = (() => { try { return new URL(tab.url).host; } catch (e) { return ""; } })();
-    let picked = null;
-    for (const [site, meta] of Object.entries(sets)) {
-      try { if (new URL(meta.url).host === host) picked = { site, meta }; } catch (e) { /* skip */ }
+  const host = (() => { try { return new URL((tab && tab.url) || "").host; } catch (e) { return ""; } })();
+  const hardFor = (() => {
+    for (const [site, meta] of Object.entries(globalThis.WC_BENCH_HARD || {})) {
+      try { if (new URL(meta.url).host === host) return { site, meta }; } catch (e) { /* skip */ }
     }
-    if (!picked) {
-      logEcho(`bench ${mode}: no hard set for this site. Open one of: ${
-        Object.values(sets).map((m) => { try { return new URL(m.url).host; }
-          catch (e) { return "?"; } }).join(", ")}`);
-      return;
-    }
-    return runPromptSet(picked.site, picked.meta.url,
-      picked.meta.prompts.map((p) => ({
+    return null;
+  })();
+  if (mode === "hard") {
+    if (!hardFor) { logEcho("bench hard: no hard set for this site"); return; }
+    return runPromptSet(hardFor.site, hardFor.meta.url,
+      hardFor.meta.prompts.map((p) => ({
         say: p.say, kind: p.kind, on: p.target, want: { reaches: p.target },
-      })), mode);
+      })), "hard");
   }
   const found = benchSiteFor((tab && tab.url) || "");
   if (!found) {
@@ -835,7 +831,23 @@ async function runBench(mode = "set") {
         try { return new URL(m.url).host; } catch (e) { return "?"; } }).join(", ")}`);
     return;
   }
-  return runPromptSet(found.site, found.meta.url, found.meta.prompts, "set");
+  /* One run, one file, both halves.
+   *
+   * The frozen set is every control's own label and the hard set shares no
+   * word with anything - they measure different things and they measure the
+   * same page, so splitting them across two runs meant two files, two
+   * fifteen-minute sittings and two numbers that then had to be put back
+   * together by hand. They are appended, each row keeping the kind that
+   * says which half it came from, so one paste tells the whole story about
+   * a site.
+   */
+  const prompts = [...found.meta.prompts];
+  if (hardFor) {
+    for (const p of hardFor.meta.prompts) {
+      prompts.push({ say: p.say, kind: p.kind, on: p.target, want: { reaches: p.target } });
+    }
+  }
+  return runPromptSet(found.site, found.meta.url, prompts, "set");
 }
 
 async function runPromptSet(site, url, prompts, mode) {

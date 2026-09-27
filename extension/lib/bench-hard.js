@@ -176,5 +176,200 @@ globalThis.WC_BENCH_HARD = {
     "kind": "chain"
    }
   ]
+ },
+ "noaa": {
+  "url": "https://water.noaa.gov/",
+  "prompts": [
+   {
+    "say": "how much rain has already fallen",
+    "target": "Past Precipitation Estimates",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "what are the rivers doing right now",
+    "target": "Rivers-at-a-Glance",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "what is the outlook further ahead",
+    "target": "Long Range Outlook",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "the main points for today",
+    "target": "Key Messages",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how much snow is there",
+    "target": "National Snow Analysis",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "where is it too dry",
+    "target": "Drought",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "I am a developer, where are the endpoints",
+    "target": "NWPS APIs",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "where might it flood",
+    "target": "Flood Inundation Mapping",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how do I read a hydrograph",
+    "target": "Hydrograph Information",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "who runs this",
+    "target": "Office of Water Prediction",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "is there ice on the rivers",
+    "target": "River Ice Surveillance",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how to stay safe in a flood",
+    "target": "Flood and Safety Resources",
+    "kind": "paraphrase"
+   }
+  ]
+ },
+ "weather": {
+  "url": "https://www.weather.gov/",
+  "prompts": [
+   {
+    "say": "what happened yesterday",
+    "target": "PAST WEATHER",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "when does the sun come up",
+    "target": "Sunrise/Sunset",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "is there a hurricane coming",
+    "target": "Hurricanes",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "conditions for flying",
+    "target": "Aviation",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "conditions at sea",
+    "target": "Marine",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "what do these terms mean",
+    "target": "Glossary",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "I want to work here",
+    "target": "Careers",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "wildfire conditions",
+    "target": "Fire Weather",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how do I reach someone",
+    "target": "Contact Us",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "weather months from now",
+    "target": "Long Range Forecasts",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "alerts on my phone",
+    "target": "Wireless Emergency Alerts",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "storm spotter training",
+    "target": "SKYWARN Storm Spotters",
+    "kind": "paraphrase"
+   }
+  ]
+ },
+ "airnow": {
+  "url": "https://www.airnow.gov/",
+  "prompts": [
+   {
+    "say": "is the air bad today",
+    "target": "Air Quality Index (AQI)",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "smoke from wildfires",
+    "target": "Fire and Smoke Map",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "I have asthma, what should I know",
+    "target": "Asthma and Heart Disease",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "air quality where I live",
+    "target": "Information by state",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "historical readings",
+    "target": "Past Data",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how is the number worked out",
+    "target": "AQI Basics",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "I want the raw feed for an app",
+    "target": "Developers/API",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "something for my classroom",
+    "target": "School Resources",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "how do I reach someone",
+    "target": "Contact Us",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "what can I do to help",
+    "target": "What You Can Do",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "is there an app",
+    "target": "AirNow Mobile App",
+    "kind": "paraphrase"
+   },
+   {
+    "say": "the pollutant that forms on hot sunny days",
+    "target": "Ozone",
+    "kind": "world-knowledge"
+   }
+  ]
  }
 };
