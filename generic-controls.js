@@ -584,6 +584,47 @@
         .find((t) => isVisible(t) && !t.contains(el));
       if (toggler) return toggler;
     }
+    /* A menu that opens on hover, which says so in no way a machine reads.
+     *
+     * droughtmonitor.unl.edu is a whole site's navigation like this:
+     *
+     *   <li class="nav-item">
+     *     <a href="/Maps.aspx" class="nav-link">Maps</a>
+     *     <ul class="dropdown-menu"> ... Map Archive, Map Viewer ... </ul>
+     *
+     * No aria-expanded, no button, no details - nothing above matches, so
+     * every item in every menu was hidden with no way in and was dropped
+     * from the inventory outright. Live that is 57 controls where the same
+     * page parsed without its stylesheet has 105, and a live run asking for
+     * "Map Archive" was told the page does not have one. It has fourteen.
+     *
+     * The container says what it is in its class, which is the only signal
+     * this markup offers, and the thing immediately before it is what
+     * reveals it.
+     */
+    const MENUISH = /(^|[\s_-])(dropdown|submenu|subnav|flyout|menu)([\s_-]|$)/i;
+    const saysMenu = (n) => {
+      if (!n) return false;
+      const role = (n.getAttribute && n.getAttribute("role")) || "";
+      if (/^(menu|menubar)$/i.test(role)) return true;
+      return MENUISH.test(String((n.className && n.className.baseVal) || n.className || ""));
+    };
+    if (saysMenu(hiddenAncestor)) {
+      const before = hiddenAncestor.previousElementSibling;
+      if (before && isVisible(before)) {
+        if (before.matches && before.matches("a, button, [role=button]")) return before;
+        const inner = before.querySelector && before.querySelector("a, button, [role=button]");
+        if (inner && isVisible(inner)) return inner;
+      }
+      // Or the menu is the whole of its parent's content and the opener is
+      // the parent's own first link, which is how a nav-item is usually
+      // built.
+      const holder = hiddenAncestor.parentElement;
+      if (holder && !holder.contains(document.activeElement)) {
+        const first = holder.querySelector && holder.querySelector("a, button, [role=button]");
+        if (first && isVisible(first) && !first.contains(el) && first !== el) return first;
+      }
+    }
     return null;
   }
 
@@ -2343,6 +2384,41 @@
     const el = deepQuery(selector);
     if (!el) throw new Error(`no such control: ${selector}`);
     const before = inventory({ includeHidden: true }).controlCount;
+    /* Hovered before it is pressed.
+     *
+     * A menu that opens on hover is usually a link as well - "Maps" on
+     * droughtmonitor is <a href="/Maps.aspx"> - so clicking it to reveal
+     * what it holds navigates away from the page the request was about, and
+     * takes the menu with it. Hovering is what a person does there, and it
+     * costs nothing where it does not apply: a button that ignores a
+     * mouseover is still clicked a moment later.
+     */
+    const goesSomewhere = el.tagName === "A" && (el.getAttribute("href") || "")
+      && !/^#/.test(el.getAttribute("href"));
+    try {
+      for (const type of ["pointerover", "mouseover", "pointerenter", "mouseenter"]) {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: type.endsWith("over"), cancelable: true }));
+      }
+      await settle({ quietMs: 120, timeoutMs: 900 });
+    } catch (e) { /* no pointer events here; the click below still stands */ }
+    const hovered = inventory({ includeHidden: true }).controlCount;
+    if (hovered > before) {
+      const after = inventory({ includeHidden: true });
+      return {
+        opened: rawLabelOf(el).slice(0, 60) || selector,
+        controlsBefore: before, controlsAfter: after.controlCount,
+        appeared: after.controlCount - before, by: "hover",
+      };
+    }
+    // Hovering revealed nothing. Pressing a link now would leave the page,
+    // which is a worse outcome than not opening a menu.
+    if (goesSomewhere) {
+      return {
+        opened: rawLabelOf(el).slice(0, 60) || selector,
+        controlsBefore: before, controlsAfter: before, appeared: 0,
+        by: "not pressed - it is a link away from here",
+      };
+    }
     realClick(el);
     await settle({ quietMs: 150, timeoutMs: 2000 });
     const after = inventory({ includeHidden: true });

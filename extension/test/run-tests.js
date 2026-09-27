@@ -2796,6 +2796,64 @@ else {
   }
 }
 
+// A whole site's navigation, invisible. droughtmonitor.unl.edu builds every
+// menu as a bare <a> beside a .dropdown-menu revealed by CSS hover - no
+// aria-expanded, no button, no details - so nothing that looks for an opener
+// found one, and "hidden with no way in" dropped every item in every menu.
+// Live that is 57 controls where the same page parsed without its stylesheet
+// has 105, and a run asking for "Map Archive" was told the page has no such
+// thing. It has fourteen like it.
+{
+  // Both the container and its items are hidden in the fixture's own CSS.
+  // A real browser hides the items by giving them no box - they are inside
+  // a display:none parent - but jsdom has no layout, and getComputedStyle
+  // on a descendant reports that element's own display rather than its
+  // ancestor's. Saying it twice is how the condition a browser produces is
+  // reproduced somewhere that cannot lay anything out.
+  const hoverNav = `<!doctype html><html><head><style>
+    .dropdown-menu, .dropdown-menu a, .dropdown-menu li { display: none; }
+    li.nav-item:hover .dropdown-menu { display: block; }
+    </style></head><body>
+    <ul><li class="nav-item">
+      <a href="/Maps.aspx" class="nav-link">Maps</a>
+      <ul class="dropdown-menu">
+        <li><a href="/Maps/MapArchive.aspx">Map Archive</a></li>
+        <li><a href="/Maps/Viewer.aspx">Map Viewer</a></li>
+      </ul>
+    </li></ul></body></html>`;
+  const page = loadPage(hoverNav, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+  if (page) {
+    const inv = page.GENERIC.inventory({ includeHidden: true });
+    const archive = (inv.controls || []).find((c) => /Map Archive/.test(String(c.label || "")));
+    ensure("an item in a hover menu is still a control", !!archive,
+      (inv.controls || []).map((c) => c.label).join(" | ").slice(0, 160));
+    if (archive) {
+      ensure("and it records what would reveal it", !!archive.revealedBy,
+        JSON.stringify(archive).slice(0, 160));
+    }
+  }
+
+  // And revealing it must not be done by pressing it. "Maps" is a link as
+  // well as a menu, so clicking to open it navigates away from the page the
+  // request was about - and takes the menu with it.
+  {
+    const page2 = loadPage(hoverNav, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+    if (page2) {
+      let navigated = 0;
+      const maps = page2.document.querySelector("a.nav-link");
+      maps.addEventListener("click", () => { navigated++; });
+      runAsync(async () => {
+        const inv2 = page2.GENERIC.inventory({ includeHidden: true });
+        const a2 = (inv2.controls || []).find((c) => /Map Archive/.test(String(c.label || "")));
+        if (!a2 || !a2.revealedBy) { check("hover menu opener found", !!(a2 && a2.revealedBy), true); return; }
+        const opened = await page2.GENERIC.openDisclosure(a2.revealedBy);
+        check("opening a hover menu does not press the link away", navigated, 0);
+        ensure("and it says how it tried", !!opened.by, JSON.stringify(opened));
+      });
+    }
+  }
+}
+
 // Picking a model has to mean using that model. watchLoad's own first check
 // asked only "is anything ready", not "is the thing I was just asked for
 // ready" - so switching from an already-loaded 3B to 8B saw the 3B sitting
