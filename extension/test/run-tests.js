@@ -3820,10 +3820,11 @@ if (partial) {
     return undefined;
   };
   runAsync(async () => {
-    // "show me the revisions" rather than "click revisions": one clause loose
-    // is what sends a sentence to the model now, and this is a test about
-    // what the model does with the second half.
-    const r = await bgp.__ask({ type: "smartAsk", instruction: "click related links and show me the revisions" });
+    // A second half that names nothing on the page: one clause loose is what
+    // sends a sentence to the model, and this is a test about what the model
+    // does with the second half. ("show me the revisions" names Revisions
+    // outright now, so the page answers it without a model at all.)
+    const r = await bgp.__ask({ type: "smartAsk", instruction: "click related links and show me what was edited lately" });
     check("a half-done sequence is not started again from the top", clicks, 1);
     check("and it is still reported as the model's work", r.plannedBy, "model");
     ensure("with the part that did not finish named",
@@ -10894,14 +10895,17 @@ const realLog = console.log;
       if (m.type === "llmStep") {
         modes.push(m.mode || "act");
         if (m.mode === "read") return { ok: true, step: { do: "finish", answer: "not on this page" } };
-        return { ok: true, step: modes.length === 2
+        return { ok: true, step: modes.filter((x) => x === "act").length === 1
           ? { do: "click", name: "About NIDIS" } : { do: "finish", answer: "" } };
       }
       return undefined;
     };
     runAsync(async () => {
       await bg2.__ask({ type: "smartAsk", instruction: "what is NIDIS" });
-      check("a question the page does not answer is read first", modes[0], "read");
+      // Read, or skipped for never mentioning NIDIS - either way the page is
+      // looked at before anything is pressed, and never answered from.
+      ensure("a question the page does not answer is not answered from it",
+        !modes.includes("read") || modes.indexOf("read") < modes.indexOf("act"), modes);
       ensure("and then goes to where the answer is", pressed.includes("About NIDIS"), pressed);
     });
   }
@@ -11115,6 +11119,109 @@ const realLog = console.log;
       await bg2.__ask({ type: "smartAsk",
         instruction: "if the West is drier than the Midwest open the West, otherwise open the Midwest" });
       check("a condition presses its branch and stops", pressed.join(","), "West");
+    });
+  }
+}
+
+// The first live run of the set on water.noaa.gov, v1.73.0.
+{
+  const bgy = loadBackground({});
+  check("the names of things in a request", JSON.stringify(bgy.namedTermsIn("what does Atlas 14 say")),
+    JSON.stringify(["Atlas 14"]));
+  check("and none in an ordinary one", bgy.namedTermsIn("which part of the country is worst off").length, 0);
+  const L = [{ label: "Hydrologic Ensemble Forecast System (HEFS)", selector: "a" },
+    { label: "Flood Inundation Mapping (FIM)", selector: "b" }, { label: "Flood Inundation Mapping", selector: "c" }];
+  check("an acronym in parentheses names its control",
+    bgy.namedByClause(L, "pull up HEFS").named.map((x) => x.label).join("|"),
+    "Hydrologic Ensemble Forecast System (HEFS)");
+  check("and a control's own label still beats the alias",
+    bgy.namedByClause(L, "open flood inundation mapping").named.map((x) => x.label).join("|"),
+    "Flood Inundation Mapping");
+
+  const np = () => loadPage(`<!doctype html><html><body>
+    <p>Minor Flood. Moderate Flood. Major Flood.</p>
+    <a href="/precip">Past Precipitation Estimates</a>
+    <a href="/nwm">National Water Model</a> <a href="/nwm">National Water Model</a>
+    <a href="/hefs">Hydrologic Ensemble Forecast System (HEFS)</a>
+    <a href="/atlas14">Current Standard: NOAA Atlas 14</a>
+    </body></html>`, { url: "https://water.noaa.gov/" });
+  const watch = (p) => {
+    const pressed = [];
+    for (const el of p.document.querySelectorAll("a")) {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        pressed.push(el.textContent.trim());
+        p.document.body.appendChild(p.document.createElement("hr"));
+      });
+    }
+    return pressed;
+  };
+  const scripted = (bg, fn) => {
+    const seen = [];
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { seen.push(m.mode || "act"); return { ok: true, step: fn(m, seen) }; }
+      return undefined;
+    };
+    return seen;
+  };
+
+  // A reading answered in its own shape is still an answer that the page
+  // does not hold it - and the run goes looking.
+  const a = np();
+  if (a) {
+    const pressed = watch(a);
+    const bga = loadBackground({ page: a });
+    scripted(bga, (m) => m.mode === "read"
+      ? { amount: "0", unit: "mi", explanation: "The table does not provide information on rain." }
+      : { do: "click", name: "Past Precipitation Estimates" });
+    runAsync(async () => {
+      const r = await bga.__ask({ type: "smartAsk", instruction: "how much rain has already fallen" });
+      ensure("a reply with no action, saying the page lacks it, goes looking",
+        pressed.includes("Past Precipitation Estimates"), [pressed, r.error]);
+    });
+  }
+
+  // A named term the page never mentions skips the reading altogether.
+  const b = np();
+  if (b) {
+    const pressed = watch(b);
+    const bgb = loadBackground({ page: b });
+    const seen = scripted(bgb, (m) => m.mode === "read"
+      ? { do: "finish", answer: "Minor Flood" } : { do: "click", name: "Current Standard: NOAA Atlas 14" });
+    runAsync(async () => {
+      await bgb.__ask({ type: "smartAsk", instruction: "what does Atlas 14 say" });
+      ensure("a question about a term the page never names is not answered from it",
+        !seen.includes("read"), seen);
+      ensure("and goes to the control that has it", pressed.includes("Current Standard: NOAA Atlas 14"), pressed);
+    });
+  }
+
+  // The same link twice is one choice.
+  const c = np();
+  if (c) {
+    const pressed = watch(c);
+    const bgc = loadBackground({ page: c });
+    // It insists, as a model sure of a control the words do not name must.
+    scripted(bgc, (m, seen) => seen.length <= 2 ? { do: "click", name: "National Water Model" } : { do: "finish", answer: "" });
+    runAsync(async () => {
+      await bgc.__ask({ type: "smartAsk", instruction: "model: I want the simulation that covers every stream" });
+      check("a link listed twice is pressed once, not called ambiguous",
+        pressed.filter((x) => x === "National Water Model").length, 1);
+    });
+  }
+
+  // A value that is the control's own name is a press.
+  const d = np();
+  if (d) {
+    const pressed = watch(d);
+    const bgd = loadBackground({ page: d });
+    scripted(bgd, (m, seen) => seen.length === 1
+      ? { do: "select", name: "HEFS", value: "Hydrologic Ensemble Forecast System" } : { do: "finish", answer: "" });
+    runAsync(async () => {
+      await bgd.__ask({ type: "smartAsk", instruction: "model: open the ensemble forecasts" });
+      ensure("selecting a link by its own name presses it",
+        pressed.includes("Hydrologic Ensemble Forecast System (HEFS)"), pressed);
     });
   }
 }

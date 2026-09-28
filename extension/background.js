@@ -5016,7 +5016,20 @@ function nthOf(control, n) {
 // which of several, the one member meant. Plain matching first: "click
 // first name" is the control called First name, not a control called Name
 // with the ordinal taken off.
-const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide)\s+/i;
+const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to)\s+(?:me\s+)?/i;
+/* The other names a label gives itself. "Hydrologic Ensemble Forecast
+ * System (HEFS)" is called HEFS as surely as it is called the long form -
+ * that is what the parentheses are for - and "pull up HEFS" matched
+ * neither, so it went to a 3B that could not place it either.
+ */
+function alsoCalled(label) {
+  const t = String(label || "");
+  const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
+  if (!m) return [];
+  const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return [flat(m[1]), flat(m[2])].filter((x) => x.length >= 2);
+}
+
 function namedByClause(all, clause) {
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   let exactly = false;
@@ -5032,12 +5045,16 @@ function namedByClause(all, clause) {
         lead = lead.trim().slice(first.length).trim();
       }
     }
-    const bare = flat(lead);
+    // "the" is not part of a name. Taken off here and not in CLAUSE_LEAD,
+    // which the vocabulary paths share - they match whole phrases like "the
+    // numbers", and taking the article away there broke them.
+    const bare = flat(lead).replace(/^the\s+/, "");
     if (!bare && !whole) return [];
     const named = all.filter((c) => {
       if (c.disabled || c.confidence === "low") return false;
       const l = flat(c.label);
-      return !!l && (l === bare || l === whole || closeName(bare, l));
+      return !!l && (l === bare || l === whole || closeName(bare, l)
+        || alsoCalled(c.label).some((a) => a === bare || a === whole));
     });
     // A panel opener is skipped while anything else wears the name, because
     // pressing the thing that holds what you asked for is not doing what
@@ -5048,14 +5065,19 @@ function namedByClause(all, clause) {
     // Where the opener is the only thing with that name, opening it is the
     // whole of what was asked for: "forcasts and outlooks" on
     // water.noaa.gov names a dropdown and nothing else.
-    const notDoors = named.filter((c) => !c.opensPanel);
-    const kept = notDoors.length ? notDoors : named;
+    // A control wearing the name as its own label beats one that only
+    // answers to it in parentheses: "open flood inundation mapping" means
+    // the control called that, not Flood Inundation Mapping (FIM) as well.
+    const ownName = named.filter((c) => { const l = flat(c.label); return l === bare || l === whole; });
+    const byName = ownName.length ? ownName : named;
+    const notDoors = byName.filter((c) => !c.opensPanel);
+    const kept = notDoors.length ? notDoors : byName;
     // Whether the name was worn exactly or reached for. The caller needs to
     // know: an exact name is already handled richly elsewhere, and this only
     // has to step in where that would miss.
     exactly = kept.some((c) => {
       const l = flat(c.label);
-      return l === bare || l === whole;
+      return l === bare || l === whole || alsoCalled(c.label).some((a) => a === bare || a === whole);
     });
     return kept;
   };
@@ -5959,6 +5981,30 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       if (seen) {
         observation = String(seen).slice(0, 2200);
         history.push({ did: "read the page", outcome: "got its values" });
+        // A question about something the page never mentions has its answer
+        // elsewhere. "what does Atlas 14 say" was read off a map legend and a
+        // 3B answered "Minor Flood". Only for the names of things - a
+        // capitalised term, an acronym, a number - because ordinary words
+        // are phrased differently from page to page ("worst off" answered
+        // correctly from a page that never says worst).
+        if (ASKING_TO_READ.test(goal) && !conditionalGoal) {
+          const terms = namedTermsIn(goal);
+          // Less the names of the controls: a term that appears only as the
+          // name of a link is a page saying where the answer is, not the
+          // answer. "Current Standard: NOAA Atlas 14" in a menu is not what
+          // Atlas 14 says.
+          let seenText = String(observation).toLowerCase();
+          for (const c of controls) {
+            const l = String(c.label || "").toLowerCase().trim();
+            if (l.length >= 3) seenText = seenText.split(l).join(" ");
+          }
+          if (terms.length && !terms.some((t) => seenText.includes(t.toLowerCase()))) {
+            readFellThrough = true;
+            history.push({ did: "read the page", outcome: `it does not mention ${terms.join(", ")}` });
+            note = `This page does not mention ${terms.join(", ")}. Choose the control that leads`
+              + " to the page that does.";
+          }
+        }
         if (conditionalGoal && !ASKING_TO_READ.test(goal)) {
           note = "Decide the condition from the values the page shows, then act on the"
             + " branch that applies. Say the value you used in why.";
@@ -6077,6 +6123,31 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     const why = String(s.why || s.reason || s.because || "").trim().slice(0, 90);
     let act = String(s.do || "").toLowerCase();
     if (!AGENT_ACTIONS.has(act) && ACTION_SYNONYMS.has(act)) act = ACTION_SYNONYMS.get(act);
+    // A reader was shown no controls, so whatever it sends back is an answer
+    // or an admission that it has none - never an action. Asked "how much
+    // rain has already fallen", a 3B replied {"amount":"0","unit":"mi",
+    // "explanation":"The table does not provide information on the amount of
+    // rain that has already fallen."} - a correct "not here" in its own
+    // shape - and was told "undefined" is not an action until the run ended.
+    // Asked to summarise, another replied with a click on a control it had
+    // not been shown. Both mean the page did not answer it.
+    if (readingOnly && act !== "finish") {
+      const said = [s.answer, s.explanation, s.summary, s.response, s.text, s.why]
+        .concat(Object.values(s))
+        .find((v) => typeof v === "string" && v.trim().length > 8
+          && !/^(click|check|select|type|read|find|search|finish)$/i.test(v.trim()));
+      if (said && !(s.name && act === "click")) {
+        act = "finish";
+        s.answer = String(said);
+      }
+    }
+    if (readingOnly && (act !== "finish" || !String(s.answer || "").trim()) && !readFellThrough) {
+      readFellThrough = true;
+      history.push({ did: "read the page", outcome: "it does not answer this here" });
+      note = "This page does not answer the question. Choose the control that leads to"
+        + " the page that does.";
+      continue;
+    }
     if (!AGENT_ACTIONS.has(act)) {
       // A model that answers off-format gets told once, then the loop ends.
       // Looping on a malformed reply burns a multi-second turn per attempt.
@@ -6276,13 +6347,26 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       if (wantedName) {
         for (const candidate of [rawName, wantedName]) {
           if (found || !candidate) continue;
+          // The same link twice is one choice. water.noaa.gov lists National
+          // Water Model in its menu and again in the Resources panel; both go
+          // to one page, and treating them as two ended the run with "names
+          // more than one" over a choice that did not exist.
+          const oneDestination = (xs) => xs.length > 1
+            && xs.every((c) => c.goesTo && c.goesTo === xs[0].goesTo);
+          const preferShown = (xs) => xs.find((c) => !c.hidden) || xs[0];
           const exact = list.filter((c) => flatLabel(c.label) === candidate);
           if (exact.length === 1) { found = exact[0]; break; }
-          const part = list.filter((c) => {
+          if (oneDestination(exact)) { found = preferShown(exact); break; }
+          // A label inside the name counts only when nothing wears the whole
+          // name: "National Water Model" asked for, a button called National
+          // is not a second candidate for it.
+          const holdsIt = list.filter((c) => { const l = flatLabel(c.label); return l && l.includes(candidate); });
+          const part = holdsIt.length ? holdsIt : list.filter((c) => {
             const l = flatLabel(c.label);
-            return l && (l.includes(candidate) || candidate.includes(l));
+            return l && l.length >= 4 && candidate.includes(l);
           });
           if (part.length === 1) { found = part[0]; break; }
+          if (oneDestination(part)) { found = preferShown(part); break; }
           // Recorded rather than resolved. Two controls answering to one
           // name is a reference that did not land, and picking between them
           // is the confident wrong action this project exists to avoid.
@@ -6333,6 +6417,16 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         // a row of buttons as a dropdown.
         const called = controls.filter((c) => flatLabel(c.label) === wantedValue);
         if (called.length === 1) { target = called[0]; valueIsTheControl = true; }
+      }
+      // The value is the control's own name. "pull up HEFS" came back as
+      // {"name":"HEFS","do":"select","value":"Hydrologic Ensemble Forecast
+      // System"} - the link, named twice - and was refused for asking a link
+      // to select something.
+      if (target && !valueIsTheControl && !optionWanted) {
+        const own = flatLabel(target.label);
+        if (own && wantedValue.length >= 4 && (own.includes(wantedValue) || wantedValue.includes(own))) {
+          valueIsTheControl = true;
+        }
       }
     }
     // Still nothing, but the page may be holding it behind something. Asked
@@ -8799,6 +8893,27 @@ function ruledOutBy(goal, target) {
     || meaningfulWords(wantedPart).filter((w) => w.length > 3 && !outWords.includes(w))
       .some((w) => wordMatchesText(w, label.toLowerCase()) === "exact" && !CONTROL_VERB.test(w));
   return alsoWanted ? null : excluded;
+}
+
+/* The names of things in a request: acronyms (NIDIS, HEFS, DSCI), a word
+ * capitalised mid-sentence (Atlas), and anything carrying a digit (14, D3),
+ * with a capitalised word and the number after it kept together.
+ */
+function namedTermsIn(text) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i].replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
+    if (!w || w === "I") continue;
+    const acronym = /^[A-Z]{2,}[0-9]*$/.test(w);
+    const digit = /\d/.test(w);
+    const capital = i > 0 && /^[A-Z][a-z]/.test(w);
+    if (!(acronym || digit || capital)) continue;
+    const next = (words[i + 1] || "").replace(/[^A-Za-z0-9]+$/g, "");
+    if (capital && /^\d+$/.test(next)) { out.push(`${w} ${next}`); i++; continue; }
+    out.push(w);
+  }
+  return out;
 }
 
 /* The one control on this page that offers the span a clause asks for.
