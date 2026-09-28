@@ -14,7 +14,7 @@
  *
  * `offline` on each row is what the grounding layer alone did with this
  * exact prompt, the model switched off, against the captured page in
- * research/live-scoring/pages. 67 of 100 are false: that is the share of
+ * research/live-scoring/pages. 70 of 100 are false: that is the share of
  * the set that has no answer without a model, and it is the reason to
  * believe a live number measures the system rather than the matcher.
  *
@@ -42,8 +42,8 @@ globalThis.WC_BENCH_PROMPTS = {
   "url": "https://waterdata.usgs.gov/monitoring-location/01646500/",
   "note": "Potomac River at Little Falls Pump Station, DC. Discharge and gage height.",
   "prompts": [
-   {"say":"set it to thirty days and then show the legend","kind":"chain","on":"Show legend","want":{"clicked":"Show legend"},"offline":true},
-   {"say":"give me a year of record, then open the tabular view","kind":"chain","on":"View tabular data","want":{"clicked":"tabular data"},"offline":true},
+   {"say":"set it to thirty days and then show the legend","kind":"chain","on":"Show legend","want":{"clicked":"Show legend"},"offline":false},
+   {"say":"give me a year of record, then open the tabular view","kind":"chain","on":"View tabular data","want":{"clicked":"tabular data"},"offline":false},
    {"say":"plot the gage height and then overlay the same span from last year","kind":"chain","on":"Data for same time span in prior year","want":{"clicked":"prior year"},"offline":false},
    {"say":"switch the vertical axis to logarithmic and then narrow the window to a week","kind":"chain","on":"7 days","want":{"clicked":"7 days"},"offline":false},
    {"say":"expand all the data collections and then show me where this gauge sits","kind":"chain","on":"Show location details","want":{"clicked":["location details","Site Location"]},"offline":false},
@@ -147,7 +147,7 @@ globalThis.WC_BENCH_PROMPTS = {
   "note": "NIDIS national drought portal.",
   "prompts": [
    {"say":"pick California and then show me the outlook for the coming months","kind":"chain","on":"Outlooks and Forecasts","want":{"clicked":"Outlooks"},"offline":false},
-   {"say":"open agriculture and then the most recent report on it","kind":"chain","on":"Featured Reports and Outlooks","want":{"clicked":"Featured Reports"},"offline":true},
+   {"say":"open agriculture and then the most recent report on it","kind":"chain","on":"Featured Reports and Outlooks","want":{"clicked":"Featured Reports"},"offline":false},
    {"say":"show soil moisture first and then the vegetation view","kind":"chain","on":"Vegetation","want":{"clicked":"Vegetation"},"offline":true},
    {"say":"find the tribal page and then the engagement information under it","kind":"chain","on":"Tribal Engagement","want":{"clicked":"Tribal Engagement"},"offline":false},
    {"say":"go to the Southern Plains and then pull up conditions there now","kind":"chain","on":"Current Conditions","want":{"clicked":"Current Conditions"},"offline":false},

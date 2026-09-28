@@ -6000,8 +6000,9 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           }
           if (terms.length && !terms.some((t) => seenText.includes(t.toLowerCase()))) {
             readFellThrough = true;
-            history.push({ did: "read the page", outcome: `it does not mention ${terms.join(", ")}` });
-            note = `This page does not mention ${terms.join(", ")}. Choose the control that leads`
+            const absent = terms.join(", ");
+            history.push({ did: "read the page", outcome: `it does not mention ${absent}` });
+            note = `This page does not mention ${absent}. Choose the control that leads`
               + " to the page that does.";
           }
         }
@@ -6533,6 +6534,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!target) {
       const asked = wantedName ? `"${String(s.name || s.label || s.control).slice(0, 40)}"`
         : `control ${s.n}`;
+      // Where the request's own distinctive words are. "where do I sign up for
+      // SKYWARN" came back as "SIGN UP", which is on nothing - while one
+      // control on the page, SKYWARN Storm Spotters, carries the word that
+      // makes the request what it is. Told only "that is not here", a 3B
+      // guessed again; told where the word is, it has something to go on.
+      // Retrieval over the request's words, never a choice made for it, and
+      // only the words few controls share.
+      const carrying = (() => {
+        const labels = controls.map((c) => String(c.label || "").toLowerCase());
+        const rare = meaningfulWords(goal).filter((w) => w.length > 3 && !CONTROL_VERB.test(w)
+          && (() => { const n = labels.filter((l) => wordMatchesText(w, l) === "exact").length;
+            return n > 0 && n <= 3; })());
+        return controls.filter((c) => rare.some(
+          (w) => wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact")).slice(0, 3);
+      })();
       // Which of the two it was. "Nothing here is called that" and "several
       // things are" want different next moves from the model, and saying
       // only that it failed tells it nothing it can act on.
@@ -6540,6 +6556,9 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         ? `More than one control answers to ${asked}: ${several.join(", ")}.`
           + " Name one of them exactly."
         : `There is no ${asked} on this page.`
+          + (carrying.length
+            ? ` The request's own words are on: ${carrying.map((c) => `"${String(c.label).slice(0, 50)}"`).join(", ")}.`
+            : "")
           + " Reply with the name of one of the controls listed above, exactly as written.";
       if (!correct(why)) {
         return giveUp(several

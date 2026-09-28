@@ -11226,6 +11226,50 @@ const realLog = console.log;
   }
 }
 
+// The first live run of the set on weather.gov, v1.74.0.
+{
+  // weather.gov's menus: a div holding the heading link, then <div class="sub">
+  // hidden by the stylesheet. Every item in them had no way in.
+  const wp = loadPage(`<!doctype html><html><body>
+    <ul><li>
+      <div class="topMenuNavList section-link"><a href="https://www.weather.gov/forecastmaps/">FORECAST</a></div>
+      <div class="sub" style="display:none"><ul>
+        <li><a href="https://aviationweather.gov">Aviation</a></li>
+        <li><a href="https://www.weather.gov/marine">Marine</a></li>
+      </ul></div>
+    </li></ul>
+    <a href="#skywarn">SKYWARN Storm Spotters</a>
+    </body></html>`, { url: "https://www.weather.gov/" });
+  if (wp) {
+    const inv = wp.GENERIC.inventory({ includeHidden: true }).controls;
+    const av = inv.find((c) => c.label === "Aviation");
+    ensure("an item in a class=\"sub\" menu has a way in", !!(av && av.revealedBy), av);
+    const bgw = loadBackground({ page: wp });
+    ensure("and is offered to the model",
+      bgw.controlsForModel(wp.GENERIC.inventory({ includeHidden: true })).some((c) => c.label === "Aviation"),
+      "not offered");
+
+    // Named something that is not there, it is told where the request's own
+    // distinctive word is.
+    const notes = [];
+    let n = 0;
+    bgw.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        if (m.note) notes.push(m.note);
+        n++;
+        return { ok: true, step: n === 1 ? { do: "click", name: "SIGN UP" } : { do: "finish", answer: "" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgw.__ask({ type: "smartAsk", instruction: "model: where do I sign up for SKYWARN" });
+      ensure("a model that names nothing real is pointed at the control carrying the request's word",
+        notes.some((x) => /SKYWARN Storm Spotters/.test(x)), notes);
+    });
+  }
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202

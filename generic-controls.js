@@ -622,7 +622,12 @@
      * this markup offers, and the thing immediately before it is what
      * reveals it.
      */
-    const MENUISH = /(^|[\s_-])(dropdown|submenu|subnav|flyout|menu)([\s_-]|$)/i;
+    // weather.gov's is <div class="sub" style="opacity: 0">, after a div
+    // holding the FORECAST link: every item in every menu there - Aviation,
+    // Marine, Severe Weather, Space Weather - had no way in, so a model told
+    // "Severe Weather" was asked for was told the page did not have it, and
+    // pressed the menu headings instead because they were all it could see.
+    const MENUISH = /(^|[\s_-])(dropdown|submenu|subnav|sub|flyout|menu)([\s_-]|$)/i;
     const saysMenu = (n) => {
       if (!n) return false;
       const role = (n.getAttribute && n.getAttribute("role")) || "";
