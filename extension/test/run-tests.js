@@ -11054,6 +11054,71 @@ const realLog = console.log;
   }
 }
 
+// The first live run of the set on droughtmonitor, v1.72.0.
+{
+  const bgx = loadBackground({});
+  const inX = (expr) => require("vm").runInContext(expr, bgx);
+  for (const [l, want] of [["7 days", true], ["1 year", true], ["Past month", true],
+    ["Weekly Drought Indices", false], ["Monthly summary", false], ["Compare Two Weeks", false]]) {
+    check(`sets a window of time or not: "${l}"`, bgx.setsATimeWindow(l), want);
+  }
+  check("\"this week's map\" is a moment, not seven days",
+    inX(`A_MOMENT_NOT_A_SPAN.test("bring me back to this week's map")`), true);
+  check("\"who do I email\" is not a reading, map or no map",
+    inX(`ASKING_TO_READ.test("who do I email about a mistake on this map")`), false);
+  check("while a question about the map still is",
+    inX(`ASKING_TO_READ.test("which part of the country is worst off on this map")`), true);
+
+  const dm = () => loadPage(`<!doctype html><html><body>
+    <p>West: 61% in drought. Midwest: 12% in drought.</p>
+    <a href="#cur">Current</a> <a href="#wdi">Weekly Drought Indices</a>
+    <a href="#w">West</a> <a href="#mw">Midwest</a> <a href="#cmp">Compare Two Weeks</a>
+    </body></html>`, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+  const watch = (p) => {
+    const pressed = [];
+    for (const el of p.document.querySelectorAll("a")) {
+      el.addEventListener("click", () => {
+        pressed.push(el.textContent.trim());
+        p.document.body.appendChild(p.document.createElement("hr"));
+      });
+    }
+    return pressed;
+  };
+
+  const p1 = dm();
+  if (p1) {
+    const pressed = watch(p1);
+    const bg1 = loadBackground({ page: p1 });
+    bg1.__model = (m) => m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined;
+    runAsync(async () => {
+      await bg1.__ask({ type: "smartAsk", instruction: "explain in plain language what this week's map is showing" });
+      ensure("an explain request about this week's map presses no weekly product",
+        !pressed.includes("Weekly Drought Indices"), pressed);
+    });
+  }
+
+  const p2 = dm();
+  if (p2) {
+    const pressed = watch(p2);
+    const bg2 = loadBackground({ page: p2 });
+    let n = 0;
+    bg2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        n++;
+        return { ok: true, step: n === 1 ? { do: "click", name: "West", why: "61% is drier than 12%" }
+          : { do: "click", name: "Compare Two Weeks" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bg2.__ask({ type: "smartAsk",
+        instruction: "if the West is drier than the Midwest open the West, otherwise open the Midwest" });
+      check("a condition presses its branch and stops", pressed.join(","), "West");
+    });
+  }
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202

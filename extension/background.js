@@ -2742,9 +2742,15 @@ const IS_CONDITIONAL =
 // small model says it anyway.
 const PAGE_DOES_NOT_SAY =
   /\b(?:not\s+on\s+this\s+page|(?:does|do)\s*n[o']t\s+(?:say|show|answer|mention|provide|include|contain)|(?:is|are)\s*n[o']t\s+(?:shown|mentioned|provided|given|available)|no\s+(?:information|data|values?)\s+(?:about|on|for)|cannot\s+(?:tell|be\s+determined|determine|answer)|can'?t\s+(?:tell|answer|determine)|not\s+enough\s+information)\b/i;
+// A question about what I should do is asking to be taken somewhere. "who
+// do I email about a mistake on this map" pointed at the map and was read,
+// and a 3B answered it with a phone schedule from the page footer while the
+// Contact Us link sat on the menu.
+const ASKING_WHAT_I_DO = /\b(?:do|can|should|could|would|will|must)\s+i\b|\bi\s+(?:need|want|have)\s+to\b/i;
 const ASKING_TO_READ = {
-  test: (s) => ASKING_TO_READ_PLAINLY.test(String(s || ""))
-    || (A_QUESTION.test(String(s || "")) && ABOUT_WHAT_IS_HERE.test(String(s || ""))),
+  test: (s) => !ASKING_WHAT_I_DO.test(String(s || ""))
+    && (ASKING_TO_READ_PLAINLY.test(String(s || ""))
+      || (A_QUESTION.test(String(s || "")) && ABOUT_WHAT_IS_HERE.test(String(s || "")))),
 };
 
 function scoreControl(control, words, phrase, opts = {}) {
@@ -6996,6 +7002,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       ok: ran.ok !== false, changed: moved, satisfied, label: target.label, why,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
+    // A condition has one branch, and taking it is the whole request. "if
+    // the West is drier than the Midwest open the West, otherwise open the
+    // Midwest" pressed West and then, asked what next, pressed Compare Two
+    // Weeks - the page left for somewhere nobody asked to go.
+    if (conditionalGoal && ran.ok !== false && (moved || satisfied) && r.opened !== true) {
+      return { ok: true, answer: null, history, steps: history.length,
+        tookMs: Date.now() - began, said: lastSaid };
+    }
     // Opening a chooser is half of choosing. The model named the dropdown -
     // {"why":"selecting Alaska","name":"Select a state","do":"click"} - which
     // is right, and clicking one only opens it, so the run needed a second
@@ -8801,8 +8815,25 @@ function ruledOutBy(goal, target) {
 // same span from last year" has "year" in it and wants the prior-year
 // overlay; "side by side with last week" wants a comparison. Read as spans,
 // both pressed a time-window button nobody had asked for.
+// "this week's map" is the current map, not seven days of one: on
+// droughtmonitor "bring me back to this week's map" pressed Weekly Drought
+// Indices as the one control covering a week.
 const A_MOMENT_NOT_A_SPAN =
-  /\b(?:from|with|since|against|than|versus|vs\.?|to|as)\s+(?:the\s+)?(?:last|previous|prior)\s+(?:week|month|year)\b|\b(?:a|one|two|\d+)\s+(?:weeks?|months?|years?)\s+ago\b|\bthis\s+time\s+last\b|\bsame\s+(?:span|period|time|window|dates?)\b/i;
+  /\bthis\s+(?:week|month|year)(?:'s|s)?\b|\btoday'?s?\b|\blatest\b|\b(?:from|with|since|against|than|versus|vs\.?|to|as)\s+(?:the\s+)?(?:last|previous|prior)\s+(?:week|month|year)\b|\b(?:a|one|two|\d+)\s+(?:weeks?|months?|years?)\s+ago\b|\bthis\s+time\s+last\b|\bsame\s+(?:span|period|time|window|dates?)\b/i;
+
+/* A control that sets a window of time, rather than one that merely has a
+ * period in its name. "7 days", "30 days", "1 year", "past month" set a
+ * window; "Weekly Drought Indices" is a product that happens to be weekly,
+ * and was pressed as the answer to "this week's map". A window names an
+ * amount - a number, or past/last and a unit - and a frequency word alone
+ * is not one.
+ */
+function setsATimeWindow(label) {
+  const t = String(label || "");
+  if (/\b(?:daily|weekly|monthly|yearly|annual|annually|quarterly|seasonal)\b/i.test(t)
+    && !/\d/.test(t)) return false;
+  return /\d/.test(t) || /\b(?:past|last|previous|prior|one)\s+(?:day|week|month|year)s?\b/i.test(t);
+}
 
 function soleSpanControl(clause, controls) {
   const text = String(clause || "");
@@ -8811,7 +8842,8 @@ function soleSpanControl(clause, controls) {
   const days = daysInPhrase(text);
   if (!days) return null;
   const spans = (controls || []).filter((c) => !c.disabled && c.confidence !== "low"
-    && !c.opensPanel && sameSpan(days, daysInPhrase(String(c.label || ""))));
+    && !c.opensPanel && setsATimeWindow(c.label)
+    && sameSpan(days, daysInPhrase(String(c.label || ""))));
   return spans.length === 1 ? spans[0] : null;
 }
 
@@ -10241,14 +10273,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // for.
         const looksAsking = /^\s*(what|how|why|when|where|which|who|is|are|was|were|does|do|did|can|could|should|would)\b/i
           .test(wanted) || /\?\s*$/.test(wanted);
+        // "explain in plain language what this week's map is showing" is a
+        // request to read, and looksAsking - built for "how many days" - did
+        // not know explain.
         const askedDays = (!forceBaseline && !forceModel && !conditional && !looksAsking
-          && !A_MOMENT_NOT_A_SPAN.test(wanted)
+          && !ASKING_TO_READ.test(wanted) && !A_MOMENT_NOT_A_SPAN.test(wanted)
           && splitIntoSteps(wanted).length === 1) ? daysInPhrase(wanted) : null;
         if (askedDays) {
           const dinv2 = await readInventory();
           const spans = ((dinv2.ok && dinv2.result && dinv2.result.controls) || [])
             .filter((c) => !c.disabled && c.confidence !== "low" && !c.opensPanel
-              && sameSpan(askedDays, daysInPhrase(c.label)));
+              && setsATimeWindow(c.label) && sameSpan(askedDays, daysInPhrase(c.label)));
           // One only. A page offering both "30 days" and "Monthly summary"
           // is asking which was meant, and that is a question for the model.
           if (spans.length === 1) {
