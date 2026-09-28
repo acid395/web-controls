@@ -14,7 +14,7 @@
  *
  * `offline` on each row is what the grounding layer alone did with this
  * exact prompt, the model switched off, against the captured page in
- * research/live-scoring/pages. 67 of 100 are false: that is the share of
+ * research/live-scoring/pages. 68 of 100 are false: that is the share of
  * the set that has no answer without a model, and it is the reason to
  * believe a live number measures the system rather than the matcher.
  *
@@ -43,16 +43,16 @@ globalThis.WC_BENCH_PROMPTS = {
   "note": "Potomac River at Little Falls Pump Station, DC. Discharge and gage height.",
   "prompts": [
    {"say":"set it to thirty days and then show the legend","kind":"chain","on":"Show legend","want":{"clicked":"Show legend"},"offline":true},
-   {"say":"give me a year of record, then open the tabular view","kind":"chain","on":"Viewtabular data","want":{"clicked":"tabular data"},"offline":true},
+   {"say":"give me a year of record, then open the tabular view","kind":"chain","on":"View tabular data","want":{"clicked":"tabular data"},"offline":true},
    {"say":"plot the gage height and then overlay the same span from last year","kind":"chain","on":"Data for same time span in prior year","want":{"clicked":"prior year"},"offline":false},
    {"say":"switch the vertical axis to logarithmic and then narrow the window to a week","kind":"chain","on":"7 days","want":{"clicked":"7 days"},"offline":false},
-   {"say":"expand all the data collections and then show me where this gauge sits","kind":"chain","on":"Show location details","want":{"clicked":"location details"},"offline":false},
+   {"say":"expand all the data collections and then show me where this gauge sits","kind":"chain","on":"Show location details","want":{"clicked":["location details","Site Location"]},"offline":false},
    {"say":"open the related graphs and then take me to the water year summary","kind":"chain","on":"Water Year Summary","want":{"clicked":"Water Year Summary"},"offline":true},
    {"say":"narrow this down to just the past week","kind":"paraphrase","on":"7 days","want":{"clicked":"7 days"},"offline":false},
    {"say":"I want the whole record for the last twelve months","kind":"paraphrase","on":"1 year","want":{"clicked":"1 year"},"offline":false},
    {"say":"clean up everything printed below the plot","kind":"paraphrase","on":"Hide graph details","want":{"clicked":"graph details"},"offline":false},
-   {"say":"give me these readings as raw rows instead of a picture","kind":"paraphrase","on":"Viewtabular data","want":{"clicked":"tabular data"},"offline":false},
-   {"say":"I need this file saved on my computer","kind":"paraphrase","on":"Downloaddata","want":{"clicked":"data"},"offline":false},
+   {"say":"give me these readings as raw rows instead of a picture","kind":"paraphrase","on":"View tabular data","want":{"clicked":"tabular data"},"offline":false},
+   {"say":"I need this file saved on my computer","kind":"paraphrase","on":"Download data","want":{"clicked":"Download data"},"offline":false},
    {"say":"plot the stage rather than the flow","kind":"vocabulary","on":"Graph Gage height, feet","want":{"clicked":"Gage height"},"offline":false},
    {"say":"show me discharge in cfs","kind":"vocabulary","on":"Graph Discharge, cubic feet per second","want":{"clicked":"Discharge"},"offline":false},
    {"say":"use a scale that keeps the low readings legible","kind":"world-knowledge","on":"Log","want":{"clicked":"Log"},"offline":false},
@@ -147,7 +147,7 @@ globalThis.WC_BENCH_PROMPTS = {
   "note": "NIDIS national drought portal.",
   "prompts": [
    {"say":"pick California and then show me the outlook for the coming months","kind":"chain","on":"Outlooks and Forecasts","want":{"clicked":"Outlooks"},"offline":false},
-   {"say":"open agriculture and then the most recent report on it","kind":"chain","on":"Featured Reports and Outlooks","want":{"clicked":"Featured Reports"},"offline":true},
+   {"say":"open agriculture and then the most recent report on it","kind":"chain","on":"Featured Reports and Outlooks","want":{"clicked":"Featured Reports"},"offline":false},
    {"say":"show soil moisture first and then the vegetation view","kind":"chain","on":"Vegetation","want":{"clicked":"Vegetation"},"offline":true},
    {"say":"find the tribal page and then the engagement information under it","kind":"chain","on":"Tribal Engagement","want":{"clicked":"Tribal Engagement"},"offline":false},
    {"say":"go to the Southern Plains and then pull up conditions there now","kind":"chain","on":"Current Conditions","want":{"clicked":"Current Conditions"},"offline":false},

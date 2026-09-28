@@ -2711,8 +2711,41 @@ const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|of
 // Asking to be told something, rather than asking for something to be done.
 // These end in an answer or in nothing; they never end in a list of buttons,
 // and "explain this data" came back offering five links to press.
-const ASKING_TO_READ =
+/* Is this a question about what the page says?
+ *
+ * The first form is unambiguous: explain, describe, what is. The second is
+ * the one that was missing. "is the flow shown here high or low for this
+ * time of year" is as plainly a question about the page as "what is this
+ * river doing right now" - and the second was read and answered correctly
+ * while the first went to the controls, where a 3B checked a box called
+ * "Field measurements" and reported that as the answer.
+ *
+ * A yes/no or "which" question is not always about the page, though. "is
+ * my tap at risk" wants the water utilities section; "is it safe to take
+ * the boat out" wants the marine forecast. What separates them is whether
+ * the question points at what is in front of it - shown here, this map,
+ * right now, the current alerts. Without that, it stays with the controls,
+ * where going somewhere is still possible.
+ */
+const ASKING_TO_READ_PLAINLY =
   /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
+const A_QUESTION =
+  /^\s*(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|which|what|how|where|who|can\s+you\s+tell)\b/i;
+const ABOUT_WHAT_IS_HERE =
+  /\b(?:here|this\s+(?:page|map|chart|graph|plot|table|site)|shown|showing|right\s+now|currently|current|at\s+the\s+moment|as\s+it\s+stands|in\s+effect)\b/i;
+// A request whose action depends on something it must first find out.
+const IS_CONDITIONAL =
+  /^\s*(?:only\s+)?(?:if|when(?:ever)?|unless)\b|\b(?:otherwise|or\s+else|unless|depending\s+on|if\s+(?:it|there|the|this|that)\b)/i;
+
+// What a reader says when the page it was given does not hold the answer.
+// The read prompt asks for exactly this sentence; the rest are the ways a
+// small model says it anyway.
+const PAGE_DOES_NOT_SAY =
+  /\b(?:not\s+on\s+this\s+page|(?:does|do)\s*n[o']t\s+(?:say|show|answer|mention|provide|include|contain)|(?:is|are)\s*n[o']t\s+(?:shown|mentioned|provided|given|available)|no\s+(?:information|data|values?)\s+(?:about|on|for)|cannot\s+(?:tell|be\s+determined|determine|answer)|can'?t\s+(?:tell|answer|determine)|not\s+enough\s+information)\b/i;
+const ASKING_TO_READ = {
+  test: (s) => ASKING_TO_READ_PLAINLY.test(String(s || ""))
+    || (A_QUESTION.test(String(s || "")) && ABOUT_WHAT_IS_HERE.test(String(s || ""))),
+};
 
 function scoreControl(control, words, phrase, opts = {}) {
   const label = foldAccents(control.label || "").toLowerCase();
@@ -5703,11 +5736,18 @@ function turnBudgetMs() {
   return turnBudgetFor((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL);
 }
 
-async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null, deadlineAt = null, chain = null } = {}) {
+async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null, deadlineAt = null, chain = null, onlyModel = false } = {}) {
   if (budgetMs === null) budgetMs = turnBudgetMs();
   const history = [];
   let observation = null;
   let note = null;
+  // A question the page turned out not to answer. Reading first is right -
+  // but "what is NIDIS" on a page that only links to the About page, or
+  // "how much rain has already fallen" on a map whose rainfall lives one
+  // click away, has its answer somewhere else, and a reader shown no
+  // controls can only report that it does not know. Once the page has said
+  // it cannot answer, the rest of the run is allowed to go and look.
+  let readFellThrough = false;
   // Corrections issued. Every one of them costs a turn of a 3B model with no
   // page progress to show for it, so there is a hard ceiling on how many
   // times the loop will explain itself before reporting what it has.
@@ -5894,7 +5934,11 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // the answer is always yes. So the page is read before the first turn
     // and the model is handed what it says, which also saves a turn on a
     // machine where turns are the expensive part.
-    if (!history.length && !observation && ASKING_TO_READ.test(goal)) {
+    // A condition is read first for the same reason, and keeps its controls:
+    // the answer to "if the gage height is above three feet" is on the page,
+    // and what to do about it is one of the things to press.
+    const conditionalGoal = IS_CONDITIONAL.test(goal);
+    if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
       const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
@@ -5909,6 +5953,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       if (seen) {
         observation = String(seen).slice(0, 2200);
         history.push({ did: "read the page", outcome: "got its values" });
+        if (conditionalGoal && !ASKING_TO_READ.test(goal)) {
+          note = "Decide the condition from the values the page shows, then act on the"
+            + " branch that applies. Say the value you used in why.";
+        }
       }
     }
 
@@ -5918,6 +5966,31 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // the run is under way the history is the context and the model is the
     // one holding it; stepping in after that would be second-guessing a
     // chain it is halfway through.
+    // A span with one control offering it, the same certainty the chain
+    // planner and the single-request shortcut use - here because a chain
+    // that went to the model reaches each of its clauses through this loop.
+    // Not under "model:", which promises the model decides everything.
+    if (!history.length && !note && !onlyModel) {
+      const span = soleSpanControl(goal, controls);
+      if (span) {
+        const isSw = /^(checkbox|radio)$/.test(String(span.type || "").toLowerCase());
+        const ran = await runVerified(routeGlobal, isSw
+          ? { name: "pageCheck", args: { selector: span.selector, on: true } }
+          : actionToCall("click", span, {}));
+        if (ran && ran.ok !== false) {
+          const moved = didItMove(ran);
+          history.push({
+            key: `click|${String(span.label || "").toLowerCase()}`,
+            did: `click "${span.label}"`,
+            outcome: moved ? "the page changed" : "it was already so",
+            ok: true, changed: moved, satisfied: !moved, label: span.label,
+            why: `the one control here covering "${String(goal).slice(0, 40)}"`,
+          });
+          return { ok: true, answer: null, history, steps: history.length,
+            tookMs: Date.now() - began, said: null, withoutModel: true };
+        }
+      }
+    }
     if (!history.length && !note) {
       const sure = await decisiveByMeaning(goal, controls).catch(() => null);
       if (sure) {
@@ -5960,7 +6033,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // "explain this data" came back {"name":"Legend","do":"click"} from a
     // 3B that had been shown a hundred and fifteen things to press and
     // twenty-five lines of rules about pressing them.
-    const readingOnly = !!observation && ASKING_TO_READ.test(goal);
+    const readingOnly = !!observation && ASKING_TO_READ.test(goal) && !readFellThrough;
     const asked = await Promise.race([
       askModelForStep(readingOnly ? {
         goal, observation, note, mode: "read",
@@ -6009,6 +6082,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     }
     note = null;
 
+    if (act === "finish" && readingOnly && PAGE_DOES_NOT_SAY.test(String(s.answer || ""))
+      && !readFellThrough) {
+      readFellThrough = true;
+      history.push({ did: "read the page", outcome: "it does not answer this here" });
+      note = "This page does not answer the question. Choose the control that leads to"
+        + " the page that does.";
+      continue;
+    }
     if (act === "finish") {
       return { ok: true, answer: String(s.answer || "").slice(0, 600), history,
         steps: history.length, tookMs: Date.now() - began, said: lastSaid };
@@ -6436,8 +6517,18 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // The model clicked Related links, saw the page change, and then checked
     // the same link - a different action, so the guard let it through.
     const repeatKey = `${act}|${label}`;
+    // Asking again for a name already pressed is asking for the same thing,
+    // even when that name now resolves somewhere else. "set it to thirty
+    // days and then show the legend" pressed Show legend - which then read
+    // Hide legend - and the model, asked what next, said "Show legend"
+    // again. There was no Show legend any more, so the nearest name won: a
+    // map widget whose text begins "USGS Topo Imagery Hydro+-Legend", pressed
+    // as a third step nobody asked for.
+    const sameNameAgain = wantedName && history.find((h) => (h.changed || h.satisfied)
+      && h.label && flatLabel(h.label) === wantedName && h.label !== target.label);
     const already = history.find((h) => h.key === repeatKey)
-      || history.find((h) => h.label === target.label && (h.changed || h.satisfied));
+      || history.find((h) => h.label === target.label && (h.changed || h.satisfied))
+      || sameNameAgain;
     if (already) {
       if (already.changed || already.satisfied) {
         // One nudge before ending. Ending here outright was right for "click
@@ -6582,6 +6673,19 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     const namesIt = !!optionWanted
       || (numbersAgree
         && matchWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase())));
+    // The request said what it does not want. "plot the stage rather than
+    // the flow" came back from a 3B as Gage height, then - that press not
+    // registering - as "Graph Discharge, cubic feet per second": the flow,
+    // the one thing ruled out, reported as done. The vocabulary already
+    // knows flow is discharge; it just was never asked.
+    const ruledOut = ruledOutBy(goal, target);
+    if (ruledOut) {
+      if (!correct(`The request says not "${ruledOut}", and "${String(target.label).slice(0, 40)}"`
+        + " is that. Choose the control for what it does ask for.")) {
+        return giveUp(`the model kept choosing "${String(target.label).slice(0, 40)}", which the request rules out`);
+      }
+      continue;
+    }
     // A contradicted number is not a judgment call. "30 days" answered with
     // "7 days" is wrong in a way no amount of insisting makes right, so this
     // is refused outright rather than questioned once and then honoured -
@@ -8621,6 +8725,65 @@ const SEARCH_CLAUSE =
 // exactly one control on the page and no other. Anything else - two controls
 // answering to the name, a control that only opens a panel, a phrase naming
 // nothing - is a decision, and decisions are the model's.
+/* What a request excludes, if the control in hand is it.
+ *
+ * "X rather than Y", "X instead of Y", "X but not Y". Judged on meaning as
+ * well as words - "the flow" names nothing on a gauge page, whose control
+ * says Discharge - and only where the control is not also what was asked
+ * for, so "discharge rather than the old discharge chart" is not refused
+ * for mentioning discharge twice.
+ */
+const RULED_OUT = /\b(?:rather\s+than|instead\s+of|but\s+not|and\s+not|not\s+the)\s+(.+?)(?=[,.;!?]|\s+(?:and|then)\s|$)/i;
+function ruledOutBy(goal, target) {
+  const m = String(goal || "").match(RULED_OUT);
+  if (!m) return null;
+  const excluded = m[1].trim();
+  const wantedPart = String(goal).replace(m[0], " ");
+  const label = String((target && target.label) || "");
+  if (!excluded || !label) return null;
+  const generic = new Set(["chart"]);
+  const minus = (set) => new Set([...set].filter((g) => !generic.has(g)));
+  const labelC = minus(conceptsInPhrase(label));
+  const outC = minus(conceptsInPhrase(excluded));
+  const wantC = minus(conceptsInPhrase(wantedPart));
+  const outWords = meaningfulWords(excluded).filter((w) => w.length > 2);
+  const hitsOut = [...outC].some((g) => labelC.has(g))
+    || outWords.some((w) => wordMatchesText(w, label.toLowerCase()) === "exact");
+  if (!hitsOut) return null;
+  const alsoWanted = [...wantC].some((g) => labelC.has(g))
+    || meaningfulWords(wantedPart).filter((w) => w.length > 3 && !outWords.includes(w))
+      .some((w) => wordMatchesText(w, label.toLowerCase()) === "exact" && !CONTROL_VERB.test(w));
+  return alsoWanted ? null : excluded;
+}
+
+/* The one control on this page that offers the span a clause asks for.
+ *
+ * "set it to thirty days" and "give me a year of record" name a span, and a
+ * page carrying 7 days, 30 days and 1 year has exactly one answer to each.
+ * A lone request like that was already pressed without asking anybody; the
+ * same words as the first half of a chain went to the model, where a 3B
+ * read "a year of record" as a checkbox called Field measurements. What
+ * makes it certain is the page, not where the clause sits in a sentence.
+ * A question or a condition is never certain.
+ */
+// A time named as a point to compare against, not a window to show. "the
+// same span from last year" has "year" in it and wants the prior-year
+// overlay; "side by side with last week" wants a comparison. Read as spans,
+// both pressed a time-window button nobody had asked for.
+const A_MOMENT_NOT_A_SPAN =
+  /\b(?:from|with|since|against|than|versus|vs\.?|to|as)\s+(?:the\s+)?(?:last|previous|prior)\s+(?:week|month|year)\b|\b(?:a|one|two|\d+)\s+(?:weeks?|months?|years?)\s+ago\b|\bthis\s+time\s+last\b|\bsame\s+(?:span|period|time|window|dates?)\b/i;
+
+function soleSpanControl(clause, controls) {
+  const text = String(clause || "");
+  if (IS_CONDITIONAL.test(text) || ASKING_TO_READ.test(text) || /\?\s*$/.test(text)) return null;
+  if (A_MOMENT_NOT_A_SPAN.test(text)) return null;
+  const days = daysInPhrase(text);
+  if (!days) return null;
+  const spans = (controls || []).filter((c) => !c.disabled && c.confidence !== "low"
+    && !c.opensPanel && sameSpan(days, daysInPhrase(String(c.label || ""))));
+  return spans.length === 1 ? spans[0] : null;
+}
+
 async function certainClausePlan(routeGlobal, clause) {
   const asSearch = String(clause || "").match(SEARCH_CLAUSE);
   if (asSearch && asSearch[1].trim()) {
@@ -8640,6 +8803,24 @@ async function certainClausePlan(routeGlobal, clause) {
 
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
+  const span = soleSpanControl(clause, all);
+  if (span) {
+    return {
+      label: span.label,
+      run: async () => {
+        if (span.hidden && span.revealedBy) {
+          await invokeOnActiveTab("openDisclosure", [span.revealedBy]).catch(() => null);
+          forgetPageTools();
+        }
+        const isSw = /^(checkbox|radio)$/.test(String(span.type || "").toLowerCase());
+        const ran = await runVerified(routeGlobal, isSw
+          ? { name: "pageCheck", args: { selector: span.selector, on: true } }
+          : { name: "pageClick", args: { selector: span.selector } });
+        if (!ran || ran.ok === false) return null;
+        return { changed: didItMove(ran) };
+      },
+    };
+  }
   // One, and only one. Two controls wearing the name is the ambiguity that
   // sent "Interactive Map" to a radio while the link went unpressed. Several
   // rows of the same one, with the clause saying which, is not.
@@ -9445,6 +9626,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           url: (() => { try { return (tab && tab.url) || null; } catch (e) { return null; } })(),
           steps: Array.isArray(res.steps) ? res.steps.length : null,
           changed: !!(res.verified && res.verified.changed),
+          // What was actually pressed, by name. "ok" alone says something
+          // happened; a row can only be scored against what it asked for if
+          // the run says what it touched. Without this a press on the wrong
+          // control that did change the page was indistinguishable from the
+          // right one.
+          acted: (() => {
+            const names = [];
+            for (const h of (Array.isArray(res.steps) ? res.steps : [])) {
+              if (h && h.label && (h.ok !== false)) names.push(String(h.label).slice(0, 80));
+            }
+            const d = res.display || {};
+            if (!d.answer && d.title && res.ok !== false) names.push(String(d.title).slice(0, 80));
+            return [...new Set(names)];
+          })(),
         };
         if (display && took > 1500) {
           display.stats = [...(display.stats || [])];
@@ -9510,6 +9705,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const forceBaseline = /^\s*baseline:\s*/i.test(msg.instruction || "");
         const wanted = plainlyPut(String(msg.instruction || "")
           .replace(/^\s*model:\s*/i, "").replace(/^\s*baseline:\s*/i, ""));
+        // A condition has to be read before anything is pressed. "if the gage
+        // height is above three feet show me a year of data, otherwise show
+        // me a week" went to the span shortcut, which saw "a year", pressed
+        // 1 year, and said it had not needed the model - right by accident,
+        // since the river was at 3.27 ft, and it would have pressed 1 year at
+        // 0.5 ft too. Every shortcut below answers the words; none of them
+        // can answer "if". So none of them runs.
+        const conditional = !forceBaseline && IS_CONDITIONAL.test(wanted);
 
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
@@ -9520,7 +9723,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // for it, and the scorer searched for the nearest thing resembling a
         // place, which for "august" is Augusta.
         const wantDate = looksLikeDate(wanted) ? isoDateFrom(wanted) : null;
-        if (wantDate && !forceBaseline && !forceModel) {
+        if (wantDate && !forceBaseline && !forceModel && !conditional) {
           const dinv = await readInventory();
           const fields = ((dinv.ok && dinv.result && dinv.result.controls) || [])
             .filter((c) => !c.disabled && !c.hidden
@@ -9643,7 +9846,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // offered typing and pressing and nothing that meant searching, so
         // it pressed a link called Public Health.
         const askedSearch = SEARCH_CLAUSE.test(String(wanted));
-        if (askedSearch && !forceBaseline && !forceModel && splitIntoSteps(wanted).length === 1) {
+        if (askedSearch && !forceBaseline && !forceModel && !conditional && splitIntoSteps(wanted).length === 1) {
           const did = await searchClause(route.global, wanted).catch(() => null);
           if (did) {
             respond({
@@ -9684,7 +9887,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // people ask for it. Questions are excluded outright, so "what is
         // the time series" still reads rather than presses.
         const bareName = !ASKING_TO_READ.test(wanted) && !CONTROL_VERB.test(wanted);
-        if (!forceBaseline && !forceModel && (isCommand(wanted) || bareName)
+        if (!forceBaseline && !forceModel && !conditional && (isCommand(wanted) || bareName)
             && splitIntoSteps(wanted).length === 1) {
           const rinv = await readInventory();
           const { named, n, word, how } = namedByClause(
@@ -9732,7 +9935,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         let instantOption = null;
-        if (!forceBaseline && !forceModel && isCommand(wanted)
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
           const oinv = await readInventory();
           const flatO = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -9837,7 +10040,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         let instant = null;
-        if (!forceBaseline && !forceModel && isCommand(wanted)
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
           const subject = meaningfulWords(wanted)
             .filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
@@ -9916,7 +10119,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // itself does not vary like that, so where the descriptors miss, the
         // inventory is asked the same question: is exactly one control named
         // this, and is it a real control rather than a way in to one.
-        if (!instant && !forceBaseline && !forceModel && isCommand(wanted)
+        if (!instant && !forceBaseline && !forceModel && !conditional && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
           const binv = await readInventory();
           const BLEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show)\s+/i;
@@ -10000,7 +10203,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // for.
         const looksAsking = /^\s*(what|how|why|when|where|which|who|is|are|was|were|does|do|did|can|could|should|would)\b/i
           .test(wanted) || /\?\s*$/.test(wanted);
-        const askedDays = (!forceBaseline && !forceModel && !looksAsking
+        const askedDays = (!forceBaseline && !forceModel && !conditional && !looksAsking
+          && !A_MOMENT_NOT_A_SPAN.test(wanted)
           && splitIntoSteps(wanted).length === 1) ? daysInPhrase(wanted) : null;
         if (askedDays) {
           const dinv2 = await readInventory();
@@ -10138,7 +10342,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // single clause is unclear the whole thing goes to the model
         // untouched, because half an instruction done by the page and half by
         // the model is the worst of both.
-        if (!forceBaseline && !forceModel && isCommand(wanted)) {
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted)) {
           const clauses = splitIntoSteps(wanted);
           if (clauses.length > 1 && clauses.length <= 6) {
             const certain = [];
@@ -10274,7 +10478,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const flags = {};
               let failed = null;
               for (const part of parts) {
-                const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false })
+                const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
                   .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
                 for (const h of one.history || []) all.push(h);
                 // Which part it was still on. "ran out of time" on its own
@@ -10327,7 +10531,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               // pure data question was spending a full run clicking controls
               // before the lookup paths below ever got a look at it.
               agent = await runModelAgent(route.global, wanted,
-                { maxSteps: isCommand(wanted) ? 6 : 3 }).catch((e) => ({
+                { maxSteps: isCommand(wanted) ? 6 : 3, onlyModel: forceModel }).catch((e) => ({
                 // history included. Without it the next line asks an
                 // undefined for .some and the panel reports "Cannot read
                 // properties of undefined" about our own crash, as though

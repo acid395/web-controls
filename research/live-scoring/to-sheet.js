@@ -50,6 +50,29 @@ function verdict(r) {
   if (!m.ok && /starts a file download|confirm/i.test(err)) {
     return { status: "PASS", note: "found it and asked to confirm first" };
   }
+  // A reading has to have been answered, and answered from the page. "ok"
+  // is true for a run that pressed a checkbox and called that the answer,
+  // which is what "is the flow shown here high or low" did on a 3B.
+  if (want.read) {
+    const said = String(m.answer || "").trim();
+    if (!m.ok) return { status: "FAIL", note: err.slice(0, 90) || "no answer" };
+    if (Array.isArray(m.acted) && !said) {
+      return { status: "FAIL", note: `acted instead of answering: ${(m.acted[0] || "?").slice(0, 40)}` };
+    }
+    if (/not on this page/i.test(said)) return { status: "FAIL", note: "said the page does not answer it" };
+    return { status: "PASS", note: said ? `answered: ${said.slice(0, 60)}` : "" };
+  }
+  // What it pressed, against what the row asked for. Runs recorded before
+  // `acted` existed carry no names and are scored on ok, as they were.
+  if (want.clicked && Array.isArray(m.acted)) {
+    const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const any = [].concat(want.clicked).map(flat);
+    const hit = m.acted.some((x) => any.some((c) => flat(x).includes(c)));
+    if (hit) return { status: "PASS", note: "" };
+    return { status: "FAIL", note: m.acted.length
+      ? `pressed ${m.acted.slice(-1)[0].slice(0, 40)}, wanted ${[].concat(want.clicked)[0]}`
+      : (err.slice(0, 90) || "pressed nothing") };
+  }
   return m.ok ? { status: "PASS", note: "" }
     : { status: "FAIL", note: err.slice(0, 90) || "no reason given" };
 }

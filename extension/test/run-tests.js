@@ -3143,9 +3143,8 @@ else {
     // something the page does not carry scores every run of that row a miss
     // no matter how well the model does.
     const unscoreable = meta.prompts
-      .filter((p2) => p2.want && p2.want.clicked
-        && !labels.some((l) => l.includes(flath(p2.want.clicked))))
-      .map((p2) => p2.want.clicked);
+      .flatMap((p2) => (p2.want && p2.want.clicked ? [].concat(p2.want.clicked) : []))
+      .filter((c) => !labels.some((l) => l.includes(flath(c))));
     check(`every ${site} expectation is checkable`, unscoreable.join(" | "), "");
   }
 }
@@ -4538,7 +4537,9 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
-      const out = await bgsl.runModelAgent("GENERIC", "click 1 year", { budgetMs: 400 });
+      // The model only: this measures how turns are budgeted, and "click 1
+      // year" on a page with one 1 year is otherwise pressed without a turn.
+      const out = await bgsl.runModelAgent("GENERIC", "click 1 year", { budgetMs: 400, onlyModel: true });
       ensure("a turn there is no room for is not begun", turns <= 2, turns);
       ensure("and the run says it ran out rather than reporting nothing",
         out.outOfTime === true || out.ranOut === true, out);
@@ -10765,6 +10766,200 @@ function report() {
 // console.log while they run, so a process that exited mid-section printed
 // its summary into a no-op - the run looked like it had simply stopped.
 const realLog = console.log;
+
+// Found by the first live run of the hand-written set, on a monitoring
+// location with a 3B loaded. Each of these was a row that went wrong for a
+// reason that would recur on any site, so each is pinned here.
+{
+  // <span>View</span><br><span>tabular data</span> is "View tabular data" on
+  // screen. Read as "Viewtabular data", the model's correct "View related
+  // graphs" was reported as not on the page.
+  const brp = loadPage(`<!doctype html><html><body>
+    <button type="button"><span>View</span><br><span>tabular data</span></button>
+    <button type="button"><span>View</span><br><span>related graphs</span></button>
+    </body></html>`, { url: "https://example.gov/" });
+  if (brp) {
+    const labels = brp.GENERIC.inventory({ includeHidden: true }).controls.map((c) => c.label);
+    ensure("a line break inside a button is a space in its name",
+      labels.includes("View tabular data") && labels.includes("View related graphs"), labels);
+  }
+
+  const bgq = loadBackground({});
+  // Script-level constants are not properties of the sandbox, but they are
+  // in its global scope, so they are read from inside it.
+  const inBg = (expr) => require("vm").runInContext(expr, bgq);
+  bgq.ASKING_TO_READ = inBg("ASKING_TO_READ");
+  bgq.IS_CONDITIONAL = inBg("IS_CONDITIONAL");
+  bgq.A_MOMENT_NOT_A_SPAN = inBg("A_MOMENT_NOT_A_SPAN");
+  // A question pointing at the page is a reading; one that does not stays
+  // with the controls, where going somewhere is still possible.
+  for (const [q, want] of [
+    ["is the flow shown here high or low for this time of year", true],
+    ["which of the current alerts is the most serious", true],
+    ["are there any river flood warnings in effect right now", true],
+    ["which part of the country is worst off on this map", true],
+    ["is my tap at risk", false],
+    ["is it safe to take the boat out", false],
+    ["click 7 days", false],
+  ]) {
+    check(`reading or not: "${q}"`, bgq.ASKING_TO_READ.test(q), want);
+  }
+  // Conditions are recognised, and ordinary requests are not.
+  for (const [q, want] of [
+    ["if the gage height is above three feet show me a year of data, otherwise show me a week", true],
+    ["open the West if it is drier, otherwise the Midwest", true],
+    ["show me a year of data", false],
+    ["give me a year of record, then open the tabular view", false],
+  ]) {
+    check(`conditional or not: "${q.slice(0, 50)}"`, bgq.IS_CONDITIONAL.test(q), want);
+  }
+  // A time given as something to compare against is not a window to set.
+  for (const [q, want] of [
+    ["overlay the same span from last year", true],
+    ["put it side by side with last week", true],
+    ["what happened a year ago", true],
+    ["give me a year of record", false],
+    ["narrow the window to a week", false],
+  ]) {
+    check(`a moment, not a span: "${q}"`, bgq.A_MOMENT_NOT_A_SPAN.test(q), want);
+  }
+  // What the request rules out, judged on meaning: the flow is discharge.
+  check("\"rather than the flow\" rules out Discharge",
+    bgq.ruledOutBy("plot the stage rather than the flow",
+      { label: "Graph Discharge, cubic feet per second" }), "the flow");
+  check("and leaves Gage height alone",
+    bgq.ruledOutBy("plot the stage rather than the flow", { label: "Graph Gage height, feet" }), null);
+  check("and a request with no exclusion rules nothing out",
+    bgq.ruledOutBy("plot the discharge", { label: "Graph Discharge, cubic feet per second" }), null);
+}
+
+{
+  // A shared page for the end-to-end cases below.
+  const page = () => loadPage(`<!doctype html><html><body>
+    <p>Gage height, feet: 3.27 ft</p>
+    <a href="#s7">7 days</a> <a href="#s30">30 days</a> <a href="#s365">1 year</a>
+    <button id="lg" type="button">Show legend</button>
+    <button type="button">USGS Topo Imagery Hydro Legend Monitoring Location</button>
+    <a href="#about">About NIDIS</a>
+    <label><input type="checkbox" name="py"> Data for same time span in prior year</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  const watch = (p) => {
+    const pressed = [];
+    for (const el of p.document.querySelectorAll("a, button, input")) {
+      el.addEventListener("click", () => {
+        pressed.push((el.textContent || el.name || "").replace(/\s+/g, " ").trim());
+        p.document.body.appendChild(p.document.createElement("hr"));
+        // Pressed, it says the opposite - which is why asking for it by its
+        // old name again could land somewhere else.
+        if (el.id === "lg") el.textContent = "Hide legend";
+      });
+    }
+    return pressed;
+  };
+
+  // A condition is not answered by a shortcut: the page is read first and
+  // the model decides, with the value in front of it.
+  const p1 = page();
+  if (p1) {
+    const pressed = watch(p1);
+    const bg1 = loadBackground({ page: p1 });
+    const seen = [];
+    bg1.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        seen.push(m);
+        return { ok: true, step: seen.length === 1
+          ? { do: "click", name: "1 year", why: "3.27 is above 3" } : { do: "finish", answer: "" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bg1.__ask({ type: "smartAsk",
+        instruction: "if the gage height is above three feet show me a year of data, otherwise show me a week" });
+      check("a condition is decided by the model, not a shortcut", r.plannedBy, "model");
+      ensure("with the page's values in front of it",
+        !!(seen[0] && seen[0].observation && /3\.27/.test(seen[0].observation)), seen[0] && seen[0].observation);
+      ensure("and the branch it chose is pressed", pressed.includes("1 year"), pressed);
+    });
+  }
+
+  // A question the page cannot answer goes and looks.
+  const p2 = page();
+  if (p2) {
+    const pressed = watch(p2);
+    const bg2 = loadBackground({ page: p2 });
+    const modes = [];
+    bg2.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        modes.push(m.mode || "act");
+        if (m.mode === "read") return { ok: true, step: { do: "finish", answer: "not on this page" } };
+        return { ok: true, step: modes.length === 2
+          ? { do: "click", name: "About NIDIS" } : { do: "finish", answer: "" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bg2.__ask({ type: "smartAsk", instruction: "what is NIDIS" });
+      check("a question the page does not answer is read first", modes[0], "read");
+      ensure("and then goes to where the answer is", pressed.includes("About NIDIS"), pressed);
+    });
+  }
+
+  // Asking again for a name already pressed does not press a lookalike.
+  const p3 = page();
+  if (p3) {
+    const pressed = watch(p3);
+    const bg3 = loadBackground({ page: p3 });
+    let n = 0;
+    bg3.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { n++; return { ok: true, step: n <= 3
+        ? { do: "click", name: "Show legend" } : { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bg3.__ask({ type: "smartAsk", instruction: "model: show me the legend on the chart" });
+      ensure("the legend is pressed", pressed.includes("Show legend"), pressed);
+      ensure("and the map widget that only shares a word is not",
+        !pressed.some((x) => /Topo Imagery/.test(x)), pressed);
+    });
+  }
+
+  // "the same span from last year" is the overlay, not the 1 year window.
+  const p4 = page();
+  if (p4) {
+    const pressed = watch(p4);
+    const bg4 = loadBackground({ page: p4 });
+    bg4.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: false, hasGpu: false };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bg4.__ask({ type: "smartAsk", instruction: "overlay the same span from last year" });
+      ensure("a comparison with last year does not set a one-year window",
+        !pressed.includes("1 year"), pressed);
+    });
+  }
+
+  // A span clause inside a chain is as certain as one on its own.
+  const p5 = page();
+  if (p5) {
+    const pressed = watch(p5);
+    const bg5 = loadBackground({ page: p5 });
+    bg5.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      // A model that would get the first half wrong, as a 3B did.
+      if (m.type === "llmStep") return { ok: true, step: { do: "check", name: "Data for same time span in prior year" } };
+      return undefined;
+    };
+    runAsync(async () => {
+      await bg5.__ask({ type: "smartAsk", instruction: "give me a year of record, then show the legend" });
+      ensure("the span half of a chain presses the one control offering it",
+        pressed[0] === "1 year", pressed);
+    });
+  }
+}
 
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit

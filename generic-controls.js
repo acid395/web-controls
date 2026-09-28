@@ -195,6 +195,24 @@
   const shortText = (el) => {
     if (!el) return "";
     let out = "";
+    // A line break is a space. waterdata.usgs.gov writes its step buttons as
+    // <span>View</span><br><span>tabular data</span>; concatenating the
+    // children read that as "Viewtabular data", a word nobody types. A
+    // model asked for "View related graphs" - exactly what the button says
+    // on screen - and was told no such control existed, and "raw rows"
+    // could never rank a control whose only word for table was fused onto
+    // "View". Walked rather than read with textContent so a <br> nested
+    // anywhere inside still separates what is either side of it.
+    const walk = (n) => {
+      for (const c of n.childNodes) {
+        if (out.length > 200) return;
+        if (c.nodeType === 8) continue;
+        if (c.nodeType === 3) { out += c.nodeValue || ""; continue; }
+        if (c.nodeType !== 1) continue;
+        if (String(c.tagName).toUpperCase() === "BR") { out += " "; continue; }
+        walk(c);
+      }
+    };
     for (const node of el.childNodes) {
       // A comment is not text. textContent on a comment node returns what is
       // inside the markers, so a Vue app's scaffolding - <!--teleport
@@ -204,7 +222,9 @@
       // and no scorer could recognise as "Select a state", so the one
       // control that could answer "select alaska" was invisible to both.
       if (node.nodeType === 8) continue;
-      out += node.nodeType === 3 ? (node.nodeValue || "") : (node.textContent || "");
+      if (node.nodeType === 3) out += node.nodeValue || "";
+      else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
+      else if (node.nodeType === 1) walk(node);
       if (out.length > 200) break;
     }
     return out.slice(0, 200);

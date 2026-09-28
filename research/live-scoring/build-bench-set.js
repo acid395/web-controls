@@ -71,7 +71,8 @@ async function runOne(url, html, p) {
       why: r.ok ? "ran" : String(r.error || "").slice(0, 40) };
   }
   if (w.clicked) {
-    return { ok: pressed.some((q) => flat(q).includes(flat(w.clicked))),
+    const any = [].concat(w.clicked);
+    return { ok: pressed.some((q) => any.some((c) => flat(q).includes(flat(c)))),
       why: pressed.length ? `pressed ${pressed[0].slice(0, 28)}`
         : String(r.error || "nothing pressed").slice(0, 40) };
   }

@@ -181,7 +181,11 @@ function buildReadPrompt({ goal, observation, note }) {
     // of this page.
     "- Use the values above. Quote the actual numbers and their units.",
     "- Two or three sentences. Say what the values mean, not what the page is.",
-    "- If the values do not answer the question, say that in the answer.",
+    // Said as one fixed sentence, because what happens next depends on it:
+    // a page that does not hold the answer is where the run goes to look
+    // for the page that does, and a reply that hedges in its own words is a
+    // reply nothing can act on.
+    '- If the values do not answer the question, answer exactly: "not on this page".',
   ].filter(Boolean).join("\n");
 }
 
