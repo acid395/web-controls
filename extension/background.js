@@ -5720,6 +5720,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
   // it acts on it the first time, and a second explanation is a second
   // multi-second turn buying the same chance again.
   let strikes = 0;
+  // A control the model insisted on that the request never named. Carried
+  // out, and said plainly rather than refused - see the note at the link
+  // check below.
+  let followedUnnamed = null;
   const correct = (message) => { note = message; return ++strikes <= 1; };
   // What it actually replied, kept. Every card that said "the local model
   // planned nothing here" threw this away, so there was no way to tell a
@@ -6618,11 +6622,111 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // a tick to undo and is still honoured, which is what keeps a genuine
       // paraphrase working: "show me the water level" lands on a checkbox
       // called Graph Gage height and shares not one word with it.
-      const isLink = String(target.tag || target.kind || "").toLowerCase() === "a";
-      if (isLink) {
-        return giveUp(`"${String(target.label).slice(0, 40)}" is a link away from here,`
-          + " and nothing in the request names it");
+      /* Except that on a portal, the answer to a paraphrase is always a link.
+       *
+       * This rule was written against "click deep to h2o level", where the
+       * model could not place the request, settled on WDFN Home, and
+       * navigating there would have abandoned the page the question was
+       * about. That reasoning is sound and the rule was still too wide.
+       *
+       * Measured on drought.gov, a page of categories: the model answered
+       * "effects on growing crops" with Agriculture, "effects on people's
+       * wellbeing" with Public Health, "a drought that comes on suddenly"
+       * with Flash Drought, "impact on shipping and barges" with Navigation
+       * and Transportation, "how are the plants doing" with Vegetation. Six
+       * of seven right. One of them was carried out. The other five were
+       * refused for being a link nothing in the request named - which is
+       * what a paraphrase is, and what this whole layer exists to serve.
+       *
+       * So insisting on a link is honoured like insisting on anything else,
+       * and the card says outright that it followed a link the request did
+       * not name. What guards the wrong case is the saying, not the
+       * refusing: somebody who sees "followed Agriculture, which your words
+       * did not name" knows precisely what happened and can go back. Never
+       * moving is not safety when it means never answering.
+       */
+      // Except where the request asked for a state, which a link has none of.
+      //
+      // Letting insistence through cost the one thing refusing was good at.
+      // "Enable the tidal predictions layer" names a layer this page does
+      // not have; refusing was right, and with the rule relaxed the model
+      // insisted on "See water level forecast in NOAA's..." and that got
+      // pressed. Same score on the forty-four, worse behaviour - and nine
+      // of the benchmark's prompts are requests for things that are not
+      // there, where refusing is the whole answer.
+      //
+      // The verb settles it. "Enable", "turn on", "check" ask for something
+      // to be in a state afterwards, and a link cannot be in a state: it
+      // goes somewhere. So a state request insisting on a link is the model
+      // failing to find what was asked for, not paraphrasing it, and is
+      // refused as before. "Effects on growing crops" asks for no state and
+      // Agriculture is a fair reading of it.
+      // No verb check here. This replaced a test for the control being a
+      // link and, without it, fired on every control whenever the request
+      // held a state verb - which refused "select alaska" on a combobox.
+      // The case it was reaching for, a state request landing on a link, is
+      // caught properly further down where link-ness is actually checked,
+      // and caught whether or not the words happen to overlap.
+      //
+      /* And only where the request names nothing better.
+       *
+       * "Select alaska" on a page carrying an Alaska option: a model that
+       * wandered to "Skip to main content" and then settled on "Select Ada
+       * County" would have that second choice honoured as insistence, and
+       * set the page to a county nobody asked about - which is the exact
+       * harm the wandering rule was written for.
+       *
+       * What separates it from "effects on growing crops" landing on
+       * Agriculture is not the insisting, it is the page. There, no control
+       * and no option answers to any word of the request, so the model's
+       * reading is the only reading on offer. Here, alaska is sitting in a
+       * dropdown, so a pick that matches nothing is not a paraphrase - it is
+       * a miss, with the answer visible beside it.
+       */
+      // A value sitting in a list, not a label sharing a word.
+      //
+      // Matching labels too cost the case this whole layer is for: "plot
+      // the water level" should reach Graph Gage height, and those words
+      // also appear in "Graph it Stream water level elevation above NAVD
+      // 1988" - so something matched, the model's pick was refused, and
+      // word-matching had overruled the model's judgment again, which is
+      // the exact thing being fixed here.
+      //
+      // A value is different. "Select alaska" against a dropdown holding
+      // Alaska is not a paraphrase with a rival reading; it is the answer,
+      // written out, in a list, unchosen. A model picking something else
+      // there has missed rather than interpreted.
+      // A span is as unambiguous as a value. "Click last month of data" on a
+      // page carrying a 30 days control: a month is thirty days, the answer
+      // is written out on the page, and a model choosing "Last reading 3"
+      // from twelve identically-named links has missed it rather than read
+      // the request some other way.
+      const askedDays = daysInPhrase(goal);
+      const somethingMatches = controls.some((c) => {
+        if (c === target) return false;
+        if (askedDays && daysInPhrase(String(c.label || "")) === askedDays) return true;
+        return (c.options || []).slice(0, 60).some((o) => {
+          const t = String(o.text || o.value || "").toLowerCase().trim();
+          return t && t.length >= 4 && goalWords.some((w) => w === t);
+        });
+      });
+      // A way in is not a wrong answer. "Click view tabular data" on a page
+      // that keeps it behind Related links: the model presses the
+      // disclosure, looks again, and finds what it was sent for. That first
+      // press names nothing in the request and matches nothing - it is not
+      // meant to - and refusing it stops the run on the threshold of the
+      // thing it was asked for.
+      const isDoor = !!target.opensPanel;
+      if (somethingMatches && !isDoor) {
+        return giveUp(`the model chose "${String(target.label).slice(0, 40)}", which the request`
+          + " names nothing of, while something here does answer to it");
       }
+      // The step that follows already records `unrelated` when a control
+      // shares no word with the request, and the card already reports that
+      // - "some steps acted on controls your words did not name", with the
+      // step naming which. Nothing further is needed here: what was missing
+      // was permission to act, not a way to describe it.
+      followedUnnamed = String(target.label || "").slice(0, 40);
     }
 
     // Naming an option is asking for it to be chosen, whatever verb came
@@ -6657,6 +6761,36 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
       .test(goal);
     const isSwitch = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
+    /* A link cannot be turned on.
+     *
+     * "Enable the tidal predictions layer" asks for a layer to be on
+     * afterwards. This page has no such layer, and refusing was the right
+     * answer - it was the right answer until the model's insistence started
+     * being honoured, after which the model settled on "See water level
+     * forecast in NOAA's National Water Prediction System" and that got
+     * pressed. The pick even shares a word, "predictions" against
+     * "Prediction", so nothing about relatedness catches it.
+     *
+     * What catches it is the verb against the control. Enable, turn on,
+     * tick, check all ask for a state to hold afterwards; a link holds no
+     * state, it goes somewhere else. So a state request landing on a link
+     * has not found what it was asked for, however the words line up, and
+     * saying so is better than navigating away and calling it done. Nine of
+     * the benchmark's prompts are requests for things that are not there,
+     * and this is the shape of every one of them.
+     */
+    // Only the verbs that can mean nothing else. STATE_COMMAND also holds
+    // "select" and "check", and this extension deliberately reads both as a
+    // press when they land on a link - "select GIS Data" and "check Data"
+    // are how people ask for a link by name, and an earlier fix exists
+    // precisely to let those through. Borrowing that list here undid it.
+    // Enable, turn on, tick: those ask for a state and nothing else.
+    const ONLY_A_STATE = /\b(enable|disable|tick|untick|uncheck|turn\s+(on|off)|switch\s+(on|off))\b/i;
+    const goesAway = String(target.tag || target.kind || "").toLowerCase() === "a";
+    if (goesAway && ONLY_A_STATE.test(goal) && !optionWanted) {
+      return giveUp(`"${String(target.label).slice(0, 40)}" is a link, and nothing here can be`
+        + " turned on the way the request asks");
+    }
     const call = (ariaOption || emptyChooser)
       ? actionToCall("click", target, s)
       : isSwitch && !optionWanted

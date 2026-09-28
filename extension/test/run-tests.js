@@ -5874,15 +5874,32 @@ for (const b of budgets) {
     }
   }
 
-  // Insisting is judgment and judgment is honoured - but only where being
-  // wrong is reversible. A switch is a tick to undo; a link is the page
-  // gone, fragment or not, because that is how a single-page app navigates.
+  /* Insisting is judgment and judgment is honoured - links included now.
+   *
+   * This pinned the opposite: a link insisted on was refused, because being
+   * wrong about a link means the page is gone. The reasoning is sound and
+   * the cost was measured on drought.gov, a page of categories. The model
+   * answered "effects on growing crops" with Agriculture, "effects on
+   * people's wellbeing" with Public Health, "a drought that comes on
+   * suddenly" with Flash Drought, "how are the plants doing" with
+   * Vegetation. Six of seven right; one carried out. The other five were
+   * refused for being a link nothing in the request named - which is what a
+   * paraphrase is, and what this layer exists to serve.
+   *
+   * Three things keep the old harm out, and all three are tested above:
+   * wandering between controls is still refused, a request that names
+   * something else on the page is still refused, and a request asking for a
+   * state - enable, turn on - landing on a link is still refused, since a
+   * link has no state to be in.
+   *
+   * The hand-written forty-four went from 42 to 43 on this change.
+   */
   {
     const both = `<label><input type="checkbox" name="sw"> Graph Gage height, feet</label>
       <a href="#home">WDFN Home</a>`;
     for (const [what, pick, wantPresses, wantOn] of [
       ["a switch", "Graph Gage height, feet", 0, true],
-      ["a link", "WDFN Home", 0, false],
+      ["a link", "WDFN Home", 1, false],
     ]) {
       const ip = loadPage(`<!doctype html><html><body>${both}</body></html>`,
         { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
