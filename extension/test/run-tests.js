@@ -2748,13 +2748,28 @@ else {
   ensure("the live run reloads the page between prompts",
     /async function resetTo/.test(panel) && /await resetTo\(/.test(panel),
     "prompts would run on whatever the last one navigated to");
-  // One runner, three modes. The shipped set measures the fast path; the
-  // hard set is what says whether anything understands. Sharing the loop is
-  // what keeps them comparable - two loops would drift and the columns
-  // would stop meaning the same thing.
-  ensure("the hard set exists and shares the runner",
-    /WC_BENCH_HARD/.test(panel) && /async function runPromptSet/.test(panel),
-    "no hard set, or it runs through a second loop");
+  // One runner, one set, two modes. There used to be two prompt files,
+  // because the shipped set was every control's own printed label and a
+  // hand-written one had to sit beside it before anything could be said
+  // about understanding. Both are hand-written now, so "hard" is a filter
+  // over the set rather than a second list - which is what stops the two
+  // runs drifting, and keeps a row meaning the same thing in either.
+  ensure("the hard mode filters the one set rather than a second list",
+    /const HARD_KINDS = new Set/.test(panel) && /HARD_KINDS\.has\(p\.kind\)/.test(panel)
+      && /async function runPromptSet/.test(panel),
+    "hard mode is not a filter over the shipped set");
+  // Every kind the filter names has to be a kind the set actually uses, or
+  // "bench hard" quietly runs fewer prompts than anybody thinks.
+  {
+    const named = [...(panel.match(/const HARD_KINDS = new Set\(\[([^\]]*)\]/) || ["", ""])[1]
+      .matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const used = new Set();
+    for (const s4 of sites) for (const p4 of sets[s4].prompts) used.add(p4.kind);
+    check("every kind the hard filter names is one the set uses",
+      named.filter((k) => !used.has(k)).join(", "), "");
+    ensure("and the hard subset is not trivially small",
+      named.length >= 3, named.join(","));
+  }
 
   // A run whose conditions are not recorded cannot be repeated.
   for (const field of ["extensionVersion", "model", "temperature", "gpu", "userAgent", "startedAt"]) {
@@ -3060,37 +3075,58 @@ else {
   }
 }
 
-// The hard set is only hard if it does not contain its own answers.
+// The set is only a test of understanding if it does not contain its own
+// answers.
 //
-// The shipped set is every control's own label, so a live run of it sent
-// three prompts of twenty-four to the model and measured the fast path.
-// These are written so that cannot happen: a paraphrase must share no word
-// with the control it should reach, or the name matcher answers it and the
-// model is never consulted.
-if (typeof require === "undefined") skip("the hard set is actually hard", "no require");
+// The set this replaces was enumerated from each page: every prompt was a
+// control's own printed label, which is precisely what the name matcher
+// exists to catch, so a live run of it sent three prompts of twenty-four to
+// the model and reported the matcher as the system. Every prompt is
+// hand-written now, and this is what keeps it that way.
+if (typeof require === "undefined") skip("the set is actually hard", "no require");
 else {
   const pathh = require("path");
-  require(pathh.join(__dirname, "..", "lib", "bench-hard.js"));
-  const hard = globalThis.WC_BENCH_HARD || {};
+  require(pathh.join(__dirname, "..", "lib", "bench-prompts.js"));
+  const all = globalThis.WC_BENCH_PROMPTS || {};
   const flath = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const leaks = [];
-  let count = 0;
-  for (const [site, meta] of Object.entries(hard)) {
+  let count = 0, chains = 0;
+  for (const [site, meta] of Object.entries(all)) {
     for (const p2 of meta.prompts) {
       count++;
-      // A chain names its steps - the difficulty there is doing two things
-      // in order, not working out what they are. A vocabulary case may
-      // contain the stem of its target ("log" inside "logarithmic"), which
-      // is the thing being tested. Only a paraphrase must be clean.
+      if (p2.kind === "chain") chains++;
+      // A chain names its steps - the difficulty there is doing several
+      // things in the right order, not working out what they are. A
+      // vocabulary case may well contain the stem of its target ("log"
+      // inside "logarithmic"), which is the thing being tested. Reading and
+      // refusal have no target to leak. Only a paraphrase must be clean.
       if (p2.kind !== "paraphrase") continue;
-      if (flath(p2.say).includes(flath(p2.target))) leaks.push(`${site}: ${p2.say}`);
+      if (flath(p2.say).includes(flath(p2.on))) leaks.push(`${site}: ${p2.say}`);
     }
   }
-  ensure("there are enough of them to mean anything", count >= 25, count);
+  ensure("there are enough of them to mean anything", count >= 100, count);
   check("no paraphrase contains the control it should reach", leaks.join(" | "), "");
+  // Chaining is a stated goal of the project. Two hundred and twenty-three
+  // prompts across the two sets this replaces contained three chains
+  // between them, which is not a sample of anything - so the floor is
+  // written down rather than left to whoever edits the set next.
+  ensure("chains are a real part of the set, not a token few",
+    chains >= 25, `${chains} of ${count}`);
+  // Nothing in here should be answerable by typing a control's own name.
+  const named = [];
+  for (const [site, meta] of Object.entries(all)) {
+    for (const p2 of meta.prompts) {
+      if (!p2.on || p2.kind === "vocabulary" || p2.kind === "chain") continue;
+      if (flath(p2.say) === flath(p2.on) || flath(p2.say) === `click ${flath(p2.on)}`) {
+        named.push(`${site}: ${p2.say}`);
+      }
+    }
+  }
+  check("no prompt is just a control's label typed back", named.join(" | "), "");
   // And every target has to be a real control, or the case is unscoreable.
+  // Reading and refusal carry no target by design.
   const fsh = require("fs");
-  for (const [site, meta] of Object.entries(hard)) {
+  for (const [site, meta] of Object.entries(all)) {
     const file = pathh.join(__dirname, "..", "..", "research", "live-scoring", "pages",
       `${site}.html`);
     if (!fsh.existsSync(file)) continue;
@@ -3100,9 +3136,17 @@ else {
     const labels = bgh.controlsForModel(pg.GENERIC.inventory({ includeHidden: true }))
       .map((c) => flath(c.label));
     const missing = meta.prompts
-      .filter((p2) => !labels.some((l) => l.includes(flath(p2.target))))
-      .map((p2) => p2.target);
+      .filter((p2) => p2.on && !labels.some((l) => l.includes(flath(p2.on))))
+      .map((p2) => p2.on);
     check(`every ${site} target is a control that page has`, missing.join(" | "), "");
+    // What a row asks for has to be checkable too - a want.clicked naming
+    // something the page does not carry scores every run of that row a miss
+    // no matter how well the model does.
+    const unscoreable = meta.prompts
+      .filter((p2) => p2.want && p2.want.clicked
+        && !labels.some((l) => l.includes(flath(p2.want.clicked))))
+      .map((p2) => p2.want.clicked);
+    check(`every ${site} expectation is checkable`, unscoreable.join(" | "), "");
   }
 }
 
@@ -3207,11 +3251,9 @@ else {
   const w2 = fsr.readFileSync(pathr.join(__dirname, "..", "background.js"), "utf8");
   const cap = (w2.match(/const HISTORY_LIMIT = (\d+)/) || [])[1];
   require(pathr.join(__dirname, "..", "lib", "bench-prompts.js"));
-  require(pathr.join(__dirname, "..", "lib", "bench-hard.js"));
   let biggest = 0;
-  for (const [site, meta] of Object.entries(globalThis.WC_BENCH_PROMPTS || {})) {
-    const hard = (globalThis.WC_BENCH_HARD || {})[site];
-    biggest = Math.max(biggest, meta.prompts.length + ((hard && hard.prompts.length) || 0));
+  for (const meta of Object.values(globalThis.WC_BENCH_PROMPTS || {})) {
+    biggest = Math.max(biggest, meta.prompts.length);
   }
   ensure("the history holds the longest run there is",
     Number(cap) >= biggest, `cap ${cap}, longest run ${biggest}`);

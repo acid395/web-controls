@@ -262,10 +262,13 @@ async function rowsForSite(site) {
   lines.push("switched off for all of it, so what is reported here is the grounding layer");
   lines.push("alone - deterministic, and re-runnable by anyone with the repo. It is not the");
   lines.push("system: the thing that ships decides with a model loaded, and a component");
-  lines.push("measured on its own does not stand in for that. The same 120 prompts are");
-  lines.push("frozen in `extension/lib/bench-prompts.js` so they can be run live, in");
-  lines.push("Chrome, with the model on - see `LIVE-BENCH.md`. Put the two columns beside");
-  lines.push("each other; neither replaces the other.");
+  lines.push("measured on its own does not stand in for that. A separate hand-written set");
+  lines.push("of a hundred prompts, frozen in `extension/lib/bench-prompts.js`, is what runs");
+  lines.push("live in Chrome with the model on - see `LIVE-BENCH.md`. These enumerated");
+  lines.push("actions and that set are different lists on purpose: this one covers every");
+  lines.push("control a page has, which is breadth; that one is written so no prompt names");
+  lines.push("its target, which is the only way to ask whether anything understands. Put the");
+  lines.push("two columns beside each other; neither replaces the other.");
   lines.push("");
   lines.push("What this half does establish is a floor. A row that lands here lands with any");
   lines.push("model or none, so model size only decides the rows this layer cannot reach.");

@@ -797,33 +797,27 @@ async function resetTo(url) {
   return tab.id;
 }
 
-/* Two runs.
+/* Two runs over one set.
  *
- *   bench        the frozen set, as shipped   - what a user gets
- *   bench hard   prompts that name nothing    - the harder half
+ *   bench        all twenty prompts for this site
+ *   bench hard   the subset that names nothing on the page
  *
- * The frozen set is every control's own label, which is what the fast path
- * is built to catch - a live run of it sent three prompts of twenty-four to
- * the model. The hard set shares no word with any control it should reach,
- * so the same page has to be worked out rather than matched. Both are run
- * the way somebody would actually type them; neither forces a path.
+ * There were two files and two commands, because the shipped set was every
+ * control's own printed label and a second, hand-written one had to exist
+ * beside it before anything could be said about whether the model
+ * understands. The set is hand-written throughout now, so "hard" is a
+ * filter over it rather than a separate list - which is what stops the two
+ * runs drifting apart, and makes a row mean the same thing in both.
+ *
+ * Reading and refusal sit outside the hard subset on purpose: they are not
+ * harder versions of pressing a control, they are a different question
+ * (can it answer off the page, can it decline), and totalling them into a
+ * "hard" percentage would blur two things worth reading separately.
  */
+const HARD_KINDS = new Set(["chain", "paraphrase", "world-knowledge", "judgment"]);
+
 async function runBench(mode = "set") {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const host = (() => { try { return new URL((tab && tab.url) || "").host; } catch (e) { return ""; } })();
-  const hardFor = (() => {
-    for (const [site, meta] of Object.entries(globalThis.WC_BENCH_HARD || {})) {
-      try { if (new URL(meta.url).host === host) return { site, meta }; } catch (e) { /* skip */ }
-    }
-    return null;
-  })();
-  if (mode === "hard") {
-    if (!hardFor) { logEcho("bench hard: no hard set for this site"); return; }
-    return runPromptSet(hardFor.site, hardFor.meta.url,
-      hardFor.meta.prompts.map((p) => ({
-        say: p.say, kind: p.kind, on: p.target, want: { reaches: p.target },
-      })), "hard");
-  }
   const found = benchSiteFor((tab && tab.url) || "");
   if (!found) {
     logEcho("bench: no frozen prompt set for this site."
@@ -831,23 +825,11 @@ async function runBench(mode = "set") {
         try { return new URL(m.url).host; } catch (e) { return "?"; } }).join(", ")}`);
     return;
   }
-  /* One run, one file, both halves.
-   *
-   * The frozen set is every control's own label and the hard set shares no
-   * word with anything - they measure different things and they measure the
-   * same page, so splitting them across two runs meant two files, two
-   * fifteen-minute sittings and two numbers that then had to be put back
-   * together by hand. They are appended, each row keeping the kind that
-   * says which half it came from, so one paste tells the whole story about
-   * a site.
-   */
-  const prompts = [...found.meta.prompts];
-  if (hardFor) {
-    for (const p of hardFor.meta.prompts) {
-      prompts.push({ say: p.say, kind: p.kind, on: p.target, want: { reaches: p.target } });
-    }
-  }
-  return runPromptSet(found.site, found.meta.url, prompts, "set");
+  const prompts = mode === "hard"
+    ? found.meta.prompts.filter((p) => HARD_KINDS.has(p.kind))
+    : found.meta.prompts;
+  if (!prompts.length) { logEcho(`bench ${mode}: nothing to run on ${found.site}`); return; }
+  return runPromptSet(found.site, found.meta.url, prompts, mode);
 }
 
 async function runPromptSet(site, url, prompts, mode) {
