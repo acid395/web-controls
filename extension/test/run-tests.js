@@ -10961,6 +10961,99 @@ const realLog = console.log;
   }
 }
 
+// The second live run of the set on the same gauge page, v1.71.0.
+{
+  const quietPage = () => loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" name="py"> Data for same time span in prior year</label>
+    <label><input type="radio" name="g" value="n"> Graph Nitrate plus nitrite, water</label>
+    <a href="#dl">Download data</a> <a href="#home">WDFN Home</a>
+    <button id="lg" type="button">Show legend</button>
+    <button type="button">USGS Topo Imagery Hydro Legend Monitoring Location</button>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  // Records a press without changing anything a signature could see, as the
+  // live Show legend press did.
+  const quietWatch = (p) => {
+    const pressed = [];
+    for (const el of p.document.querySelectorAll("a, button, input")) {
+      el.addEventListener("click", () => pressed.push((el.textContent || el.value || "").replace(/\s+/g, " ").trim()));
+    }
+    return pressed;
+  };
+  const oneModel = (bg, steps) => {
+    let n = 0;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { const st = steps[n++] || { do: "finish", answer: "" }; return { ok: true, step: st }; }
+      return undefined;
+    };
+  };
+
+  // The prompt's own notation, copied back, is taken off the name.
+  const a = quietPage();
+  if (a) {
+    const bga = loadBackground({ page: a });
+    oneModel(bga, [{ do: "check", name: "same time span in (checkbox)", on: true }]);
+    runAsync(async () => {
+      await bga.__ask({ type: "smartAsk", instruction: "model: overlay the same span from last year" });
+      check("a name with the prompt's (checkbox) notation still resolves",
+        a.document.querySelector('input[name="py"]').checked, true);
+    });
+  }
+
+  // Typing into a radio is refused, not reported as a change.
+  const b = quietPage();
+  if (b) {
+    const bgb = loadBackground({ page: b });
+    oneModel(bgb, [{ do: "type", name: "Graph Nitrate plus nitrite, water", value: "rows" },
+      { do: "type", name: "Graph Nitrate plus nitrite, water", value: "rows" }]);
+    runAsync(async () => {
+      await bgb.__ask({ type: "smartAsk", instruction: "model: give me these readings as raw rows" });
+      check("typing into a radio does not choose it",
+        b.document.querySelector('input[name="g"]').checked, false);
+    });
+  }
+
+  // Meaning names a control: saving to a computer is downloading.
+  const c = quietPage();
+  if (c) {
+    const pressed = quietWatch(c);
+    const bgc = loadBackground({ page: c });
+    oneModel(bgc, [{ do: "click", name: "Download data" }, { do: "click", name: "Download data" }]);
+    runAsync(async () => {
+      const r = await bgc.__ask({ type: "smartAsk", instruction: "model: I need this file saved on my computer" });
+      ensure("\"saved on my computer\" is allowed to reach Download data",
+        pressed.includes("Download data") || /download|confirm/i.test(String(r.error || "")), [pressed, r.error]);
+      ensure("and it is not called wandering",
+        !/moved between controls/.test(String(r.error || "")), r.error);
+    });
+  }
+
+  // An earlier press of the same name counts, changed or not.
+  const d = quietPage();
+  if (d) {
+    const pressed = quietWatch(d);
+    const lg = d.document.getElementById("lg");
+    lg.addEventListener("click", () => { lg.textContent = "Hide legend"; });
+    const bgd = loadBackground({ page: d });
+    oneModel(bgd, [{ do: "click", name: "Show legend" }, { do: "click", name: "Show legend" },
+      { do: "click", name: "Show legend" }]);
+    runAsync(async () => {
+      await bgd.__ask({ type: "smartAsk", instruction: "model: show the legend" });
+      ensure("a press that moved nothing is still not followed by a lookalike",
+        !pressed.some((x) => /Topo Imagery/.test(x)), pressed);
+    });
+  }
+
+  // The planners behind the model get only what is wanted.
+  {
+    const bgw = loadBackground({});
+    const inW = (expr) => require("vm").runInContext(expr, bgw);
+    check("the wanted half of \"X rather than Y\"",
+      inW(`String("plot the stage rather than the flow").replace(RULED_OUT, " ").replace(/\\s+/g, " ").trim()`),
+      "plot the stage");
+  }
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202

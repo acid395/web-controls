@@ -14,7 +14,7 @@
  *
  * `offline` on each row is what the grounding layer alone did with this
  * exact prompt, the model switched off, against the captured page in
- * research/live-scoring/pages. 68 of 100 are false: that is the share of
+ * research/live-scoring/pages. 67 of 100 are false: that is the share of
  * the set that has no answer without a model, and it is the reason to
  * believe a live number measures the system rather than the matcher.
  *
@@ -147,7 +147,7 @@ globalThis.WC_BENCH_PROMPTS = {
   "note": "NIDIS national drought portal.",
   "prompts": [
    {"say":"pick California and then show me the outlook for the coming months","kind":"chain","on":"Outlooks and Forecasts","want":{"clicked":"Outlooks"},"offline":false},
-   {"say":"open agriculture and then the most recent report on it","kind":"chain","on":"Featured Reports and Outlooks","want":{"clicked":"Featured Reports"},"offline":false},
+   {"say":"open agriculture and then the most recent report on it","kind":"chain","on":"Featured Reports and Outlooks","want":{"clicked":"Featured Reports"},"offline":true},
    {"say":"show soil moisture first and then the vegetation view","kind":"chain","on":"Vegetation","want":{"clicked":"Vegetation"},"offline":true},
    {"say":"find the tribal page and then the engagement information under it","kind":"chain","on":"Tribal Engagement","want":{"clicked":"Tribal Engagement"},"offline":false},
    {"say":"go to the Southern Plains and then pull up conditions there now","kind":"chain","on":"Current Conditions","want":{"clicked":"Current Conditions"},"offline":false},

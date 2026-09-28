@@ -6249,7 +6249,13 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // our own formatting. Refused by name, so it cannot happen again however
     // the prompt is written.
     const KIND_WORD = /^(button|link|a|checkbox|radio|select|option|input|textarea|control|name|text)$/;
+    // The prompt writes a control as `label (checkbox) off`, and a 3B copies
+    // the line back whole: "same time span in (checkbox)" for the prior-year
+    // overlay - the right control - and "Gage height, feet (svg)" for the
+    // stage. Both were resolved as names nothing on the page wears. The
+    // notation is ours, so it is taken off before the name is looked up.
     const namedRaw = String(s.name || s.label || s.control || s.target || "")
+      .replace(/\s*\((?:checkbox|radio|button|link|a|select|select-one|input|text|textbox|search|svg|option|combobox|listbox|menu|tab|switch|img|image|date|number|range|submit)\)(?:\s+(?:on|off|checked|unchecked|open|closed))?\s*$/i, "")
       .replace(/^[<\[(]+|[>\])]+$/g, "");
     const rawName = KIND_WORD.test(flatLabel(namedRaw)) ? "" : flatLabel(namedRaw);
     const wantedName = rawName.replace(NAMED_LEAD, "").trim() || rawName;
@@ -6484,7 +6490,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     const ariaOption = String(target.kind || "").toLowerCase() === "option"
       && !/^(select|option)$/.test(String(target.tag || "").toLowerCase());
     const switchTarget = /^(checkbox|radio)$/.test(String(target.type || "").toLowerCase());
-    if (!optionWanted && !valueIsTheControl && !switchTarget && !ariaOption
+    // A switch is exempt from the verb because "click", "select" and "check"
+    // all mean choosing it. Typing into one means nothing: asked for "raw
+    // rows instead of a picture", a 3B typed into the Nitrate radio, the
+    // radio was chosen, and the card said "changed" about a request for a
+    // table.
+    if (!optionWanted && !valueIsTheControl && !(switchTarget && act !== "type") && !ariaOption
         && !emptyChooser && !actionFits(act, target)) {
       // The verb says what the person wants; the markup says how it is done.
       // Every exception above this line was added one at a time for one
@@ -6524,13 +6535,16 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // again. There was no Show legend any more, so the nearest name won: a
     // map widget whose text begins "USGS Topo Imagery Hydro+-Legend", pressed
     // as a third step nobody asked for.
-    const sameNameAgain = wantedName && history.find((h) => (h.changed || h.satisfied)
+    // Pressed, not necessarily changed: live, Show legend's press moved no
+    // signature this can see, so requiring a change let the second ask
+    // through to the map widget anyway.
+    const sameNameAgain = wantedName && history.find((h) => h.ok !== false
       && h.label && flatLabel(h.label) === wantedName && h.label !== target.label);
     const already = history.find((h) => h.key === repeatKey)
       || history.find((h) => h.label === target.label && (h.changed || h.satisfied))
       || sameNameAgain;
     if (already) {
-      if (already.changed || already.satisfied) {
+      if (already.changed || already.satisfied || already === sameNameAgain) {
         // One nudge before ending. Ending here outright was right for "click
         // 30 days" and wrong for everything that has a second half: not
         // every compound instruction splits - "click Learn More, compare the
@@ -6670,7 +6684,24 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // positive evidence, and the question below is the right response to
     // that rather than a shrug.
     const matchWords = telling;
+    // By meaning as well as by word. "I need this file saved on my computer"
+    // got the answer Download data from a 3B, and it was turned away as a
+    // control the request does not name - which it does, in every way but
+    // the word. The vocabulary says what a request is about and what a
+    // control is; where those agree, that is naming. "chart" is left out:
+    // on a gauge page nearly every control is a graph of something, so it
+    // tells one from another not at all.
+    const namesByMeaning = (() => {
+      const skip = new Set(["chart"]);
+      // Only what is wanted: "the stage rather than the flow" is not about flow.
+      const wantedText = String(goal).replace(RULED_OUT, " ");
+      const want = [...conceptsInPhrase(wantedText)].filter((g) => !skip.has(g));
+      if (!want.length) return false;
+      const has = conceptsInPhrase(String(target.label || ""));
+      return want.some((g) => has.has(g));
+    })();
     const namesIt = !!optionWanted
+      || (numbersAgree && namesByMeaning)
       || (numbersAgree
         && matchWords.some((w) => wordMatchesText(w, String(target.label || "").toLowerCase())));
     // The request said what it does not want. "plot the stage rather than
@@ -9713,6 +9744,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 0.5 ft too. Every shortcut below answers the words; none of them
         // can answer "if". So none of them runs.
         const conditional = !forceBaseline && IS_CONDITIONAL.test(wanted);
+        // What is wanted, without what is ruled out. The planners below read a
+        // request for every measurement it mentions, so "plot the stage rather
+        // than the flow" asked them for gage height and discharge both, and
+        // every one of them declined. The model still sees the whole request -
+        // it needs the exclusion to refuse the wrong control - but these only
+        // need to know what to fetch.
+        const wantedOnly = String(wanted).replace(RULED_OUT, " ").replace(/\s+/g, " ").trim() || wanted;
 
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
@@ -10700,7 +10738,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        const dataCall = forceModel ? null : planDataTool(wanted, route);
+        const dataCall = forceModel ? null : planDataTool(wantedOnly, route);
 
         // Control is the primary job, so an instruction phrased as an action
         // is not diverted into answering about the page. "set the parameter
@@ -11221,7 +11259,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       ? c.selector !== openedAt
                       : String(c.label || "").trim().toLowerCase() !== openedLabel)),
                 };
-                const inside = planGenericTool(wanted, within);
+                const inside = planGenericTool(wantedOnly, within);
                 const first = inside && inside.calls && inside.calls[0];
                 // Only ever a switch, never another click. This retry exists
                 // because pressing a panel open is not finishing the job, and
@@ -11291,14 +11329,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
-        const wants = commandLike || forceModel ? [] : pageValueWants(wanted);
+        const wants = commandLike || forceModel ? [] : pageValueWants(wantedOnly);
         // An aggregate is a reason to read the page even when the thing being
         // aggregated is a word this vocabulary has never met. "Total
         // reservoir storage" on a page with a column called "Reservoir
         // Storage (acre-ft)" found no known concept, skipped the page
         // entirely, and ended up clicking two navigation links - a question
         // answered by navigating away from the answer.
-        const wantsAgg = commandLike || forceModel ? null : aggregateWanted(wanted);
+        const wantsAgg = commandLike || forceModel ? null : aggregateWanted(wantedOnly);
         // Needed by the page read and again by the walk that follows links,
         // so it lives above both rather than inside the first.
         const askedPlace = dataCall && dataCall.args
@@ -11309,7 +11347,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Before giving up on reading, match the question's own words
         // against the page's own column names - no vocabulary required,
         // which is what a site nobody has seen needs.
-        if (!commandLike && !forceModel && !pageValueWants(wanted).length) {
+        if (!commandLike && !forceModel && !pageValueWants(wantedOnly).length) {
           const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
           const hits = read.ok ? findByOwnWords(read.result, wanted, askedPlace) : null;
           if (hits) {
@@ -11521,7 +11559,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // came from rules running ahead of the page's own controls.
         const rulesLead = forceBaseline || !!modelSkipped;
         if (route.global === "USGS" && rulesLead) {
-          const fast = forceModel ? null : planTool(wanted);
+          const fast = forceModel ? null : planTool(wantedOnly);
           if (fast) {
             const result = await invokeOnActiveTab(fast.fn, fast.args);
             // A rule that fired and then failed is not an answer. It was the
@@ -11543,7 +11581,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // and FCP usable at all without the model - 46 tools that previously
         // only it could reach. A hand-written manifest beats GENERIC's
         // selector guessing below, having been checked against the real site.
-        let manifestCall = forceModel ? null : planManifestTool(wanted, route.global);
+        let manifestCall = forceModel ? null : planManifestTool(wantedOnly, route.global);
         let cameFromPage = false;
         if (manifestCall) {
           // A hand-written tool is preferred above for having been checked
@@ -11859,7 +11897,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
           .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
         if (inv.ok) {
-          const guess = forceModel ? null : planGenericTool(wanted, inv.result);
+          const guess = forceModel ? null : planGenericTool(wantedOnly, inv.result);
 
           // A question must not press anything, and must not offer to
           // either. "How full is lake conroe" produced a menu of two
@@ -12081,7 +12119,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
         if (commandLike) {
-          const pageWants = pageValueWants(wanted);
+          const pageWants = pageValueWants(wantedOnly);
           if (pageWants.length && inv.ok) {
             const readForValues = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
             if (readForValues.ok) {
@@ -12204,7 +12242,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const fresh = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => ({ ok: false }));
             if (!fresh.ok) continue;
             forgetPageTools();
-            const retry = planGenericTool(wanted, fresh.result);
+            const retry = planGenericTool(wantedOnly, fresh.result);
             if (!retry || !retry.calls) continue;
 
             const steps = [];

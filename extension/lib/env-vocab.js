@@ -63,9 +63,14 @@
       gisData: ["gis data", "gis", "shapefile", "shapefiles", "shp", "geospatial", "geodata"],
       logScale: ["log", "logarithmic", "log scale", "logarithmic scale"],
       linearScale: ["linear", "linear scale"],
-      download: ["download", "export", "save", "get the data", "grab the data"],
+      // "I need this file saved on my computer" named Download data in every
+      // way but the word, and "save" matched only itself - not saved, not
+      // saving, and not the computer it was going to.
+      download: ["download", "export", "save", "saved", "saving", "save it", "get the data",
+        "grab the data", "on my computer", "to my computer", "a copy", "keep a copy"],
       dataTable: ["table", "tabular", "tabular data", "data table", "data tables", "spreadsheet",
-        "the numbers", "raw numbers", "the figures", "csv"],
+        "the numbers", "raw numbers", "the figures", "csv", "rows", "raw rows", "as rows",
+        "row by row", "columns"],
       chart: ["chart", "graph", "plot", "hydrograph", "the picture"],
       map: ["map", "the map", "basemap"],
       timeSpan: ["time span", "timespan", "period", "date range", "range", "how far back"],
