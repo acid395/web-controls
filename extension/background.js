@@ -1087,7 +1087,9 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
     },
     {
-      name: "pageSubmit", fn: "submit", argOrder: ["selector"],
+      // submitWhenReady: waits for an autocomplete's suggestions first, where
+      // a box has one, because some forms refuse to submit without them.
+      name: "pageSubmit", fn: "submitWhenReady", argOrder: ["selector"],
       description: "Submit a field after filling it - presses Enter, or submits the surrounding form, or clicks its submit button. Typing alone leaves the text sitting in the box.",
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
     },
@@ -4832,6 +4834,34 @@ function answerTextOf(step, raw = "") {
   return usable(s.why) || usable(s.reason) || "";
 }
 
+/* Where a page says almost nothing in text, what it shows is in its names.
+ *
+ * weather.gov's front page is an image and a list of links: the hazards
+ * legend - Flash Flood Warning, Hurricane Warning, Wind Advisory - is links,
+ * and the reader is given text. Asked which warnings are listed, or which
+ * is the most severe, a 3B answered with the sidebar's temperature, the only
+ * text there was. Only on a thin page - a page with real text keeps to its
+ * text - the names of what is visible are added, so the question can be
+ * answered from what the page actually shows.
+ */
+function withNamesWhereThin(seen, controls) {
+  const text = String(seen || "");
+  const thin = !text || text === "nothing readable" || /no readable data in the DOM/.test(text) || text.length < 260;
+  if (!thin) return seen;
+  // The page's own content before its navigation: the site menu is on every
+  // page and says nothing about this one.
+  const inNav = (c) => /(?:^|[\s>.#])(?:nav|navbar|header|menu|topnav|topMenu|footer)[\w-]*/i.test(String(c.selector || ""));
+  // Links and buttons - what a page lists - not its form fields.
+  const listed = (c) => /^(a|link|button)$/i.test(String(c.kind || c.tag || "")) && !/^(text|search|checkbox|radio|submit)$/i.test(String(c.type || ""));
+  const visible = (controls || []).filter((c) => !c.hidden && !c.revealedBy && c.label && String(c.label).length <= 60 && listed(c));
+  const names = [...new Set([...visible.filter((c) => !inNav(c)), ...visible.filter(inNav)]
+    .map((c) => String(c.label).trim()))]
+    .slice(0, 40);
+  if (!names.length) return seen;
+  return [text && text !== "nothing readable" ? text : null,
+    "named on the page:", ...names.map((n) => `  ${n}`)].filter(Boolean).join("\n");
+}
+
 async function answerAfterActing(res, ask) {
   const out = { ...res };
   // Some paths answer without a card and let the handler build one later;
@@ -4865,6 +4895,10 @@ async function answerAfterActing(res, ask) {
   // arrive and to draw it - a graph switching series or a table opening
   // happens after the click returns.
   await waitForPageLoad();
+  // A navigation the action started late - a redirect after a geocode, a
+  // jump menu's Go - is waited out before anything is read: the page about
+  // to be left is otherwise read twice, found stable, and answered from.
+  await waitForNavigation(await currentTabUrl(), 1500);
   // Until the page stops changing, not a fixed pause. The NWPS FAQ and the
   // hydrologic discussion arrive after the page says it has loaded, and a
   // reader handed the page at nine hundred milliseconds answered "not on
@@ -4882,6 +4916,10 @@ async function answerAfterActing(res, ask) {
     if (again === seen) break;
     seen = again;
   }
+  try {
+    const named = await invokeOnActiveTab("inventory", [{}]).catch(() => ({ ok: false }));
+    seen = withNamesWhereThin(seen, controlsForModel((named.ok && named.result) || { controls: [] }));
+  } catch (e) { /* the text alone, then */ }
   // What the action put in front of the person, by name. "open the map
   // layers panel and tell me which layers are available" opened the panel,
   // and the layers are checkboxes - their names are controls, not text, and
@@ -6272,6 +6310,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         seen = [seen && seen !== "nothing readable" ? seen : null,
           "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
       }
+      seen = withNamesWhereThin(seen, controls);
       if (seen) {
         observation = String(seen).slice(0, 2200);
         history.push({ did: "read the page", outcome: "got its values" });
@@ -8106,6 +8145,38 @@ async function waitForPageLoad({ timeoutMs = 10000 } = {}) {
   }
 }
 
+/* A navigation an action started late.
+ *
+ * weather.gov's forecast box geocodes the location first and redirects once
+ * the answer comes back - a second or two after the submit returned, when
+ * the tab still reads "complete" on the page it is about to leave. Reading
+ * then read the home page, and the next step of a chain chose among the
+ * home page's controls. This watches for the tab to leave fromUrl and, if it
+ * does within the time given, waits for the new page to finish.
+ */
+async function currentTabUrl() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return (tab && tab.url) || "";
+  } catch (e) { return ""; }
+}
+async function waitForNavigation(fromUrl, timeoutMs = 4000) {
+  const began = Date.now();
+  while (Date.now() - began < timeoutMs) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) return false;
+      if (tab.status === "loading" || (fromUrl && tab.url && tab.url !== fromUrl)) {
+        await waitForPageLoad({ timeoutMs: 12000 });
+        forgetPageTools();
+        return true;
+      }
+    } catch (e) { return false; }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return false;
+}
+
 async function runVerified(routeGlobal, toolCall) {
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
@@ -9548,9 +9619,11 @@ async function fillZipAndSend(routeGlobal, box, zip) {
     await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
     forgetPageTools();
   }
+  const fromUrl = await currentTabUrl();
   const filled = await runVerified(routeGlobal, { name: "pageFill", args: { selector: box.selector, text: zip } });
   if (!filled || filled.ok === false) return filled || { ok: false, error: "could not type into the box" };
   const sent = await runVerified(routeGlobal, { name: "pageSubmit", args: { selector: box.selector } });
+  if (sent && sent.ok !== false) await waitForNavigation(fromUrl, 6000);
   return sent || { ok: false, error: "could not submit the box" };
 }
 
@@ -9672,12 +9745,16 @@ async function searchClause(routeGlobal, clause) {
     await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
     forgetPageTools();
   }
+  const fromUrl = await currentTabUrl();
   const filled = await runVerified(routeGlobal,
     { name: "pageFill", args: { selector: box.selector, text: words } });
   if (filled.ok === false) return null;
   const sent = await runVerified(routeGlobal,
     { name: "pageSubmit", args: { selector: box.selector } });
   if (!sent || sent.ok === false) return null;
+  // A search usually goes to a results page; "then open the first result"
+  // has to be read from that page, not from the one the search started on.
+  await waitForNavigation(fromUrl, 4000);
   return { ok: true, verified: { changed: true }, words, box, label: box.label };
 }
 

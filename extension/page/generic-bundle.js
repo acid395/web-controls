@@ -1914,6 +1914,37 @@
    * and an adjacent submit button. Enter first, since that is what a person
    * would press and what search widgets almost always listen for.
    * ========================================================================== */
+  /* Submit, once the box is ready to be submitted.
+   *
+   * weather.gov's forecast box cancels its own form unless its autocomplete
+   * has already offered a suggestion:
+   *   $('#getForecast').submit(function () {
+   *     if (ac.suggestions[0]) { ...click the first one... } return false; });
+   * and the suggestions arrive from a geocoding service a few hundred
+   * milliseconds after typing. Typed and submitted at once, "enter 20001 in
+   * the local forecast box" was cancelled by the page every time, silently.
+   * Where a box shows signs of an autocomplete, the submit waits - up to two
+   * and a half seconds - for its suggestions to appear.
+   */
+  async function submitWhenReady(elOrSel) {
+    const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
+    if (!el) throw new Error(`submit: not found: ${elOrSel}`);
+    const hasAutocomplete = el.tagName === "INPUT" && (
+      (el.getAttribute("autocomplete") || "").toLowerCase() === "off"
+      || el.getAttribute("aria-autocomplete") || el.getAttribute("list")
+      || (el.getAttribute("role") || "").toLowerCase() === "combobox"
+      || /autocomplete|typeahead|suggest/i.test(String(el.className || "")));
+    if (hasAutocomplete) {
+      const SUGGESTION = ".autocomplete-suggestion, .ui-menu-item, [role=listbox] [role=option], .tt-suggestion, [class*='suggestion'] li, li[class*='suggestion']";
+      const shown = () => [...document.querySelectorAll(SUGGESTION)].some((n) => isVisible(n));
+      const began = Date.now();
+      while (!shown() && Date.now() - began < 2500) {
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    }
+    return submit(el);
+  }
+
   function submit(elOrSel) {
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`submit: not found: ${elOrSel}`);
@@ -3035,6 +3066,7 @@
     inventory,
     readPage,
     submit,
+    submitWhenReady,
     waitForSelector,
     readControl,
     restore,

@@ -11697,6 +11697,48 @@ const realLog = console.log;
   }
 }
 
+// weather.gov, v1.78.3.
+{
+  // A form that cancels itself until its autocomplete has suggested
+  // something, the way weather.gov's forecast box does.
+  const ap = loadPage(`<!doctype html><html><body>
+    <form id="getForecast" action="https://forecast.weather.gov/zipcity.php">
+      <label for="q">Local forecast by City, St or ZIP code</label>
+      <input id="q" name="inputstring" type="text" autocomplete="off">
+      <input type="submit" value="Go">
+    </form><ul id="sugg"></ul>
+    <script>
+      window.__went = 0;
+      document.getElementById("q").addEventListener("input", function () {
+        setTimeout(function () {
+          document.getElementById("sugg").innerHTML = '<li class="autocomplete-suggestion">20001, Washington DC</li>';
+        }, 600);
+      });
+      document.getElementById("getForecast").addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (document.querySelector(".autocomplete-suggestion")) window.__went++;
+      });
+    </script></body></html>`, { url: "https://www.weather.gov/" });
+  if (ap) {
+    runAsync(async () => {
+      ap.GENERIC.fill("#q", "20001");
+      await ap.GENERIC.submitWhenReady("#q");
+      check("a box whose form waits for suggestions is submitted once they arrive", ap.window.__went, 1);
+    });
+  }
+
+  // A thin page's links are what the reader can answer from.
+  const bgt = loadBackground({});
+  const thin = bgt.withNamesWhereThin("no readable data in the DOM - what this page shows is an image",
+    [{ label: "HOME", kind: "a", selector: "div.topnav > a" }, { label: "Flash Flood Warning", kind: "a", selector: "#wwa li a" },
+      { label: "Search For", kind: "input", type: "text", selector: "#query" }]);
+  ensure("a thin page gives the reader its link names", /Flash Flood Warning/.test(thin), thin);
+  ensure("content before navigation", thin.indexOf("Flash Flood Warning") < thin.indexOf("HOME"), thin);
+  ensure("and not its form fields", !/Search For/.test(thin), thin);
+  const full = "Latest value 2.85 ft Provisional Oct 03, 2026 12:50:00 AM EDT. ".repeat(6);
+  check("a page with real text keeps to its text", bgt.withNamesWhereThin(full, [{ label: "HOME", kind: "a" }]), full);
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202
