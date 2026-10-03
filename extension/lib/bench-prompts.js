@@ -12,7 +12,7 @@
  * the first happen on a page the first one opens.
  *
  * `offline` is what the grounding layer alone did with the prompt, model
- * off, against the captured page - 47 of 100 are false. jsdom applies
+ * off, against the captured page - 42 of 100 are false. jsdom applies
  * no stylesheet and cannot follow a link, so it is a floor, not a
  * forecast, and says nothing about steps on a second page. A reading
  * passes offline whenever the page has text to read, since explaining is
@@ -45,7 +45,7 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"graph the water temperature from the multiparameter sonde and tell me the latest temperature","kind":"action+explain","steps":["Graph Temperature, water, degrees Celsius From m"],"explain":true,"on":"Graph Temperature, water, degrees Celsius From m","want":{"clicked":"Graph Temperature, water, degrees Celsius From m","read":true},"offline":false},
    {"say":"open the tabular data and tell me the highest value in it","kind":"action+explain","steps":["View tabular data"],"explain":true,"on":"View tabular data","want":{"clicked":"View tabular data","read":true},"offline":false},
    {"say":"graph the discharge, switch to 30 days, and put it on a log scale","kind":"multistep","steps":["Graph Discharge, cubic feet per second","30 days","Log"],"on":"Log","want":{"clicked":"Log"},"offline":false},
-   {"say":"change the time span to 1 year, then show the legend","kind":"multistep","steps":["1 year","Show legend"],"on":"Show legend","want":{"clicked":"Show legend"},"offline":false},
+   {"say":"change the time span to 1 year, then show the legend","kind":"multistep","steps":["1 year","Show legend"],"on":"Show legend","want":{"clicked":"Show legend"},"offline":true},
    {"say":"expand all the data collections, then show the location details","kind":"multistep","steps":["Expand all data collections","Show location details"],"on":"Show location details","want":{"clicked":"Show location details"},"offline":true},
    {"say":"zoom in on the location map and switch it to imagery","kind":"multistep","steps":["Zoom in","Imagery"],"on":"Imagery","want":{"clicked":"Imagery"},"offline":false}
   ]
@@ -68,8 +68,8 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"what time of day is the new map released each week","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"show the previous week's map and tell me what date that map is valid for","kind":"action+explain","steps":["Previous Map"],"explain":true,"on":"Previous Map","want":{"clicked":"Previous Map","read":true},"offline":true},
    {"say":"open the West regional map and explain what it shows","kind":"action+explain","steps":["West"],"explain":true,"on":"West","want":{"clicked":"West","read":true},"offline":true},
-   {"say":"go to the summary page and summarize this week's drought conditions","kind":"action+explain","steps":["Summary"],"explain":true,"on":"Summary","want":{"clicked":"Summary","read":true},"offline":false},
-   {"say":"open the statistics by threshold page and explain what the numbers represent","kind":"action+explain","steps":["Statistics by Threshold"],"explain":true,"on":"Statistics by Threshold","want":{"clicked":"Statistics by Threshold","read":true},"offline":false},
+   {"say":"go to the summary page and summarize this week's drought conditions","kind":"action+explain","steps":["Summary"],"explain":true,"on":"Summary","want":{"clicked":"Summary","read":true},"offline":true},
+   {"say":"open the statistics by threshold page and explain what the numbers represent","kind":"action+explain","steps":["Statistics by Threshold"],"explain":true,"on":"Statistics by Threshold","want":{"clicked":"Statistics by Threshold","read":true},"offline":true},
    {"say":"open the map archive, then play the animation","kind":"multistep","steps":["Map Archive","Animations"],"later":true,"on":"Map Archive","want":{"clicked":"Map Archive"},"offline":true},
    {"say":"open the regions list and choose the Midwest","kind":"multistep","steps":["Regions","Midwest"],"on":"Midwest","want":{"clicked":"Midwest"},"offline":false},
    {"say":"switch to grayscale, then show the previous week's map","kind":"multistep","steps":["View grayscale version of the map","Previous Map"],"on":"Previous Map","want":{"clicked":"Previous Map"},"offline":true},
@@ -80,7 +80,7 @@ globalThis.WC_BENCH_PROMPTS = {
   "url": "https://water.noaa.gov/",
   "note": "National Water Prediction Service landing map. The map is a canvas.",
   "prompts": [
-   {"say":"zoom in on the map","kind":"action","steps":["Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":false},
+   {"say":"zoom in on the map","kind":"action","steps":["Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":true},
    {"say":"zoom out on the map","kind":"action","steps":["Zoom out"],"on":"Zoom out","want":{"clicked":"Zoom out"},"offline":true},
    {"say":"open the map layers panel","kind":"action","steps":["View Layers"],"on":"View Layers","want":{"clicked":"View Layers"},"offline":true},
    {"say":"search the map for Sacramento","kind":"action","steps":["Search Locaction"],"on":"Search Locaction","want":{"clicked":"Search Locaction"},"offline":false},
@@ -92,7 +92,7 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"what date is the latest hydrologic discussion from","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"what is the update notice at the top of the page about","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"what does the national hydrologic discussion say today","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
-   {"say":"open the hydrologic discussion in full page view and summarize it","kind":"action+explain","steps":["View full page"],"explain":true,"on":"View full page","want":{"clicked":"View full page","read":true},"offline":false},
+   {"say":"open the hydrologic discussion in full page view and summarize it","kind":"action+explain","steps":["View full page"],"explain":true,"on":"View full page","want":{"clicked":"View full page","read":true},"offline":true},
    {"say":"open the map layers panel and tell me which layers are available","kind":"action+explain","steps":["View Layers"],"explain":true,"on":"View Layers","want":{"clicked":"View Layers","read":true},"offline":true},
    {"say":"go to the NWPS FAQ and explain what NWPS is","kind":"action+explain","steps":["NWPS FAQ"],"explain":true,"on":"NWPS FAQ","want":{"clicked":"NWPS FAQ","read":true},"offline":true},
    {"say":"open the national hydrologic discussion and summarize the main concerns","kind":"action+explain","steps":["National Hydrologic Discussion"],"explain":true,"on":"National Hydrologic Discussion","want":{"clicked":"National Hydrologic Discussion","read":true},"offline":true},
@@ -118,7 +118,7 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"which of the listed alerts is the most severe","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"get the forecast for ZIP code 10001 and summarize the next two days","kind":"action+explain","steps":["Enter Your City, ST or ZIP Code"],"explain":true,"on":"Enter Your City, ST or ZIP Code","want":{"clicked":"Enter Your City, ST or ZIP Code","read":true},"offline":false},
    {"say":"open the active alerts and tell me which states have flood warnings","kind":"action+explain","steps":["ACTIVE ALERTS"],"explain":true,"on":"ACTIVE ALERTS","want":{"clicked":"ACTIVE ALERTS","read":true},"offline":true},
-   {"say":"open the first warning listed on the hazards map and summarize it","kind":"action+explain","steps":["Warning"],"explain":true,"on":"Warning","want":{"clicked":"Warning","read":true},"offline":false},
+   {"say":"open the first warning listed on the hazards map and summarize it","kind":"action+explain","steps":["Warning"],"explain":true,"on":"Warning","want":{"clicked":"Warning","read":true},"offline":true},
    {"say":"show the warnings for Florida and summarize what is in effect","kind":"action+explain","steps":["Warnings By State"],"explain":true,"on":"Warnings By State","want":{"clicked":"Warnings By State","read":true},"offline":false},
    {"say":"search the site for wind chill and summarize the top result","kind":"action+explain","steps":["Search For"],"explain":true,"on":"Search For","want":{"clicked":"Search For","read":true},"offline":false},
    {"say":"open the forecast menu and then go to aviation","kind":"multistep","steps":["FORECAST","Aviation"],"on":"Aviation","want":{"clicked":"Aviation"},"offline":true},
@@ -144,7 +144,7 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"explain what the D0 through D4 categories in the map legend mean","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"which regions have recent drought status updates, and when were they published","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"which drought category covers the largest share of the country","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
-   {"say":"switch to the 30-day precipitation map and explain what its legend shows","kind":"action+explain","steps":["30-Day Precipitation"],"explain":true,"on":"30-Day Precipitation","want":{"clicked":"30-Day Precipitation","read":true},"offline":true},
+   {"say":"switch to the 30-day precipitation map and explain what its legend shows","kind":"action+explain","steps":["30-Day Precipitation"],"explain":true,"on":"30-Day Precipitation","want":{"clicked":"30-Day Precipitation","read":true},"offline":false},
    {"say":"pick Texas from the state list and summarize its current drought conditions","kind":"action+explain","steps":["Select a State"],"explain":true,"on":"Select a State","want":{"clicked":"Select a State","read":true},"offline":false},
    {"say":"open the latest drought status update and summarize it","kind":"action+explain","steps":["Drought Status Update"],"explain":true,"on":"Drought Status Update","want":{"clicked":"Drought Status Update","read":true},"offline":true},
    {"say":"look up Denver, CO in the neighborhood drought search and tell me the drought level there","kind":"action+explain","steps":["How is drought affecting your neighborhood?"],"explain":true,"on":"How is drought affecting your neighborhood?","want":{"clicked":"How is drought affecting your neighborhood?","read":true},"offline":false},

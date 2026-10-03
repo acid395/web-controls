@@ -180,6 +180,9 @@ function buildReadPrompt({ goal, observation, note }) {
     // answer built out of what the model knows about rivers rather than out
     // of this page.
     "- Use the values above. Quote the actual numbers and their units.",
+    // "what is the latest gage height reading and when was it taken" was
+    // answered with the time alone; the value was on the line above it.
+    "- If the question asks for more than one thing, answer each of them.",
     "- Two or three sentences. Say what the values mean, not what the page is.",
     // Said as one fixed sentence, because what happens next depends on it:
     // a page that does not hold the answer is where the run goes to look

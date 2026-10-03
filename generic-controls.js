@@ -284,6 +284,25 @@
     setNativeValue(el, opt.value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    /* A jump menu: one list and a Go button, and nothing else in the form.
+     *
+     * weather.gov's "Warnings By State" is exactly this - choosing Texas does
+     * nothing until Go is pressed, and Go reads the chosen option. Asked to
+     * "show the warnings for Texas", Texas was chosen and the page sat there.
+     * Where the list is the form's only field and its only button says go,
+     * choosing is the whole request. A form with other fields is left alone:
+     * there, choosing one value is not finishing the form.
+     */
+    const inline = String(el.getAttribute("onchange") || "");
+    const holder = el.form || el.parentElement;
+    if (holder && !/location|\.submit\(|href/i.test(inline)) {
+      const fields = [...holder.querySelectorAll("select, textarea, input:not([type=button]):not([type=submit]):not([type=hidden]):not([type=image])")];
+      const buttons = [...holder.querySelectorAll("button, input[type=button], input[type=submit]")];
+      if (fields.length === 1 && buttons.length === 1
+          && /^(go|apply|view|show|submit|ok|get)$/i.test(String(buttons[0].textContent || buttons[0].value || "").trim())) {
+        realClick(buttons[0]);
+      }
+    }
     return opt.value;
   };
 
@@ -489,11 +508,34 @@
     try { return getComputedStyle(el).cursor === "pointer"; } catch (e) { return false; }
   };
 
+  /* A path that names one element.
+   *
+   * Six levels was the whole of it, unique or not. drought.gov's mega-menu
+   * puts each column's list six deep, so "Regional Drought Status Updates"
+   * and "Drought Early Warning Activities" - second item, second column, in
+   * two different menus - came out as the same selector, and pressing one
+   * pressed whichever came first in the page. 41 of 266 controls there
+   * shared a selector with something else. Past six levels the walk now goes
+   * on until the path names exactly one element, and an ancestor with an id
+   * ends it as soon as that is enough.
+   */
+  const namesOne = (sel, el) => {
+    try {
+      const root = el.getRootNode && el.getRootNode();
+      const scope = root && root.querySelectorAll ? root : document;
+      const hits = scope.querySelectorAll(sel);
+      return hits.length === 1 && hits[0] === el;
+    } catch (e) { return true; }   // not valid on its own (crosses a shadow root); keep it
+  };
   const cssPath = (el) => {
     if (el.id) return `#${CSS.escape(el.id)}`;
     const parts = [];
     let cur = el;
-    while (cur && cur.nodeType === 1 && parts.length < 6) {
+    while (cur && cur.nodeType === 1 && parts.length < 24) {
+      if (cur !== el && cur.id && parts.length) {
+        const anchored = [`#${CSS.escape(cur.id)}`, ...parts].join(" > ");
+        if (namesOne(anchored, el)) return anchored;
+      }
       let s = tagOf(cur);
       if (cur.classList.length) s += "." + [...cur.classList].map((c) => CSS.escape(c)).join(".");
       const p = cur.parentNode;
@@ -519,7 +561,10 @@
         if (same > 1 && index && !capped) s += `:nth-of-type(${index})`;
       }
       parts.unshift(s);
-      cur = p instanceof ShadowRoot ? p.host : p;
+      if (parts.length >= 6 && namesOne(parts.join(" > "), el)) return parts.join(" > ");
+      if (p instanceof ShadowRoot) return parts.join(" > ");
+      cur = p;
+      if (!cur || tagOf(cur) === "html") break;
     }
     return parts.join(" > ");
   };
@@ -634,6 +679,24 @@
       if (/^(menu|menubar)$/i.test(role)) return true;
       return MENUISH.test(String((n.className && n.className.baseVal) || n.className || ""));
     };
+    /* Inside something that says it has a popup.
+     *
+     * Leaflet's layer switcher - on waterdata.usgs.gov and most map pages
+     * built on it - is <div class="leaflet-control-layers" aria-haspopup=
+     * "true"> holding a "Layers" icon and a hidden list of USGS Topo,
+     * Imagery and Hydro. Nothing else above marks it, so Imagery had no way
+     * in and "switch the location map to satellite imagery" pressed an
+     * unrelated link. aria-haspopup is the page saying exactly this, and the
+     * thing to open it with is its own visible link or button.
+     */
+    const popupHolder = hiddenAncestor.parentElement
+      && hiddenAncestor.parentElement.closest
+      && hiddenAncestor.parentElement.closest('[aria-haspopup]:not([aria-haspopup="false"])');
+    if (popupHolder && popupHolder.contains(hiddenAncestor)) {
+      const opener = [...popupHolder.querySelectorAll("a, button, [role=button]")]
+        .find((t) => isVisible(t) && !t.contains(el) && !hiddenAncestor.contains(t));
+      if (opener) return opener;
+    }
     if (saysMenu(hiddenAncestor)) {
       const before = hiddenAncestor.previousElementSibling;
       if (before && isVisible(before)) {
@@ -1812,6 +1875,16 @@
     const button = scope.querySelector('button[type=submit], input[type=submit], button[class*="search"], [aria-label*="earch"][role=button]');
     if (button) { realClick(button); return { submitted: "button" }; }
 
+    // Or the panel's own apply button, a level or two up. waterdata.usgs.gov's
+    // "Days before today" box sits in its own div, and the button that applies
+    // it - Change time span - is that div's sibling, so a box filled with 14
+    // was left waiting for a press nobody made.
+    for (let up = el.parentElement, depth = 0; up && depth < 3; up = up.parentElement, depth++) {
+      const apply = [...up.querySelectorAll("button, input[type=submit], input[type=button]")]
+        .find((b) => b !== el && /^(go|apply|change|update|submit|show|view|ok|set|search|done)\b/i
+          .test(String(b.textContent || b.value || "").trim()));
+      if (apply) { realClick(apply); return { submitted: "button" }; }
+    }
     return { submitted: "enter" };
   }
 

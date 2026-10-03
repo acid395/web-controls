@@ -83,7 +83,11 @@ const CASES = [
   ["usgs", "i want a full year", { on: /^1 year$/i }],
   ["usgs", "show me four weeks", { on: /^30 days$/i }],
   ["usgs", "give me twelve months", { on: /^1 year$/i }],
-  ["usgs", "show me 90 days", { refuse: true }],
+  // Refusing was right while the only way to a span was a button; there is
+  // no 90-day button. The page also has a "Days before today" box, and
+  // typing 90 into it and applying it does show 90 days - so the right
+  // answer changed when that became reachable, not the standard.
+  ["usgs", "show me 90 days", { searched: /^90$/ }],
   ["usgs", "click the hydrograph exporter", { refuse: true }],
   ["usgs", "enable the tidal predictions layer", { refuse: true }],
   ["noaa", "click rivers at a glance", { clicked: /rivers-at-a-glance/i }],

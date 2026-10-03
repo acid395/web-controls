@@ -3956,7 +3956,9 @@ if (slowModel) {
   };
   runAsync(async () => {
     const began = Date.now();
-    const out = await bgt.runModelAgent("GENERIC", "click go", { budgetMs: 6000 });
+    // The model only: this is about the budget, and "click go" on a page with
+    // one Go button is otherwise pressed without a turn.
+    const out = await bgt.runModelAgent("GENERIC", "click go", { budgetMs: 6000, onlyModel: true });
     ensure("a generation that never returns cannot outlast the budget",
       Date.now() - began < 20000, Date.now() - began);
     ensure("and it is reported as running out of time", out.outOfTime === true, out);
@@ -5056,6 +5058,25 @@ for (const b of budgets) {
   // between them is the confident wrong action this exists to avoid. Two
   // controls under one identical label are not this case - those are folded
   // into one before the model ever sees them, as the same thing twice over.
+  {
+    const amb2 = loadPage(`<!doctype html><html><body>
+      <label><input type="checkbox" name="a"> Snow Depth</label>
+      <label><input type="checkbox" name="b"> Water Depth</label>
+      </body></html>`, { url: "https://water.noaa.gov/" });
+    if (amb2) {
+      const bgb2 = loadBackground({ page: amb2 });
+      bgb2.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmStep") return { ok: true, step: { name: "Depth", do: "check", on: true }, raw: "{}" };
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgb2.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+        check("where the request names which, the model's short name lands on it",
+          [...amb2.document.querySelectorAll("input")].filter((x) => x.checked).map((x) => x.name).join(","), "a");
+      });
+    }
+  }
   const amb = loadPage(`<!doctype html><html><body>
     <label><input type="checkbox" name="a"> Snow Depth</label>
     <label><input type="checkbox" name="b"> Water Depth</label>
@@ -5071,11 +5092,14 @@ for (const b of budgets) {
       return undefined;
     };
     runAsync(async () => {
-      const r = await bga2.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+      // Nothing in the request tells the two apart either. Where it does -
+      // "enable snow depth" - the request's own words settle what the model's
+      // short name could not, which is reading the request, not guessing.
+      const r = await bga2.__ask({ type: "smartAsk", instruction: "model: enable the depth layer" });
       check("a name that fits two controls presses neither",
         [...amb.document.querySelectorAll("input")].filter((x) => x.checked).length, 0);
       ensure("and says that is what happened",
-        /more than one control/i.test(`${r.error || ""} ${(r.display || {}).note || ""}`),
+        /more than one control/i.test(`${r.error || ""} ${(r.display || {}).note || ""} ${(r.display || {}).subtitle || ""}`),
         `${r.error} | ${(r.display || {}).note}`);
     });
   }
@@ -10814,8 +10838,11 @@ const realLog = console.log;
     ["which of the current alerts is the most serious", true],
     ["are there any river flood warnings in effect right now", true],
     ["which part of the country is worst off on this map", true],
-    ["is my tap at risk", false],
-    ["is it safe to take the boat out", false],
+    // Read first now, like every question; a page that does not answer
+    // them sends the run on to its controls.
+    ["is my tap at risk", true],
+    ["is it safe to take the boat out", true],
+    ["who do I email about a mistake", false],
     ["click 7 days", false],
   ]) {
     check(`reading or not: "${q}"`, bgq.ASKING_TO_READ.test(q), want);
@@ -11281,6 +11308,156 @@ const realLog = console.log;
       await bgw.__ask({ type: "smartAsk", instruction: "model: where do I sign up for SKYWARN" });
       ensure("a model that names nothing real is pointed at the control carrying the request's word",
         notes.some((x) => /SKYWARN Storm Spotters/.test(x)), notes);
+    });
+  }
+}
+
+// The live USGS runs of the action-and-explain set, and a pass over all
+// hundred prompts with a model that always names the right control - so
+// that what fails is the plumbing, not the model.
+{
+  const bgz = loadBackground({});
+  // Do this, then tell me that.
+  check("an action and a question are told apart",
+    JSON.stringify(bgz.actThenAsk("graph the discharge and tell me the most recent flow value")),
+    JSON.stringify({ act: "graph the discharge", ask: "tell me the most recent flow value" }));
+  check("a question about the page is not split into an action",
+    bgz.actThenAsk("explain what this map shows and how to read it"), null);
+  // A list of steps, and the steps that finish the one before them.
+  check("a comma list is several steps",
+    JSON.stringify(bgz.splitIntoSteps("graph the discharge, switch to 30 days, and put it on a log scale")),
+    JSON.stringify(["graph the discharge", "switch to 30 days", "put it on a log scale"]));
+  check("\"and press go\" stays with the choice it finishes",
+    bgz.splitIntoSteps("pick Colorado in the warnings by state list and press go").length, 1);
+  check("\"and get the forecast\" stays with the box it submits",
+    bgz.splitIntoSteps("enter 20001 in the local forecast box and get the forecast").length, 1);
+  // What to search for and where.
+  check("search the map for X searches for X",
+    JSON.stringify(bgz.searchParts("search the map for Sacramento")), JSON.stringify({ query: "Sacramento", where: "map" }));
+  check("look up X in the Y search names the box",
+    JSON.stringify(bgz.searchParts("look up Denver, CO in the neighborhood drought search")),
+    JSON.stringify({ query: "Denver, CO", where: "neighborhood drought search" }));
+  // Repeats, and names said with where they are.
+  check("twice is two", bgz.timesAsked("zoom in twice"), 2);
+  const L = [{ label: "Show legend", selector: "a", opensPanel: true }, { label: "Hide legend", selector: "b" },
+    { label: "Zoom in", selector: "c" }];
+  check("\"show the legend\" never presses Hide legend",
+    bgz.namedByClause(L, "show the legend").named.map((x) => x.label).join("|"), "Show legend");
+  check("a place after a name does not hide the name",
+    bgz.namedByClause(L, "zoom in on the location map").named.map((x) => x.label).join("|"), "Zoom in");
+  // Ordinals over separate links that are each one of the thing.
+  const A = [{ label: "Warnings By State", selector: "s" }, { label: "Flash Flood Warning", selector: "f" },
+    { label: "Hurricane Warning", selector: "h" }];
+  check("the first warning is the first link that is a warning",
+    bgz.namedByClause(A, "open the first warning listed").named.map((x) => x.label).join("|"), "Flash Flood Warning");
+  // A ZIP code and the box for it.
+  const Z = [{ label: "Search For", type: "text", selector: "q" },
+    { label: "Local forecast by City, St or ZIP code", type: "text", selector: "z1" },
+    { label: "Enter Your City, ST or ZIP Code", type: "text", selector: "z2" }];
+  const zb = bgz.zipBoxFor("enter 20001 in the local forecast box", Z);
+  check("a ZIP goes to the ZIP box the request describes", zb && zb.box.selector, "z1");
+  check("and nothing happens without a ZIP", bgz.zipBoxFor("get the forecast", Z), null);
+}
+
+{
+  // Selectors name one element. drought.gov's mega-menu gave two links in
+  // two different menus the same six-level path.
+  const menu = (items) => `<div class="m"><div class="row"><div class="col"><ul class="l">${
+    items.map((t) => `<li class="i"><a href="/${t.replace(/\s/g, "-")}">${t}</a></li>`).join("")}</ul></div></div></div>`;
+  const deep = (inner) => `<div class="a"><div class="b"><div class="c"><div class="d">${inner}</div></div></div></div>`;
+  const sp = loadPage(`<!doctype html><html><body>
+    <nav><ul><li>${deep(menu(["About NIDIS", "Drought Early Warning Activities"]))}</li>
+    <li>${deep(menu(["Latest News", "Regional Drought Status Updates"]))}</li></ul></nav>
+    </body></html>`, { url: "https://www.drought.gov/" });
+  if (sp) {
+    const inv = sp.GENERIC.inventory({ includeHidden: true }).controls;
+    const ambiguous = inv.filter((c) => sp.document.querySelectorAll(c.selector).length !== 1).map((c) => c.label);
+    check("every control's selector names exactly one element", ambiguous.join(" | "), "");
+  }
+
+  // A layers list hidden inside something that says it has a popup.
+  const lp = loadPage(`<!doctype html><html><body>
+    <div class="leaflet-control-layers" aria-haspopup="true">
+      <a class="leaflet-control-layers-toggle" href="#" title="Layers" role="button"></a>
+      <section class="leaflet-control-layers-list" style="display:none">
+        <label><input type="radio" name="base" checked> USGS Topo</label>
+        <label><input type="radio" name="base"> Imagery</label>
+      </section>
+    </div></body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (lp) {
+    const im = lp.GENERIC.inventory({ includeHidden: true }).controls.find((c) => c.label === "Imagery");
+    ensure("a choice inside an aria-haspopup holder has a way in", !!(im && im.revealedBy), im);
+  }
+
+  // A jump menu: choosing is the request, so Go is pressed.
+  const jp = loadPage(`<!doctype html><html><body>
+    <form name="jump"><select name="menu"><option value="">Warnings By State</option>
+      <option value="/search?area=CO">Colorado</option></select>
+      <input type="button" value="Go" id="go"></form></body></html>`, { url: "https://www.weather.gov/" });
+  if (jp) {
+    let went = 0;
+    jp.document.getElementById("go").addEventListener("click", () => { went++; });
+    jp.GENERIC.selectOption('select[name="menu"]', "Colorado");
+    check("choosing from a jump menu presses its Go", went, 1);
+  }
+
+  // "the last 14 days" with no 14-day button fills the days box and applies.
+  const dp = loadPage(`<!doctype html><html><body>
+    <a href="#7">7 days</a> <a href="#30">30 days</a>
+    <button id="open" aria-expanded="false" aria-controls="panel">Change time span</button>
+    <div id="panel" style="display:none"><div class="days"><label for="d">Days before today:</label>
+      <input id="d" type="text"></div><button id="apply" type="button">Change time span</button></div>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (dp) {
+    let applied = 0;
+    dp.document.getElementById("open").addEventListener("click", () => {
+      dp.document.getElementById("panel").style.display = "block";
+      dp.document.getElementById("open").setAttribute("aria-expanded", "true");
+    });
+    dp.document.getElementById("apply").addEventListener("click", () => { applied++; });
+    const bgd = loadBackground({ page: dp });
+    bgd.__model = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    runAsync(async () => {
+      await bgd.__ask({ type: "smartAsk", instruction: "set the time span to the last 14 days" });
+      check("a span no button offers goes into the days box", dp.document.getElementById("d").value, "14");
+      check("and is applied", applied >= 1, true);
+    });
+  }
+
+  // "show the daily data types" is not a day.
+  const np = loadPage(`<!doctype html><html><body>
+    <button id="open" aria-expanded="false" aria-controls="panel">Change time span</button>
+    <div id="panel" style="display:none"><label for="d">Days before today:</label><input id="d" type="text"></div>
+    <button id="show">Show these data types</button></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (np) {
+    const bgn = loadBackground({ page: np });
+    bgn.__model = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    runAsync(async () => {
+      await bgn.__ask({ type: "smartAsk", instruction: "show the daily data types" });
+      check("\"daily\" is not typed into a days box", np.document.getElementById("d").value, "");
+    });
+  }
+
+  // Do this, then tell me that: the answer reaches the card.
+  const ap = loadPage(`<!doctype html><html><body><p>Latest value 5,120 ft³/s</p>
+    <label><input type="radio" name="g" value="q"> Graph Discharge, cubic feet per second</label>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (ap) {
+    const bga = loadBackground({ page: ap });
+    bga.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        return m.mode === "read" ? { ok: true, step: { do: "finish", answer: "5,120 cubic feet per second." } }
+          : { ok: true, step: { do: "check", name: "Graph Discharge, cubic feet per second", on: true } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bga.__ask({ type: "smartAsk", instruction: "graph the discharge and tell me the most recent flow value" });
+      check("the action is done", ap.document.querySelector('input[name="g"]').checked, true);
+      ensure("and the question after it is answered on the card",
+        /5,120/.test(String((r.display || {}).answer || "")), r.display);
     });
   }
 }

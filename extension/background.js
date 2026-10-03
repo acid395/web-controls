@@ -2730,7 +2730,7 @@ const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|of
 const ASKING_TO_READ_PLAINLY =
   /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
 const A_QUESTION =
-  /^\s*(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|which|what|how|where|who|can\s+you\s+tell)\b/i;
+  /^\s*(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b/i;
 const ABOUT_WHAT_IS_HERE =
   /\b(?:here|this\s+(?:page|map|chart|graph|plot|table|site)|shown|showing|right\s+now|currently|current|at\s+the\s+moment|as\s+it\s+stands|in\s+effect)\b/i;
 // A request whose action depends on something it must first find out.
@@ -2747,10 +2747,17 @@ const PAGE_DOES_NOT_SAY =
 // and a 3B answered it with a phone schedule from the page footer while the
 // Contact Us link sat on the menu.
 const ASKING_WHAT_I_DO = /\b(?:do|can|should|could|would|will|must)\s+i\b|\bi\s+(?:need|want|have)\s+to\b/i;
+// Any question is read first now, pointing at the page or not. "how far back
+// does the discharge record go", "where exactly is this gauge located" and
+// "is the latest reading provisional" all have their answers written on the
+// page, and all three went to the controls - a 3B pressed Change time span,
+// a data table and Subscribe to WaterAlert. Requiring the question to point
+// at the page was protecting "is my tap at risk" from being read, and since
+// a reading that finds no answer now falls through to the controls, reading
+// first costs that kind of question one turn rather than its answer.
 const ASKING_TO_READ = {
   test: (s) => !ASKING_WHAT_I_DO.test(String(s || ""))
-    && (ASKING_TO_READ_PLAINLY.test(String(s || ""))
-      || (A_QUESTION.test(String(s || "")) && ABOUT_WHAT_IS_HERE.test(String(s || "")))),
+    && (ASKING_TO_READ_PLAINLY.test(String(s || "")) || A_QUESTION.test(String(s || ""))),
 };
 
 function scoreControl(control, words, phrase, opts = {}) {
@@ -3285,7 +3292,12 @@ function carriesText(instruction) {
 // a click, the query went nowhere, and the card reported a search. A button
 // is never the box, however it is labelled: a real text field first, and one
 // that also says "search" ahead of one that does not.
-function findSearchBox(controls) {
+function findSearchBox(controls, where = null) {
+  // The box the request named, where it named one: "the neighborhood drought
+  // search" is the box asking "How is drought affecting your neighborhood?",
+  // not the site search in the header that ranked first without it.
+  const whereWords = where ? meaningfulWords(where).filter((w) => w.length > 3
+    && !/^(search|site|page|website|box|field|bar)$/.test(w)) : [];
   const typeOf = (c) => String(c.type || c.kind || "").toLowerCase();
   const textual = (c) => TEXT_INPUT_KINDS.has(typeOf(c)) || typeOf(c) === "textarea";
 
@@ -3306,6 +3318,7 @@ function findSearchBox(controls) {
     // text", and document order picked the second. A control called exactly
     // what a person would say it is beats one that qualifies the name.
     if (/^\s*search\s*$/i.test(c.label || "")) r += 1;
+    for (const w of whereWords) if (wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact") r += 5;
     return r;
   };
   const boxes = controls.filter(textual);
@@ -4721,6 +4734,101 @@ function argsForTool(def, instruction, words) {
 // to gage height" acts, "gage height in Alaska" answers.
 const CONTROL_VERB = /\b(click|press|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look ?up|find|type|enter|download|zoom|group|sort|view|go to|navigate|apply|reset|clear|check|uncheck|tick)\b/i;
 
+/* "Do this and tell me that."
+ *
+ * "graph the discharge and tell me the most recent flow value" graphed the
+ * discharge and stopped: every path that acts finishes when the action
+ * lands, and none of them knew a question was waiting behind it. Five of the
+ * twenty prompts on a gauge page did the first half perfectly and never
+ * answered. So the sentence is cut where the question starts, the action
+ * runs through everything that runs actions, and the question is asked of
+ * the page that action left behind.
+ *
+ * Only where the first half is an action - "explain what this map shows and
+ * how to read it" is one question, not a step and a question.
+ */
+const ACTS_FIRST = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look\s*up|find|type|enter|zoom|view|go|navigate|graph|plot|chart|get|put|play|bring|pull|take|load|move|filter|sort|apply)\b/i;
+const THEN_ASKS = /^(.+?\S)(?:\s*,\s*|\s+)(?:and\s+(?:then\s+)?|then\s+)((?:tell\s+me|explain|describe|summari[sz]e|say|list|report|give\s+me\s+(?:the\s+)?(?:value|number|reading|date|figure)|what|which|how|where|when|whether|is\s|are\s)\b.*)$/i;
+function actThenAsk(instruction) {
+  const m = String(instruction || "").match(THEN_ASKS);
+  if (!m) return null;
+  const act = m[1].trim(), ask = m[2].trim();
+  if (!ACTS_FIRST.test(act) || ASKING_TO_READ.test(act)) return null;
+  return { act, ask };
+}
+
+/* The second half of "do this and tell me that": read what the action left
+ * on the page and answer from it. The action's own result is kept whole -
+ * its card, its steps, its verdict - and the answer is added to it, so a
+ * row that did the click and could not answer still shows the click.
+ */
+async function answerAfterActing(res, ask) {
+  const out = { ...res };
+  // Some paths answer without a card and let the handler build one later;
+  // that one would not know about the answer, so one is made here.
+  const card = out.display ? { ...out.display } : {
+    title: (() => { try { return friendlyToolName((res.toolCall && res.toolCall.name) || res.plannedBy || "Done"); }
+      catch (e) { return "Done"; } })(),
+    subtitle: "", stats: [], rows: [], note: "", source: "this page",
+  };
+  const note = (text) => {
+    if (!card) return;
+    card.note = card.note ? `${card.note} - ${text}` : text;
+  };
+  if (res.ok === false) {
+    if (card) out.display = card;
+    note("the action did not work, so the question after it was not answered");
+    return out;
+  }
+  // The run answered it already. A model working through "click Learn More,
+  // compare the last two weeks, and summarize the difference" reads and
+  // answers inside its own run; asking again spends a turn and overwrites
+  // an answer that came from the page as it was mid-run.
+  if (String(res.answer || (res.display && res.display.answer) || "").trim()) return res;
+  const status = await modelStatus().catch(() => null);
+  if (!(status && status.ready)) {
+    if (card) out.display = card;
+    note("the action ran; answering the question needs the local model, which is not loaded");
+    return out;
+  }
+  // What the action brought up is the point, so the page is given time to
+  // arrive and to draw it - a graph switching series or a table opening
+  // happens after the click returns.
+  await waitForPageLoad();
+  await new Promise((r) => setTimeout(r, 900));
+  forgetInventory();
+  const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+  let seen = read.ok ? summariseForModel(read.result) : null;
+  const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
+  const series = ((feeds.ok && feeds.result && feeds.result.series) || []).filter((x) => x && x.count >= 3);
+  if (series.length) {
+    const lines = series.slice(0, 6).map((x) =>
+      `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
+    seen = [seen && seen !== "nothing readable" ? seen : null,
+      "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
+  }
+  const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
+    mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+  const st = (asked && asked.step) || {};
+  const said = String([st.answer, st.explanation, st.summary, st.response, st.text]
+    .find((v) => typeof v === "string" && v.trim()) || "").trim();
+  if (!asked || asked.ok === false || !said) {
+    if (card) out.display = card;
+    note("the action ran; the model gave no answer to the question");
+    return out;
+  }
+  const notHere = PAGE_DOES_NOT_SAY.test(said);
+  out.answer = said;
+  if (card) {
+    card.answer = said;
+    card.subtitle = said.slice(0, 140);
+    card.rows = [...(card.rows || []), { name: "then read the page", value: notHere ? "it does not say" : "answered",
+      meta: ask.slice(0, 60) }];
+    out.display = card;
+  }
+  return out;
+}
+
 function isCommand(instruction) {
   if (CONTROL_VERB.test(instruction || "")) return true;
   // A verb with a typo in it is still a verb. "clcik 30 days" was not
@@ -4950,12 +5058,26 @@ const ACTION_SYNONYMS = new Map(Object.entries({
 // A bare "and" only separates where a verb follows it, because the first half
 // of "click forecasts and outlooks and click key messages" is the name of a
 // control.
+const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull";
+// "and press go", "and hit enter", "and get the forecast" finish the step
+// before them - the Go of a jump menu, the submit of a typed box - and as a
+// step of their own they went looking for a Go button on the page the first
+// half had already left.
+const FINISHES_THE_STEP = "(?:press|click|hit|tap)\\s+(?:go|enter|submit|search)\\b|submit\\b|get\\s+(?:the\\s+)?(?:forecast|weather|results?)\\b";
+const STEP_BOUNDARY = new RegExp(
+  `\\s*(?:,\\s*then\\s+|\\s+then\\s+|\\s+and then\\s+)\\s*`
+  + `|\\s*,\\s*(?:and\\s+)?(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`
+  + `|\\s+and\\s+(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`, "i");
 function splitIntoSteps(instruction) {
   return String(instruction || "")
     // plot, graph and chart are asked for as often as click on these sites -
     // "turn on 30 days and plot the discharge" read as one clause, so
     // neither half got the treatment a named control gets.
-    .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check)\b)/i)
+    // And a list: "graph the discharge, switch to 30 days, and put it on a
+    // log scale" is three requests, and read as one the span shortcut found
+    // "30 days" in it and did that alone. A comma separates where a verb
+    // follows it, the same test a bare "and" gets.
+    .split(STEP_BOUNDARY)
     // Each clause loses its own manners too. The whole instruction is
     // cleaned before it gets here, which handles courtesy at the ends -
     // but "click 30 days and then could you show the legend" carries it in
@@ -5016,7 +5138,7 @@ function nthOf(control, n) {
 // which of several, the one member meant. Plain matching first: "click
 // first name" is the control called First name, not a control called Name
 // with the ordinal taken off.
-const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to)\s+(?:me\s+)?/i;
+const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to|(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to)\s+(?:me\s+)?/i;
 /* The other names a label gives itself. "Hydrologic Ensemble Forecast
  * System (HEFS)" is called HEFS as surely as it is called the long form -
  * that is what the parentheses are for - and "pull up HEFS" matched
@@ -5050,12 +5172,45 @@ function namedByClause(all, clause) {
     // numbers", and taking the article away there broke them.
     const bare = flat(lead).replace(/^the\s+/, "");
     if (!bare && !whole) return [];
-    const named = all.filter((c) => {
+    // The sentence without its articles. "show the legend" is "Show legend"
+    // with a "the" in it, and was matched only loosely - loosely enough that
+    // the location map's Hide legend won it.
+    const plainWhole = flat(String(text).replace(/\b(?:the|a|an|my|this|that)\b/gi, " "));
+    // A request to show never presses a control that hides, and the other
+    // way round. "show the legend" pressed Hide legend - nothing changed,
+    // and the graph's own Show legend sat unpressed beside it.
+    const says = String(text).trim().toLowerCase();
+    const wantsOpen = /^(?:please\s+)?(?:show|open|expand|display|turn\s+on|enable|reveal)\b/.test(says);
+    const wantsShut = /^(?:please\s+)?(?:hide|close|collapse|turn\s+off|disable|dismiss)\b/.test(says);
+    const opposite = (l) => (wantsOpen && /^(?:hide|close|collapse|dismiss)\b/.test(l))
+      || (wantsShut && /^(?:show|open|expand|reveal)\b/.test(l));
+    let cutExactly = false;
+    let named = all.filter((c) => {
       if (c.disabled || c.confidence === "low") return false;
       const l = flat(c.label);
-      return !!l && (l === bare || l === whole || closeName(bare, l)
-        || alsoCalled(c.label).some((a) => a === bare || a === whole));
+      if (!l || opposite(l)) return false;
+      return l === bare || l === whole || l === plainWhole || closeName(bare, l)
+        || alsoCalled(c.label).some((a) => a === bare || a === whole);
     });
+    // Where it is, said after what it is. "zoom in on the location map" is
+    // Zoom in, on the map - and the place made the whole sentence a name
+    // nothing wore, so a 3B was asked and pressed Site Location. Cut at each
+    // preposition from the right, and take what is left only where it is
+    // exactly one control's name.
+    // Places only - on, in, at. "to" and "for" carry values ("set time span
+    // to 30 day") and ordinals ("for the second location"), and cutting
+    // there threw the part that mattered away.
+    if (!named.length && !ordinalIn(text)) {
+      const words = bare.split(" ");
+      for (let i = words.length - 1; i > 0 && !named.length; i--) {
+        if (!/^(?:on|in|at|within|inside)$/.test(words[i])) continue;
+        const core = words.slice(0, i).join(" ").replace(/^the\s+/, "");
+        if (!core) continue;
+        const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
+          && flat(c.label) === core && !opposite(flat(c.label)));
+        if (hits.length === 1) { named = hits; cutExactly = true; }
+      }
+    }
     // A panel opener is skipped while anything else wears the name, because
     // pressing the thing that holds what you asked for is not doing what
     // you asked - "Flood Inundation" is both an accordion and the layer
@@ -5068,16 +5223,17 @@ function namedByClause(all, clause) {
     // A control wearing the name as its own label beats one that only
     // answers to it in parentheses: "open flood inundation mapping" means
     // the control called that, not Flood Inundation Mapping (FIM) as well.
-    const ownName = named.filter((c) => { const l = flat(c.label); return l === bare || l === whole; });
+    const ownName = named.filter((c) => { const l = flat(c.label); return l === bare || l === whole || l === plainWhole; });
     const byName = ownName.length ? ownName : named;
     const notDoors = byName.filter((c) => !c.opensPanel);
     const kept = notDoors.length ? notDoors : byName;
     // Whether the name was worn exactly or reached for. The caller needs to
     // know: an exact name is already handled richly elsewhere, and this only
     // has to step in where that would miss.
-    exactly = kept.some((c) => {
+    exactly = cutExactly || kept.some((c) => {
       const l = flat(c.label);
-      return l === bare || l === whole || alsoCalled(c.label).some((a) => a === bare || a === whole);
+      return l === bare || l === whole || l === plainWhole
+        || alsoCalled(c.label).some((a) => a === bare || a === whole);
     });
     return kept;
   };
@@ -5089,6 +5245,24 @@ function namedByClause(all, clause) {
   if (ord && ord.rest && ord.n !== null) {
     const byOrd = match(ord.rest);
     if (byOrd.length) return { named: byOrd, n: ord.n, word: ord.word, how: "ordinal" };
+    // "the first warning" among separate links that are each a warning.
+    // The ordinal path above counts rows of one repeated control; weather.gov
+    // lists Flash Flood Warning, Hurricane Warning and the rest as distinct
+    // links, so "open the first warning listed" found no pattern to count.
+    // The thing named is the first word after the verb; the controls wearing
+    // it, in page order, are what is counted.
+    const noun = (meaningfulWords(String(ord.rest).replace(CLAUSE_LEAD, "")).find((w) => w.length > 3) || "")
+      .replace(/s$/, "");
+    if (noun) {
+      const wearing = all.filter((c) => !c.disabled && c.confidence !== "low"
+        // The thing it is, not a word somewhere in it: "Flash Flood Warning"
+        // is a warning; "Warnings By State" is a list of them.
+        && new RegExp(`\\b${noun}s?\\s*$`, "i").test(String(c.label || "").trim()));
+      if (wearing.length >= 2) {
+        const pick = ord.n === -1 ? wearing[wearing.length - 1] : wearing[ord.n - 1];
+        if (pick) return { named: [pick], n: null, word: ord.word, how: "ordinal" };
+      }
+    }
   }
   // The page's own word for the thing that was asked for.
   //
@@ -5993,10 +6167,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           // name of a link is a page saying where the answer is, not the
           // answer. "Current Standard: NOAA Atlas 14" in a menu is not what
           // Atlas 14 says.
+          // Links that lead elsewhere only. drought.gov's legend entries, "D0 -
+          // Abnormally Dry" through D4, are buttons on the page and the rows of
+          // its table at once; removing every control's name erased the table
+          // the question was about.
           let seenText = String(observation).toLowerCase();
           for (const c of controls) {
+            const away = c.goesTo && !/^#|^javascript:/i.test(String(c.goesTo));
             const l = String(c.label || "").toLowerCase().trim();
-            if (l.length >= 3) seenText = seenText.split(l).join(" ");
+            if (away && l.length >= 3) seenText = seenText.split(l).join(" ");
           }
           if (terms.length && !terms.some((t) => seenText.includes(t.toLowerCase()))) {
             readFellThrough = true;
@@ -6022,6 +6201,73 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // A span with one control offering it, the same certainty the chain
     // planner and the single-request shortcut use - here because a chain
     // that went to the model reaches each of its clauses through this loop.
+    // A search, in a clause of a chain as on its own. "search the site for
+    // flood safety, then open the first result" sent its first half to the
+    // model, which on its own is asked to type and press - the page's own
+    // search box and its submit were right there.
+    if (!history.length && !note && !onlyModel && SEARCH_CLAUSE.test(goal) && !ASKING_TO_READ.test(goal)) {
+      const did = await searchClause(routeGlobal, goal).catch(() => null);
+      if (did) {
+        history.push({ key: `search|${did.words.toLowerCase()}`, did: `searched for "${did.words.slice(0, 40)}"`,
+          outcome: `in ${did.box.label || "the search box"}`, ok: true, changed: true, label: did.box.label,
+          why: "the page has a search box" });
+        return { ok: true, answer: null, history, steps: history.length,
+          tookMs: Date.now() - began, said: null, withoutModel: true };
+      }
+    }
+    // A ZIP code and the one box for it, in a clause of a chain as on its own.
+    if (!history.length && !note && !onlyModel && !IS_CONDITIONAL.test(goal) && !ASKING_TO_READ.test(goal)) {
+      const zipped = zipBoxFor(goal, controls);
+      if (zipped) {
+        const sent = await fillZipAndSend(routeGlobal, zipped.box, zipped.zip);
+        if (sent && sent.ok !== false) {
+          history.push({ key: `type|${String(zipped.box.label || "").toLowerCase()}`,
+            did: `typed ${zipped.zip} into "${String(zipped.box.label).slice(0, 40)}" and submitted it`,
+            outcome: "the page changed", ok: true, changed: true, label: zipped.box.label,
+            why: "a ZIP code and the box that takes one" });
+          return { ok: true, answer: null, history, steps: history.length,
+            tookMs: Date.now() - began, said: null, withoutModel: true };
+        }
+      }
+    }
+    // A clause naming one control exactly is pressed, as a request on its
+    // own already is. "zoom in on the location map" names Zoom in; inside a
+    // chain it went to a 3B, which pressed Site Location.
+    if (!history.length && !note && !onlyModel && !IS_CONDITIONAL.test(goal) && !ASKING_TO_READ.test(goal)) {
+      const times = timesAsked(goal);
+      const nm = namedByClause(controls, times > 1 ? String(goal).replace(REPEAT_TAIL, "").trim() : goal);
+      const one = nm.how === "exact" && nm.named.length === 1 && nm.n === null ? nm.named[0] : null;
+      // Not a toggle with a state of its own: "hide graph details" when they
+      // are already hidden must leave them alone, and the path below knows
+      // to; pressing here would reverse them.
+      const hasState = one && (typeof one.expanded === "boolean"
+        || /^(?:show|hide|expand|collapse|open|close)\b/i.test(String(one.label || "")));
+      if (one && !hasState && !TEXT_INPUT_KINDS.has(String(one.type || "").toLowerCase())) {
+        if (one.hidden && one.revealedBy) {
+          await invokeOnActiveTab("openDisclosure", [one.revealedBy]).catch(() => null);
+          forgetPageTools();
+        }
+        const isSw = /^(checkbox|radio)$/.test(String(one.type || "").toLowerCase());
+        let ran = null;
+        for (let i = 0; i < (isSw ? 1 : times); i++) {
+          ran = await runVerified(routeGlobal, isSw
+            ? { name: "pageCheck", args: { selector: one.selector, on: !/\b(?:uncheck|untick|turn\s+off|disable|hide)\b/i.test(goal) } }
+            : actionToCall("click", one, {}));
+          if (!ran || ran.ok === false) break;
+        }
+        if (ran && ran.ok !== false) {
+          const moved = didItMove(ran);
+          history.push({
+            key: `click|${String(one.label || "").toLowerCase()}`,
+            did: times > 1 && !isSw ? `click "${one.label}" ${times} times` : `click "${one.label}"`,
+            outcome: moved ? "the page changed" : "pressed", ok: true, changed: moved, satisfied: !moved,
+            label: one.label, why: "the words name this control",
+          });
+          return { ok: true, answer: null, history, steps: history.length,
+            tookMs: Date.now() - began, said: null, withoutModel: true };
+        }
+      }
+    }
     // Not under "model:", which promises the model decides everything.
     if (!history.length && !note && !onlyModel) {
       const span = soleSpanControl(goal, controls);
@@ -6368,6 +6614,28 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           });
           if (part.length === 1) { found = part[0]; break; }
           if (oneDestination(part)) { found = preferShown(part); break; }
+          // The request's own words, where the model's name fits several. Asked
+          // for "the water temperature from the multiparameter sonde", a 3B
+          // named "Graph Temperature, water, degrees Celsiu" - cut short, and
+          // fitting all seven temperature series. "multiparameter sonde" is in
+          // the request and on two of them.
+          let pool = part;
+          if (part.length > 1 && goalWords.length) {
+            const scored = part.map((c) => ({ c, n: goalWords.filter((w) =>
+              wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact").length }));
+            const best = Math.max(...scored.map((x) => x.n));
+            if (best > 0) pool = scored.filter((x) => x.n === best).map((x) => x.c);
+            if (pool.length === 1) { found = pool[0]; break; }
+          }
+          // The plain one, where the rest are it with a qualifier. A gauge page
+          // lists "Temperature ... From multiparameter sonde" and the same
+          // words followed by ", [Discontinued]"; a model asking for the
+          // first, cut short by the prompt, was told its name fitted two.
+          const base = pool.filter((c) => {
+            const l = flatLabel(c.label);
+            return pool.every((o) => o === c || flatLabel(o.label).startsWith(l));
+          });
+          if (base.length === 1) { found = base[0]; break; }
           // Recorded rather than resolved. Two controls answering to one
           // name is a reference that did not land, and picking between them
           // is the confident wrong action this project exists to avoid.
@@ -7272,8 +7540,13 @@ function summariseForModel(read) {
       if (flat(c)) tableWords.add(flat(c));
       tableSquashed += squash(c);
     }
-    for (const row of (t.rows || []).slice(0, 6)) {
-      tableLines.push(`  ${row.join(" | ")}`);
+    // Twelve rows, each cell cut to what identifies it. Six was too few to
+    // answer "what does this monitoring location measure" - the gauge's
+    // table lists nineteen data types and the answer named three - and the
+    // full cells (a turbidity sensor is described in 150 characters) would
+    // have pushed the page's latest readings out of the budget after them.
+    for (const row of (t.rows || []).slice(0, 12)) {
+      tableLines.push(`  ${row.map((cell) => String(cell).slice(0, 56)).join(" | ")}`);
       for (const cell of row) {
         for (const n of nums(cell)) inTable.add(n);
         if (flat(cell)) tableWords.add(flat(cell));
@@ -8969,8 +9242,14 @@ function setsATimeWindow(label) {
   return /\d/.test(t) || /\b(?:past|last|previous|prior|one)\s+(?:day|week|month|year)s?\b/i.test(t);
 }
 
+// A request names a span only where it names a unit. "show the daily data
+// types" read as one day, found no 1-day button, and typed 1 into the "Days
+// before today" box - "daily" describes which data, not how much of it.
+const NAMES_A_UNIT = /\b(?:days?|weeks?|months?|years?|fortnight)\b/i;
+
 function soleSpanControl(clause, controls) {
   const text = String(clause || "");
+  if (!NAMES_A_UNIT.test(text)) return null;
   if (IS_CONDITIONAL.test(text) || ASKING_TO_READ.test(text) || /\?\s*$/.test(text)) return null;
   if (A_MOMENT_NOT_A_SPAN.test(text)) return null;
   const days = daysInPhrase(text);
@@ -8979,6 +9258,42 @@ function soleSpanControl(clause, controls) {
     && !c.opensPanel && setsATimeWindow(c.label)
     && sameSpan(days, daysInPhrase(String(c.label || ""))));
   return spans.length === 1 ? spans[0] : null;
+}
+
+/* A ZIP code, and the box that takes one.
+ *
+ * "get the forecast for ZIP code 10001" was taken by the place lookup, which
+ * does not know ZIP codes and said so, while weather.gov had a box labelled
+ * "Enter Your City, ST or ZIP Code" on the page. A five-digit code and a box
+ * asking for a ZIP is as unambiguous as the date fields already are. Two
+ * such boxes - weather.gov has one in its header and one in its sidebar -
+ * are told apart by the request's own words ("the local forecast box"), and
+ * a tie is left for the model.
+ */
+function zipBoxFor(text, controls) {
+  const zip = (String(text || "").match(/\b(\d{5})(?:-\d{4})?\b/) || [])[1];
+  if (!zip) return null;
+  const boxes = (controls || []).filter((c) => !c.disabled
+    && TEXT_INPUT_KINDS.has(String(c.type || "").toLowerCase()) && /\bzip\b/i.test(String(c.label || "")));
+  if (!boxes.length) return null;
+  if (boxes.length === 1) return { box: boxes[0], zip };
+  const words = meaningfulWords(text).filter((w) => w.length > 3 && !/^\d+$/.test(w));
+  const scored = boxes.map((b) => ({ b, n: words.filter((w) =>
+    wordMatchesText(w, String(b.label || "").toLowerCase()) === "exact").length + (b.hidden ? 0 : 0.5) }));
+  const best = Math.max(...scored.map((x) => x.n));
+  const top = scored.filter((x) => x.n === best);
+  return top.length === 1 ? { box: top[0].b, zip } : null;
+}
+
+async function fillZipAndSend(routeGlobal, box, zip) {
+  if (box.hidden && box.revealedBy) {
+    await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
+    forgetPageTools();
+  }
+  const filled = await runVerified(routeGlobal, { name: "pageFill", args: { selector: box.selector, text: zip } });
+  if (!filled || filled.ok === false) return filled || { ok: false, error: "could not type into the box" };
+  const sent = await runVerified(routeGlobal, { name: "pageSubmit", args: { selector: box.selector } });
+  return sent || { ok: false, error: "could not submit the box" };
 }
 
 async function certainClausePlan(routeGlobal, clause) {
@@ -9021,28 +9336,79 @@ async function certainClausePlan(routeGlobal, clause) {
   // One, and only one. Two controls wearing the name is the ambiguity that
   // sent "Interactive Map" to a radio while the link went unpressed. Several
   // rows of the same one, with the clause saying which, is not.
-  const { named, n } = namedByClause(all, clause);
+  const zipped = zipBoxFor(clause, all);
+  if (zipped) {
+    return {
+      label: `${zipped.zip} into ${zipped.box.label}`,
+      run: async () => {
+        const sent = await fillZipAndSend(routeGlobal, zipped.box, zipped.zip);
+        return sent && sent.ok !== false ? { changed: true } : null;
+      },
+    };
+  }
+  // "zoom in twice" is Zoom in, twice. The count made the clause a name
+  // nothing wore, so it went to the model, which zoomed once.
+  const times = timesAsked(clause);
+  const core = times > 1 ? String(clause).replace(REPEAT_TAIL, "").trim() : clause;
+  const { named, n } = namedByClause(all, core);
   if (named.length !== 1) return null;
   const only = n === null ? named[0] : nthOf(named[0], n);
   if (!only) return null;
   if (TEXT_INPUT_KINDS.has(String(only.type || "").toLowerCase())) return null;
   return {
-    label: only.label,
+    label: times > 1 ? `${only.label} x${times}` : only.label,
     run: async () => {
-      const did = await actOnExactlyNamedClause(routeGlobal, clause);
-      if (!did) return null;
+      let did = null;
+      for (let i = 0; i < times; i++) {
+        did = await actOnExactlyNamedClause(routeGlobal, core);
+        if (!did) return null;
+      }
       return { changed: did.verified ? did.verified.changed !== false : true };
     },
   };
 }
 
-async function searchClause(routeGlobal, clause) {
+const REPEAT_TAIL = /\s+(?:twice|thrice|(\d|two|three|four|five)\s+times)\s*$/i;
+function timesAsked(clause) {
+  const m = String(clause || "").match(REPEAT_TAIL);
+  if (!m) return 1;
+  const w = m[0].trim().toLowerCase();
+  if (w.startsWith("twice")) return 2;
+  if (w.startsWith("thrice")) return 3;
+  const n = { two: 2, three: 3, four: 4, five: 5 }[m[1].toLowerCase()] || parseInt(m[1], 10);
+  return Math.min(Math.max(n || 1, 1), 5);
+}
+
+/* What to search for, and where.
+ *
+ * Everything after the verb was the query, so "search the map for
+ * Sacramento" typed "the map for Sacramento" into the box and "search the
+ * site for snow drought" typed "the site for snow drought". People name the
+ * place they are searching as often as the thing: "search the site for X",
+ * "look up X in the neighborhood drought search". The place is not part of
+ * the query - it says which box.
+ */
+function searchParts(clause) {
   const asked = String(clause || "").match(SEARCH_CLAUSE);
   if (!asked) return null;
-  const words = asked[1].trim();
-  if (!words) return null;
+  let query = asked[1].trim();
+  let where = null;
+  const named = query.match(/^(?:the|this|our|that)\s+([a-z][a-z\s-]{0,40}?)\s+for\s+(.+)$/i);
+  if (named) { where = named[1]; query = named[2]; }
+  else {
+    const inside = query.match(/^(.+?)\s+(?:in|on|using|with|through)\s+(?:the|this)\s+([a-z][a-z\s-]{0,40}?(?:search|box|field|bar|lookup|tool|map|finder))$/i);
+    if (inside) { query = inside[1]; where = inside[2]; }
+  }
+  query = query.trim().replace(/^["'\u201c]|["'\u201d]$/g, "").trim();
+  return query ? { query, where } : null;
+}
+
+async function searchClause(routeGlobal, clause) {
+  const parts = searchParts(clause);
+  if (!parts) return null;
+  const words = parts.query;
   const sinv = await readInventory();
-  const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []));
+  const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []), parts.where);
   if (!box) return null;
   if (box.hidden && box.revealedBy) {
     await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
@@ -9692,6 +10058,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       doorsOpenedThisAsk = new Set();
       const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       recordAsk(askId, msg.instruction, { status: "running" });
+      // The whole sentence is what was asked and what the card shows; the
+      // paths below see only the action half, and the question is answered
+      // once that half has responded.
+      const askedAs = String(msg.instruction || "");
+      const thenAsk = /^\s*(?:model|baseline):/i.test(askedAs) ? null : actThenAsk(askedAs);
+      if (thenAsk) msg = { ...msg, instruction: thenAsk.act };
 
       // Every answer carries a card. "Enable snow depth" came back as the
       // bare word "done" and nothing else - no title, no rows, no reason -
@@ -9756,7 +10128,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // almost four minutes" is the report that matters most and the hardest
       // to act on, because it does not say which of the paths spent it.
       const askBegan = Date.now();
+      let answeredAfter = false;
       const respond = (res) => {
+        if (thenAsk && !answeredAfter) {
+          answeredAfter = true;
+          answerAfterActing(res, thenAsk.ask)
+            .then((merged) => respond(merged))
+            .catch((e) => respond({ ...res,
+              error: res.error || `the action ran; reading the page failed: ${(e && e.message) || e}` }));
+          return;
+        }
         if (plannedTool && !res.toolCall && !res.plannedCall) res.toolCall = plannedTool;
         const display = cardFor(res);
         // When one decision costs this much, no amount of work in here is
@@ -9802,7 +10183,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
          * measurements travel separately from the words describing them.
          */
         res.metrics = {
-          instruction: String(msg.instruction || ""),
+          instruction: askedAs,
           at: new Date().toISOString(),
           tookMs: took,
           ok: res.ok !== false,
@@ -9864,7 +10245,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           display.source = `${display.source || route.global} - asked ${modelName(modelUsed)}`;
         }
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
-        recordAsk(askId, msg.instruction, {
+        recordAsk(askId, askedAs, {
           status: res.ok === false ? "error" : "done",
           plannedBy: res.plannedBy,
           display,
@@ -9926,6 +10307,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // interpret - and it was going nowhere: the model planned nothing
         // for it, and the scorer searched for the nearest thing resembling a
         // place, which for "august" is Augusta.
+        if (!forceBaseline && !forceModel && !conditional && !ASKING_TO_READ.test(wanted)
+            && splitIntoSteps(wanted).length === 1 && /\b\d{5}\b/.test(wanted)) {
+          const zinv = await readInventory();
+          const zipped = zipBoxFor(wanted, (zinv.ok && zinv.result && zinv.result.controls) || []);
+          if (zipped) {
+            const sent = await fillZipAndSend(route.global, zipped.box, zipped.zip);
+            if (sent && sent.ok !== false) {
+              respond({
+                ...sent, ok: true, plannedBy: "exact-match",
+                toolCall: { name: "pageFill", args: { selector: zipped.box.selector, text: zipped.zip } },
+                steps: [{ did: `typed ${zipped.zip} and submitted it`, ok: true, changed: true, label: zipped.box.label }],
+                display: {
+                  title: `${zipped.zip}`,
+                  subtitle: `typed into "${String(zipped.box.label).slice(0, 50)}" and submitted`,
+                  stats: [], rows: [], source: "this page",
+                  note: "a ZIP code and a box that takes one, so this did not wait for the model",
+                },
+              });
+              return;
+            }
+          }
+        }
         const wantDate = looksLikeDate(wanted) ? isoDateFrom(wanted) : null;
         if (wantDate && !forceBaseline && !forceModel && !conditional) {
           const dinv = await readInventory();
@@ -10412,12 +10815,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // not know explain.
         const askedDays = (!forceBaseline && !forceModel && !conditional && !looksAsking
           && !ASKING_TO_READ.test(wanted) && !A_MOMENT_NOT_A_SPAN.test(wanted)
+          && NAMES_A_UNIT.test(wanted)
           && splitIntoSteps(wanted).length === 1) ? daysInPhrase(wanted) : null;
         if (askedDays) {
           const dinv2 = await readInventory();
           const spans = ((dinv2.ok && dinv2.result && dinv2.result.controls) || [])
             .filter((c) => !c.disabled && c.confidence !== "low" && !c.opensPanel
               && setsATimeWindow(c.label) && sameSpan(askedDays, daysInPhrase(c.label)));
+          // No button offers that span, but a box takes a number of days.
+          // "set the time span to the last 14 days" on a gauge page opened
+          // Change time span and stopped: there is no 14 days button, and
+          // the "Days before today" box inside the panel is the control
+          // that does exactly this. One such box only, and only where no
+          // button already offers the span.
+          if (!spans.length) {
+            const boxes = ((dinv2.ok && dinv2.result && dinv2.result.controls) || [])
+              .filter((c) => !c.disabled && TEXT_INPUT_KINDS.has(String(c.type || "").toLowerCase())
+                && /\bdays?\b/i.test(String(c.label || "")) && !/\bdate\b/i.test(String(c.label || "")));
+            if (boxes.length === 1) {
+              const box = boxes[0];
+              if (box.hidden && box.revealedBy) {
+                await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
+                forgetPageTools();
+              }
+              const filled = await runVerified(route.global,
+                { name: "pageFill", args: { selector: box.selector, text: String(askedDays) } });
+              const sent = filled && filled.ok !== false
+                ? await runVerified(route.global, { name: "pageSubmit", args: { selector: box.selector } })
+                : filled;
+              if (sent && sent.ok !== false) {
+                respond({
+                  ...sent, ok: true, plannedBy: "exact-match",
+                  toolCall: { name: "pageFill", args: { selector: box.selector, text: String(askedDays) } },
+                  steps: [{ did: `typed ${askedDays} into "${box.label}"`, ok: true, changed: true, label: box.label },
+                    { did: "applied it", ok: true, changed: didItMove(sent), label: box.label }],
+                  display: {
+                    title: `${askedDays} days`,
+                    subtitle: `typed ${askedDays} into "${String(box.label).replace(/:\s*$/, "")}" and applied it`,
+                    stats: [], rows: [], source: "this page",
+                    note: "no button here offers that span, and one box takes a number of days",
+                  },
+                });
+                return;
+              }
+            }
+          }
           // One only. A page offering both "30 days" and "Monthly summary"
           // is asking which was meant, and that is a question for the model.
           if (spans.length === 1) {
