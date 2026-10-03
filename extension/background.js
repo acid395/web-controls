@@ -4796,7 +4796,14 @@ const NOT_AN_ANSWER = /^(?:click|check|select|type|read|find|search|finish|true|
 function answerTextOf(step, raw = "") {
   const s = step && typeof step === "object" ? step : {};
   const usable = (v) => (typeof v === "number" && Number.isFinite(v)) ? String(v)
-    : (typeof v === "string" && v.trim() && !NOT_AN_ANSWER.test(v.trim())) ? v.trim() : "";
+    : (typeof v === "string" && v.trim() && !NOT_AN_ANSWER.test(v.trim())) ? v.trim()
+    // An object of findings - {"Major Flood": "...", "Minor Flood": "..."} -
+    // is an answer laid out as a table.
+    : (v && typeof v === "object" && !Array.isArray(v)) ? Object.entries(v)
+      .filter(([, x]) => typeof x === "string" || typeof x === "number")
+      .map(([k, x]) => `${k}: ${x}`).join("; ")
+    : Array.isArray(v) ? v.filter((x) => typeof x === "string" || typeof x === "number").join(", ")
+    : "";
   for (const k of ["answer", "explanation", "summary", "response", "text", "result", "value", "reading"]) {
     const got = usable(s[k]);
     if (got) {
@@ -4809,9 +4816,19 @@ function answerTextOf(step, raw = "") {
     const got = usable(v);
     if (got) return [got, k === "amount" ? usable(s.unit) : ""].filter(Boolean).join(" ");
   }
-  // Prose with no JSON around it is an answer too.
+  // Prose with no JSON around it is an answer too - and so is JSON the parser
+  // gave up on, cut short or malformed, read as its own keys and values.
   const text = String(raw || "").trim();
   if (text && !text.includes("{")) return text.slice(0, 600);
+  if (text) {
+    // An answer cut off mid-sentence - the reply ran out before its quote closed.
+    const cut = text.match(/"(?:answer|explanation|summary|response|text)"\s*:\s*"([^"]{8,})$/i);
+    if (cut) return cut[1].trim().slice(0, 600);
+    const pairs = [...text.matchAll(/"([^"]{1,80})"\s*:\s*(?:"([^"]{1,300})"|(-?\d+(?:[.,]\d+)*))/g)]
+      .filter((m) => !/^(?:do|name|n|on|why|reason)$/i.test(m[1]))
+      .map((m) => (/^(?:answer|explanation|summary|response|text)$/i.test(m[1]) ? (m[2] || m[3]) : `${m[1]}: ${m[2] || m[3]}`));
+    if (pairs.length) return pairs.join("; ").slice(0, 600);
+  }
   return usable(s.why) || usable(s.reason) || "";
 }
 
@@ -4848,10 +4865,40 @@ async function answerAfterActing(res, ask) {
   // arrive and to draw it - a graph switching series or a table opening
   // happens after the click returns.
   await waitForPageLoad();
-  await new Promise((r) => setTimeout(r, 900));
-  forgetInventory();
-  const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
-  let seen = read.ok ? summariseForModel(read.result) : null;
+  // Until the page stops changing, not a fixed pause. The NWPS FAQ and the
+  // hydrologic discussion arrive after the page says it has loaded, and a
+  // reader handed the page at nine hundred milliseconds answered "not on
+  // this page" about text that came a second later.
+  const readNow = async () => {
+    forgetInventory();
+    const r = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
+    return r.ok ? summariseForModel(r.result) : null;
+  };
+  await new Promise((r) => setTimeout(r, 700));
+  let seen = await readNow();
+  for (let tries = 0; tries < 4; tries++) {
+    await new Promise((r) => setTimeout(r, 800));
+    const again = await readNow();
+    if (again === seen) break;
+    seen = again;
+  }
+  // What the action put in front of the person, by name. "open the map
+  // layers panel and tell me which layers are available" opened the panel,
+  // and the layers are checkboxes - their names are controls, not text, and
+  // the reader was shown text only, so it said the page did not list them.
+  try {
+    const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => ({ ok: false }));
+    const choices = ((inv.ok && inv.result && inv.result.controls) || [])
+      .filter((c) => !c.hidden && (/^(checkbox|radio)$/i.test(String(c.type || ""))
+        || /^(option|tab|menuitem|menuitemradio|menuitemcheckbox)$/i.test(String(c.kind || ""))))
+      .map((c) => `${String(c.label || "").slice(0, 50)}${typeof c.checked === "boolean" ? (c.checked ? " (on)" : " (off)") : ""}`)
+      .filter((t) => t.trim())
+      .slice(0, 30);
+    if (choices.length) {
+      seen = [seen && seen !== "nothing readable" ? seen : null,
+        "choices on the page now:", ...choices.map((c) => `  ${c}`)].filter(Boolean).join("\n");
+    }
+  } catch (e) { /* the page text is still there to answer from */ }
   const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
   const series = ((feeds.ok && feeds.result && feeds.result.series) || []).filter((x) => x && x.count >= 3);
   if (series.length) {
@@ -4862,8 +4909,10 @@ async function answerAfterActing(res, ask) {
   }
   const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
     mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
-  const said = asked && asked.ok !== false ? answerTextOf(asked.step, asked.raw) : "";
-  if (!asked || asked.ok === false || !said) {
+  // A reply that would not parse still carries its words.
+  const said = asked && !asked.timedOut
+    ? answerTextOf(asked.ok !== false ? asked.step : null, asked.raw) : "";
+  if (!asked || !said) {
     if (card) out.display = card;
     note("the action ran; the model gave no answer to the question");
     return out;
@@ -6444,6 +6493,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         Math.max(5000, deadline - Date.now()))),
     ]);
     if (asked.raw) lastSaid = String(asked.raw).slice(0, 200);
+    // A reader whose reply would not parse still wrote an answer. "explain
+    // what this map shows" came back as JSON cut off mid-object, the run
+    // reported the model as unable to answer, and the keyword fallback read
+    // out the map's settings - Filter, Enabled, Opacity - instead.
+    if (!asked.ok && !asked.timedOut && readingOnly && asked.raw) {
+      const salvaged = answerTextOf(null, asked.raw);
+      if (salvaged) {
+        asked.ok = true;
+        asked.step = { do: "finish", answer: salvaged };
+      }
+    }
     if (!asked.ok) {
       // Out of time with something already done is a partial result, not a
       // failure - and reporting failure would send this to the scorer, which
@@ -7557,8 +7617,20 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // model to repeat itself and the guard above to stop it - two turns of a
     // 3B model to do one thing, and on this hardware a turn is fifteen
     // seconds of somebody waiting.
-    if (!mayHaveMore && (moved || satisfied) && !history[history.length - 1].unrelated) {
-      return { ok: true, answer: null, history, steps: history.length,
+    // Or the request named it and the press went through. "zoom in twice,
+    // then open the layers panel" pressed View Layers - the panel opened, but
+    // nothing the page fingerprint watches moved - so the turn was spent
+    // anyway, and the model, asked what next, pressed Close map panel.
+    // Nothing changing is not nothing happening; a press of the thing asked
+    // for is the end of a one-step request.
+    const lastStep = history[history.length - 1];
+    const namedPress = lastStep && lastStep.ok !== false && !lastStep.unrelated && ran.ok !== false;
+    if (!mayHaveMore && (moved || satisfied || namedPress) && !lastStep.unrelated) {
+      // Ended on a press nothing measurable followed: done, and said to be
+      // unconfirmed rather than reported as a change it cannot vouch for.
+      const quiet = !moved && !satisfied;
+      if (quiet) lastStep.unconfirmed = true;
+      return { ok: true, answer: null, history, steps: history.length, unconfirmed: quiet || undefined,
         tookMs: Date.now() - began, said: lastSaid };
     }
     // The page it acts on next is the page it just changed, so the reading is
@@ -7743,7 +7815,12 @@ function summariseForModel(read) {
   // scaffolding and the rest is this, so what fits here is very nearly the
   // whole of what a question gets answered from - and prefill measured on
   // the machine this runs on is the cheap half of a turn.
-  return bits.join("\n").slice(0, 2200);
+  // A map's scale bar is the map, not the page's content. water.noaa.gov's
+  // "300 mi" reached the reader as a line of its own, and asked what the
+  // update notice said, a 3B built "300 miles of water levels have changed"
+  // out of it. A line that is a distance and nothing else is dropped.
+  const SCALE_ONLY = /^\s*\d[\d,.]*\s*(?:mi|km|m|ft|yd|nm|miles?|kilomet(?:er|re)s?|meters?|feet)\s*$/i;
+  return bits.filter((b) => !SCALE_ONLY.test(String(b))).join("\n").slice(0, 2200);
 }
 
 async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] } = {}) {

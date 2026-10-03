@@ -11615,6 +11615,88 @@ const realLog = console.log;
   check("a generic one-word name loses to the specific one", pick("open the data and maps menu"), "Data and Maps");
 }
 
+// water.noaa.gov, v1.78.2: explanations that the extension, not the model,
+// left unanswerable.
+{
+  const bgn = loadBackground({});
+  check("an answer laid out as an object reads as text",
+    bgn.answerTextOf({ flood_categories: { "Major Flood": "widespread damage", "Minor Flood": "minimal damage" } }, ""),
+    "Major Flood: widespread damage; Minor Flood: minimal damage");
+  check("JSON cut off mid-answer still gives the answer",
+    bgn.answerTextOf(null, '{"answer": "The map shows river gauges colored by flood category'),
+    "The map shows river gauges colored by flood category");
+  // A map's scale bar is not page content.
+  check("a lone distance line is dropped from what the reader sees",
+    /300 mi/.test(bgn.summariseForModel({ tables: [], pairs: [], readouts: [{ text: "300 mi" }, { text: "Update (9/24): river outlook revised" }] })),
+    false);
+}
+
+{
+  // A panel of choices the reader has to be able to name, and text that
+  // arrives after the page says it has loaded.
+  const lp = loadPage(`<!doctype html><html><body>
+    <button id="vl" type="button">View Layers</button>
+    <div id="panel" style="display:none">
+      <label><input type="checkbox" name="a"> Flood Inundation</label>
+      <label><input type="checkbox" name="b"> Snow Water Equivalent</label>
+    </div>
+    <button id="cl" type="button">Close map panel</button>
+    <div id="late"></div>
+    </body></html>`, { url: "https://water.noaa.gov/" });
+  if (lp) {
+    lp.document.getElementById("vl").addEventListener("click", () => {
+      lp.document.getElementById("panel").style.display = "block";
+    });
+    let closed = 0;
+    lp.document.getElementById("cl").addEventListener("click", () => { closed++; });
+    const bgl = loadBackground({ page: lp });
+    let sawChoices = false;
+    bgl.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        if (m.mode === "read") {
+          sawChoices = /Flood Inundation/.test(m.observation || "") && /Snow Water Equivalent/.test(m.observation || "");
+          return { ok: true, step: { do: "finish", answer: sawChoices ? "Flood Inundation, Snow Water Equivalent" : "not on this page" } };
+        }
+        return { ok: true, step: { do: "click", name: "View Layers" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      const r = await bgl.__ask({ type: "smartAsk", instruction: "open the map layers panel and tell me which layers are available" });
+      ensure("the reader is shown the choices an action revealed", sawChoices, (r.display || {}).answer);
+      check("and nothing else is pressed after the panel opens", closed, 0);
+    });
+  }
+
+  const tp = loadPage(`<!doctype html><html><body>
+    <a id="faq" href="#faq">NWPS FAQ</a><div id="body"></div></body></html>`, { url: "https://water.noaa.gov/" });
+  if (tp) {
+    tp.document.getElementById("faq").addEventListener("click", (e) => {
+      e.preventDefault();
+      setTimeout(() => {
+        tp.document.getElementById("body").innerHTML =
+          "<h2>What is NWPS?</h2><p>The National Water Prediction Service provides river forecasts.</p>";
+      }, 1300);
+    });
+    const bgt = loadBackground({ page: tp });
+    let read = "";
+    bgt.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") {
+        if (m.mode === "read") { read = m.observation || ""; return { ok: true, step: { do: "finish", answer: "river forecasts" } }; }
+        return { ok: true, step: { do: "click", name: "NWPS FAQ" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgt.__ask({ type: "smartAsk", instruction: "go to the NWPS FAQ and explain what NWPS is" });
+      ensure("text that arrives after load is waited for before reading",
+        /National Water Prediction Service provides river forecasts/.test(read), read);
+    });
+  }
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202
