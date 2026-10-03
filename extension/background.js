@@ -5214,6 +5214,7 @@ function alsoCalled(label, control = null) {
 function namedByClause(all, clause) {
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   let exactly = false;
+  let namedOtherwise = false;
   const match = (text) => {
     const whole = flat(text);
     // "clik compair two weks" kept its misspelled verb as part of the name,
@@ -5295,16 +5296,21 @@ function namedByClause(all, clause) {
     // Whether the name was worn exactly or reached for. The caller needs to
     // know: an exact name is already handled richly elsewhere, and this only
     // has to step in where that would miss.
-    exactly = cutExactly || kept.some((c) => {
+    // Exactly is the control's own name, letter for letter - the case a later
+    // path handles by comparing labels. Named another way (without its
+    // articles, with a place after it, by the acronym in its parentheses) is
+    // "named": certain, but only this path knows it, so it must not be handed
+    // to one that compares labels and would not recognise it.
+    exactly = kept.some((c) => { const l = flat(c.label); return l === bare || l === whole; });
+    namedOtherwise = !exactly && (cutExactly || kept.some((c) => {
       const l = flat(c.label);
-      return l === bare || l === whole || l === plainWhole
-        || alsoCalled(c.label, c).some((a) => a === bare || a === whole);
-    });
+      return l === plainWhole || alsoCalled(c.label, c).some((a) => a === bare || a === whole);
+    }));
     return kept;
   };
   const plain = match(clause);
   if (plain.length) {
-    return { named: plain, n: null, word: null, how: exactly ? "exact" : "close" };
+    return { named: plain, n: null, word: null, how: exactly ? "exact" : namedOtherwise ? "named" : "close" };
   }
   const ord = ordinalIn(clause);
   if (ord && ord.rest && ord.n !== null) {
@@ -6301,7 +6307,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!history.length && !note && !onlyModel && !IS_CONDITIONAL.test(goal) && !ASKING_TO_READ.test(goal)) {
       const times = timesAsked(goal);
       const nm = namedByClause(controls, times > 1 ? String(goal).replace(REPEAT_TAIL, "").trim() : goal);
-      const one = nm.how === "exact" && nm.named.length === 1 && nm.n === null ? nm.named[0] : null;
+      const one = (nm.how === "exact" || nm.how === "named") && nm.named.length === 1 && nm.n === null
+        ? nm.named[0] : null;
       // Not a toggle with a state of its own: "hide graph details" when they
       // are already hidden must leave them alone, and the path below knows
       // to; pressing here would reverse them.
@@ -9556,13 +9563,32 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
   // hidden checkbox changes no signature this can see, so the box was being
   // ticked and the step reported as unverifiable - the state itself is the
   // evidence, and it is the thing that was asked about.
+  //
+  // Read fresh, then ask the control itself, then trust the page. Live, "zoom
+  // in on the location map and switch it to imagery" switched the map to
+  // imagery in front of the person who asked - and the card said "failed",
+  // because Leaflet folds its layer list away again after a choice and the
+  // read-back could not find the radio it had just pressed. A step that
+  // visibly did the thing must not be reported as failing it.
+  forgetInventory();
   const again = await readInventory();
   const now = ((again.ok && again.result && again.result.controls) || [])
     .find((c) => c.selector === only.selector);
-  const ended = now ? now.checked === true : null;
-  if (ended === null || ended !== !wantsOff) return null;
-  return { ok: true, verified: { changed: true }, label: only.label,
-    alreadySo: only.checked === ended };
+  let ended = now ? now.checked === true : null;
+  if (ended !== !wantsOff) {
+    const direct = await invokeOnActiveTab("readControl", [only.selector]).catch(() => ({ ok: false }));
+    const st = direct && direct.ok ? direct.result : null;
+    if (st && st.found && typeof st.checked === "boolean") ended = st.checked;
+  }
+  if (ended === !wantsOff) {
+    return { ok: true, verified: { changed: true }, label: only.label,
+      alreadySo: only.checked === ended };
+  }
+  // The box reads otherwise, or cannot be read - but the page moved.
+  if (didItMove(ran)) {
+    return { ok: true, verified: { changed: true }, label: only.label, unconfirmed: true };
+  }
+  return null;
 }
 
 async function benchmarkPlanners({ onlyTargets = null } = {}) {

@@ -1832,6 +1832,24 @@
       state[key] = { value, label: rawLabelOf(el).slice(0, 60) || null, tag };
       n++;
     }
+    /* A Leaflet map's own state. Zooming changes no input and no aria
+     * attribute, so "zoom in on the location map" zoomed the map and the card
+     * said nothing changed; and the base-layer radios are hidden again as
+     * soon as the list folds away, so switching to Imagery was invisible to
+     * the loop above too. Leaflet writes the zoom onto its proxy element's
+     * transform the moment it changes, and the layer radios keep their
+     * checked state while hidden - both are read here, labelled for the card.
+     */
+    try {
+      deepQueryAll(".leaflet-proxy").slice(0, 2).forEach((p, i) => {
+        const t = String((p.style && p.style.transform) || "");
+        if (t) state[`leaflet-zoom-${i}`] = { value: t, label: "map zoom", tag: "map" };
+      });
+      for (const r of deepQueryAll(".leaflet-control-layers-selector").slice(0, 12)) {
+        const key = cssPath(r);
+        if (key && !state[key]) state[key] = { value: !!r.checked, label: rawLabelOf(r).slice(0, 60) || "map layer", tag: "input" };
+      }
+    } catch (e) { /* no map here */ }
     return { url: location.href, title: document.title, controls: state, count: n };
   }
 

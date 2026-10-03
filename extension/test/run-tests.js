@@ -11538,6 +11538,56 @@ const realLog = console.log;
   }
 }
 
+// The fourth live USGS run, v1.78.0: the map switched to imagery and the
+// card said "failed"; the map zoomed and the card said "nothing changed".
+{
+  const leaflet = () => loadPage(`<!doctype html><html><body>
+    <div class="leaflet-container"><div class="leaflet-proxy" style="transform: translate3d(1200px, 3100px, 0px) scale(4096)"></div>
+    <div class="leaflet-control-layers" aria-haspopup="true">
+      <a class="leaflet-control-layers-toggle" href="#" title="Layers" role="button"></a>
+      <section class="leaflet-control-layers-list" style="display:none">
+        <label><span><input type="radio" class="leaflet-control-layers-selector" name="b" checked><span> USGS Topo</span></span></label>
+        <label><span><input type="radio" class="leaflet-control-layers-selector" name="b"><span> Imagery</span></span></label>
+      </section></div>
+    <div class="leaflet-control-zoom"><a class="leaflet-control-zoom-in" href="#" title="Zoom in" role="button" aria-label="Zoom in">+</a></div>
+    </div><a href="/site-map">Site Map</a><a href="/about">About this location</a></body></html>`,
+    { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  const wire = (p) => {
+    const proxy = p.document.querySelector(".leaflet-proxy");
+    const zoom = p.document.querySelector(".leaflet-control-zoom-in");
+    zoom.addEventListener("click", (e) => { e.preventDefault(); proxy.style.transform = "translate3d(2400px, 6200px, 0px) scale(8192)"; });
+    const pressed = [];
+    for (const a of p.document.querySelectorAll("a")) a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(a.title || a.textContent.trim()); });
+    return pressed;
+  };
+  const p1 = leaflet();
+  if (p1) {
+    const pressed = wire(p1);
+    const bg1 = loadBackground({ page: p1 });
+    bg1.__model = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    runAsync(async () => {
+      const r = await bg1.__ask({ type: "smartAsk", instruction: "zoom in on the location map and switch it to imagery" });
+      const rows = ((r.display || {}).rows || []);
+      check("the map ends on imagery", p1.document.querySelectorAll(".leaflet-control-layers-selector")[1].checked, true);
+      ensure("and the card does not call that a failure",
+        !rows.some((x) => /fail/i.test(String(x.value))), rows);
+      ensure("and a zoom is seen as a change",
+        rows.some((x) => /zoom in/i.test(x.name) && !/nothing changed/i.test(String(x.value))), rows);
+    });
+  }
+  const p2 = leaflet();
+  if (p2) {
+    const pressed = wire(p2);
+    const bg2 = loadBackground({ page: p2 });
+    bg2.__model = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    runAsync(async () => {
+      await bg2.__ask({ type: "smartAsk", instruction: "zoom in on the location map" });
+      check("a request naming Zoom in with a place after it presses Zoom in and nothing else",
+        pressed.join("|"), "Zoom in");
+    });
+  }
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202
