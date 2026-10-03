@@ -11462,6 +11462,82 @@ const realLog = console.log;
   }
 }
 
+// The third live USGS run, v1.77.0.
+{
+  const bgr = loadBackground({});
+  // Every shape a reader's answer came back in.
+  for (const [what, st, raw, want] of [
+    ["an answer field", { do: "finish", answer: "5,120 cfs" }, "", "5,120 cfs"],
+    ["a value and a unit", { value: "2.86", unit: "ft" }, "", "2.86 ft"],
+    ["a short answer", { do: "finish", answer: "low" }, "", "low"],
+    ["a bare number", { result: 42 }, "", "42"],
+    ["prose with no JSON", { do: "finish", answer: "" }, "The latest flow is 5,120 cfs.", "The latest flow is 5,120 cfs."],
+    ["a click is not an answer", { name: "Log", do: "click" }, '{"name":"Log"}', ""],
+  ]) {
+    check(`a reader's reply, ${what}`, bgr.answerTextOf(st, raw), want);
+  }
+  // An admission and nothing else falls through; a hedged answer does not.
+  for (const [t, want] of [
+    ["not on this page", true],
+    ["The table does not provide information on the amount of rain.", true],
+    ["The page does not give an exact start, but discharge data is listed from 1972-06-09.", false],
+    ["The page does not say whether it is approved; the latest reading is marked Provisional.", false],
+  ]) {
+    check(`admits no answer: "${t.slice(0, 48)}"`, bgr.admitsNoAnswer(t), want);
+  }
+  // Show and hide, only where it is the same thing.
+  const L = [{ label: "Open Water", selector: "w", type: "checkbox" }, { label: "Hide graph details", selector: "h" }];
+  check("a name starting with a verb is not the opposite of a request",
+    bgr.namedByClause(L, "disable open water").named.map((x) => x.label).join("|"), "Open Water");
+  check("while show still never presses the hide for the same thing",
+    bgr.namedByClause(L, "show graph details").named.length, 0);
+  // A section name is not a second name.
+  check("a section qualifier is not an alias",
+    bgr.namedByClause([{ label: "Close (National Drought Mitigation Center)", selector: "x",
+      section: "National Drought Mitigation Center" }], "open the national drought mitigation center").named.length, 0);
+}
+
+{
+  // Identical controls under headings of their own are named for them.
+  const sp = loadPage(`<!doctype html><html><body>
+    <section><h3>Daily data</h3><button aria-expanded="false">Show these data types</button></section>
+    <section><h3>Field measurements</h3><button aria-expanded="false">Show these data types</button></section>
+    <section><h3>Statistical tables for select daily data</h3><button aria-expanded="false">Show these data types</button></section>
+    <table><tr><td><a href="/s/1">View</a></td></tr><tr><td><a href="/s/2">View</a></td></tr></table>
+    </body></html>`, { url: "https://waterdata.usgs.gov/monitoring-location/X/" });
+  if (sp) {
+    const inv = sp.GENERIC.inventory({ includeHidden: true }).controls;
+    check("identical buttons in their own sections are told apart",
+      inv.filter((c) => /^Show these data types \(/.test(c.label)).length, 3);
+    check("while a table's repeated links stay one pattern",
+      (inv.find((c) => c.label === "View") || {}).count, 2);
+    // The model naming the button without its section still lands on the
+    // one the request describes.
+    let n = 0;
+    const pressed = [];
+    sp.document.querySelectorAll("button").forEach((b, i) => b.addEventListener("click", () => pressed.push(i)));
+    const bgs = loadBackground({ page: sp });
+    bgs.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { n++; return { ok: true, step: n <= 2 ? { do: "click", name: "Show these data types" } : { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgs.__ask({ type: "smartAsk", instruction: "model: show the daily data types" });
+      check("the daily one, not the statistical tables that also say daily", pressed.join(","), "0");
+    });
+  }
+
+  // Ticking through a label does not untick it again.
+  const lp = loadPage(`<!doctype html><html><body>
+    <label id="lab"><input type="checkbox" name="fi"> Flood Inundation</label></body></html>`, { url: "https://water.noaa.gov/" });
+  if (lp) {
+    lp.GENERIC.setChecked ? lp.GENERIC.setChecked("#lab", true) : null;
+    const box = lp.document.querySelector('[name="fi"]');
+    if (lp.GENERIC.setChecked) check("checking a label ticks its box once", box.checked, true);
+  }
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202

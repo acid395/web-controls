@@ -311,6 +311,16 @@
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`setChecked: not found: ${elOrSel}`);
     if (!!el.checked !== !!on) realClick(el);
+    // Through its label, where pressing the box itself did not take - which
+    // is what a person presses, and what some widgets listen to. Only for an
+    // actual box: called on a <label>, which has no checked state of its
+    // own, the first press ticked the box and this pressed the label again
+    // and unticked it.
+    const isBox = el.tagName === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "");
+    if (isBox && !!el.checked !== !!on) {
+      const label = (el.labels && el.labels[0]) || (el.closest && el.closest("label"));
+      if (label) realClick(label);
+    }
     return el.checked;
   };
 
@@ -716,6 +726,26 @@
     return null;
   }
 
+  // The heading of the section a control sits in: the nearest heading before
+  // it inside the closest ancestor that has one. Short, and empty where the
+  // page gives none.
+  function sectionHeadingOf(el, siblings = []) {
+    if (!el) return { text: "" };
+    let n = el.parentElement;
+    for (let depth = 0; n && depth < 6 && n !== document.body; depth++, n = n.parentElement) {
+      // A section holding another of the same control is not this one's own.
+      if (siblings.some((o) => o && o !== el && n.contains(o))) return { text: "" };
+      const heads = [...n.querySelectorAll("h2, h3, h4, h5, h6, [role=heading], legend")]
+        .filter((h) => !h.contains(el)
+          && (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+      if (heads.length) {
+        const t = String(heads[heads.length - 1].textContent || "").replace(/\s+/g, " ").trim();
+        if (t) return { text: t.slice(0, 40) };
+      }
+    }
+    return { text: "" };
+  }
+
   function inventory({ includeHidden = false } = {}) {
     freshPass();
     ariaIndex = null; labelForIndex = null;
@@ -860,6 +890,43 @@
       all.push(rec);
     }
 
+    /* The same words in different sections are different controls.
+     *
+     * A gauge page has five buttons reading "Show these data types", one
+     * under each of Daily data, Field measurements, Discrete sample data,
+     * Peak measurements and Statistical tables. Folded into one pattern the
+     * model saw "Show these data types x5" and could not have chosen Daily
+     * if it understood the request perfectly. Where a handful of identical
+     * controls each sit under a heading of their own, each is named for it.
+     * Twenty rows of a table all sit under the same heading, so they stay
+     * one pattern, as they should.
+     */
+    const bySig0 = new Map();
+    for (const r of all) {
+      if (!bySig0.has(r._sig)) bySig0.set(r._sig, []);
+      bySig0.get(r._sig).push(r);
+    }
+    // Narrowly. Named controls that act in place only - a link leading
+    // somewhere is already told apart by where it goes, and renaming the
+    // menu's "National Hydrologic Discussion" after the page banner would
+    // have stopped the request naming it from matching it. And each heading
+    // must belong to that control alone: a section holding two of them is
+    // not what tells them apart.
+    for (const rows of bySig0.values()) {
+      if (rows.length < 2 || rows.length > 8) continue;
+      if (!String(rows[0].label || "").trim()) continue;
+      if (rows.some((r) => r.goesTo && !/^#|^javascript:/i.test(String(r.goesTo)))) continue;
+      const els = rows.map((r) => { try { return deepQuery(r.selector); } catch (e) { return null; } });
+      if (els.some((e) => !e)) continue;
+      const found = els.map((e) => sectionHeadingOf(e, els));
+      const heads = found.map((x) => x.text);
+      if (heads.some((h) => !h) || new Set(heads.map((h) => h.toLowerCase())).size !== rows.length) continue;
+      rows.forEach((r, i) => {
+        r.label = `${r.label} (${heads[i]})`;
+        r.section = heads[i];
+        r._sig = `${r._sig}|${heads[i]}`;
+      });
+    }
     const bySig = new Map();
     for (const r of all) {
       if (!bySig.has(r._sig)) bySig.set(r._sig, []);
@@ -2496,6 +2563,19 @@
     try {
       for (const type of ["pointerover", "mouseover", "pointerenter", "mouseenter"]) {
         el.dispatchEvent(new MouseEvent(type, { bubbles: type.endsWith("over"), cancelable: true }));
+      }
+      /* And the holder it sits in, and focus. Leaflet's layer list - Imagery
+       * on the gauge map - opens on mouseenter of its container or focus of
+       * its toggle, and mouseenter does not bubble: entering the toggle
+       * alone opened nothing, and the Imagery radio behind it was pressed
+       * shut. Only where the page has said this is a popup holder.
+       */
+      const holder = el.closest && el.closest('[aria-haspopup]:not([aria-haspopup="false"])');
+      if (holder && holder !== el) {
+        for (const type of ["pointerenter", "mouseenter", "mouseover"]) {
+          holder.dispatchEvent(new MouseEvent(type, { bubbles: type === "mouseover", cancelable: true }));
+        }
+        if (typeof el.focus === "function") el.focus();
       }
       await settle({ quietMs: 120, timeoutMs: 900 });
     } catch (e) { /* no pointer events here; the click below still stands */ }

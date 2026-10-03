@@ -165,7 +165,12 @@ function loadBackground({ onFetch, page } = {}) {
   // in five was failing thirty-odd checks with "the handler never responded",
   // which is a harness budget, not a product fault: raising it hides nothing,
   // because a genuine hang still exhausts it.
-  sandbox.__ask = (message, { timeoutMs = 60000 } = {}) => new Promise((resolve, reject) => {
+  // Sixty seconds held until the suite passed seventeen hundred checks: on a
+  // machine with a load average near four, a correct ask under twenty-odd
+  // concurrent sections overran it, and which tests went red changed from run
+  // to run - the signature of a budget, not a fault. The same failures came
+  // from the previous release run on the same machine at the same time.
+  sandbox.__ask = (message, { timeoutMs = 120000 } = {}) => new Promise((resolve, reject) => {
     if (!messageHandlers.length) return reject(new Error("background.js registered no onMessage listener"));
     // Which ask hung. "The handler never responded" names no instruction, so
     // an intermittent one sent several rounds of guessing at code that was

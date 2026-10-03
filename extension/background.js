@@ -2755,6 +2755,25 @@ const ASKING_WHAT_I_DO = /\b(?:do|can|should|could|would|will|must)\s+i\b|\bi\s+
 // at the page was protecting "is my tap at risk" from being read, and since
 // a reading that finds no answer now falls through to the controls, reading
 // first costs that kind of question one turn rather than its answer.
+/* Whether a reader's reply is an admission and nothing more.
+ *
+ * Any sentence saying the page does not say something used to send the run
+ * on to the controls. A 3B hedges as a matter of course - "the page does not
+ * give the exact start date, but discharge data is listed from 1972-06-09"
+ * - and that is an answer with a caveat, which was being thrown away for the
+ * caveat: "how far back does the discharge record go" read the page, called
+ * it unanswered, and pressed Change time span. Only a reply that admits and
+ * carries nothing else - no figure, no "but" - is treated as no answer.
+ */
+function admitsNoAnswer(text) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  if (/^["'(\s]*not on this page\b/i.test(t)) return true;
+  if (!PAGE_DOES_NOT_SAY.test(t)) return false;
+  const carries = /\d/.test(t) || /\b(?:but|however|although|though|while|instead|only)\b|;/i.test(t) || t.length > 180;
+  return !carries;
+}
+
 const ASKING_TO_READ = {
   test: (s) => !ASKING_WHAT_I_DO.test(String(s || ""))
     && (ASKING_TO_READ_PLAINLY.test(String(s || "")) || A_QUESTION.test(String(s || ""))),
@@ -4762,6 +4781,40 @@ function actThenAsk(instruction) {
  * its card, its steps, its verdict - and the answer is added to it, so a
  * row that did the click and could not answer still shows the click.
  */
+/* The answer in a reader's reply, whatever shape it came in.
+ *
+ * A reader is asked for {"answer": ...} and a 3B writes what it likes -
+ * {"explanation": ...}, {"value": "2.86 ft"}, {"amount": "0", "unit": "mi"},
+ * a bare number. Two places read these replies and each had its own list of
+ * field names: the reading inside a run accepted any field but only answers
+ * longer than eight characters, so "2.86 ft" and "low" were thrown away; the
+ * question asked after an action accepted five named fields and nothing
+ * else, so three answers on one gauge page came back as "the model gave no
+ * answer". One reading of a reply, for both.
+ */
+const NOT_AN_ANSWER = /^(?:click|check|select|type|read|find|search|finish|true|false|null)$/i;
+function answerTextOf(step, raw = "") {
+  const s = step && typeof step === "object" ? step : {};
+  const usable = (v) => (typeof v === "number" && Number.isFinite(v)) ? String(v)
+    : (typeof v === "string" && v.trim() && !NOT_AN_ANSWER.test(v.trim())) ? v.trim() : "";
+  for (const k of ["answer", "explanation", "summary", "response", "text", "result", "value", "reading"]) {
+    const got = usable(s[k]);
+    if (got) {
+      // A value and its unit, written as two fields.
+      return k === "value" || k === "amount" ? [got, usable(s.unit)].filter(Boolean).join(" ") : got;
+    }
+  }
+  for (const [k, v] of Object.entries(s)) {
+    if (/^(?:do|name|n|on|selector|control|label|target|why|reason|because|unit)$/i.test(k)) continue;
+    const got = usable(v);
+    if (got) return [got, k === "amount" ? usable(s.unit) : ""].filter(Boolean).join(" ");
+  }
+  // Prose with no JSON around it is an answer too.
+  const text = String(raw || "").trim();
+  if (text && !text.includes("{")) return text.slice(0, 600);
+  return usable(s.why) || usable(s.reason) || "";
+}
+
 async function answerAfterActing(res, ask) {
   const out = { ...res };
   // Some paths answer without a card and let the handler build one later;
@@ -4809,15 +4862,13 @@ async function answerAfterActing(res, ask) {
   }
   const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
     mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
-  const st = (asked && asked.step) || {};
-  const said = String([st.answer, st.explanation, st.summary, st.response, st.text]
-    .find((v) => typeof v === "string" && v.trim()) || "").trim();
+  const said = asked && asked.ok !== false ? answerTextOf(asked.step, asked.raw) : "";
   if (!asked || asked.ok === false || !said) {
     if (card) out.display = card;
     note("the action ran; the model gave no answer to the question");
     return out;
   }
-  const notHere = PAGE_DOES_NOT_SAY.test(said);
+  const notHere = admitsNoAnswer(said);
   out.answer = said;
   if (card) {
     card.answer = said;
@@ -5144,8 +5195,16 @@ const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set
  * that is what the parentheses are for - and "pull up HEFS" matched
  * neither, so it went to a 3B that could not place it either.
  */
-function alsoCalled(label) {
+function alsoCalled(label, control = null) {
   const t = String(label || "");
+  // A section name added to tell identical controls apart is ours, not the
+  // control's: "Close (National Drought Mitigation Center)" is a Close
+  // button, and must not answer to the centre's name.
+  if (control && control.section) {
+    const own = t.replace(/\s*\([^()]*\)\s*$/, "");
+    const flatOwn = own.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return flatOwn ? [flatOwn] : [];
+  }
   const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
   if (!m) return [];
   const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -5182,15 +5241,21 @@ function namedByClause(all, clause) {
     const says = String(text).trim().toLowerCase();
     const wantsOpen = /^(?:please\s+)?(?:show|open|expand|display|turn\s+on|enable|reveal)\b/.test(says);
     const wantsShut = /^(?:please\s+)?(?:hide|close|collapse|turn\s+off|disable|dismiss)\b/.test(says);
-    const opposite = (l) => (wantsOpen && /^(?:hide|close|collapse|dismiss)\b/.test(l))
-      || (wantsShut && /^(?:show|open|expand|reveal)\b/.test(l));
+    // Only where the rest is the same thing: "show the legend" against Hide
+    // legend. "disable the open water layer" against a layer called Open
+    // Water is a name that happens to start with a verb, not the opposite of
+    // the request.
+    const requestRest = plainWhole.replace(/^(?:please\s+)?(?:show|open|expand|display|turn\s+on|enable|reveal|hide|close|collapse|turn\s+off|disable|dismiss)\s+/, "");
+    const sameThing = (l) => l.replace(/^(?:hide|close|collapse|dismiss|show|open|expand|reveal)\s+/, "") === requestRest;
+    const opposite = (l) => ((wantsOpen && /^(?:hide|close|collapse|dismiss)\b/.test(l))
+      || (wantsShut && /^(?:show|open|expand|reveal)\b/.test(l))) && sameThing(l);
     let cutExactly = false;
     let named = all.filter((c) => {
       if (c.disabled || c.confidence === "low") return false;
       const l = flat(c.label);
       if (!l || opposite(l)) return false;
       return l === bare || l === whole || l === plainWhole || closeName(bare, l)
-        || alsoCalled(c.label).some((a) => a === bare || a === whole);
+        || alsoCalled(c.label, c).some((a) => a === bare || a === whole);
     });
     // Where it is, said after what it is. "zoom in on the location map" is
     // Zoom in, on the map - and the place made the whole sentence a name
@@ -5233,7 +5298,7 @@ function namedByClause(all, clause) {
     exactly = cutExactly || kept.some((c) => {
       const l = flat(c.label);
       return l === bare || l === whole || l === plainWhole
-        || alsoCalled(c.label).some((a) => a === bare || a === whole);
+        || alsoCalled(c.label, c).some((a) => a === bare || a === whole);
     });
     return kept;
   };
@@ -6378,12 +6443,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // shape - and was told "undefined" is not an action until the run ended.
     // Asked to summarise, another replied with a click on a control it had
     // not been shown. Both mean the page did not answer it.
-    if (readingOnly && act !== "finish") {
-      const said = [s.answer, s.explanation, s.summary, s.response, s.text, s.why]
-        .concat(Object.values(s))
-        .find((v) => typeof v === "string" && v.trim().length > 8
-          && !/^(click|check|select|type|read|find|search|finish)$/i.test(v.trim()));
-      if (said && !(s.name && act === "click")) {
+    if (readingOnly && (act !== "finish" || !String(s.answer || "").trim())) {
+      // A click on a named control is not an answer, however it is phrased.
+      const said = s.name && act === "click" ? "" : answerTextOf(s, asked.raw);
+      if (said) {
         act = "finish";
         s.answer = String(said);
       }
@@ -6406,8 +6469,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     }
     note = null;
 
-    if (act === "finish" && readingOnly && PAGE_DOES_NOT_SAY.test(String(s.answer || ""))
-      && !readFellThrough) {
+    if (act === "finish" && readingOnly && admitsNoAnswer(s.answer) && !readFellThrough) {
       readFellThrough = true;
       history.push({ did: "read the page", outcome: "it does not answer this here" });
       note = "This page does not answer the question. Choose the control that leads to"
@@ -6619,12 +6681,25 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           // named "Graph Temperature, water, degrees Celsiu" - cut short, and
           // fitting all seven temperature series. "multiparameter sonde" is in
           // the request and on two of them.
+          // Judged on the words that tell the candidates apart, not on every
+          // word: five buttons all read "Show these data types", and what
+          // differs is the section - Daily data, Statistical tables for select
+          // daily data. Counting every shared word scored those two alike for
+          // "show the daily data types"; the one whose distinguishing words the
+          // request covers, with fewest left over, is the one it describes.
           let pool = part;
           if (part.length > 1 && goalWords.length) {
-            const scored = part.map((c) => ({ c, n: goalWords.filter((w) =>
-              wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact").length }));
+            const wordsOf = (c) => new Set(meaningfulWords(String(c.label || "")));
+            const sets = part.map(wordsOf);
+            const common = new Set([...sets[0]].filter((w) => sets.every((st) => st.has(w))));
+            const asked = new Set(goalWords);
+            const scored = part.map((c, i) => {
+              const own = [...sets[i]].filter((w) => !common.has(w));
+              const hit = own.filter((w) => asked.has(w)).length;
+              return { c, n: hit - 0.01 * (own.length - hit) };
+            });
             const best = Math.max(...scored.map((x) => x.n));
-            if (best > 0) pool = scored.filter((x) => x.n === best).map((x) => x.c);
+            if (best >= 1) pool = scored.filter((x) => x.n === best).map((x) => x.c);
             if (pool.length === 1) { found = pool[0]; break; }
           }
           // The plain one, where the rest are it with a qualifier. A gauge page

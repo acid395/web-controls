@@ -12,7 +12,7 @@
  * the first happen on a page the first one opens.
  *
  * `offline` is what the grounding layer alone did with the prompt, model
- * off, against the captured page - 42 of 100 are false. jsdom applies
+ * off, against the captured page - 43 of 100 are false. jsdom applies
  * no stylesheet and cannot follow a link, so it is a floor, not a
  * forecast, and says nothing about steps on a second page. A reading
  * passes offline whenever the page has text to read, since explaining is
@@ -95,7 +95,7 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"open the hydrologic discussion in full page view and summarize it","kind":"action+explain","steps":["View full page"],"explain":true,"on":"View full page","want":{"clicked":"View full page","read":true},"offline":true},
    {"say":"open the map layers panel and tell me which layers are available","kind":"action+explain","steps":["View Layers"],"explain":true,"on":"View Layers","want":{"clicked":"View Layers","read":true},"offline":true},
    {"say":"go to the NWPS FAQ and explain what NWPS is","kind":"action+explain","steps":["NWPS FAQ"],"explain":true,"on":"NWPS FAQ","want":{"clicked":"NWPS FAQ","read":true},"offline":true},
-   {"say":"open the national hydrologic discussion and summarize the main concerns","kind":"action+explain","steps":["National Hydrologic Discussion"],"explain":true,"on":"National Hydrologic Discussion","want":{"clicked":"National Hydrologic Discussion","read":true},"offline":true},
+   {"say":"open the national hydrologic discussion and summarize the main concerns","kind":"action+explain","steps":["National Hydrologic Discussion"],"explain":true,"on":"National Hydrologic Discussion","want":{"clicked":"National Hydrologic Discussion","read":true},"offline":false},
    {"say":"zoom in twice, then open the layers panel","kind":"multistep","steps":["Zoom in","Zoom in","View Layers"],"on":"View Layers","want":{"clicked":"View Layers"},"offline":false},
    {"say":"search for St. Louis, then zoom in","kind":"multistep","steps":["Search Locaction","Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":true},
    {"say":"open the forecasts and outlooks menu, then go to the long range outlook","kind":"multistep","steps":["Forecasts and Outlooks","Long Range Outlook"],"on":"Long Range Outlook","want":{"clicked":"Long Range Outlook"},"offline":true},
