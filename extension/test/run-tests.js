@@ -11588,6 +11588,33 @@ const realLog = console.log;
   }
 }
 
+// droughtmonitor, v1.78.1: a 3B shown Previous Map first chose Compare Two
+// Weeks, and wandered to Maps for the Southeast. The words named one control
+// completely in both - and the same reading must not press the things it
+// also finds.
+{
+  const bgw = loadBackground({});
+  const C = [
+    { label: "Previous Map", kind: "button", opensPanel: true, selector: "pm" },
+    { label: "Compare Two Weeks", kind: "a", selector: "cw" },
+    { label: "Southeast", kind: "a", selector: "se", hidden: true, revealedBy: "rg" },
+    { label: "Maps", kind: "a", selector: "mp" },
+    { label: "Map", kind: "region", selector: "mr" },
+    { label: "View Layers", kind: "button", selector: "vl" },
+    { label: "Select a State", kind: "select", options: [{ text: "Colorado" }], selector: "ss" },
+    { label: "Change time span", kind: "button", opensPanel: true, selector: "ct" },
+    { label: "Menu", kind: "button", selector: "mn" },
+    { label: "Data and Maps", kind: "button", opensPanel: true, selector: "dm" },
+  ];
+  const pick = (q) => (bgw.wholeNameIn(q, C) || {}).label || null;
+  check("the previous week's map is Previous Map", pick("show the previous week's drought map"), "Previous Map");
+  check("the Southeast is Southeast", pick("show the drought map for the Southeast"), "Southeast");
+  check("the map layers panel is not the map canvas", pick("open the map layers panel"), null);
+  check("the state list is not pressed as a dropdown", pick("select Colorado from the state list"), null);
+  check("a span with a number is not just the door to its panel", pick("set the time span to the last 14 days"), null);
+  check("a generic one-word name loses to the specific one", pick("open the data and maps menu"), "Data and Maps");
+}
+
 // beforeExit fires when the loop has drained and, unlike exit, may schedule
 // work - so a section still in flight gets its chance to finish. The exit
 // hook then remains the last resort. Without this the suite printed 202

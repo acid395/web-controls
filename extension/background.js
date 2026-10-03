@@ -6362,6 +6362,30 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         }
       }
     }
+    if (!history.length && !note && !onlyModel && !IS_CONDITIONAL.test(goal) && !ASKING_TO_READ.test(goal)
+        && !SEARCH_CLAUSE.test(goal)) {
+      const whole = wholeNameIn(goal, controls);
+      if (whole) {
+        if (whole.hidden && whole.revealedBy) {
+          await invokeOnActiveTab("openDisclosure", [whole.revealedBy]).catch(() => null);
+          forgetPageTools();
+        }
+        const isSw = /^(checkbox|radio)$/.test(String(whole.type || "").toLowerCase());
+        const ran = await runVerified(routeGlobal, isSw
+          ? { name: "pageCheck", args: { selector: whole.selector, on: !/\b(?:uncheck|untick|turn\s+off|disable|hide)\b/i.test(goal) } }
+          : actionToCall("click", whole, {}));
+        if (ran && ran.ok !== false) {
+          const moved = didItMove(ran);
+          history.push({
+            key: `click|${String(whole.label || "").toLowerCase()}`, did: `click "${whole.label}"`,
+            outcome: moved ? "the page changed" : "pressed", ok: true, changed: moved, satisfied: !moved,
+            label: whole.label, why: "every word of its name is in the request",
+          });
+          return { ok: true, answer: null, history, steps: history.length,
+            tookMs: Date.now() - began, said: null, withoutModel: true };
+        }
+      }
+    }
     if (!history.length && !note) {
       const sure = await decisiveByMeaning(goal, controls).catch(() => null);
       if (sure) {
@@ -7201,7 +7225,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       const asked40 = String(target.label).slice(0, 40);
       if (queried === null) {
         queried = label;
+        // Where the request's own rare words are. Told only "nothing names
+        // Maps", a 3B asked again for Maps; the Southeast was on the page,
+        // wearing the one word of the request no other control wore.
+        const wearingIt = controls.filter((c) => c !== target && matchWords.some((w) =>
+          wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact")).slice(0, 3);
         note = `Nothing in the request names "${asked40}".`
+          + (wearingIt.length
+            ? ` The request's own words are on: ${wearingIt.map((c) => `"${String(c.label).slice(0, 50)}"`).join(", ")}.`
+            : "")
           + " If what you want is a value inside a list, name that value."
           + ` If "${asked40}" really is the one, ask for it again.`;
         continue;
@@ -9288,6 +9320,73 @@ function namedTermsIn(text) {
     out.push(w);
   }
   return out;
+}
+
+/* The one control whose whole name is in the request.
+ *
+ * "show the previous week's drought map" has every word of Previous Map in
+ * it and every word of nothing else; "show the drought map for the
+ * Southeast" likewise names Southeast. A 3B shown Previous Map first in its
+ * list still chose Compare Two Weeks, three times in one run, and wandered
+ * to the Maps menu for the Southeast. When the words already name one
+ * control completely there is nothing to decide.
+ *
+ * Guarded, because the same reading also finds things it must not press -
+ * previewed against all hundred prompts before it was written: "the map
+ * layers panel" contains the map canvas's own name, "the state list"
+ * contains a dropdown's, "the time span" a door that only opens a panel. So:
+ * pressable things only (no regions, lists, boxes or doors), a one-word name
+ * only where that word is rare on the page, the most complete name only, and
+ * exactly one of those or nothing.
+ */
+function wholeNameIn(clause, controls) {
+  const asked = new Set(meaningfulWords(clause));
+  if (!asked.size) return null;
+  const labelsHere = (controls || []).map((c) => String(c.label || "").toLowerCase());
+  // A door is the thing asked for - "the previous week's map" is the Previous
+  // Map tab - except where the request carries a value, which is what the
+  // panel behind the door is for: "the last 14 days" names Change time span
+  // and needs the 14 typed in after it.
+  const carriesValue = /\d/.test(String(clause));
+  // A lone word that every interface has names nothing in particular. "open
+  // the data and maps menu" contains Menu, the mobile menu button.
+  const GENERIC_ONE = /^(?:menu|menus|page|site|home|close|more|back|next|go|submit|ok|cancel|search|map|maps|data|list|view|panel|tab|link|button|here|link)$/;
+  const pressable = (c) => {
+    const kind = String(c.kind || "").toLowerCase();
+    const type = String(c.type || "").toLowerCase();
+    if (c.disabled || (c.opensPanel && carriesValue) || (c.options || []).length) return false;
+    if (TEXT_INPUT_KINDS.has(type) || kind === "select" || kind === "textarea") return false;
+    if (/^(region|div|span|section|main|nav|header|footer|form|th|td|table|li|ul|img|svg)$/.test(kind)) return false;
+    if (c.hidden && !c.revealedBy) return false;
+    return true;
+  };
+  const hits = [];
+  // More than one thing asked: "click Learn More, compare the last two weeks,
+  // and summarize the difference" names Learn More completely and then asks
+  // for two more things, which pressing Learn More and stopping would drop.
+  const MORE_TO_DO = /\b(?:compare|summari[sz]e|explain|describe|tell|calculate|count|report|read|analy[sz]e|find|then|also)\b/i;
+  for (const c of controls || []) {
+    if (!pressable(c)) continue;
+    // A toggle carries a state, and "hide graph details" when they are
+    // already hidden must not reopen them; the path that reads states
+    // decides those. A tab already open is already what was asked for.
+    if (/^(?:show|hide|expand|collapse|open|close)\b/i.test(String(c.label || "").trim())) continue;
+    if (c.expanded === true) continue;
+    const words = meaningfulWords(String(c.label || ""));
+    if (!words.length || !words.every((w) => asked.has(w))) continue;
+    const rest = String(clause).toLowerCase().split(/[^a-z0-9']+/).filter((w) => w && !words.includes(w));
+    if (rest.some((w) => MORE_TO_DO.test(w))) continue;
+    if (words.length === 1) {
+      if (GENERIC_ONE.test(words[0])) continue;
+      const wearing = labelsHere.filter((l) => wordMatchesText(words[0], l) === "exact").length;
+      if (wearing > 2) continue;
+    }
+    hits.push({ c, n: words.length });
+  }
+  if (!hits.length) return null;
+  const best = Math.max(...hits.map((h) => h.n));
+  const top = hits.filter((h) => h.n === best);
+  return top.length === 1 ? top[0].c : null;
 }
 
 /* The one control on this page that offers the span a clause asks for.
