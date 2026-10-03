@@ -2767,8 +2767,10 @@ else {
     for (const s4 of sites) for (const p4 of sets[s4].prompts) used.add(p4.kind);
     check("every kind the hard filter names is one the set uses",
       named.filter((k) => !used.has(k)).join(", "), "");
-    ensure("and the hard subset is not trivially small",
-      named.length >= 3, named.join(","));
+    // Measured in prompts, not kinds: two kinds can hold most of a set.
+    let hardCount = 0;
+    for (const s4 of sites) for (const p4 of sets[s4].prompts) if (named.includes(p4.kind)) hardCount++;
+    ensure("and the hard subset is not trivially small", hardCount >= 25, hardCount);
   }
 
   // A run whose conditions are not recorded cannot be repeated.
@@ -3094,7 +3096,7 @@ else {
   for (const [site, meta] of Object.entries(all)) {
     for (const p2 of meta.prompts) {
       count++;
-      if (p2.kind === "chain") chains++;
+      if (p2.kind === "multistep" || p2.kind === "action+explain") chains++;
       // A chain names its steps - the difficulty there is doing several
       // things in the right order, not working out what they are. A
       // vocabulary case may well contain the stem of its target ("log"
@@ -3110,8 +3112,21 @@ else {
   // prompts across the two sets this replaces contained three chains
   // between them, which is not a sample of anything - so the floor is
   // written down rather than left to whoever edits the set next.
-  ensure("chains are a real part of the set, not a token few",
+  ensure("combinations are a real part of the set, not a token few",
     chains >= 25, `${chains} of ${count}`);
+  // Two kinds and their combinations, nothing else.
+  const kindsSeen = new Set();
+  for (const meta of Object.values(all)) for (const p2 of meta.prompts) kindsSeen.add(p2.kind);
+  check("the set is actions, explanations and combinations of them",
+    [...kindsSeen].filter((k) => !["action", "explain", "action+explain", "multistep"].includes(k)).join(", "), "");
+  // Every multistep prompt really has several steps.
+  const single = [];
+  for (const meta of Object.values(all)) {
+    for (const p2 of meta.prompts) {
+      if (p2.kind === "multistep" && (p2.steps || []).length < 2) single.push(p2.say);
+    }
+  }
+  check("every multistep prompt has at least two steps", single.join(" | "), "");
   // Nothing in here should be answerable by typing a control's own name.
   const named = [];
   for (const [site, meta] of Object.entries(all)) {
@@ -3136,8 +3151,8 @@ else {
     const labels = bgh.controlsForModel(pg.GENERIC.inventory({ includeHidden: true }))
       .map((c) => flath(c.label));
     const missing = meta.prompts
-      .filter((p2) => p2.on && !labels.some((l) => l.includes(flath(p2.on))))
-      .map((p2) => p2.on);
+      .flatMap((p2) => (p2.steps || []).slice(0, p2.later ? 1 : 99))
+      .filter((st) => !labels.some((l) => l.includes(flath(st))));
     check(`every ${site} target is a control that page has`, missing.join(" | "), "");
     // What a row asks for has to be checkable too - a want.clicked naming
     // something the page does not carry scores every run of that row a miss

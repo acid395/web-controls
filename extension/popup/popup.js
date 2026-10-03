@@ -800,7 +800,7 @@ async function resetTo(url) {
 /* Two runs over one set.
  *
  *   bench        all twenty prompts for this site
- *   bench hard   the subset that names nothing on the page
+ *   bench hard   the multistep and act-then-explain prompts only
  *
  * There were two files and two commands, because the shipped set was every
  * control's own printed label and a second, hand-written one had to exist
@@ -809,12 +809,11 @@ async function resetTo(url) {
  * filter over it rather than a separate list - which is what stops the two
  * runs drifting apart, and makes a row mean the same thing in both.
  *
- * Reading and refusal sit outside the hard subset on purpose: they are not
- * harder versions of pressing a control, they are a different question
- * (can it answer off the page, can it decline), and totalling them into a
- * "hard" percentage would blur two things worth reading separately.
+ * The combinations are the harder half: one action or one reading is the
+ * building block, and doing several in order - or acting and then reading
+ * what that brought up - is where a run has the most ways to go wrong.
  */
-const HARD_KINDS = new Set(["chain", "paraphrase", "world-knowledge", "judgment"]);
+const HARD_KINDS = new Set(["multistep", "action+explain"]);
 
 async function runBench(mode = "set") {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

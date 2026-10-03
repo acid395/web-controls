@@ -9,32 +9,29 @@ Both halves matter and neither replaces the other. Offline is deterministic
 and re-runnable by anyone with the repo; live is the real claim but depends
 on a machine, a model and a website on a given day.
 
-## What is in the set, and why it was rewritten
+## What is in the set
 
-100 prompts, five sites, twenty each, hand-written against the control list
-every page really carries.
+100 prompts, five sites, twenty each, hand-written against the controls and
+data each page really carries. Two kinds of thing, and their combinations:
 
-The set this replaces was enumerated from the pages themselves, so most of
-it read `click NDMC`, `click NASA`, `click tag: Drought Index` - a footer
-logo or a tag chip asked for by its exact printed name. That is what the
-name matcher exists to catch, so it caught it: a run of twenty-four such
-prompts on droughtmonitor sent three to the model. A set that answers
-itself without a model says nothing about a system whose point is the
-model.
+    action          one visible change: a click, toggle, tab, menu, search,
+                    or a choice from a list                            35
+    explain         a question answered from data the page carries      23
+    action+explain  do something, then explain what it brought up      21
+    multistep       two or three actions in order                      21
 
-It also held three chains in two hundred and twenty-three prompts. Chaining
-is a stated goal of the project; three is not a sample. The mix is now
-fixed per site:
+Nothing else - no paraphrase puzzles, refusals or conditions. Those measure
+something real, but not what this set is for: whether the extension operates
+these sites and reads them.
 
-    6  chain            two or three steps in one sentence, in order
-    5  paraphrase       shares no meaningful word with the control it wants
-    2  vocabulary       the domain's own word or abbreviation - cfs, DSCI, HEFS
-    2  world-knowledge  only outside knowledge connects the ask to the control
-    3  reading          answered in prose off the page; nothing is pressed
-    1  refusal          the page has no such thing; saying so is the pass
-    1  judgment         a condition to read before it can be acted on
-
-Thirty chains, and nothing answerable by typing a label back.
+What the earlier live runs taught is built in. A chain whose first step
+opens a new page fails if its next control is not on that page, so every
+multistep prompt either stays on one page or continues with controls every
+page of the site carries - the top menus. And explaining needs something to
+explain: droughtmonitor's and water.noaa.gov's maps are an image and a
+canvas, and weather.gov's front page carries almost no text, so explain
+prompts there ask about what those pages do write down, and the richer
+questions follow a step that opens a page with the data on it.
 
 ## Why the prompt set is frozen
 
@@ -54,20 +51,15 @@ asked, and the comparison would measure nothing.
 
 ## Two runs
 
-    bench          all twenty for this site    what a user gets
-    bench hard     the subset naming nothing   chain, paraphrase,
-                                               world-knowledge, judgment
+    bench          all twenty for this site
+    bench hard     the combinations only       multistep, action+explain
 
 `hard` is a filter over the one set, not a second list, so the two runs
-cannot drift apart and a row means the same thing in either. Reading and
-refusal sit outside it deliberately: they are not harder versions of
-pressing a control but a different question - can it answer off the page,
-can it decline - and totalling them into one "hard" percentage would blur
-two things worth reading separately.
+cannot drift apart and a row means the same thing in either.
 
-A test refuses to let a paraphrase contain its own target, another checks
-every target is a control the page really has, and a third checks every
-`want` is checkable against that page - because a case that cannot be
+Tests check that every step on the starting page is a control that page
+really has, that every multistep prompt has at least two steps, and that
+the set holds only these four kinds - because a case that cannot be
 scored is not a case.
 
 Both are run the way somebody would actually type them. Neither forces a
@@ -132,15 +124,16 @@ Say these in the paper rather than hoping nobody asks.
   recorded GPU and user agent are what make a number comparable to another.
 - **The model is not deterministic across builds.** Temperature is 0, but a
   different WebLLM version or quantisation is a different system.
-- **A refusal can be right.** Five of the 100 ask for something no page
-  carries; for those, landing means refusing. Counting them as failures
-  would understate, counting a wrong press as success would overstate.
+- **The data changes.** Alerts, forecasts and drought numbers are live; an
+  explain prompt is judged on whether the answer matches what the page said
+  that day, which is why every run keeps the answer it gave.
 - **The offline column is jsdom.** It has no layout engine and applies no
   stylesheet, so a CSS-hidden menu is wide open there and every element
   reports the same fake rectangle. A browser is strictly harder. Read that
   column as a floor, not a forecast: on droughtmonitor the same actions
   scored 100% against the snapshot and a third of that in Chrome.
-- **A chain scores on `ok`, which is coarse.** A row reporting success did
-  something; that its steps happened in the right order deserves a human
-  eye on the recorded card rather than only the total. Every chain records
-  the control its last step should reach, so this is checkable.
+- **A multistep row needs reading, not just totalling.** Each one lists its
+  steps in order, and whether all of them happened - not only the last -
+  is judged from the recorded card. That is why the sheet has a MAYBE
+  column: a run that reached the end by a different route, or did most of
+  the steps, is not the same as one that did nothing.

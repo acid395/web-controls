@@ -1,332 +1,232 @@
 /* submission-set.js - the hundred prompts, hand-written, one file.
  *
- * What was wrong with the set this replaces: it was enumerated from each
- * page's own controls, so most of it read "click NDMC", "click NASA",
- * "click tag: Drought Index" - a footer logo and a tag chip asked for by
- * their exact printed name. That set measures the name matcher. It was
- * built to catch exactly those, so it caught them, and a run of a hundred
- * and forty-two prompts sent three of twenty-four to the model on one site.
- * A number that high about a system whose point is the model is not a
- * measurement of the system.
+ * Two kinds of thing, and combinations of them. Nothing else.
  *
- * Two hundred and twenty-three prompts across both old sets contained three
- * chains. Chaining is a stated goal of the project. Three is not a sample.
+ *   action          one visible change: a click, a toggle, a tab, a menu,
+ *                   a search, a choice from a list
+ *   explain         a question answered from data the page carries
+ *   action+explain  do something, then explain what it brought up
+ *   multistep       two or three actions in order
  *
- * So: a hundred prompts, twenty on each of five sites, written by hand
- * against the control list each page really carries. The mix per site is
- * fixed on purpose -
+ * The previous set mixed in paraphrase puzzles, refusals and conditions,
+ * which measure something real but not what this set is for: whether the
+ * extension operates these sites and reads them.
  *
- *   6 chain            two or three steps in one sentence, in order
- *   5 paraphrase       shares no meaningful word with the control it wants
- *   2 vocabulary       the domain's own word or abbreviation (cfs, DSCI, HEFS)
- *   2 world-knowledge  only outside knowledge connects ask to control
- *   3 reading          answered in prose off the page, nothing is pressed
- *   1 refusal          the page genuinely has no such thing; saying so is the pass
- *   1 judgment         a condition that has to be read before it can be acted on
+ * Built from what the live runs taught. A chain whose first step leaves the
+ * page fails if its second step is not on the page it lands on, so every
+ * multistep prompt here either stays on one page or uses controls every page
+ * of the site carries - the top menus - for the steps after it leaves.
+ * \`later: true\` marks those: only the first step is checked against the
+ * captured starting page, because the rest happen somewhere else.
  *
- * - which puts thirty chains in the set where there were three, and leaves
- * nothing in it that can be answered by matching a printed label.
+ * And explaining needs something to explain. droughtmonitor's map and
+ * water.noaa.gov's are images and canvases, and weather.gov's front page
+ * carries almost no text - so explain prompts there ask about what those
+ * pages do write down (dates, legends, the alert list, the discussion), and
+ * the richer questions come after a step that opens a page with the data.
  *
- * Hand-written because meaning is the thing being tested. A prompt
- * generated from a page is generated from the answer, and grades the
- * generator.
+ * `steps` are the controls each prompt should reach, in order. `explain`
+ * says an answer in prose is expected as well.
  *
- * `want` is written in the offline harness's own vocabulary (clicked / on /
- * read / refuse). `clicked` may be a list where more than one control is a
- * right answer - decided before a run, not after one so the identical list scores both offline and live, and
- * the only difference between the two numbers is whether the model was on.
+ * Five sites: airnow.gov would not load when the set was first written.
  *
- * Five sites, not six: airnow.gov would not load while this was written
- * (curl returned 000 on every attempt), and a site nobody can reach cannot
- * be part of a set anybody is meant to reproduce.
- *
- * This file is the source. build-bench-set.js runs every prompt against the
- * captured page with the model off, records what the grounding layer alone
- * did with it, and writes extension/lib/bench-prompts.js from the result -
- * so the shipped set carries, per row, whether it needs the model at all.
+ * build-bench-set.js runs every prompt against the captured page with the
+ * model off and writes extension/lib/bench-prompts.js from the result.
  */
 module.exports = {
   usgs: {
     url: "https://waterdata.usgs.gov/monitoring-location/01646500/",
-    note: "Potomac River at Little Falls Pump Station, DC. Discharge and gage height.",
+    note: "Potomac River at Little Falls Pump Station, DC. Gage height, discharge and water quality.",
     prompts: [
-      // chain
-      { say: "set it to thirty days and then show the legend",
-        kind: "chain", on: "Show legend", want: { clicked: "Show legend" } },
-      { say: "give me a year of record, then open the tabular view",
-        kind: "chain", on: "View tabular data", want: { clicked: "tabular data" } },
-      { say: "plot the gage height and then overlay the same span from last year",
-        kind: "chain", on: "Data for same time span in prior year",
-        want: { clicked: "prior year" } },
-      { say: "switch the vertical axis to logarithmic and then narrow the window to a week",
-        kind: "chain", on: "7 days", want: { clicked: "7 days" } },
-      { say: "expand all the data collections and then show me where this gauge sits",
-        kind: "chain", on: "Show location details",
-        // Either answers "where this gauge sits". A live 3B chose Site
-        // Location, which is arguably the closer of the two; scoring it a
-        // miss would have been the set being wrong, not the run.
-        want: { clicked: ["location details", "Site Location"] } },
-      { say: "open the related graphs and then take me to the water year summary",
-        kind: "chain", on: "Water Year Summary", want: { clicked: "Water Year Summary" } },
-      // paraphrase
-      { say: "narrow this down to just the past week",
-        kind: "paraphrase", on: "7 days", want: { clicked: "7 days" } },
-      { say: "I want the whole record for the last twelve months",
-        kind: "paraphrase", on: "1 year", want: { clicked: "1 year" } },
-      { say: "clean up everything printed below the plot",
-        kind: "paraphrase", on: "Hide graph details", want: { clicked: "graph details" } },
-      { say: "give me these readings as raw rows instead of a picture",
-        kind: "paraphrase", on: "View tabular data", want: { clicked: "tabular data" } },
-      { say: "I need this file saved on my computer",
-        kind: "paraphrase", on: "Download data", want: { clicked: "Download data" } },
-      // vocabulary
-      { say: "plot the stage rather than the flow",
-        kind: "vocabulary", on: "Graph Gage height, feet", want: { clicked: "Gage height" } },
-      { say: "show me discharge in cfs",
-        kind: "vocabulary", on: "Graph Discharge, cubic feet per second",
-        want: { clicked: "Discharge" } },
-      // world-knowledge
-      { say: "use a scale that keeps the low readings legible",
-        kind: "world-knowledge", on: "Log", want: { clicked: "Log" } },
-      { say: "this is one gauge of thousands, take me to the map of all of them",
-        kind: "world-knowledge", on: "National Water Dashboard",
-        // Not "Site Map": a live 3B pressed that - the footer's sitemap, an
-        // index of usgs.gov - and then "All Maps" on the page it led to. It
-        // reads like an answer and is not one.
-        want: { clicked: "National Water Dashboard" } },
-      // reading
-      { say: "what is this river doing right now, in plain terms",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "explain what the two plotted series on this page actually measure",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "is the flow shown here high or low for this time of year",
-        kind: "reading", on: null, want: { read: true } },
-      // refusal
-      { say: "export this chart as a powerpoint slide",
-        kind: "refusal", on: null, want: { refuse: true } },
-      // judgment
-      { say: "if the gage height is above three feet show me a year of data, otherwise show me a week",
-        kind: "judgment", on: "7 days", want: { clicked: "days" } },
+      { say: "switch the graph to show the last 30 days", kind: "action", steps: ["30 days"] },
+      { say: "change the graph to a logarithmic scale", kind: "action", steps: ["Log"] },
+      { say: "graph the discharge instead of the gage height", kind: "action",
+        steps: ["Graph Discharge, cubic feet per second"] },
+      { say: "show the turbidity on the graph", kind: "action",
+        steps: ["Graph Turbidity, water, unfiltered"] },
+      { say: "open the table of data values", kind: "action", steps: ["View tabular data"] },
+      { say: "switch the location map to satellite imagery", kind: "action", steps: ["Imagery"] },
+      { say: "set the time span to the last 14 days", kind: "action",
+        steps: ["Change time span", "Days before today"] },
+
+      { say: "what is the latest gage height reading and when was it taken", kind: "explain", explain: true },
+      { say: "explain what this monitoring location measures", kind: "explain", explain: true },
+      { say: "how far back does the discharge record go", kind: "explain", explain: true },
+      { say: "summarize how the water level has changed over the past week", kind: "explain", explain: true },
+      { say: "is the latest reading provisional or approved, and what does that mean", kind: "explain", explain: true },
+
+      { say: "switch to the 1 year view and describe the overall trend in gage height",
+        kind: "action+explain", steps: ["1 year"], explain: true },
+      { say: "graph the discharge and tell me the most recent flow value",
+        kind: "action+explain", steps: ["Graph Discharge, cubic feet per second"], explain: true },
+      { say: "turn on last year's data for comparison and explain how this year differs",
+        kind: "action+explain", steps: ["Data for same time span in prior year"], explain: true },
+      { say: "open the tabular data and tell me the highest value in it",
+        kind: "action+explain", steps: ["View tabular data"], explain: true },
+
+      { say: "graph the discharge, switch to 30 days, and put it on a log scale", kind: "multistep",
+        steps: ["Graph Discharge, cubic feet per second", "30 days", "Log"] },
+      { say: "change the time span to 1 year, then show the legend", kind: "multistep",
+        steps: ["1 year", "Show legend"] },
+      { say: "expand all the data collections, then show the location details", kind: "multistep",
+        steps: ["Expand all data collections", "Show location details"] },
+      { say: "zoom in on the location map and switch it to imagery", kind: "multistep",
+        steps: ["Zoom in", "Imagery"] },
     ],
   },
 
   droughtmap: {
     url: "https://droughtmonitor.unl.edu/CurrentMap.aspx",
-    note: "U.S. Drought Monitor, current national map. Weekly, retrospective.",
+    note: "U.S. Drought Monitor, current national map. Weekly; the map is an image.",
     prompts: [
-      // chain
-      { say: "open the archive and then play it back as an animation",
-        kind: "chain", on: "Animations", want: { clicked: "Animations" } },
-      { say: "pull up the statistics by threshold and then download those numbers",
-        kind: "chain", on: "Data Download", want: { clicked: "Data Download" } },
-      { say: "show me the West, then put it side by side with last week",
-        kind: "chain", on: "Compare Two Weeks", want: { clicked: "Compare Two Weeks" } },
-      { say: "open the time series and then give me the bar chart form of it",
-        kind: "chain", on: "Bar Chart", want: { clicked: "Bar Chart" } },
-      { say: "find the eligibility tool for farmers, then the agriculture page",
-        kind: "chain", on: "Ag in Drought", want: { clicked: "Ag in Drought" } },
-      { say: "switch into Spanish and then bring me back to this week's map",
-        kind: "chain", on: "Current", want: { clicked: "Current" } },
-      // paraphrase
-      { say: "I am colourblind, make this readable",
-        kind: "paraphrase", on: "View grayscale version of the map",
-        want: { clicked: "grayscale" } },
-      { say: "how do they decide what counts as D3",
-        kind: "paraphrase", on: "Drought Classification", want: { clicked: "Classification" } },
-      { say: "how many people are living through this",
-        kind: "paraphrase", on: "Population Statistics", want: { clicked: "Population" } },
-      { say: "who do I email about a mistake on this map",
-        kind: "paraphrase", on: "Contact Us", want: { clicked: "Contact" } },
-      { say: "let me know by email every time this updates",
-        kind: "paraphrase", on: "Drought Alert Request", want: { clicked: "Alert Request" } },
-      // vocabulary
-      { say: "show me the DSCI",
-        kind: "vocabulary", on: "Drought Severity and Coverage Index",
-        want: { clicked: "Severity and Coverage" } },
-      { say: "where are the shapefiles",
-        kind: "vocabulary", on: "GIS Data", want: { clicked: "GIS Data" } },
-      // world-knowledge
-      { say: "just the lower forty eight",
-        kind: "world-knowledge", on: "Continental U.S.", want: { clicked: "Continental" } },
-      { say: "I need the one that covers Alaska and Hawaii as well",
-        kind: "world-knowledge", on: "OCONUS Drought Status", want: { clicked: "OCONUS" } },
-      // reading
-      { say: "what share of the country is in drought right now",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "explain in plain language what this week's map is showing",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "which part of the country is worst off on this map",
-        kind: "reading", on: null, want: { read: true } },
-      // refusal
-      { say: "show me tomorrow's drought map",
-        kind: "refusal", on: null, want: { refuse: true } },
-      // judgment
-      { say: "if the West is drier than the Midwest open the West, otherwise open the Midwest",
-        kind: "judgment", on: "West", want: { clicked: "West" } },
+      { say: "show the previous week's drought map", kind: "action", steps: ["Previous Map"] },
+      { say: "switch the map to grayscale", kind: "action", steps: ["View grayscale version of the map"] },
+      { say: "open the list of regions", kind: "action", steps: ["Regions"] },
+      { say: "show the drought map for the Southeast", kind: "action", steps: ["Southeast"] },
+      { say: "open the map archive", kind: "action", steps: ["Map Archive"] },
+      { say: "go to the time series data", kind: "action", steps: ["Time Series"] },
+      { say: "open the compare two weeks tool", kind: "action", steps: ["Compare Two Weeks"] },
+
+      { say: "when was this drought map released and what date is the data valid for", kind: "explain", explain: true },
+      { say: "explain what the D0 through D4 categories on the legend mean", kind: "explain", explain: true },
+      { say: "explain what this map shows and how to read it", kind: "explain", explain: true },
+      { say: "how many people are in drought right now", kind: "explain", explain: true },
+      { say: "what time of day is the new map released each week", kind: "explain", explain: true },
+
+      { say: "show the previous week's map and tell me what date that map is valid for",
+        kind: "action+explain", steps: ["Previous Map"], explain: true },
+      { say: "open the West regional map and explain what it shows",
+        kind: "action+explain", steps: ["West"], explain: true },
+      { say: "go to the summary page and summarize this week's drought conditions",
+        kind: "action+explain", steps: ["Summary"], explain: true },
+      { say: "open the statistics by threshold page and explain what the numbers represent",
+        kind: "action+explain", steps: ["Statistics by Threshold"], explain: true },
+
+      { say: "open the map archive, then play the animation", kind: "multistep",
+        steps: ["Map Archive", "Animations"], later: true },
+      { say: "open the regions list and choose the Midwest", kind: "multistep",
+        steps: ["Regions", "Midwest"] },
+      { say: "switch to grayscale, then show the previous week's map", kind: "multistep",
+        steps: ["View grayscale version of the map", "Previous Map"] },
+      { say: "go to the data tables, then open the time series", kind: "multistep",
+        steps: ["Data Tables", "Time Series"], later: true },
     ],
   },
 
   noaa: {
     url: "https://water.noaa.gov/",
-    note: "National Water Prediction Service landing map.",
+    note: "National Water Prediction Service landing map. The map is a canvas.",
     prompts: [
-      // chain
-      { say: "open the layer list and then zoom the map in",
-        kind: "chain", on: "Zoom in", want: { clicked: "Zoom in" } },
-      { say: "find the daily briefing and then show me its key messages",
-        kind: "chain", on: "Key Messages", want: { clicked: "Key Messages" } },
-      { say: "check the snow analysis first, then the river ice",
-        kind: "chain", on: "River Ice Surveillance", want: { clicked: "River Ice" } },
-      { say: "look up the drought information and then jump to the national portal for it",
-        kind: "chain", on: "Drought.gov Portal", want: { clicked: "Portal" } },
-      { say: "show me where the data lives, then the API documentation",
-        kind: "chain", on: "NWPS APIs", want: { clicked: "NWPS APIs" } },
-      { say: "open the flood hazard outlook and then the safety resources",
-        kind: "chain", on: "Flood and Safety Resources", want: { clicked: "Safety Resources" } },
-      // paraphrase
-      { say: "how much rain has already fallen",
-        kind: "paraphrase", on: "Past Precipitation Estimates", want: { clicked: "Precipitation Estimates" } },
-      { say: "which rivers are running high at the moment",
-        kind: "paraphrase", on: "Rivers-at-a-Glance", want: { clicked: "Rivers-at-a-Glance" } },
-      { say: "what will the water do over the next few months",
-        kind: "paraphrase", on: "Long Range Outlook", want: { clicked: "Long Range Outlook" } },
-      { say: "show me how deep the water would get on my street",
-        kind: "paraphrase", on: "Flood Inundation Mapping (FIM)", want: { clicked: "Inundation" } },
-      { say: "I cannot read these charts, is there an explainer",
-        kind: "paraphrase", on: "Hydrograph Information", want: { clicked: "Hydrograph" } },
-      // vocabulary
-      { say: "pull up HEFS",
-        kind: "vocabulary", on: "Hydrologic Ensemble Forecast System (HEFS)",
-        want: { clicked: "Ensemble" } },
-      { say: "what does Atlas 14 say",
-        kind: "vocabulary", on: "Current Standard: NOAA Atlas 14", want: { clicked: "Atlas 14" } },
-      // world-knowledge
-      { say: "who issues the forecast for my local river basin",
-        kind: "world-knowledge", on: "River Forecast Centers", want: { clicked: "Forecast Centers" } },
-      { say: "I want the simulation that covers every stream in the country",
-        kind: "world-knowledge", on: "National Water Model", want: { clicked: "National Water Model" } },
-      // reading
-      { say: "what is this map actually showing me",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "summarise the national water situation as it stands",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "are there any river flood warnings in effect right now",
-        kind: "reading", on: null, want: { read: true } },
-      // refusal
-      { say: "give me the ocean tide tables for Boston harbour",
-        kind: "refusal", on: null, want: { refuse: true } },
-      // judgment
-      { say: "if a significant river flood outlook is posted open it, otherwise open the hydrologic discussion",
-        kind: "judgment", on: "Significant River Flood Outlook", want: { clicked: "Outlook" } },
+      { say: "zoom in on the map", kind: "action", steps: ["Zoom in"] },
+      { say: "zoom out on the map", kind: "action", steps: ["Zoom out"] },
+      { say: "open the map layers panel", kind: "action", steps: ["View Layers"] },
+      { say: "search the map for Sacramento", kind: "action", steps: ["Search Locaction"] },
+      { say: "open the shortcuts menu", kind: "action", steps: ["Shortcuts"] },
+      { say: "open the forecasts and outlooks menu", kind: "action", steps: ["Forecasts and Outlooks"] },
+      { say: "go to the rivers at a glance page", kind: "action", steps: ["Rivers-at-a-Glance"] },
+
+      { say: "explain what this map shows", kind: "explain", explain: true },
+      { say: "what do the flood categories in the map legend mean", kind: "explain", explain: true },
+      { say: "what date is the latest hydrologic discussion from", kind: "explain", explain: true },
+      { say: "what is the update notice at the top of the page about", kind: "explain", explain: true },
+      { say: "what does the national hydrologic discussion say today", kind: "explain", explain: true },
+
+      { say: "open the hydrologic discussion in full page view and summarize it",
+        kind: "action+explain", steps: ["View full page"], explain: true },
+      { say: "open the map layers panel and tell me which layers are available",
+        kind: "action+explain", steps: ["View Layers"], explain: true },
+      { say: "go to the NWPS FAQ and explain what NWPS is",
+        kind: "action+explain", steps: ["NWPS FAQ"], explain: true },
+      { say: "open the national hydrologic discussion and summarize the main concerns",
+        kind: "action+explain", steps: ["National Hydrologic Discussion"], explain: true },
+
+      { say: "zoom in twice, then open the layers panel", kind: "multistep",
+        steps: ["Zoom in", "Zoom in", "View Layers"] },
+      { say: "search for St. Louis, then zoom in", kind: "multistep",
+        steps: ["Search Locaction", "Zoom in"] },
+      { say: "open the forecasts and outlooks menu, then go to the long range outlook", kind: "multistep",
+        steps: ["Forecasts and Outlooks", "Long Range Outlook"] },
+      { say: "open the data and APIs menu, then go to the NWPS APIs page", kind: "multistep",
+        steps: ["Data and APIs", "NWPS APIs"] },
     ],
   },
 
   weather: {
     url: "https://www.weather.gov/",
-    note: "National Weather Service home page. Live alert links change hourly.",
+    note: "National Weather Service home page. The front page is mostly an image; alerts change hourly.",
     prompts: [
-      // chain
-      { say: "open the radar and then switch it to the low bandwidth version",
-        kind: "chain", on: "Standard Radar (Low Bandwidth)", want: { clicked: "Low Bandwidth" } },
-      { say: "check the aviation forecast, then the one for boats",
-        kind: "chain", on: "Marine", want: { clicked: "Marine" } },
-      { say: "open the education section and then find the glossary in it",
-        kind: "chain", on: "Glossary", want: { clicked: "Glossary" } },
-      { say: "show me the satellite view and then the air quality",
-        kind: "chain", on: "AIR QUALITY", want: { clicked: "AIR QUALITY" } },
-      { say: "go to the river and rainfall page, then the long range forecasts",
-        kind: "chain", on: "Long Range Forecasts", want: { clicked: "Long Range" } },
-      { say: "find the storm spotter programme and then the preparedness certification",
-        kind: "chain", on: "StormReady", want: { clicked: "StormReady" } },
-      // paraphrase
-      { say: "I am taking a small plane up tomorrow",
-        kind: "paraphrase", on: "Aviation", want: { clicked: "Aviation" } },
-      { say: "is it safe to take the boat out",
-        kind: "paraphrase", on: "Marine", want: { clicked: "Marine" } },
-      { say: "will it be light out when I leave at six",
-        kind: "paraphrase", on: "Sunrise/Sunset", want: { clicked: "Sunrise" } },
-      { say: "what do these warning terms actually mean",
-        kind: "paraphrase", on: "Glossary", want: { clicked: "Glossary" } },
-      { say: "I want the receiver that wakes me up for emergencies",
-        kind: "paraphrase", on: "NOAA Weather Radio", want: { clicked: "Weather Radio" } },
-      // vocabulary
-      { say: "show me the CPC outlook",
-        kind: "vocabulary", on: "Climate Prediction", want: { clicked: "Climate Prediction" } },
-      { say: "where do I sign up for SKYWARN",
-        kind: "vocabulary", on: "SKYWARN Storm Spotters", want: { clicked: "SKYWARN" } },
-      // world-knowledge
-      { say: "solar flares knock out my GPS, where would I check on that",
-        kind: "world-knowledge", on: "Space Weather", want: { clicked: "Space Weather" } },
-      { say: "my county wants the tornado preparedness certification",
-        kind: "world-knowledge", on: "StormReady", want: { clicked: "StormReady" } },
-      // reading
-      { say: "what warnings are active across the country right now",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "explain what this page is telling me about today's weather",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "which of the current alerts is the most serious",
-        kind: "reading", on: null, want: { read: true } },
-      // refusal
-      { say: "give me the ten day forecast for London",
-        kind: "refusal", on: null, want: { refuse: true } },
-      // judgment
-      { say: "if a hurricane warning is up open hurricanes, otherwise open severe weather",
-        kind: "judgment", on: "Severe Weather", want: { clicked: "Weather" } },
+      { say: "enter 20001 in the local forecast box and get the forecast", kind: "action",
+        steps: ["Enter Your City, ST or ZIP Code"] },
+      { say: "open the active alerts", kind: "action", steps: ["ACTIVE ALERTS"] },
+      { say: "show the national radar", kind: "action", steps: ["RADAR"] },
+      { say: "open the satellite imagery", kind: "action", steps: ["SATELLITE"] },
+      { say: "show the warnings for Texas", kind: "action", steps: ["Warnings By State"] },
+      { say: "search the weather service site for heat safety", kind: "action", steps: ["Search For"] },
+      { say: "open the marine forecasts", kind: "action", steps: ["Marine"] },
+
+      { say: "which warnings and advisories are listed on the hazards map right now", kind: "explain", explain: true },
+      { say: "what does the map on the front page show", kind: "explain", explain: true },
+      { say: "which of the listed alerts is the most severe", kind: "explain", explain: true },
+
+      { say: "get the forecast for ZIP code 10001 and summarize the next two days",
+        kind: "action+explain", steps: ["Enter Your City, ST or ZIP Code"], explain: true },
+      { say: "open the active alerts and tell me which states have flood warnings",
+        kind: "action+explain", steps: ["ACTIVE ALERTS"], explain: true },
+      { say: "open the first warning listed on the hazards map and summarize it",
+        kind: "action+explain", steps: ["Warning"], explain: true },
+      { say: "show the warnings for Florida and summarize what is in effect",
+        kind: "action+explain", steps: ["Warnings By State"], explain: true },
+      { say: "search the site for wind chill and summarize the top result",
+        kind: "action+explain", steps: ["Search For"], explain: true },
+
+      { say: "open the forecast menu and then go to aviation", kind: "multistep",
+        steps: ["FORECAST", "Aviation"] },
+      { say: "type 60601 into the forecast box, get the forecast, then open the hourly weather graph",
+        kind: "multistep", steps: ["Enter Your City, ST or ZIP Code", "Hourly Weather Forecast"], later: true },
+      { say: "pick Colorado in the warnings by state list and press go", kind: "multistep",
+        steps: ["Warnings By State", "Warnings By State"] },
+      { say: "open the safety menu, then go to the NOAA Weather Radio page", kind: "multistep",
+        steps: ["SAFETY", "NOAA Weather Radio"] },
+      { say: "search the site for flood safety, then open the first result", kind: "multistep",
+        steps: ["Search For", "the first result"], later: true },
     ],
   },
 
   drought: {
     url: "https://www.drought.gov/",
-    note: "NIDIS national drought portal.",
+    note: "NIDIS national drought portal. Carries a D0-D4 percentage table.",
     prompts: [
-      // chain
-      { say: "pick California and then show me the outlook for the coming months",
-        kind: "chain", on: "Outlooks and Forecasts", want: { clicked: "Outlooks" } },
-      { say: "open agriculture and then the most recent report on it",
-        kind: "chain", on: "Featured Reports and Outlooks", want: { clicked: "Featured Reports" } },
-      { say: "show soil moisture first and then the vegetation view",
-        kind: "chain", on: "Vegetation", want: { clicked: "Vegetation" } },
-      { say: "find the tribal page and then the engagement information under it",
-        kind: "chain", on: "Tribal Engagement", want: { clicked: "Tribal Engagement" } },
-      { say: "go to the Southern Plains and then pull up conditions there now",
-        kind: "chain", on: "Current Conditions", want: { clicked: "Current Conditions" } },
-      { say: "open the basics and then explain the difference between the short and long term kind",
-        kind: "chain", on: "Short-Term vs Long-Term Drought", want: { clicked: "Short-Term" } },
-      // paraphrase
-      { say: "what damage is this causing",
-        kind: "paraphrase", on: "Drought Impacts", want: { clicked: "Impacts" } },
-      { say: "I want tree ring records going back centuries",
-        kind: "paraphrase", on: "Paleoclimate", want: { clicked: "Paleoclimate" } },
-      { say: "is my tap at risk",
-        kind: "paraphrase", on: "Water Utilities", want: { clicked: "Water Utilities" } },
-      { say: "how does this end up making people ill",
-        kind: "paraphrase", on: "Public Health", want: { clicked: "Public Health" } },
-      { say: "is there money going for research into this",
-        kind: "paraphrase", on: "Funding Opportunities", want: { clicked: "Funding" } },
-      // vocabulary
-      { say: "show me flash drought",
-        kind: "vocabulary", on: "Flash Drought", want: { clicked: "Flash Drought" } },
-      { say: "what is NIDIS",
-        kind: "vocabulary", on: "About NIDIS", want: { clicked: "NIDIS" } },
-      // world-knowledge
-      { say: "the states that grow most of the country's corn",
-        kind: "world-knowledge", on: "Midwest", want: { clicked: "Midwest" } },
-      { say: "I teach fifth grade and need something for the classroom",
-        kind: "world-knowledge", on: "Resources for Teachers and Students",
-        want: { clicked: "Teachers" } },
-      // reading
-      { say: "summarise the national drought picture as it stands",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "explain how much of the country this is affecting",
-        kind: "reading", on: null, want: { read: true } },
-      { say: "which sector does this page say is hit hardest",
-        kind: "reading", on: null, want: { read: true } },
-      // refusal
-      { say: "file a federal disaster claim for my farm from here",
-        kind: "refusal", on: null, want: { refuse: true } },
-      // judgment
-      { say: "if California-Nevada is in drought open that region, otherwise open the national view",
-        kind: "judgment", on: "California-Nevada", want: { clicked: "California" } },
+      { say: "switch the map to the 30-day precipitation view", kind: "action", steps: ["30-Day Precipitation"] },
+      { say: "show the 30-day temperature map", kind: "action", steps: ["30-Day Temperature"] },
+      { say: "select Colorado from the state list", kind: "action", steps: ["Select a State"] },
+      { say: "open the data and maps menu", kind: "action", steps: ["Data and Maps"] },
+      { say: "search the site for snow drought", kind: "action", steps: ["Open Search Bar"] },
+      { say: "hide the abnormally dry areas on the map", kind: "action", steps: ["D0 - Abnormally Dry"] },
+      { say: "go to the agriculture sector page", kind: "action", steps: ["Agriculture"] },
+
+      { say: "what percentage of the country is in drought right now", kind: "explain", explain: true },
+      { say: "how much of the U.S. is in extreme or exceptional drought", kind: "explain", explain: true },
+      { say: "explain what the D0 through D4 categories in the map legend mean", kind: "explain", explain: true },
+      { say: "which regions have recent drought status updates, and when were they published", kind: "explain", explain: true },
+      { say: "which drought category covers the largest share of the country", kind: "explain", explain: true },
+
+      { say: "switch to the 30-day precipitation map and explain what its legend shows",
+        kind: "action+explain", steps: ["30-Day Precipitation"], explain: true },
+      { say: "pick Texas from the state list and summarize its current drought conditions",
+        kind: "action+explain", steps: ["Select a State"], explain: true },
+      { say: "open the latest drought status update and summarize it",
+        kind: "action+explain", steps: ["Drought Status Update"], explain: true },
+      { say: "look up Denver, CO in the neighborhood drought search and tell me the drought level there",
+        kind: "action+explain", steps: ["How is drought affecting your neighborhood?"], explain: true },
+
+      { say: "show the 30-day temperature map, then switch back to the U.S. Drought Monitor map", kind: "multistep",
+        steps: ["30-Day Temperature", "U.S. Drought Monitor"] },
+      { say: "open the by sector menu, then go to water utilities", kind: "multistep",
+        steps: ["By Sector", "Water Utilities"] },
+      { say: "search the site for flash drought, then open the first result", kind: "multistep",
+        steps: ["Open Search Bar", "the first result"], later: true },
+      { say: "open the research and learn menu and go to drought basics", kind: "multistep",
+        steps: ["Research and Learn", "Drought Basics"] },
     ],
   },
 };

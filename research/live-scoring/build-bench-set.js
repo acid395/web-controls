@@ -56,7 +56,9 @@ async function runOne(url, html, p) {
     return { ok: r.ok === false && !pressed.length,
       why: r.ok === false ? "refused" : "acted anyway" };
   }
-  if (w.read) {
+  // An action followed by an explanation is judged on the action offline:
+  // the explanation is the model's, and the model is off.
+  if (w.read && !w.clicked) {
     const read = await bg.invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
     const summary = read.ok ? bg.summariseForModel(read.result) : "";
     return { ok: summary.length > 60, why: `${summary.length} chars of page` };
@@ -79,6 +81,20 @@ async function runOne(url, html, p) {
   return { ok: false, why: "no expectation" };
 }
 
+/* What a prompt asks for, in the runner's own terms.
+ *
+ * A prompt names its steps; the offline runner and the live panel judge a
+ * row by `want`. The last step is the one that says the request was carried
+ * through - except where the steps leave the page, and only the first can be
+ * seen from here. A prompt with no steps is a reading.
+ */
+function wantOf(p) {
+  const steps = p.steps || [];
+  if (!steps.length) return { read: true };
+  const seen = p.later ? steps[0] : steps[steps.length - 1];
+  return p.explain ? { clicked: seen, read: true } : { clicked: seen };
+}
+
 async function rowsForSite(site) {
   const meta = SET[site];
   const file = path.join(DIR, `${site}.html`);
@@ -86,9 +102,10 @@ async function rowsForSite(site) {
   const html = fs.readFileSync(file, "utf8");
   const out = [];
   for (const p of meta.prompts) {
-    const res = await runOne(meta.url, html, p);
-    out.push({ site, say: p.say, kind: p.kind, on: p.on, want: p.want,
-      offline: !!res.ok, why: res.why });
+    const want = wantOf(p);
+    const res = await runOne(meta.url, html, { ...p, want });
+    out.push({ site, say: p.say, kind: p.kind, steps: p.steps || [], explain: !!p.explain,
+      later: !!p.later, on: want.clicked || null, want, offline: !!res.ok, why: res.why });
     process.stderr.write(res.ok ? "." : "x");
   }
   return out;
@@ -104,53 +121,39 @@ function emit(rows) {
   for (const r of rows) (bySite[r.site] = bySite[r.site] || []).push(r);
   const tot = rows.length;
   const needsModel = rows.filter((r) => !r.offline).length;
-  const chains = rows.filter((r) => r.kind === "chain").length;
 
   const head = `/* bench-prompts.js - the prompt set, frozen, so a live run and an offline
  * one are the same experiment.
  *
- * ${tot} prompts, ${Object.keys(bySite).length} sites, twenty each, hand-written against the control
- * list every page really carries. ${chains} of them are chains - two or three
- * steps in one sentence - where the two sets this replaces had three
- * between them across two hundred and twenty-three prompts.
+ * ${tot} prompts, ${Object.keys(bySite).length} sites, twenty each, hand-written against the controls
+ * and data each page really carries. Two kinds of thing and their
+ * combinations: an action that visibly changes the page, a question
+ * answered from the page's data, an action followed by an explanation,
+ * and several actions in order.
  *
- * Nothing in here can be answered by matching a printed label. The set this
- * replaces was enumerated from each page's own controls, so most of it read
- * "click NDMC" or "click tag: Drought Index" - a footer logo asked for by
- * name, which is exactly what the name matcher exists to catch. On one site
- * three of twenty-four prompts reached the model.
+ * \`steps\` are the controls a prompt should reach, in order; \`explain\`
+ * means a prose answer is expected too; \`later\` means the steps after
+ * the first happen on a page the first one opens.
  *
- * \`offline\` on each row is what the grounding layer alone did with this
- * exact prompt, the model switched off, against the captured page in
- * research/live-scoring/pages. ${needsModel} of ${tot} are false: that is the share of
- * the set that has no answer without a model, and it is the reason to
- * believe a live number measures the system rather than the matcher.
+ * \`offline\` is what the grounding layer alone did with the prompt, model
+ * off, against the captured page - ${needsModel} of ${tot} are false. jsdom applies
+ * no stylesheet and cannot follow a link, so it is a floor, not a
+ * forecast, and says nothing about steps on a second page. A reading
+ * passes offline whenever the page has text to read, since explaining is
+ * the model's job and the model is off.
  *
- * Read the offline column with jsdom's limits in mind - it applies no
- * stylesheet and does no layout, so CSS-hidden menus are wide open there
- * and a browser is strictly harder. It is a floor, not a forecast.
- *
- * And it is weaker still on the reading rows. Offline, a reading prompt
- * passes when the page yields more than sixty characters to summarise - it
- * checks that there is something to read, not that anything explained it,
- * because explaining is the model's job and the model is off. All fifteen
- * read \`offline: true\` for that reason and none of them should be counted
- * as answered without a model. The live run is the only thing that says
- * whether those fifteen work.
- *
- * kinds: chain | paraphrase | vocabulary | world-knowledge | reading
- *        | refusal | judgment
+ * kinds: action | explain | action+explain | multistep
  *
  * Generated by research/live-scoring/build-bench-set.js from
- * research/live-scoring/submission-set.js, which is the hand-written
- * source and the file to edit.
+ * research/live-scoring/submission-set.js, which is the file to edit.
  */
 globalThis.WC_BENCH_PROMPTS = {`;
 
   const body = Object.entries(bySite).map(([site, rs]) => {
     const meta = SET[site];
     const ps = rs.map((r) => "   " + JSON.stringify({
-      say: r.say, kind: r.kind, on: r.on, want: r.want, offline: r.offline,
+      say: r.say, kind: r.kind, steps: r.steps, explain: r.explain || undefined,
+      later: r.later || undefined, on: r.on, want: r.want, offline: r.offline,
     })).join(",\n");
     return ` ${JSON.stringify(site)}: {\n`
       + `  "url": ${JSON.stringify(meta.url)},\n`
