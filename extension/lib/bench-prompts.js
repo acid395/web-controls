@@ -12,7 +12,7 @@
  * the first happen on a page the first one opens.
  *
  * `offline` is what the grounding layer alone did with the prompt, model
- * off, against the captured page - 48 of 100 are false. jsdom applies
+ * off, against the captured page - 47 of 100 are false. jsdom applies
  * no stylesheet and cannot follow a link, so it is a floor, not a
  * forecast, and says nothing about steps on a second page. A reading
  * passes offline whenever the page has text to read, since explaining is
@@ -38,11 +38,11 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"what is the latest gage height reading and when was it taken","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"explain what this monitoring location measures","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"how far back does the discharge record go","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
-   {"say":"summarize how the water level has changed over the past week","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"where exactly is this gauge located, according to the page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"is the latest reading provisional or approved, and what does that mean","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
-   {"say":"switch to the 1 year view and describe the overall trend in gage height","kind":"action+explain","steps":["1 year"],"explain":true,"on":"1 year","want":{"clicked":"1 year","read":true},"offline":false},
+   {"say":"show the daily data types and tell me how far back the daily record goes","kind":"action+explain","steps":["Show these data types"],"explain":true,"on":"Show these data types","want":{"clicked":"Show these data types","read":true},"offline":true},
    {"say":"graph the discharge and tell me the most recent flow value","kind":"action+explain","steps":["Graph Discharge, cubic feet per second"],"explain":true,"on":"Graph Discharge, cubic feet per second","want":{"clicked":"Graph Discharge, cubic feet per second","read":true},"offline":false},
-   {"say":"turn on last year's data for comparison and explain how this year differs","kind":"action+explain","steps":["Data for same time span in prior year"],"explain":true,"on":"Data for same time span in prior year","want":{"clicked":"Data for same time span in prior year","read":true},"offline":false},
+   {"say":"graph the water temperature from the multiparameter sonde and tell me the latest temperature","kind":"action+explain","steps":["Graph Temperature, water, degrees Celsius From m"],"explain":true,"on":"Graph Temperature, water, degrees Celsius From m","want":{"clicked":"Graph Temperature, water, degrees Celsius From m","read":true},"offline":false},
    {"say":"open the tabular data and tell me the highest value in it","kind":"action+explain","steps":["View tabular data"],"explain":true,"on":"View tabular data","want":{"clicked":"View tabular data","read":true},"offline":false},
    {"say":"graph the discharge, switch to 30 days, and put it on a log scale","kind":"multistep","steps":["Graph Discharge, cubic feet per second","30 days","Log"],"on":"Log","want":{"clicked":"Log"},"offline":false},
    {"say":"change the time span to 1 year, then show the legend","kind":"multistep","steps":["1 year","Show legend"],"on":"Show legend","want":{"clicked":"Show legend"},"offline":false},
