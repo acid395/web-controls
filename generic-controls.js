@@ -1934,12 +1934,29 @@
       || el.getAttribute("aria-autocomplete") || el.getAttribute("list")
       || (el.getAttribute("role") || "").toLowerCase() === "combobox"
       || /autocomplete|typeahead|suggest/i.test(String(el.className || "")));
-    if (hasAutocomplete) {
-      const SUGGESTION = ".autocomplete-suggestion, .ui-menu-item, [role=listbox] [role=option], .tt-suggestion, [class*='suggestion'] li, li[class*='suggestion']";
-      const shown = () => [...document.querySelectorAll(SUGGESTION)].some((n) => isVisible(n));
+    // A select a widget has turned into a type-and-pick box - drought.gov's
+    // "How is drought affecting your neighborhood?" is a <select> that a
+    // script replaces with a text box and a list of places. It goes nowhere
+    // on Enter; it goes when a place is chosen.
+    const widget = el.closest && el.closest("[class*='selectize'], [class*='ts-wrapper'], [class*='ts-control'], [class*='choices'], [class*='select2'], [class*='location-search'], [class*='autocomplete'], [class*='typeahead']");
+    if (hasAutocomplete || widget) {
+      const SUGGESTION = ".autocomplete-suggestion, .ui-menu-item, [role=listbox] [role=option], .tt-suggestion, [class*='suggestion'] li, li[class*='suggestion'], .selectize-dropdown .option, .ts-dropdown .option, .choices__list--dropdown .choices__item--selectable, .select2-results__option";
+      const visibleSuggestions = () => [...document.querySelectorAll(SUGGESTION)].filter((n) => isVisible(n));
       const began = Date.now();
-      while (!shown() && Date.now() - began < 2500) {
+      while (!visibleSuggestions().length && Date.now() - began < 2500) {
         await new Promise((r) => setTimeout(r, 120));
+      }
+      /* The first suggestion, where it is what was typed. Choosing it is what
+       * a person does, and the only thing some of these boxes act on;
+       * weather.gov's own submit handler does exactly this. Only where the
+       * suggestion carries the typed words - a box that merely hints at
+       * other searches keeps the words as typed and is submitted.
+       */
+      const typed = String(el.value || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+      const first = visibleSuggestions()[0];
+      if (first && typed.length && typed.every((w) => String(first.textContent || "").toLowerCase().includes(w))) {
+        realClick(first);
+        return { submitted: "suggestion", chose: String(first.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80) };
       }
     }
     return submit(el);

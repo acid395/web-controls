@@ -11718,6 +11718,11 @@ const realLog = console.log;
         e.preventDefault();
         if (document.querySelector(".autocomplete-suggestion")) window.__went++;
       });
+      // Choosing a suggestion is what the real widget acts on - weather.gov's own
+      // submit handler does nothing but click the first one.
+      document.getElementById("sugg").addEventListener("click", function (e) {
+        if (e.target.classList.contains("autocomplete-suggestion")) window.__went++;
+      });
     </script></body></html>`, { url: "https://www.weather.gov/" });
   if (ap) {
     runAsync(async () => {
@@ -11737,6 +11742,69 @@ const realLog = console.log;
   ensure("and not its form fields", !/Search For/.test(thin), thin);
   const full = "Latest value 2.85 ft Provisional Oct 03, 2026 12:50:00 AM EDT. ".repeat(6);
   check("a page with real text keeps to its text", bgt.withNamesWhereThin(full, [{ label: "HOME", kind: "a" }]), full);
+}
+
+// drought.gov, v1.78.4.
+{
+  // A type-and-pick box: it goes when a place is chosen, never on Enter.
+  const tp = loadPage(`<!doctype html><html><body>
+    <div class="ts-wrapper location-search"><input id="loc" type="text" role="combobox" aria-autocomplete="list"></div>
+    <div class="ts-dropdown" id="dd"></div>
+    <script>
+      window.__chosen = "";
+      document.getElementById("loc").addEventListener("input", function () {
+        setTimeout(function () {
+          document.getElementById("dd").innerHTML = '<div class="option" role="option">Denver, CO, USA</div>';
+        }, 500);
+      });
+      document.getElementById("dd").addEventListener("click", function (e) {
+        if (e.target.classList.contains("option")) window.__chosen = e.target.textContent;
+      });
+    </script></body></html>`, { url: "https://www.drought.gov/" });
+  if (tp) {
+    runAsync(async () => {
+      tp.GENERIC.fill("#loc", "Denver, CO");
+      const r = await tp.GENERIC.submitWhenReady("#loc");
+      check("a type-and-pick box has the matching place chosen", tp.__chosen, "Denver, CO, USA");
+      check("and says that is how it was sent", r && r.submitted, "suggestion");
+    });
+  }
+
+  // "the first result" among a title the page shows twice.
+  const fp = loadPage(`<!doctype html><html><body>
+    <a href="/e/1">Flash Drought Virtual Workshop</a> <a href="/e/1-recording">Flash Drought Virtual Workshop</a>
+    </body></html>`, { url: "https://www.drought.gov/search" });
+  if (fp) {
+    const pressed = [];
+    fp.document.querySelectorAll("a").forEach((a, i) => a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(i); }));
+    const bgf = loadBackground({ page: fp });
+    let n = 0;
+    bgf.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep") { n++; return { ok: true, step: n <= 2 ? { do: "click", name: "Flash Drought Virtual Workshop" } : { do: "finish", answer: "" } }; }
+      return undefined;
+    };
+    runAsync(async () => {
+      await bgf.__ask({ type: "smartAsk", instruction: "model: open the first result" });
+      check("\"the first\" among identical names is the first on the page", pressed.join(","), "0");
+    });
+  }
+
+  // A link pressed with no visible change is not "already set that way".
+  const lp = loadPage(`<!doctype html><html><body>
+    <a href="#" id="t">30-Day Precipitation</a></body></html>`, { url: "https://www.drought.gov/" });
+  if (lp) {
+    lp.getElementById ? null : null;
+    lp.document.getElementById("t").addEventListener("click", (e) => e.preventDefault());
+    const bgl = loadBackground({ page: lp });
+    bgl.__model = (m) => (m.type === "llmStatus" ? { ready: true, hasGpu: true }
+      : m.type === "llmStep" ? { ok: true, step: { do: "finish", answer: "" } } : undefined);
+    runAsync(async () => {
+      const r = await bgl.__ask({ type: "smartAsk", instruction: "switch the map to the 30-day precipitation view" });
+      const said = `${(r.display || {}).subtitle || ""} ${JSON.stringify((r.display || {}).rows || [])}`;
+      ensure("a quiet press of a link is not called already set", !/already set that way|already so/.test(said), said);
+    });
+  }
 }
 
 // beforeExit fires when the loop has drained and, unlike exit, may schedule

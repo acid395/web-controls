@@ -6420,7 +6420,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           history.push({
             key: `click|${String(one.label || "").toLowerCase()}`,
             did: times > 1 && !isSw ? `click "${one.label}" ${times} times` : `click "${one.label}"`,
-            outcome: moved ? "the page changed" : "pressed", ok: true, changed: moved, satisfied: !moved,
+            outcome: moved ? "the page changed" : isSw ? "it was already so" : "pressed, though nothing on the page visibly changed",
+            ok: true, changed: moved, satisfied: !moved && isSw, unconfirmed: !moved && !isSw || undefined,
             label: one.label, why: "the words name this control",
           });
           return { ok: true, answer: null, history, steps: history.length,
@@ -6441,8 +6442,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           history.push({
             key: `click|${String(span.label || "").toLowerCase()}`,
             did: `click "${span.label}"`,
-            outcome: moved ? "the page changed" : "it was already so",
-            ok: true, changed: moved, satisfied: !moved, label: span.label,
+            outcome: moved ? "the page changed" : isSw ? "it was already so" : "pressed, though nothing on the page visibly changed",
+            ok: true, changed: moved, satisfied: !moved && isSw, unconfirmed: !moved && !isSw || undefined, label: span.label,
             why: `the one control here covering "${String(goal).slice(0, 40)}"`,
           });
           return { ok: true, answer: null, history, steps: history.length,
@@ -6466,7 +6467,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           const moved = didItMove(ran);
           history.push({
             key: `click|${String(whole.label || "").toLowerCase()}`, did: `click "${whole.label}"`,
-            outcome: moved ? "the page changed" : "pressed", ok: true, changed: moved, satisfied: !moved,
+            outcome: moved ? "the page changed" : isSw ? "it was already so" : "pressed, though nothing on the page visibly changed",
+            ok: true, changed: moved, satisfied: !moved && isSw, unconfirmed: !moved && !isSw || undefined,
             label: whole.label, why: "every word of its name is in the request",
           });
           return { ok: true, answer: null, history, steps: history.length,
@@ -6841,6 +6843,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
             return pool.every((o) => o === c || flatLabel(o.label).startsWith(l));
           });
           if (base.length === 1) { found = base[0]; break; }
+          // The request said which: "search the site for flash drought, then
+          // open the first result" reached the results, the model named the
+          // first result's title, and that title is on the page twice - the
+          // run stopped with "names more than one". The first in page order is
+          // the first.
+          if (/\b(?:first|top)\b/i.test(goal) && pool.length > 1) { found = pool[0]; break; }
           // Recorded rather than resolved. Two controls answering to one
           // name is a reference that did not land, and picking between them
           // is the confident wrong action this project exists to avoid.
