@@ -6044,7 +6044,17 @@ function isSiteFurniture(c) {
   return false;
 }
 
-function controlsForModel(inv, { max = 120 } = {}) {
+// How many controls a decision can be shown, and how many it can be chosen
+// from. Not the same number. drought.gov carries two hundred and thirty, and
+// its map switches - state lines, county lines, Jump to Alaska - sit past the
+// two hundredth in page order, so a list cut at a hundred and twenty before
+// anything was ranked never held them: "jump the map to Alaska" had nothing
+// to match, by meaning or by words. The whole page is ranked and looked up
+// in; only what goes into the prompt is cut.
+const OFFER_MAX = 120;
+const WHOLE_PAGE = 400;
+
+function controlsForModel(inv, { max = OFFER_MAX } = {}) {
   const all = (inv && inv.controls) || [];
   const seen = new Set();
   const kept = [];
@@ -6233,7 +6243,13 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         history, said: lastSaid };
     }
     lastInv = inv;
-    let controls = controlsForModel(inv.result);
+    // The whole page for ranking and for finding what the model named; the
+    // first hundred and twenty, as always, for everything else - the name
+    // shortcuts and the re-reads between steps cost four times as long over
+    // two hundred and thirty, and a chain that finished in fifty seconds ran
+    // out of time.
+    const wide = controlsForModel(inv.result, { max: WHOLE_PAGE });
+    let controls = wide.slice(0, OFFER_MAX);
 
     // No room for a decision that costs what the last one cost, so this
     // does not start one. Beginning a turn that cannot finish spends the
@@ -6259,12 +6275,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     let offered = controls;
     let narrowedFrom = 0;
     if (controls.length > 18) {
-      const ranked = await rankByMeaning(goal, controls).catch(() => null);
+      const ranked = await rankByMeaning(goal, wide).catch(() => null);
       if (ranked && ranked.length && ranked[0].score > 0.3) {
         const keep = ranked.filter((r) => r.score > 0.2).slice(0, 12);
         if (keep.length >= 3) {
           offered = keep.map((r) => r.control);
-          narrowedFrom = controls.length;
+          narrowedFrom = wide.length;
         }
       }
       // Meaning first, words second. Where the embedder cannot load - which
@@ -6274,12 +6290,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // about nine seconds of prefill and a third of the decode rate on
       // every single decision.
       if (!narrowedFrom && controls.length > 30) {
-        const byWord = rankByWords(goal, controls);
+        const byWord = rankByWords(goal, wide);
         if (byWord && byWord[0].score >= 3) {
           const keep = byWord.filter((r) => r.score > 0).slice(0, 24);
-          if (keep.length >= 3 && keep.length < controls.length) {
+          if (keep.length >= 3 && keep.length < wide.length) {
             offered = keep.map((r) => r.control);
-            narrowedFrom = controls.length;
+            narrowedFrom = wide.length;
           }
         }
       }
@@ -6868,7 +6884,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       }
       return { found, opt, many };
     };
-    const first = resolveIn(controls);
+    let first = resolveIn(controls);
+    // Past the first hundred and twenty, where the shortlist can now reach.
+    if (!first.found && !first.opt && wide.length > controls.length) {
+      const further = resolveIn(wide);
+      if (further.found) first = further;
+    }
     let target = first.found;
     let several = first.many;
     // The value, where the model named that instead of the control holding
@@ -7270,7 +7291,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // adapts: a word is distinctive here if few controls here use it. Where
     // the request has distinctive words, the pick has to answer to one of
     // them; where it has none, any match is all there is to go on.
-    const labelsHere = controls.map((c) => String(c.label || "").toLowerCase());
+    // Over the list the choice came from. A control past the first hundred
+    // and twenty, measured against only those, finds none of the request's
+    // words anywhere - "alaska" is on nothing before Jump to Alaska - and is
+    // refused as naming nothing of it.
+    const labelsHere = (controls.includes(target) ? controls : wide)
+      .map((c) => String(c.label || "").toLowerCase());
     const spreadOf = (w) => labelsHere.filter((l) => wordMatchesText(w, l)).length;
     const tooCommon = Math.max(3, Math.round(labelsHere.length * 0.06));
     const telling = goalWords.filter((w) => {

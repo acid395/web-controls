@@ -3148,7 +3148,9 @@ else {
     const pg = loadPage(fsh.readFileSync(file, "utf8"), { url: meta.url });
     if (!pg) continue;
     const bgh = loadBackground({ page: pg });
-    const labels = bgh.controlsForModel(pg.GENERIC.inventory({ includeHidden: true }))
+    // The whole page, the way a run looks things up - only the prompt is cut
+    // to a hundred and twenty.
+    const labels = bgh.controlsForModel(pg.GENERIC.inventory({ includeHidden: true }), { max: 400 })
       .map((c) => flath(c.label));
     const missing = meta.prompts
       .flatMap((p2) => (p2.steps || []).slice(0, p2.later ? 1 : 99))
@@ -3161,6 +3163,45 @@ else {
       .flatMap((p2) => (p2.want && p2.want.clicked ? [].concat(p2.want.clicked) : []))
       .filter((c) => !labels.some((l) => l.includes(flath(c))));
     check(`every ${site} expectation is checkable`, unscoreable.join(" | "), "");
+  }
+}
+
+// drought.gov's map switches sit past the two hundredth control, and the
+// list was cut at a hundred and twenty before anything was ranked - so
+// "jump the map to Alaska" could never be shown Jump to Alaska, and a model
+// that named it anyway was refused for naming nothing the request said,
+// because "alaska" appeared on none of the first hundred and twenty.
+{
+  const fsj = require("fs");
+  const file = require("path").join(__dirname, "..", "..", "research", "live-scoring", "pages", "drought.html");
+  const pg = fsj.existsSync(file) && loadPage(fsj.readFileSync(file, "utf8"), { url: "https://www.drought.gov/" });
+  if (pg) {
+    const pressed = [];
+    for (const el of pg.document.querySelectorAll("button")) {
+      el.addEventListener("click", () => pressed.push(el.className));
+    }
+    const bgJ = loadBackground({ page: pg });
+    let shown = false;
+    bgJ.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmEmbed") return { ok: false };
+      if (m.type === "llmStep") {
+        // Can only choose what it was actually shown.
+        shown = shown || JSON.stringify(m).includes("Jump to Alaska");
+        return { ok: true, step: { name: shown ? "Jump to Alaska" : "nothing offered fits", do: "click" } };
+      }
+      return undefined;
+    };
+    runAsync(async () => {
+      // A whole real page is a minute of work that never yields, and run
+      // beside the others it starved their timers into failing. So it waits
+      // to be the only one running.
+      while (asyncRunning > 1 || asyncQueue.length) await new Promise((r) => setTimeout(r, 100));
+      await bgJ.runModelAgent("GENERIC", "jump the map to Alaska", { maxSteps: 1 });
+      ensure("a control past the first hundred and twenty is shown to the model", shown, "");
+      ensure("and pressing it is not refused", pressed.some((c) => /jump-button-alaska/.test(c)),
+        pressed.join(" | ") || "nothing pressed");
+    });
   }
 }
 

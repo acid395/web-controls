@@ -1,7 +1,7 @@
 /* bench-prompts.js - the prompt set, frozen, so a live run and an offline
  * one are the same experiment.
  *
- * 100 prompts, 5 sites, twenty each, hand-written against the controls
+ * 250 prompts, 5 sites, 50 each, hand-written against the controls
  * and data each page really carries. Two kinds of thing and their
  * combinations: an action that visibly changes the page, a question
  * answered from the page's data, an action followed by an explanation,
@@ -12,7 +12,7 @@
  * the first happen on a page the first one opens.
  *
  * `offline` is what the grounding layer alone did with the prompt, model
- * off, against the captured page - 43 of 100 are false. jsdom applies
+ * off, against the captured page - 102 of 250 are false. jsdom applies
  * no stylesheet and cannot follow a link, so it is a floor, not a
  * forecast, and says nothing about steps on a second page. A reading
  * passes offline whenever the page has text to read, since explaining is
@@ -47,7 +47,37 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"graph the discharge, switch to 30 days, and put it on a log scale","kind":"multistep","steps":["Graph Discharge, cubic feet per second","30 days","Log"],"on":"Log","want":{"clicked":"Log"},"offline":false},
    {"say":"change the time span to 1 year, then show the legend","kind":"multistep","steps":["1 year","Show legend"],"on":"Show legend","want":{"clicked":"Show legend"},"offline":true},
    {"say":"expand all the data collections, then show the location details","kind":"multistep","steps":["Expand all data collections","Show location details"],"on":"Show location details","want":{"clicked":"Show location details"},"offline":true},
-   {"say":"zoom in on the location map and switch it to imagery","kind":"multistep","steps":["Zoom in","Imagery"],"on":"Imagery","want":{"clicked":"Imagery"},"offline":false}
+   {"say":"zoom in on the location map and switch it to imagery","kind":"multistep","steps":["Zoom in","Imagery"],"on":"Imagery","want":{"clicked":"Imagery"},"offline":false},
+   {"say":"switch the graph to show the last 7 days","kind":"action","steps":["7 days"],"on":"7 days","want":{"clicked":"7 days"},"offline":false},
+   {"say":"graph the pH from the multiparameter sonde","kind":"action","steps":["Graph pH, water, unfiltered"],"on":"Graph pH, water, unfiltered","want":{"clicked":"Graph pH, water, unfiltered"},"offline":false},
+   {"say":"graph the dissolved oxygen","kind":"action","steps":["Graph Dissolved oxygen, water, unfiltered"],"on":"Graph Dissolved oxygen, water, unfiltered","want":{"clicked":"Graph Dissolved oxygen, water, unfiltered"},"offline":false},
+   {"say":"plot the specific conductance","kind":"action","steps":["Graph Specific conductance"],"on":"Graph Specific conductance","want":{"clicked":"Graph Specific conductance"},"offline":false},
+   {"say":"graph the stream water level elevation above NAVD 1988","kind":"action","steps":["Graph Stream water level elevation above NAVD 1988"],"on":"Graph Stream water level elevation above NAVD 1988","want":{"clicked":"Graph Stream water level elevation above NAVD 1988"},"offline":false},
+   {"say":"show the nitrate plus nitrite readings on the graph","kind":"action","steps":["Graph Nitrate plus nitrite"],"on":"Graph Nitrate plus nitrite","want":{"clicked":"Graph Nitrate plus nitrite"},"offline":false},
+   {"say":"switch the graph back to a linear scale","kind":"action","steps":["Linear"],"on":"Linear","want":{"clicked":"Linear"},"offline":false},
+   {"say":"show the field measurements on the graph","kind":"action","steps":["Field measurements"],"on":"Field measurements","want":{"clicked":"Field measurements"},"offline":false},
+   {"say":"open the download data panel","kind":"action","steps":["Download data"],"on":"Download data","want":{"clicked":"Download data"},"offline":false},
+   {"say":"turn on the hydro layer on the location map","kind":"action","steps":["Hydro"],"on":"Hydro","want":{"clicked":"Hydro"},"offline":false},
+   {"say":"what is the date range of the turbidity record at this gauge","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"how many continuous data types are available at this location","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"how far back do the peak measurements go","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which data types at this gauge have been discontinued","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what is the datum of this gage, according to the page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which reservoirs affect low flow at this site, according to the page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what does the page say about turbidity values above 1,000 FNU","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"graph the specific conductance and tell me the latest value","kind":"action+explain","steps":["Graph Specific conductance"],"explain":true,"on":"Graph Specific conductance","want":{"clicked":"Graph Specific conductance","read":true},"offline":false},
+   {"say":"graph the dissolved oxygen and tell me the most recent reading","kind":"action+explain","steps":["Graph Dissolved oxygen, water, unfiltered"],"explain":true,"on":"Graph Dissolved oxygen, water, unfiltered","want":{"clicked":"Graph Dissolved oxygen, water, unfiltered","read":true},"offline":false},
+   {"say":"switch to the 30 days view and tell me the date range shown","kind":"action+explain","steps":["30 days"],"explain":true,"on":"30 days","want":{"clicked":"30 days","read":true},"offline":false},
+   {"say":"open the related graphs and tell me what the combined location graph does","kind":"action+explain","steps":["View related graphs"],"explain":true,"on":"View related graphs","want":{"clicked":"View related graphs","read":true},"offline":false},
+   {"say":"show the location details and tell me what county this gauge is in","kind":"action+explain","steps":["Show location details"],"explain":true,"on":"Show location details","want":{"clicked":"Show location details","read":true},"offline":true},
+   {"say":"expand all the data collections and tell me how many discrete sample data types there are","kind":"action+explain","steps":["Expand all data collections"],"explain":true,"on":"Expand all data collections","want":{"clicked":"Expand all data collections","read":true},"offline":true},
+   {"say":"graph the turbidity and tell me the latest value","kind":"action+explain","steps":["Graph Turbidity"],"explain":true,"on":"Graph Turbidity","want":{"clicked":"Graph Turbidity","read":true},"offline":false},
+   {"say":"graph the turbidity, switch to 1 year, and show the legend","kind":"multistep","steps":["Graph Turbidity","1 year","Show legend"],"on":"Show legend","want":{"clicked":"Show legend"},"offline":true},
+   {"say":"switch the location map to imagery and turn on the hydro layer","kind":"multistep","steps":["Imagery","Hydro"],"on":"Hydro","want":{"clicked":"Hydro"},"offline":false},
+   {"say":"graph the stream water level elevation, then turn on last year's data for comparison","kind":"multistep","steps":["Graph Stream water level elevation above NAVD 1988","Data for same time span in prior year"],"on":"Data for same time span in prior year","want":{"clicked":"Data for same time span in prior year"},"offline":false},
+   {"say":"hide today's statistics, then hide the graph details","kind":"multistep","steps":["Hide today's statistics","Hide graph details"],"on":"Hide graph details","want":{"clicked":"Hide graph details"},"offline":true},
+   {"say":"show the daily data types, then show the peak measurements","kind":"multistep","steps":["Show these data types (Daily data)","Show these data types (Peak measurements)"],"on":"Show these data types (Peak measurements)","want":{"clicked":"Show these data types (Peak measurements)"},"offline":false},
+   {"say":"zoom out on the location map, then switch it back to USGS Topo","kind":"multistep","steps":["Zoom out","USGS Topo"],"on":"USGS Topo","want":{"clicked":"USGS Topo"},"offline":false}
   ]
  },
  "droughtmap": {
@@ -73,7 +103,37 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"open the map archive, then play the animation","kind":"multistep","steps":["Map Archive","Animations"],"later":true,"on":"Map Archive","want":{"clicked":"Map Archive"},"offline":true},
    {"say":"open the regions list and choose the Midwest","kind":"multistep","steps":["Regions","Midwest"],"on":"Midwest","want":{"clicked":"Midwest"},"offline":false},
    {"say":"switch to grayscale, then show the previous week's map","kind":"multistep","steps":["View grayscale version of the map","Previous Map"],"on":"Previous Map","want":{"clicked":"Previous Map"},"offline":true},
-   {"say":"go to the data tables, then open the time series","kind":"multistep","steps":["Data Tables","Time Series"],"later":true,"on":"Data Tables","want":{"clicked":"Data Tables"},"offline":true}
+   {"say":"go to the data tables, then open the time series","kind":"multistep","steps":["Data Tables","Time Series"],"later":true,"on":"Data Tables","want":{"clicked":"Data Tables"},"offline":true},
+   {"say":"show the drought map for the High Plains","kind":"action","steps":["High Plains"],"on":"High Plains","want":{"clicked":"High Plains"},"offline":false},
+   {"say":"open the Pacific regional map","kind":"action","steps":["Pacific"],"on":"Pacific","want":{"clicked":"Pacific"},"offline":true},
+   {"say":"show the map for the continental U.S.","kind":"action","steps":["Continental U.S."],"on":"Continental U.S.","want":{"clicked":"Continental U.S."},"offline":true},
+   {"say":"open the comparison slider","kind":"action","steps":["Comparison Slider"],"on":"Comparison Slider","want":{"clicked":"Comparison Slider"},"offline":true},
+   {"say":"go to the weeks in drought page","kind":"action","steps":["Weeks in Drought"],"on":"Weeks in Drought","want":{"clicked":"Weeks in Drought"},"offline":true},
+   {"say":"open the drought severity and coverage index","kind":"action","steps":["Drought Severity and Coverage Index"],"on":"Drought Severity and Coverage Index","want":{"clicked":"Drought Severity and Coverage Index"},"offline":true},
+   {"say":"go to the drought outlooks","kind":"action","steps":["Outlooks"],"on":"Outlooks","want":{"clicked":"Outlooks"},"offline":false},
+   {"say":"open the map in Spanish","kind":"action","steps":["En Español"],"on":"En Español","want":{"clicked":"En Español"},"offline":false},
+   {"say":"open the custom map request page","kind":"action","steps":["Custom Map Request"],"on":"Custom Map Request","want":{"clicked":"Custom Map Request"},"offline":true},
+   {"say":"go to the population statistics page","kind":"action","steps":["Population Statistics"],"on":"Population Statistics","want":{"clicked":"Population Statistics"},"offline":true},
+   {"say":"who authored this week's drought map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what file formats can this map be downloaded in","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which regions can I view separate drought maps for","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what formats is the written drought summary available in","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which organizations produce the U.S. Drought Monitor, according to this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what is the difference between D0 and D1 according to the legend","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"how do I report drought conditions where I live, according to this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"go to the drought classification page and explain how D2 is defined","kind":"action+explain","steps":["Drought Classification"],"explain":true,"on":"Drought Classification","want":{"clicked":"Drought Classification","read":true},"offline":true},
+   {"say":"open the West regional map and tell me who authored it","kind":"action+explain","steps":["West"],"explain":true,"on":"West","want":{"clicked":"West","read":true},"offline":true},
+   {"say":"go to the drought summary and tell me what it says about the High Plains","kind":"action+explain","steps":["Drought Summary"],"explain":true,"on":"Drought Summary","want":{"clicked":"Drought Summary","read":true},"offline":true},
+   {"say":"go to the drought summary and tell me what the looking ahead section says","kind":"action+explain","steps":["Drought Summary"],"explain":true,"on":"Drought Summary","want":{"clicked":"Drought Summary","read":true},"offline":true},
+   {"say":"open the outlooks page and tell me which outlook maps it shows","kind":"action+explain","steps":["Outlooks"],"explain":true,"on":"Outlooks","want":{"clicked":"Outlooks","read":true},"offline":true},
+   {"say":"open the what is the USDM page and explain what the U.S. Drought Monitor is","kind":"action+explain","steps":["What is the USDM?"],"explain":true,"on":"What is the USDM?","want":{"clicked":"What is the USDM?","read":true},"offline":true},
+   {"say":"open the Southeast regional map and tell me what its statistics show","kind":"action+explain","steps":["Southeast"],"explain":true,"on":"Southeast","want":{"clicked":"Southeast","read":true},"offline":true},
+   {"say":"open the West regional map, then open its full summary","kind":"multistep","steps":["West","Full Summary"],"later":true,"on":"West","want":{"clicked":"West"},"offline":false},
+   {"say":"go to the data tables and set the area type to state","kind":"multistep","steps":["Data Tables","State"],"later":true,"on":"Data Tables","want":{"clicked":"Data Tables"},"offline":true},
+   {"say":"open the map archive and change the map type to legend only","kind":"multistep","steps":["Map Archive","Legend Only"],"later":true,"on":"Map Archive","want":{"clicked":"Map Archive"},"offline":true},
+   {"say":"switch to grayscale, then open the regions list","kind":"multistep","steps":["View grayscale version of the map","Regions"],"on":"Regions","want":{"clicked":"Regions"},"offline":true},
+   {"say":"go to the conditions and outlooks page, then open the weekly drought indices","kind":"multistep","steps":["Conditions & Outlooks","Weekly Drought Indices"],"later":true,"on":"Conditions & Outlooks","want":{"clicked":"Conditions & Outlooks"},"offline":true},
+   {"say":"open the High Plains regional map, then view more statistics","kind":"multistep","steps":["High Plains","View More Statistics"],"later":true,"on":"High Plains","want":{"clicked":"High Plains"},"offline":false}
   ]
  },
  "noaa": {
@@ -99,7 +159,37 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"zoom in twice, then open the layers panel","kind":"multistep","steps":["Zoom in","Zoom in","View Layers"],"on":"View Layers","want":{"clicked":"View Layers"},"offline":false},
    {"say":"search for St. Louis, then zoom in","kind":"multistep","steps":["Search Locaction","Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":true},
    {"say":"open the forecasts and outlooks menu, then go to the long range outlook","kind":"multistep","steps":["Forecasts and Outlooks","Long Range Outlook"],"on":"Long Range Outlook","want":{"clicked":"Long Range Outlook"},"offline":true},
-   {"say":"open the data and APIs menu, then go to the NWPS APIs page","kind":"multistep","steps":["Data and APIs","NWPS APIs"],"on":"NWPS APIs","want":{"clicked":"NWPS APIs"},"offline":true}
+   {"say":"open the data and APIs menu, then go to the NWPS APIs page","kind":"multistep","steps":["Data and APIs","NWPS APIs"],"on":"NWPS APIs","want":{"clicked":"NWPS APIs"},"offline":true},
+   {"say":"open the drought menu","kind":"action","steps":["Drought"],"on":"Drought","want":{"clicked":"Drought"},"offline":true},
+   {"say":"open the resources menu","kind":"action","steps":["Resources"],"on":"Resources","want":{"clicked":"Resources"},"offline":true},
+   {"say":"go to the past precipitation estimates","kind":"action","steps":["Past Precipitation Estimates"],"on":"Past Precipitation Estimates","want":{"clicked":"Past Precipitation Estimates"},"offline":true},
+   {"say":"open the flood inundation mapping page","kind":"action","steps":["Flood Inundation Mapping (FIM)"],"on":"Flood Inundation Mapping (FIM)","want":{"clicked":"Flood Inundation Mapping (FIM)"},"offline":false},
+   {"say":"go to the hydrologic ensemble forecast system page","kind":"action","steps":["Hydrologic Ensemble Forecast System (HEFS)"],"on":"Hydrologic Ensemble Forecast System (HEFS)","want":{"clicked":"Hydrologic Ensemble Forecast System (HEFS)"},"offline":true},
+   {"say":"open the organization menu","kind":"action","steps":["Organization"],"on":"Organization","want":{"clicked":"Organization"},"offline":true},
+   {"say":"go to the river forecast centers page","kind":"action","steps":["River Forecast Centers"],"on":"River Forecast Centers","want":{"clicked":"River Forecast Centers"},"offline":true},
+   {"say":"open the national water model page","kind":"action","steps":["National Water Model"],"on":"National Water Model","want":{"clicked":"National Water Model"},"offline":true},
+   {"say":"search the map for Denver","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":false},
+   {"say":"open the about menu","kind":"action","steps":["About"],"on":"About","want":{"clicked":"About"},"offline":true},
+   {"say":"which hydrologic discussions are available on this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what flood hazard outlook archives does this page link to","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what precipitation frequency standards does this site list","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what organization runs this website","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what flood safety campaign about driving does this page link to","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what documentation does this site offer for new users","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which basemap sources are credited on this map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"go to the hydrograph information page and explain what action stage means","kind":"action+explain","steps":["Hydrograph Information"],"explain":true,"on":"Hydrograph Information","want":{"clicked":"Hydrograph Information","read":true},"offline":true},
+   {"say":"open the hydrograph information page and explain the difference between minor and major flooding","kind":"action+explain","steps":["Hydrograph Information"],"explain":true,"on":"Hydrograph Information","want":{"clicked":"Hydrograph Information","read":true},"offline":true},
+   {"say":"open the national water model page and tell me what the model forecasts","kind":"action+explain","steps":["National Water Model"],"explain":true,"on":"National Water Model","want":{"clicked":"National Water Model","read":true},"offline":true},
+   {"say":"go to the office of water prediction page and tell me its mission","kind":"action+explain","steps":["Office of Water Prediction"],"explain":true,"on":"Office of Water Prediction","want":{"clicked":"Office of Water Prediction","read":true},"offline":true},
+   {"say":"open the national water center page and tell me about the building","kind":"action+explain","steps":["National Water Center"],"explain":true,"on":"National Water Center","want":{"clicked":"National Water Center","read":true},"offline":false},
+   {"say":"open the NWPS release notes and tell me what the latest version changed","kind":"action+explain","steps":["NWPS Release Notes"],"explain":true,"on":"NWPS Release Notes","want":{"clicked":"NWPS Release Notes","read":true},"offline":true},
+   {"say":"go to the categorical FIM list and tell me what it lists","kind":"action+explain","steps":["Categorical FIM List"],"explain":true,"on":"Categorical FIM List","want":{"clicked":"Categorical FIM List","read":true},"offline":true},
+   {"say":"open the drought menu, then go to the CPC drought information","kind":"multistep","steps":["Drought","CPC Drought Information"],"on":"CPC Drought Information","want":{"clicked":"CPC Drought Information"},"offline":true},
+   {"say":"open the resources menu, then go to hydrograph information","kind":"multistep","steps":["Resources","Hydrograph Information"],"on":"Hydrograph Information","want":{"clicked":"Hydrograph Information"},"offline":true},
+   {"say":"open the organization menu, then go to the weather forecast offices","kind":"multistep","steps":["Organization","Weather Forecast Offices"],"on":"Weather Forecast Offices","want":{"clicked":"Weather Forecast Offices"},"offline":false},
+   {"say":"zoom out twice, then open the layers panel","kind":"multistep","steps":["Zoom out","Zoom out","View Layers"],"on":"View Layers","want":{"clicked":"View Layers"},"offline":false},
+   {"say":"open the about menu, then go to the NWPS user guide","kind":"multistep","steps":["About","NWPS User Guide"],"on":"NWPS User Guide","want":{"clicked":"NWPS User Guide"},"offline":false},
+   {"say":"open the shortcuts menu, then go to the partner FIM location list","kind":"multistep","steps":["Shortcuts","Partner FIM Location List"],"on":"Partner FIM Location List","want":{"clicked":"Partner FIM Location List"},"offline":false}
   ]
  },
  "weather": {
@@ -125,7 +215,37 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"type 60601 into the forecast box, get the forecast, then open the hourly weather graph","kind":"multistep","steps":["Enter Your City, ST or ZIP Code","Hourly Weather Forecast"],"later":true,"on":"Enter Your City, ST or ZIP Code","want":{"clicked":"Enter Your City, ST or ZIP Code"},"offline":false},
    {"say":"pick Colorado in the warnings by state list and press go","kind":"multistep","steps":["Warnings By State","Warnings By State"],"on":"Warnings By State","want":{"clicked":"Warnings By State"},"offline":false},
    {"say":"open the safety menu, then go to the NOAA Weather Radio page","kind":"multistep","steps":["SAFETY","NOAA Weather Radio"],"on":"NOAA Weather Radio","want":{"clicked":"NOAA Weather Radio"},"offline":false},
-   {"say":"search the site for flood safety, then open the first result","kind":"multistep","steps":["Search For","the first result"],"later":true,"on":"Search For","want":{"clicked":"Search For"},"offline":false}
+   {"say":"search the site for flood safety, then open the first result","kind":"multistep","steps":["Search For","the first result"],"later":true,"on":"Search For","want":{"clicked":"Search For"},"offline":false},
+   {"say":"open the fire weather page","kind":"action","steps":["Fire Weather"],"on":"Fire Weather","want":{"clicked":"Fire Weather"},"offline":true},
+   {"say":"go to the hurricanes page","kind":"action","steps":["Hurricanes"],"on":"Hurricanes","want":{"clicked":"Hurricanes"},"offline":true},
+   {"say":"open the forecast maps","kind":"action","steps":["FORECAST MAPS"],"on":"FORECAST MAPS","want":{"clicked":"FORECAST MAPS"},"offline":true},
+   {"say":"show the enhanced radar","kind":"action","steps":["Enhanced Radar"],"on":"Enhanced Radar","want":{"clicked":"Enhanced Radar"},"offline":true},
+   {"say":"go to the air quality page","kind":"action","steps":["AIR QUALITY"],"on":"AIR QUALITY","want":{"clicked":"AIR QUALITY"},"offline":true},
+   {"say":"open the current conditions","kind":"action","steps":["CURRENT"],"on":"CURRENT","want":{"clicked":"CURRENT"},"offline":true},
+   {"say":"go to the weather glossary","kind":"action","steps":["Glossary"],"on":"Glossary","want":{"clicked":"Glossary"},"offline":false},
+   {"say":"open the Guam forecast page","kind":"action","steps":["Guam"],"on":"Guam","want":{"clicked":"Guam"},"offline":false},
+   {"say":"go to the SKYWARN storm spotters page","kind":"action","steps":["SKYWARN Storm Spotters"],"on":"SKYWARN Storm Spotters","want":{"clicked":"SKYWARN Storm Spotters"},"offline":true},
+   {"say":"open the past weather page","kind":"action","steps":["PAST WEATHER"],"on":"PAST WEATHER","want":{"clicked":"PAST WEATHER"},"offline":true},
+   {"say":"which tropical alerts are listed on the hazards map right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what heat-related alerts are listed on the hazards map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which marine alerts are on the hazards map right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what does the headline story on the front page say","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which U.S. territories have their own forecast pages linked here","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what kinds of radar views does this page offer","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which flood-related alerts are listed on the hazards map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"open the marine page and tell me what kinds of marine forecasts it offers","kind":"action+explain","steps":["Marine"],"explain":true,"on":"Marine","want":{"clicked":"Marine","read":true},"offline":false},
+   {"say":"go to the safety page and tell me which hazards it covers","kind":"action+explain","steps":["SAFETY"],"explain":true,"on":"SAFETY","want":{"clicked":"SAFETY","read":true},"offline":false},
+   {"say":"open the SKYWARN page and explain what storm spotters do","kind":"action+explain","steps":["SKYWARN Storm Spotters"],"explain":true,"on":"SKYWARN Storm Spotters","want":{"clicked":"SKYWARN Storm Spotters","read":true},"offline":false},
+   {"say":"go to the fire weather page and tell me which fire outlooks it links to","kind":"action+explain","steps":["Fire Weather"],"explain":true,"on":"Fire Weather","want":{"clicked":"Fire Weather","read":true},"offline":true},
+   {"say":"open the small craft advisory on the hazards map and summarize where it applies","kind":"action+explain","steps":["Small Craft Advisory"],"explain":true,"on":"Small Craft Advisory","want":{"clicked":"Small Craft Advisory","read":true},"offline":true},
+   {"say":"go to the education page and tell me what JetStream is","kind":"action+explain","steps":["EDUCATION"],"explain":true,"on":"EDUCATION","want":{"clicked":"EDUCATION","read":true},"offline":false},
+   {"say":"open the NOAA weather radio page and explain what it is","kind":"action+explain","steps":["NOAA Weather Radio"],"explain":true,"on":"NOAA Weather Radio","want":{"clicked":"NOAA Weather Radio","read":true},"offline":true},
+   {"say":"open the marine page, then go to the offshore forecasts","kind":"multistep","steps":["Marine","Offshore Forecasts"],"later":true,"on":"Marine","want":{"clicked":"Marine"},"offline":false},
+   {"say":"go to the safety page, then open the lightning safety page","kind":"multistep","steps":["SAFETY","Lightning"],"later":true,"on":"SAFETY","want":{"clicked":"SAFETY"},"offline":false},
+   {"say":"open the SKYWARN page, then find a class in my area","kind":"multistep","steps":["SKYWARN Storm Spotters","Find a class in your area"],"later":true,"on":"SKYWARN Storm Spotters","want":{"clicked":"SKYWARN Storm Spotters"},"offline":false},
+   {"say":"go to the education page, then open JetStream","kind":"multistep","steps":["EDUCATION","JetStream"],"later":true,"on":"EDUCATION","want":{"clicked":"EDUCATION"},"offline":false},
+   {"say":"open the fire weather page, then go to the spot forecasts","kind":"multistep","steps":["Fire Weather","Spot Forecasts"],"later":true,"on":"Fire Weather","want":{"clicked":"Fire Weather"},"offline":true},
+   {"say":"open the marine page, then go to the point forecasts","kind":"multistep","steps":["Marine","Point Forecasts"],"later":true,"on":"Marine","want":{"clicked":"Marine"},"offline":false}
   ]
  },
  "drought": {
@@ -149,9 +269,39 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"open the latest drought status update and summarize it","kind":"action+explain","steps":["Drought Status Update"],"explain":true,"on":"Drought Status Update","want":{"clicked":"Drought Status Update","read":true},"offline":true},
    {"say":"look up Denver, CO in the neighborhood drought search and tell me the drought level there","kind":"action+explain","steps":["How is drought affecting your neighborhood?"],"explain":true,"on":"How is drought affecting your neighborhood?","want":{"clicked":"How is drought affecting your neighborhood?","read":true},"offline":false},
    {"say":"show the 30-day temperature map, then switch back to the U.S. Drought Monitor map","kind":"multistep","steps":["30-Day Temperature","U.S. Drought Monitor"],"on":"U.S. Drought Monitor","want":{"clicked":"U.S. Drought Monitor"},"offline":false},
-   {"say":"open the by sector menu, then go to water utilities","kind":"multistep","steps":["By Sector","Water Utilities"],"on":"Water Utilities","want":{"clicked":"Water Utilities"},"offline":true},
+   {"say":"open the by sector menu, then go to water utilities","kind":"multistep","steps":["By Sector","Water Utilities"],"on":"Water Utilities","want":{"clicked":"Water Utilities"},"offline":false},
    {"say":"search the site for flash drought, then open the first result","kind":"multistep","steps":["Open Search Bar","the first result"],"later":true,"on":"Open Search Bar","want":{"clicked":"Open Search Bar"},"offline":false},
-   {"say":"open the research and learn menu and go to drought basics","kind":"multistep","steps":["Research and Learn","Drought Basics"],"on":"Drought Basics","want":{"clicked":"Drought Basics"},"offline":true}
+   {"say":"open the research and learn menu and go to drought basics","kind":"multistep","steps":["Research and Learn","Drought Basics"],"on":"Drought Basics","want":{"clicked":"Drought Basics"},"offline":true},
+   {"say":"show state lines on the map","kind":"action","steps":["Show State Lines"],"on":"Show State Lines","want":{"clicked":"Show State Lines"},"offline":false},
+   {"say":"turn on county lines on the map","kind":"action","steps":["Show County Lines"],"on":"Show County Lines","want":{"clicked":"Show County Lines"},"offline":false},
+   {"say":"jump the map to Alaska","kind":"action","steps":["Jump to Alaska"],"on":"Jump to Alaska","want":{"clicked":"Jump to Alaska"},"offline":false},
+   {"say":"jump the map to Hawaii","kind":"action","steps":["Jump to Hawaii"],"on":"Jump to Hawaii","want":{"clicked":"Jump to Hawaii"},"offline":false},
+   {"say":"open the news and events menu","kind":"action","steps":["News and Events"],"on":"News and Events","want":{"clicked":"News and Events"},"offline":true},
+   {"say":"go to the fire topic page","kind":"action","steps":["Fire"],"on":"Fire","want":{"clicked":"Fire"},"offline":false},
+   {"say":"open the by location menu","kind":"action","steps":["By Location"],"on":"By Location","want":{"clicked":"By Location"},"offline":false},
+   {"say":"go to the regional drought status updates","kind":"action","steps":["Regional Drought Status Updates"],"on":"Regional Drought Status Updates","want":{"clicked":"Regional Drought Status Updates"},"offline":true},
+   {"say":"open the energy sector page","kind":"action","steps":["Energy"],"on":"Energy","want":{"clicked":"Energy"},"offline":false},
+   {"say":"show the map description","kind":"action","steps":["Show Map Description"],"on":"Show Map Description","want":{"clicked":"Show Map Description"},"offline":false},
+   {"say":"what percentage of the country is in severe drought right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"how much of the U.S. is abnormally dry right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what upcoming drought events or webinars are listed on this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what is NIDIS, according to this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"which agencies partner on this portal, according to the page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what are the latest news stories on this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what is the combined percentage of the U.S. in severe, extreme, or exceptional drought","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"go to the current conditions page and tell me how drought changed over the last week","kind":"action+explain","steps":["Current Conditions"],"explain":true,"on":"Current Conditions","want":{"clicked":"Current Conditions","read":true},"offline":true},
+   {"say":"open the agriculture page and tell me how drought affects crops","kind":"action+explain","steps":["Agriculture"],"explain":true,"on":"Agriculture","want":{"clicked":"Agriculture","read":true},"offline":false},
+   {"say":"go to the flash drought page and explain what causes flash drought","kind":"action+explain","steps":["Flash Drought"],"explain":true,"on":"Flash Drought","want":{"clicked":"Flash Drought","read":true},"offline":false},
+   {"say":"open the water utilities page and tell me how drought affects water utilities","kind":"action+explain","steps":["Water Utilities"],"explain":true,"on":"Water Utilities","want":{"clicked":"Water Utilities","read":true},"offline":true},
+   {"say":"go to the California-Nevada region and tell me who the regional contact is","kind":"action+explain","steps":["California-Nevada"],"explain":true,"on":"California-Nevada","want":{"clicked":"California-Nevada","read":true},"offline":false},
+   {"say":"open the drought basics page and explain the types of drought","kind":"action+explain","steps":["Drought Basics"],"explain":true,"on":"Drought Basics","want":{"clicked":"Drought Basics","read":true},"offline":false},
+   {"say":"go to the short-term vs long-term drought page and explain the difference","kind":"action+explain","steps":["Short-Term vs Long-Term Drought"],"explain":true,"on":"Short-Term vs Long-Term Drought","want":{"clicked":"Short-Term vs Long-Term Drought","read":true},"offline":true},
+   {"say":"open the agriculture page, then go to the crop moisture index","kind":"multistep","steps":["Agriculture","Crop Moisture Index (CMI)"],"later":true,"on":"Agriculture","want":{"clicked":"Agriculture"},"offline":true},
+   {"say":"go to the water utilities page, then open the reservoir storage dashboard","kind":"multistep","steps":["Water Utilities","Reservoir Storage Dashboard"],"later":true,"on":"Water Utilities","want":{"clicked":"Water Utilities"},"offline":true},
+   {"say":"go to the current conditions page, then show the 4-week change","kind":"multistep","steps":["Current Conditions","4-Week Change"],"later":true,"on":"Current Conditions","want":{"clicked":"Current Conditions"},"offline":false},
+   {"say":"show state lines and county lines on the map","kind":"multistep","steps":["Show State Lines","Show County Lines"],"on":"Show County Lines","want":{"clicked":"Show County Lines"},"offline":false},
+   {"say":"open the California-Nevada region page, then open the latest drought update","kind":"multistep","steps":["California-Nevada","Latest Drought Update"],"later":true,"on":"California-Nevada","want":{"clicked":"California-Nevada"},"offline":false},
+   {"say":"jump the map to Puerto Rico, then back to the continental U.S.","kind":"multistep","steps":["Jump to Puerto Rico","Jump to CONUS"],"on":"Jump to CONUS","want":{"clicked":"Jump to CONUS"},"offline":false}
   ]
  }
 };
