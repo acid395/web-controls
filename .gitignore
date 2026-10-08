@@ -2,3 +2,4 @@ node_modules/
 package-lock.json
 dist/
 research/live-scoring/pages/prof/
+widget/package/

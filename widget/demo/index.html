@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reservoir Watch</title>
+<style>
+  :root {
+    --bg: #f6f8fb; --card: #fff; --ink: #17212e; --ink-2: #5a6678; --line: #dfe5ec; --accent: #1a6fd1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #10151b; --card: #18202a; --ink: #e5eaf0; --ink-2: #98a4b3; --line: #2a333e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 24px; padding: 14px 24px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header strong { font-size: 17px; }
+  header nav a { color: var(--ink-2); text-decoration: none; margin-right: 16px; }
+  header nav a:hover { color: var(--accent); }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 120px; }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  .sub { color: var(--ink-2); margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat small { color: var(--ink-2); display: block; }
+  .stat b { font-size: 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 12px; }
+  select, button, input[type=search] { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
+  [role=tablist] { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+  [role=tab] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--ink-2); }
+  [role=tab][aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; min-width: 80px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  .note { color: var(--ink-2); font-size: 13.5px; }
+  details { margin-top: 8px; }
+  .alert { border-left: 4px solid #c27c00; padding: 8px 12px; background: color-mix(in srgb, #c27c00 10%, var(--card)); border-radius: 6px; margin-bottom: 16px; }
+  .alert[hidden] { display: none; }
+  .hint { position: fixed; bottom: 88px; right: 24px; background: var(--ink); color: var(--bg); padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+  @media (max-width: 640px) { .hint { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <strong>Reservoir Watch</strong>
+  <nav aria-label="Main">
+    <a href="#overview">Overview</a>
+    <a href="#reservoirs">Reservoirs</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#about">About the data</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Colorado River reservoirs</h1>
+  <p class="sub">Storage as of October 1, 2026. A sample app for trying the web-controls widget: nothing here knows the widget exists.</p>
+
+  <div class="grid" id="overview">
+    <div class="stat"><small>System storage</small><b>23.4 MAF</b></div>
+    <div class="stat"><small>Percent of capacity</small><b>39%</b></div>
+    <div class="stat"><small>Change since last year</small><b>&minus;1.8 MAF</b></div>
+    <div class="stat"><small>Lake Mead elevation</small><b>1,061 ft</b></div>
+  </div>
+
+  <div class="alert" id="shortage" hidden>
+    <strong>Tier 1 shortage.</strong> Lake Mead is projected below 1,075 ft on January 1, which triggers reduced deliveries to Arizona and Nevada under the 2007 Interim Guidelines.
+  </div>
+
+  <section class="card" id="reservoirs">
+    <div role="tablist" aria-label="View">
+      <button role="tab" aria-selected="true" aria-controls="p-table" id="tab-table">Storage table</button>
+      <button role="tab" aria-selected="false" aria-controls="p-trend" id="tab-trend">10-year trend</button>
+      <button role="tab" aria-selected="false" aria-controls="p-releases" id="tab-releases">Planned releases</button>
+    </div>
+
+    <div class="controls">
+      <label>Basin
+        <select id="basin">
+          <option value="all">All basins</option>
+          <option value="upper">Upper Colorado</option>
+          <option value="lower">Lower Colorado</option>
+        </select>
+      </label>
+      <label>Units
+        <select id="units">
+          <option value="maf">Million acre-feet</option>
+          <option value="km3">Cubic kilometers</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="showAlerts"> Show shortage alerts</label>
+      <label><input type="checkbox" id="showAvg"> Compare to 30-year average</label>
+      <input type="search" id="find" placeholder="Find a reservoir" aria-label="Find a reservoir">
+    </div>
+
+    <div id="p-table" role="tabpanel" aria-labelledby="tab-table">
+      <table>
+        <thead><tr><th>Reservoir</th><th>Basin</th><th class="num">Storage</th><th class="num">Capacity</th><th>Full</th><th class="num avg" hidden>30-yr avg</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div id="p-trend" role="tabpanel" aria-labelledby="tab-trend" hidden>
+      <p>System storage has fallen in seven of the last ten water years. The low point was 2022, at 18.9 million acre-feet (31% of capacity). The wet winter of 2023 added 6.1 MAF, most of it into Lake Powell, and storage has drifted down since.</p>
+      <table>
+        <thead><tr><th>Water year</th><th class="num">System storage (MAF)</th></tr></thead>
+        <tbody>
+          <tr><td>2017</td><td class="num">31.2</td></tr><tr><td>2018</td><td class="num">27.6</td></tr>
+          <tr><td>2019</td><td class="num">29.1</td></tr><tr><td>2020</td><td class="num">26.4</td></tr>
+          <tr><td>2021</td><td class="num">21.8</td></tr><tr><td>2022</td><td class="num">18.9</td></tr>
+          <tr><td>2023</td><td class="num">25.0</td></tr><tr><td>2024</td><td class="num">25.9</td></tr>
+          <tr><td>2025</td><td class="num">24.1</td></tr><tr><td>2026</td><td class="num">23.4</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="p-releases" role="tabpanel" aria-labelledby="tab-releases" hidden>
+      <p>Glen Canyon Dam will release 7.48 MAF from Lake Powell in water year 2027, the minimum under the Mid-Elevation Release Tier. Hoover Dam releases follow downstream demand and average about 9.6 MAF a year.</p>
+    </div>
+    <p class="note">MAF = million acre-feet. One acre-foot is about 1,233 cubic meters.</p>
+  </section>
+
+  <section class="card" id="alerts">
+    <h2>Alerts</h2>
+    <form id="signup">
+      <label>Email for weekly updates <input type="email" id="email" placeholder="you@example.com"></label>
+      <label>Reservoir
+        <select id="alertFor"><option>Lake Mead</option><option>Lake Powell</option><option>Flaming Gorge</option></select>
+      </label>
+      <button type="submit">Subscribe</button>
+      <span id="signupDone" class="note" hidden>Subscribed. (Nothing is sent: this is a demo.)</span>
+    </form>
+  </section>
+
+  <section class="card" id="about">
+    <h2>About the data</h2>
+    <details>
+      <summary>Where the numbers come from</summary>
+      <p>End-of-month storage from the Bureau of Reclamation's 24-Month Study. Capacities are live storage, excluding dead pool. Figures here are illustrative and rounded.</p>
+    </details>
+    <details>
+      <summary>What "percent of capacity" means</summary>
+      <p>Current live storage divided by the reservoir's live capacity. A reservoir at 39% holds a little under two fifths of what it could.</p>
+    </details>
+  </section>
+</main>
+
+<div class="hint">Try the button in the corner &rarr;</div>
+
+<script>
+  const DATA = [
+    { name: "Lake Mead", basin: "lower", storage: 8.9, capacity: 26.1, avg: 17.2 },
+    { name: "Lake Powell", basin: "upper", storage: 9.6, capacity: 24.3, avg: 15.8 },
+    { name: "Flaming Gorge", basin: "upper", storage: 3.2, capacity: 3.7, avg: 3.3 },
+    { name: "Lake Mohave", basin: "lower", storage: 1.6, capacity: 1.8, avg: 1.7 },
+    { name: "Lake Havasu", basin: "lower", storage: 0.6, capacity: 0.6, avg: 0.6 },
+    { name: "Blue Mesa", basin: "upper", storage: 0.5, capacity: 0.9, avg: 0.6 },
+  ];
+  const $ = (id) => document.getElementById(id);
+  function draw() {
+    const basin = $("basin").value, km3 = $("units").value === "km3", q = $("find").value.trim().toLowerCase();
+    const k = km3 ? 1.2335 : 1, unit = km3 ? "km³" : "MAF";
+    $("rows").innerHTML = DATA
+      .filter((r) => (basin === "all" || r.basin === basin) && (!q || r.name.toLowerCase().includes(q)))
+      .map((r) => `<tr><td>${r.name}</td><td>${r.basin === "upper" ? "Upper" : "Lower"}</td>`
+        + `<td class="num">${(r.storage * k).toFixed(1)} ${unit}</td><td class="num">${(r.capacity * k).toFixed(1)} ${unit}</td>`
+        + `<td><div class="bar"><span style="width:${Math.round(r.storage / r.capacity * 100)}%"></span></div> ${Math.round(r.storage / r.capacity * 100)}%</td>`
+        + `<td class="num avg" ${$("showAvg").checked ? "" : "hidden"}>${(r.avg * k).toFixed(1)} ${unit}</td></tr>`).join("");
+    document.querySelectorAll("th.avg").forEach((th) => { th.hidden = !$("showAvg").checked; });
+  }
+  for (const id of ["basin", "units", "showAvg"]) $(id).addEventListener("change", draw);
+  $("find").addEventListener("input", draw);
+  $("showAlerts").addEventListener("change", () => { $("shortage").hidden = !$("showAlerts").checked; });
+  document.querySelectorAll("[role=tab]").forEach((tab) => tab.addEventListener("click", () => {
+    document.querySelectorAll("[role=tab]").forEach((t) => {
+      t.setAttribute("aria-selected", String(t === tab));
+      $(t.getAttribute("aria-controls")).hidden = t !== tab;
+    });
+  }));
+  $("signup").addEventListener("submit", (e) => { e.preventDefault(); $("signupDone").hidden = false; });
+  draw();
+</script>
+
+<!-- The whole installation. -->
+<script src="/dist/web-controls-widget.js"
+        data-title="Ask Reservoir Watch"
+        data-suggestions="show only the lower basin reservoirs|switch the units to cubic kilometers|how full is Lake Powell compared to its average?|show the 10-year trend and tell me the lowest year"
+        data-models="Llama-3.2-1B-Instruct-q4f16_1-MLC,Llama-3.2-3B-Instruct-q4f16_1-MLC,Llama-3.1-8B-Instruct-q4f16_1-MLC"></script>
+</body>
+</html>

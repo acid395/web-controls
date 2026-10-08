@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget Bookmarklet</title>
+<style>
+  :root { --bg: #f6f8fb; --card: #fff; --ink: #17212e; --ink-2: #5a6678; --line: #dfe5ec; --accent: #1a6fd1; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #10151b; --card: #18202a; --ink: #e5eaf0; --ink-2: #98a4b3; --line: #2a333e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  p, li { color: var(--ink); }
+  .muted { color: var(--ink-2); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 16px 0; }
+  .bm { display: inline-block; background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px; text-decoration: none; font-weight: 600; cursor: grab; }
+  code { background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 13.5px; overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink-2); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Try the widget on any site</h1>
+  <p class="muted">For comparing the library against the extension on the same pages. A site that installs the library gets this without a bookmarklet; this just lets you put it on sites you don't own.</p>
+
+  <div class="card">
+    <p><strong>1.</strong> Drag this to your bookmarks bar:</p>
+    <p><a class="bm" id="bm" href="#">web-controls widget</a></p>
+    <p><strong>2.</strong> Keep <code>node widget/demo/serve.js</code> running.</p>
+    <p><strong>3.</strong> Open a site, for example <a href="https://www.drought.gov/">drought.gov</a>, then click the bookmark. The widget's button appears in the bottom-right corner. Press <em>Load model</em> once; after that the weights come from the browser's cache.</p>
+    <p class="muted">Chrome may ask whether the site can reach devices on your local network. That's the bookmarklet loading the widget from localhost. A site that installs the library serves the file itself, so its visitors never see that prompt.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;font-size:18px">Where it won't load</h2>
+    <p>Sites whose Content-Security-Policy limits <code>script-src</code> will block the bookmarklet. If they limit <code>connect-src</code>, they also block the model download from Hugging Face. When that happens the bookmark shows an alert. A site that installs the library sets its own CSP to allow both; the README lists the exact directives.</p>
+    <p>Turn the extension off for that tab while you compare. Both put the same page agent into the page, and two copies get in each other's way.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;font-size:18px">Suggested comparison</h2>
+    <table>
+      <thead><tr><th>Site</th><th>Same prompts as the extension's bench</th></tr></thead>
+      <tbody>
+        <tr><td>waterdata.usgs.gov (a monitoring location)</td><td>"graph the turbidity", "switch to the 30 days view and tell me the date range shown"</td></tr>
+        <tr><td>droughtmonitor.unl.edu</td><td>"show the drought map for the High Plains", "who authored this week's drought map"</td></tr>
+        <tr><td>water.noaa.gov</td><td>"open the resources menu, then go to hydrograph information"</td></tr>
+        <tr><td>www.weather.gov</td><td>"open the fire weather page", "which marine alerts are on the hazards map right now"</td></tr>
+        <tr><td>www.drought.gov</td><td>"jump the map to Alaska", "what percentage of the country is in severe drought right now"</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">Steps that load a new page end the run. The widget lives in the page and goes with it, but the extension doesn't. The panel reopens on the next page if the bookmark is clicked again, with the history kept.</p>
+  </div>
+</main>
+<script>
+  const origin = location.origin;
+  const code = `(() => {
+    if (window.WebControls) { window.WebControls.mount().open(); return; }
+    const s = document.createElement("script");
+    s.src = "${origin}/dist/web-controls-widget.js";
+    s.onload = () => setTimeout(() => window.WebControls && window.WebControls.mount().open(), 200);
+    s.onerror = () => alert("web-controls: the widget did not load from ${origin}. Is the demo server running, and does this site's Content-Security-Policy allow scripts from it?");
+    document.documentElement.appendChild(s);
+  })()`;
+  document.getElementById("bm").href = "javascript:" + encodeURIComponent(code.replace(/\s+/g, " "));
+</script>
+</body>
+</html>
