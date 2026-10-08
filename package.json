@@ -1,0 +1,37 @@
+{
+  "name": "web-controls-widget",
+  "version": "0.1.0",
+  "description": "A drop-in widget that lets visitors ask any page, in plain English, to do something or explain what it shows - answered by a model running on their own machine.",
+  "main": "dist/web-controls-widget.js",
+  "module": "dist/web-controls-widget.mjs",
+  "types": "dist/web-controls-widget.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/web-controls-widget.d.ts",
+      "import": "./dist/web-controls-widget.mjs",
+      "default": "./dist/web-controls-widget.js"
+    },
+    "./script": "./dist/web-controls-widget.js",
+    "./web-llm.js": "./dist/web-llm.js",
+    "./dist/*": "./dist/*"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "webllm",
+    "webgpu",
+    "agent",
+    "accessibility",
+    "widget",
+    "local-llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acid395/web-controls.git",
+    "directory": "widget"
+  },
+  "license": "MIT",
+  "sideEffects": true
+}
