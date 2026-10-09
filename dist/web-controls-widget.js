@@ -1,14 +1,18 @@
-/*! web-controls widget 0.1.0 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.1.1 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.1.0";
+globalThis.WC_WIDGET_VERSION = "0.1.1";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
 
 /* ---- extension/lib/models.js ---- */
 (function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* The models this extension will plan with, in one place.
  *
  * This list used to live in four: the offscreen document decided which ids
@@ -186,10 +190,16 @@ globalThis.WC_BIGGEST_THAT_FITS = function (gpu) {
 };
 
 })();
+} finally { console.log = __wcLog; }
+})();
 
 
 /* ---- extension/lib/step-prompt.js ---- */
 (function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* step-prompt.js - the words put in front of the model, in one place.
  *
  * This lived inside the offscreen document, which was the only thing that
@@ -467,10 +477,16 @@ function repairJson(slice) {
 globalThis.WC_FIRST_JSON_OBJECT = firstJsonObject;
 
 })();
+} finally { console.log = __wcLog; }
+})();
 
 
 /* ---- extension/lib/env-vocab.js ---- */
 (function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* ============================================================================
  * env-vocab.js - shared environmental-science vocabulary, not tied to any
  * one site.
@@ -616,10 +632,16 @@ globalThis.WC_FIRST_JSON_OBJECT = firstJsonObject;
 })();
 
 })();
+} finally { console.log = __wcLog; }
+})();
 
 
 /* ---- extension/lib/gpu.js ---- */
 (function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* gpu.js - what this machine's WebGPU adapter can and cannot do, in one
  * place.
  *
@@ -682,6 +704,8 @@ async function describeGpu() {
 
 globalThis.WC_DESCRIBE_GPU = describeGpu;
 
+})();
+} finally { console.log = __wcLog; }
 })();
 
 
@@ -768,6 +792,10 @@ function installFeedCapture() {
 
 /* ---- extension/page/generic-bundle.js ---- */
 (function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* ============================================================================
  * generic-controls.js - paste into the DevTools console on ANY page.
  *
@@ -4020,11 +4048,17 @@ if (window.__wcPageBridge) {
 }
 
 })();
+} finally { console.log = __wcLog; }
+})();
 
 
 /* ---- extension/page/*-bundle.js (named manifests) ---- */
 const WC_NAMED_BUNDLES = {
   USGS: function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* ============================================================================
  * web-controls.js - paste into the DevTools console on the live page.
  *
@@ -4474,8 +4508,14 @@ if (window.__wcPageBridge) {
   window.addEventListener("message", window.__wcPageBridge);
 }
 
+})();
+} finally { console.log = __wcLog; }
   },
   SITE: function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* ============================================================================
  * site-controls.js - paste into the DevTools console on a USGS
  *   monitoring-location page, e.g.
@@ -4921,8 +4961,14 @@ if (window.__wcPageBridge) {
   window.addEventListener("message", window.__wcPageBridge);
 }
 
+})();
+} finally { console.log = __wcLog; }
   },
   NOAA: function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* ============================================================================
  * noaa-controls.js - paste into the DevTools console on
  *   https://water.noaa.gov/
@@ -5380,8 +5426,14 @@ if (window.__wcPageBridge) {
   window.addEventListener("message", window.__wcPageBridge);
 }
 
+})();
+} finally { console.log = __wcLog; }
   },
   FCP: function () {
+const __wcLog = console.log;
+if (true) console.log = function () {};
+try {
+return (function () {
 /* ============================================================================
  * forecastpoints-controls.js - paste into the DevTools console on
  *   https://www.weather.gov/forecastpoints?lat=...&lon=...  (any forecast
@@ -5746,6 +5798,8 @@ if (window.__wcPageBridge) {
   window.addEventListener("message", window.__wcPageBridge);
 }
 
+})();
+} finally { console.log = __wcLog; }
   },
 };
 
@@ -5754,6 +5808,10 @@ if (window.__wcPageBridge) {
 function bootAgent(chrome) {
   const importScripts = () => {};
   const fetch = WC_NATIVE_FETCH;
+const __wcLog = console.log;
+if (globalThis.__wcQuiet) console.log = function () {};
+try {
+return (function () {
 /* background.js - the service worker.
  *
  * Eight things live here:
@@ -8907,6 +8965,23 @@ function matchOption(control, words) {
   // number that was the entire point of the instruction ignored. Every
   // option is scored, and an option matched whole beats one matched in part.
   const phrase = words.join(" ");
+  // A word that names the dropdown does not name an option in it. "Show only
+  // the lower basin reservoirs" against a Basin select holding All basins,
+  // Upper Colorado and Lower Colorado chose All basins - "basin" matched it
+  // as well as "lower" matched Lower Colorado, and the tie went to whichever
+  // came first. "Basin" is what the request called the dropdown; only
+  // "lower" was choosing within it. The label as inventoried carries the
+  // option texts too, so they come off it first to leave the control's own
+  // name.
+  const ownName = (() => {
+    let t = ` ${String(control.label || "").toLowerCase()} `;
+    for (const o of options) {
+      const ot = String(o.text || "").toLowerCase().trim();
+      if (ot) t = t.split(ot).join(" ");
+    }
+    return t;
+  })();
+  const naming = new Set(words.filter((w) => wordMatchesText(w, ownName) === "exact"));
   let best = null, bestScore = 0;
   for (const o of options) {
     const text = String(o.text || o.value || "").toLowerCase();
@@ -8914,6 +8989,7 @@ function matchOption(control, words) {
     let score = 0;
     if (meaningfulWords(text).join(" ") === phrase) score += 10;
     for (const w of words) {
+      if (naming.has(w)) continue;
       const hit = wordMatchesText(w, text);
       if (hit === "exact") score += 2;
       else if (hit) score += 1;   // fuzzy, below exact, never instead of it
@@ -18749,6 +18825,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 return;
               }
             }
+            // Counted by what changed, not by what was pressed. "Show only the
+            // lower basin" reported "Applied 3 controls" over three rows that
+            // each read "no change" - a submit after the dropdown and a second
+            // dropdown named on one shared word - so the headline claimed the
+            // opposite of the rows under it.
+            const did = steps.filter((st) => st.ok && st.changed !== false).length;
             respond({
               ok: !failed,
               plannedBy: "page-match",
@@ -18756,7 +18838,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               error: failed ? `"${failed.call.args.selector}" failed: ${failed.error}` : undefined,
               unmatchedWords: guess.unmatchedWords.length ? guess.unmatchedWords : undefined,
               display: {
-                title: failed ? "Partly applied" : (steps.length > 1 ? `Applied ${steps.length} controls` : "Applied"),
+                title: failed ? "Partly applied"
+                  : did === 0 ? "Nothing changed"
+                  : did > 1 ? `Applied ${did} controls` : "Applied",
                 subtitle: guess.unmatchedWords.length
                   ? `nothing on this page matched: ${guess.unmatchedWords.join(", ")}`
                   : guess.phrase,
@@ -19196,7 +19280,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-  return { routeFor };
+return { routeFor };
+})();
+} finally { console.log = __wcLog; }
 }
 
 
@@ -19272,11 +19358,20 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     // A worker the page's CSP forbids fails with an error event and nothing
     // else, and CreateWebWorkerMLCEngine would wait on it forever - so the
     // error is raced against the load.
-    const made = makeWorker();
+    // Some refusals are thrown by the constructor rather than reported later.
+    let made;
+    try { made = makeWorker(); } catch (e) {
+      const err = new Error(`the model worker could not start: ${String((e && e.message) || e)}`);
+      err.workerDidNotStart = true;
+      throw err;
+    }
     const worker = made.worker;
     const failed = new Promise((_, reject) => {
-      worker.addEventListener("error", (e) => reject(new Error(
-        `the model worker could not start${e && e.message ? `: ${e.message}` : ""}`)), { once: true });
+      worker.addEventListener("error", (e) => {
+        const err = new Error(`the model worker could not start${e && e.message ? `: ${e.message}` : ""}`);
+        err.workerDidNotStart = true;
+        reject(err);
+      }, { once: true });
     });
     try {
       const engine = await Promise.race([
@@ -19299,8 +19394,15 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     // smaller context window, which is what lets them fit beside a page.
     const chatOpts = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM(modelId) >= 4000)
       ? { context_window_size: 3072 } : undefined;
+    // The main thread only when the worker itself could not start - a CSP
+    // without blob:, a browser without module workers. A worker that started
+    // and then failed to load the model failed for a reason the main thread
+    // shares (the network, the card's memory), and falling back there began
+    // the whole multi-gigabyte download again to fail the same way.
     if (useWorker && makeWorker && typeof Worker !== "undefined" && api.CreateWebWorkerMLCEngine) {
-      try { return await inWorker(api, modelId, chatOpts); } catch (e) { /* main thread, below */ }
+      try { return await inWorker(api, modelId, chatOpts); } catch (e) {
+        if (!(e && e.workerDidNotStart)) throw e;
+      }
     }
     where = "the page";
     return api.CreateMLCEngine(modelId, { initProgressCallback: progressCb }, chatOpts);
@@ -19340,15 +19442,28 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
   async function step(modelId, prompt, { timeoutMs = 45000 } = {}) {
     const engine = await engineFor(modelId);
     const began = Date.now();
-    const reply = await Promise.race([
-      engine.chat.completions.create({
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: 192,
-      }),
-      new Promise((_, reject) => setTimeout(
-        () => reject(new Error(`inference timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)),
-    ]);
+    let timer = null;
+    let reply;
+    try {
+      reply = await Promise.race([
+        engine.chat.completions.create({
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: 192,
+        }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            // Stopped, not just abandoned. A generation nobody is waiting
+            // for still holds the engine, and the next decision queued
+            // behind it - so one slow turn made the turn after it slow too.
+            try { if (engine.interruptGenerate) engine.interruptGenerate(); } catch (e) { /* already done */ }
+            reject(new Error(`inference timed out after ${Math.round(timeoutMs / 1000)}s`));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
     const u = (reply && reply.usage) || {};
     const x = u.extra || {};
     return {
@@ -19445,13 +19560,21 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   // One localStorage entry holding the lot. Blocked storage (a sandboxed
   // frame, a privacy mode) falls back to memory: the history is then only
   // as long as the page, which is no worse than having none.
+  //
+  // And once a write has failed, memory for good. A full quota (5 MB, shared
+  // with the host app) refuses the write and leaves the old value readable,
+  // so reading localStorage after that returned the history as it was before
+  // the failure - every ask from then on vanished from it.
   let memory = {};
+  let memoryOnly = false;
   const readAll = () => {
+    if (memoryOnly) return memory;
     try { return JSON.parse(localStorage.getItem(storageKey) || "{}") || {}; } catch (e) { return memory; }
   };
   const writeAll = (data) => {
     memory = data;
-    try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch (e) { /* memory it is */ }
+    if (memoryOnly) return;
+    try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch (e) { memoryOnly = true; }
   };
   const storageLocal = {
     get(key, cb) {
@@ -19829,6 +19952,8 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   bar.appendChild(fill);
   bar.hidden = true;
   modelBox.append(modelRow, bar);
+  // A site that turned the model off should not offer to download one.
+  if (options.useModel === false) modelBox.hidden = true;
   panel.appendChild(modelBox);
 
   const log = el("div", "log");
@@ -19845,10 +19970,15 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   panel.appendChild(form);
 
   // --- model state -----------------------------------------------------------
+  // The site's model when nothing is stored yet. Falling back to the first
+  // in the list picked the 1B on a first open, because the site's default
+  // is written to storage asynchronously and the panel can ask first.
   const chosenModel = async () => {
     const got = await storage.get("llmModelId");
     const id = got.llmModelId;
-    return id && models.some((m) => m.id === id) ? id : (models[0] && models[0].id);
+    if (id && models.some((m) => m.id === id)) return id;
+    if (models.some((m) => m.id === options.model)) return options.model;
+    return models[0] && models[0].id;
   };
   const nameOf = (id) => (globalThis.WC_MODEL_NAME ? globalThis.WC_MODEL_NAME(id) : id);
 
@@ -20045,40 +20175,67 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   async function redraw() {
     const res = await send({ type: "askHistory" }).catch(() => null);
     log.textContent = "";
-    const history = (res && res.ok && res.history) || [];
+    let history = (res && res.ok && res.history) || [];
     recall = history.map((h) => h.instruction).filter(Boolean).reverse();
-    if (!history.length) { drawEmpty(); return; }
+    // The request running now is in the history as "running", and also on
+    // screen as its live card. Drawn once - live - or the panel shows it
+    // twice, and the stored copy never updates.
+    if (busy) {
+      const last = history.length - 1;
+      if (last >= 0 && history[last].status === "running") history = history.slice(0, last);
+    }
+    if (!history.length && !live.length) { drawEmpty(); return; }
     history.forEach((entry, i) => drawEntry(entry, i !== history.length - 1));
+    // Put back what is running and what is queued behind it. A redraw that
+    // left them out is how an answer ended up on a card no longer on screen:
+    // opening the panel mid-ask, or pressing Clear, emptied the log under it.
+    for (const slot of live) log.append(slot.echo, slot.card);
     scrollDown();
   }
 
   // --- asking --------------------------------------------------------------
+  // One at a time, in order. A second request while the first was running
+  // used to be dropped - and the input box had already been cleared, so
+  // whatever was typed was simply gone.
   let busy = false;
   let runningCard = null;
-  async function run(echo, message) {
-    if (busy) return;
-    busy = true;
-    sendBtn.disabled = true;
-    await drawing;
+  const live = [];
+  let queue = Promise.resolve();
+  const statusLine = (text) => {
+    const line = el("div");
+    line.append(el("span", "spin"), document.createTextNode(text));
+    return line;
+  };
+  function attach(slot) {
+    if (slot.echo.isConnected) return;
     const empty = log.querySelector(".empty");
     if (empty) empty.remove();
-    log.appendChild(el("div", "echo", echo));
-    runningCard = el("div", "card running");
-    const line = el("div");
-    line.append(el("span", "spin"), document.createTextNode("Working on it…"));
-    runningCard.appendChild(line);
-    log.appendChild(runningCard);
+    log.append(slot.echo, slot.card);
     scrollDown();
-    let res;
-    try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
-    const card = cardFor(res);
-    runningCard.replaceWith(card);
-    runningCard = null;
-    busy = false;
-    sendBtn.disabled = false;
-    scrollDown();
-    drawModel();
-    return res;
+  }
+  function run(echo, message) {
+    const slot = { echo: el("div", "echo", echo), card: el("div", "card running") };
+    slot.card.appendChild(statusLine(live.length ? "Waiting for the request before this one…" : "Working on it…"));
+    live.push(slot);
+    drawing.then(() => attach(slot));
+    const job = queue.then(async () => {
+      await drawing;
+      attach(slot);
+      busy = true;
+      runningCard = slot.card;
+      slot.card.replaceChildren(statusLine("Working on it…"));
+      let res;
+      try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      slot.card.replaceWith(cardFor(res));
+      live.splice(live.indexOf(slot), 1);
+      runningCard = null;
+      busy = false;
+      scrollDown();
+      drawModel();
+      return res;
+    });
+    queue = job.catch(() => {});
+    return job;
   }
   function ask(text) {
     const instruction = String(text || "").trim();
@@ -20095,9 +20252,7 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     if (m.type === "llmGenerating") text = "The model is thinking…";
     if (m.type === "llmProgress" && m.text) text = `Loading the model: ${m.text}`;
     if (!text) return;
-    const line = el("div");
-    line.append(el("span", "spin"), document.createTextNode(String(text).slice(0, 160)));
-    runningCard.replaceChildren(line);
+    runningCard.replaceChildren(statusLine(String(text).slice(0, 160)));
   }
 
   // --- open and close --------------------------------------------------------
@@ -20111,7 +20266,8 @@ function createWidgetUI({ send, modelHost, storage, options }) {
       drawHistory();
       chosenModel().then((id) => { if (id) picker.value = id; drawModel(); });
       startPolling();
-      if (options.autoLoad && !modelHost.status().ready && !modelHost.status().loading) loadModel();
+      if (options.autoLoad && options.useModel !== false
+        && !modelHost.status().ready && !modelHost.status().loading) loadModel();
       setTimeout(() => input.focus(), 0);
     }
   }
@@ -20137,11 +20293,10 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     }
     if (e.key === "Escape") { setOpen(false); launcher.focus(); }
   });
-  if (options.hotkey !== false) {
-    window.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggle(); }
-    });
-  }
+  const onHotkey = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggle(); }
+  };
+  if (options.hotkey !== false) window.addEventListener("keydown", onHotkey);
 
   (document.body || document.documentElement).appendChild(host);
   // Open again after a navigation if it was open before: on a multi-page
@@ -20155,7 +20310,11 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     ask,
     progress,
     loadModel,
-    destroy: () => { if (poll) clearInterval(poll); host.remove(); },
+    destroy: () => {
+      if (poll) clearInterval(poll);
+      window.removeEventListener("keydown", onHotkey);
+      host.remove();
+    },
     host,
   };
 }
@@ -20197,6 +20356,9 @@ const DEFAULTS = {
   webllmUrl: null,
   hotkey: true,
   storageKey: "web-controls",
+  // The agent logs every ask and its result. Useful while wiring the widget
+  // in; noise in somebody's production console, so off unless asked for.
+  debug: false,
 };
 
 let mounted = null;
@@ -20243,6 +20405,7 @@ function mount(userOptions = {}) {
   });
   shim.storage.set({ localModelEnabled: options.useModel !== false });
 
+  globalThis.__wcQuiet = !options.debug;
   agent = bootAgent(shim.chrome);
 
   ui = createWidgetUI({ send: shim.send, modelHost, storage: shim.storage, options });
@@ -20273,8 +20436,15 @@ function mount(userOptions = {}) {
     // The page as the agent sees it, for a developer checking what their
     // markup exposes.
     inventory: () => (window.GENERIC ? window.GENERIC.inventory() : null),
-    unmount: () => { ui.destroy(); modelHost.release(); },
+    // Gone, and mountable again. Leaving `mounted` set meant the next mount()
+    // handed back this one, with its panel already removed from the page.
+    unmount: () => {
+      ui.destroy();
+      modelHost.release();
+      if (mounted === api) mounted = null;
+    },
   };
+  const api = mounted;
   return mounted;
 }
 
@@ -20298,6 +20468,7 @@ function optionsFromScript(script) {
   if (d.worker === "false") out.worker = false;
   if (d.webllm) out.webllmUrl = d.webllm;
   if (d.hotkey === "false") out.hotkey = false;
+  if (d.debug != null) out.debug = d.debug !== "false";
   return out;
 }
 
