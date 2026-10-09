@@ -87,6 +87,7 @@ Copy the files in `dist/` into the site and add one tag. It mounts itself once t
 | `worker` | `data-worker="false"` | `true` | Run the model in a Web Worker so it never blocks your UI |
 | `webllmUrl` | `data-webllm` | `web-llm.js` beside the widget | Where to load WebLLM from |
 | `hotkey` | `data-hotkey="false"` | `true` | Ctrl/Cmd+Shift+Space toggles the panel |
+| `debug` | `data-debug` | `false` | Log every ask and its result to the console |
 | | `data-capture-feeds="false"` | on | Record the JSON/CSV your page fetches, so questions can be answered from the data behind a chart |
 | | `data-manual` | | Load but don't mount; call `WebControls.mount()` yourself |
 

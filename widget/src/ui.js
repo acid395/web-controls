@@ -162,6 +162,8 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   bar.appendChild(fill);
   bar.hidden = true;
   modelBox.append(modelRow, bar);
+  // A site that turned the model off should not offer to download one.
+  if (options.useModel === false) modelBox.hidden = true;
   panel.appendChild(modelBox);
 
   const log = el("div", "log");
@@ -178,10 +180,15 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   panel.appendChild(form);
 
   // --- model state -----------------------------------------------------------
+  // The site's model when nothing is stored yet. Falling back to the first
+  // in the list picked the 1B on a first open, because the site's default
+  // is written to storage asynchronously and the panel can ask first.
   const chosenModel = async () => {
     const got = await storage.get("llmModelId");
     const id = got.llmModelId;
-    return id && models.some((m) => m.id === id) ? id : (models[0] && models[0].id);
+    if (id && models.some((m) => m.id === id)) return id;
+    if (models.some((m) => m.id === options.model)) return options.model;
+    return models[0] && models[0].id;
   };
   const nameOf = (id) => (globalThis.WC_MODEL_NAME ? globalThis.WC_MODEL_NAME(id) : id);
 
@@ -378,40 +385,67 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   async function redraw() {
     const res = await send({ type: "askHistory" }).catch(() => null);
     log.textContent = "";
-    const history = (res && res.ok && res.history) || [];
+    let history = (res && res.ok && res.history) || [];
     recall = history.map((h) => h.instruction).filter(Boolean).reverse();
-    if (!history.length) { drawEmpty(); return; }
+    // The request running now is in the history as "running", and also on
+    // screen as its live card. Drawn once - live - or the panel shows it
+    // twice, and the stored copy never updates.
+    if (busy) {
+      const last = history.length - 1;
+      if (last >= 0 && history[last].status === "running") history = history.slice(0, last);
+    }
+    if (!history.length && !live.length) { drawEmpty(); return; }
     history.forEach((entry, i) => drawEntry(entry, i !== history.length - 1));
+    // Put back what is running and what is queued behind it. A redraw that
+    // left them out is how an answer ended up on a card no longer on screen:
+    // opening the panel mid-ask, or pressing Clear, emptied the log under it.
+    for (const slot of live) log.append(slot.echo, slot.card);
     scrollDown();
   }
 
   // --- asking --------------------------------------------------------------
+  // One at a time, in order. A second request while the first was running
+  // used to be dropped - and the input box had already been cleared, so
+  // whatever was typed was simply gone.
   let busy = false;
   let runningCard = null;
-  async function run(echo, message) {
-    if (busy) return;
-    busy = true;
-    sendBtn.disabled = true;
-    await drawing;
+  const live = [];
+  let queue = Promise.resolve();
+  const statusLine = (text) => {
+    const line = el("div");
+    line.append(el("span", "spin"), document.createTextNode(text));
+    return line;
+  };
+  function attach(slot) {
+    if (slot.echo.isConnected) return;
     const empty = log.querySelector(".empty");
     if (empty) empty.remove();
-    log.appendChild(el("div", "echo", echo));
-    runningCard = el("div", "card running");
-    const line = el("div");
-    line.append(el("span", "spin"), document.createTextNode("Working on it…"));
-    runningCard.appendChild(line);
-    log.appendChild(runningCard);
+    log.append(slot.echo, slot.card);
     scrollDown();
-    let res;
-    try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
-    const card = cardFor(res);
-    runningCard.replaceWith(card);
-    runningCard = null;
-    busy = false;
-    sendBtn.disabled = false;
-    scrollDown();
-    drawModel();
-    return res;
+  }
+  function run(echo, message) {
+    const slot = { echo: el("div", "echo", echo), card: el("div", "card running") };
+    slot.card.appendChild(statusLine(live.length ? "Waiting for the request before this one…" : "Working on it…"));
+    live.push(slot);
+    drawing.then(() => attach(slot));
+    const job = queue.then(async () => {
+      await drawing;
+      attach(slot);
+      busy = true;
+      runningCard = slot.card;
+      slot.card.replaceChildren(statusLine("Working on it…"));
+      let res;
+      try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      slot.card.replaceWith(cardFor(res));
+      live.splice(live.indexOf(slot), 1);
+      runningCard = null;
+      busy = false;
+      scrollDown();
+      drawModel();
+      return res;
+    });
+    queue = job.catch(() => {});
+    return job;
   }
   function ask(text) {
     const instruction = String(text || "").trim();
@@ -428,9 +462,7 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     if (m.type === "llmGenerating") text = "The model is thinking…";
     if (m.type === "llmProgress" && m.text) text = `Loading the model: ${m.text}`;
     if (!text) return;
-    const line = el("div");
-    line.append(el("span", "spin"), document.createTextNode(String(text).slice(0, 160)));
-    runningCard.replaceChildren(line);
+    runningCard.replaceChildren(statusLine(String(text).slice(0, 160)));
   }
 
   // --- open and close --------------------------------------------------------
@@ -444,7 +476,8 @@ function createWidgetUI({ send, modelHost, storage, options }) {
       drawHistory();
       chosenModel().then((id) => { if (id) picker.value = id; drawModel(); });
       startPolling();
-      if (options.autoLoad && !modelHost.status().ready && !modelHost.status().loading) loadModel();
+      if (options.autoLoad && options.useModel !== false
+        && !modelHost.status().ready && !modelHost.status().loading) loadModel();
       setTimeout(() => input.focus(), 0);
     }
   }
@@ -470,11 +503,10 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     }
     if (e.key === "Escape") { setOpen(false); launcher.focus(); }
   });
-  if (options.hotkey !== false) {
-    window.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggle(); }
-    });
-  }
+  const onHotkey = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggle(); }
+  };
+  if (options.hotkey !== false) window.addEventListener("keydown", onHotkey);
 
   (document.body || document.documentElement).appendChild(host);
   // Open again after a navigation if it was open before: on a multi-page
@@ -488,7 +520,11 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     ask,
     progress,
     loadModel,
-    destroy: () => { if (poll) clearInterval(poll); host.remove(); },
+    destroy: () => {
+      if (poll) clearInterval(poll);
+      window.removeEventListener("keydown", onHotkey);
+      host.remove();
+    },
     host,
   };
 }

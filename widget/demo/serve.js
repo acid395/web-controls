@@ -27,7 +27,9 @@ http.createServer((req, res) => {
   if (rel === "/") rel = "/demo/index.html";
   if (!rel.startsWith("/demo/") && !rel.startsWith("/dist/")) rel = `/demo${rel}`;
   const file = path.normalize(path.join(ROOT, rel));
-  if (!file.startsWith(ROOT)) { res.writeHead(403); res.end(); return; }
+  // ROOT plus a separator: a bare prefix test let "/demo/../../widget-x/..."
+  // through to any sibling directory whose name merely starts with "widget".
+  if (!file.startsWith(ROOT + path.sep)) { res.writeHead(403); res.end(); return; }
   fs.readFile(file, (err, data) => {
     const headers = {
       "Access-Control-Allow-Origin": "*",
@@ -40,7 +42,9 @@ http.createServer((req, res) => {
     res.writeHead(200, { ...headers, "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" });
     res.end(data);
   });
-}).listen(PORT, () => {
+// This machine only. With CORS open to every origin, listening on all
+// interfaces would serve these files to anything on the same network.
+}).listen(PORT, "127.0.0.1", () => {
   console.log(`web-controls widget demo: http://localhost:${PORT}`);
   console.log(`try it on another site:   http://localhost:${PORT}/try-on-any-site.html`);
 });

@@ -37,13 +37,21 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   // One localStorage entry holding the lot. Blocked storage (a sandboxed
   // frame, a privacy mode) falls back to memory: the history is then only
   // as long as the page, which is no worse than having none.
+  //
+  // And once a write has failed, memory for good. A full quota (5 MB, shared
+  // with the host app) refuses the write and leaves the old value readable,
+  // so reading localStorage after that returned the history as it was before
+  // the failure - every ask from then on vanished from it.
   let memory = {};
+  let memoryOnly = false;
   const readAll = () => {
+    if (memoryOnly) return memory;
     try { return JSON.parse(localStorage.getItem(storageKey) || "{}") || {}; } catch (e) { return memory; }
   };
   const writeAll = (data) => {
     memory = data;
-    try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch (e) { /* memory it is */ }
+    if (memoryOnly) return;
+    try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch (e) { memoryOnly = true; }
   };
   const storageLocal = {
     get(key, cb) {

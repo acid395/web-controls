@@ -32,6 +32,9 @@ const DEFAULTS = {
   webllmUrl: null,
   hotkey: true,
   storageKey: "web-controls",
+  // The agent logs every ask and its result. Useful while wiring the widget
+  // in; noise in somebody's production console, so off unless asked for.
+  debug: false,
 };
 
 let mounted = null;
@@ -78,6 +81,7 @@ function mount(userOptions = {}) {
   });
   shim.storage.set({ localModelEnabled: options.useModel !== false });
 
+  globalThis.__wcQuiet = !options.debug;
   agent = bootAgent(shim.chrome);
 
   ui = createWidgetUI({ send: shim.send, modelHost, storage: shim.storage, options });
@@ -108,8 +112,15 @@ function mount(userOptions = {}) {
     // The page as the agent sees it, for a developer checking what their
     // markup exposes.
     inventory: () => (window.GENERIC ? window.GENERIC.inventory() : null),
-    unmount: () => { ui.destroy(); modelHost.release(); },
+    // Gone, and mountable again. Leaving `mounted` set meant the next mount()
+    // handed back this one, with its panel already removed from the page.
+    unmount: () => {
+      ui.destroy();
+      modelHost.release();
+      if (mounted === api) mounted = null;
+    },
   };
+  const api = mounted;
   return mounted;
 }
 
@@ -133,5 +144,6 @@ function optionsFromScript(script) {
   if (d.worker === "false") out.worker = false;
   if (d.webllm) out.webllmUrl = d.webllm;
   if (d.hotkey === "false") out.hotkey = false;
+  if (d.debug != null) out.debug = d.debug !== "false";
   return out;
 }

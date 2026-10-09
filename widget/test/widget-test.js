@@ -190,6 +190,141 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("a client-side route change does not break the page", w.location.pathname === "/lake-mead/reports");
   }
 
+  console.log("two requests at once");
+  {
+    // The second used to be dropped - after the input box had been cleared.
+    const w = page();
+    await load(w);
+    const wc = w.WebControls.mount();
+    const pressed = [];
+    w.document.getElementById("t-rep").addEventListener("click", () => pressed.push("reports"));
+    w.document.getElementById("t-sum").addEventListener("click", () => pressed.push("summary"));
+    const [a, b] = await Promise.all([wc.ask("show the monthly reports"), wc.ask("show the summary")]);
+    check("both are carried out, in order", pressed.join(",") === "reports,summary", pressed.join(","));
+    check("and both come back", !!a && !!b);
+    const root = w.__widgetRoot;
+    check("and both are on screen, finished", root.querySelectorAll(".echo").length >= 2
+      && !root.querySelector(".card.running"));
+  }
+
+  console.log("reopening mid-ask");
+  {
+    // Opening the panel redraws it. Mid-ask, that redraw used to empty the
+    // log under the running card, so the answer went nowhere visible.
+    const w = page();
+    await load(w);
+    const wc = w.WebControls.mount();
+    wc.open();
+    const pending = wc.ask("show the monthly reports");
+    await new Promise((r) => setTimeout(r, 5));
+    wc.close();
+    wc.open();
+    await pending;
+    await new Promise((r) => setTimeout(r, 50));
+    const root = w.__widgetRoot;
+    check("the answer is still drawn", !root.querySelector(".card.running") && root.querySelectorAll(".log .card").length >= 1,
+      root.querySelector(".log").textContent.slice(0, 200));
+    // A static "Still running" card redrawn from the history is what the
+    // lost answer looked like: something on screen, and not the answer.
+    check("and is the answer, not a stale running card", !root.querySelector(".log").textContent.includes("Still running"),
+      root.querySelector(".log").textContent.slice(0, 200));
+    const echoes = [...root.querySelectorAll(".log > .echo")].map((n) => n.textContent);
+    check("once", echoes.filter((t) => t === "show the monthly reports").length === 1, echoes.join(" | "));
+  }
+
+  console.log("unmounting");
+  {
+    const w = page();
+    await load(w);
+    const first = w.WebControls.mount();
+    first.unmount();
+    check("the panel is gone", !w.document.querySelector("[data-web-controls-widget]"));
+    const second = w.WebControls.mount();
+    check("and mounting again gives a new one", second !== first && !!w.document.querySelector("[data-web-controls-widget]"));
+  }
+
+  console.log("a site that turns the model off");
+  {
+    const w = page();
+    await load(w, { useModel: "false" });
+    w.WebControls.mount().open();
+    check("offers no download", w.__widgetRoot.querySelector(".model").hidden === true);
+  }
+
+  console.log("a full storage quota");
+  {
+    // A refused write left the old value readable, so every ask after it
+    // vanished from the history.
+    const w = page();
+    await load(w);
+    const wc = w.WebControls.mount();
+    await wc.ask("show the monthly reports");
+    w.Storage.prototype.setItem = () => { throw new w.DOMException("full", "QuotaExceededError"); };
+    await wc.ask("show the summary");
+    wc.close();
+    wc.open();
+    await new Promise((r) => setTimeout(r, 50));
+    const asked = [...w.__widgetRoot.querySelectorAll(".echo, .past-q")].map((n) => n.textContent);
+    check("asks after the quota is hit are still in the history", asked.includes("show the summary"), asked.join(" | "));
+  }
+
+  console.log("the host app's console");
+  {
+    const w = page();
+    const logged = [];
+    w.console.log = (...a) => logged.push(a.join(" "));
+    await load(w);
+    await w.WebControls.mount().ask("show the monthly reports");
+    check("loading and asking print nothing", logged.length === 0, logged.slice(0, 3).join(" | "));
+  }
+
+  console.log("the model host");
+  {
+    // From its source, with WebLLM faked: the real one needs WebGPU.
+    const vm = require("vm");
+    const src = fs.readFileSync(path.join(__dirname, "..", "src", "model-host.js"), "utf8");
+    const box = { URL, setTimeout, clearTimeout, location: { href: "https://example.org/" }, Worker: function () {},
+      navigator: {}, globalThis: {} };
+    vm.createContext(box);
+    vm.runInContext(`${src}\nthis.createModelHost = createModelHost;`, box);
+    const fakeApi = (calls, { workerLoad = "ok" } = {}) => ({
+      CreateWebWorkerMLCEngine: async () => {
+        calls.push("worker");
+        if (workerLoad === "fail") throw new Error("out of memory");
+        return { unload() {} };
+      },
+      CreateMLCEngine: async () => { calls.push("main"); return { unload() {} }; },
+    });
+    const waitFor = async (host) => { for (let i = 0; i < 50 && host.status().loading; i++) await new Promise((r) => setTimeout(r, 5)); };
+
+    let calls = [];
+    let host = box.createModelHost({ loadLib: async () => fakeApi(calls),
+      makeWorker: () => { throw new Error("blocked by CSP"); } });
+    host.load("m");
+    await waitFor(host);
+    check("a worker that cannot start falls back to the page", calls.join(",") === "main" && host.status().where === "the page",
+      calls.join(","));
+
+    calls = [];
+    host = box.createModelHost({ loadLib: async () => fakeApi(calls, { workerLoad: "fail" }),
+      makeWorker: () => ({ worker: { addEventListener() {}, terminate() {} } }) });
+    host.load("m");
+    await waitFor(host);
+    check("a worker that started but failed to load does not download it all again",
+      calls.join(",") === "worker" && /out of memory/.test(host.status().error || ""), `${calls.join(",")} ${host.status().error}`);
+
+    let interrupted = false;
+    host = box.createModelHost({ loadLib: async () => ({
+      CreateMLCEngine: async () => ({
+        chat: { completions: { create: () => new Promise(() => {}) } },
+        interruptGenerate() { interrupted = true; },
+      }),
+    }), useWorker: false });
+    let err = null;
+    try { await host.step("m", "hi", { timeoutMs: 30 }); } catch (e) { err = e; }
+    check("a decision that times out is stopped, not left running", interrupted && /timed out/.test(String(err)));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

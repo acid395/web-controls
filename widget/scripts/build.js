@@ -29,7 +29,18 @@ const section = (name, body) => `\n/* ---- ${name} ---- */\n${body}\n`;
 // another only through globalThis (WC_MODELS, WC_BUILD_STEP_PROMPT,
 // window.GENERIC), and two of them declaring the same helper name at top
 // level would otherwise be a SyntaxError that takes the whole widget down.
-const isolated = (name, body) => section(name, `(function () {\n${body}\n})();`);
+// And quiet while they load. Each announces itself with a console.log - "Loaded
+// window.GENERIC" in green - which is useful in the extension and noise in
+// the console of every app that installs this. Only the load is silenced;
+// anything they log later goes through as normal.
+//
+// The silencing goes around a call, never around the code itself. Wrapping a
+// file in try { } put its declarations in a block, and background.js
+// declares median() twice - legal at the top of a function, a SyntaxError in
+// a block under strict mode, which a module always is. The script build is
+// sloppy and swallowed it; only the npm build broke.
+const quietly = (body, when = "true") => `const __wcLog = console.log;\nif (${when}) console.log = function () {};\ntry {\nreturn (function () {\n${body}\n})();\n} finally { console.log = __wcLog; }`;
+const isolated = (name, body) => section(name, `(function () {\n${quietly(body)}\n})();`);
 
 const background = read(EXT, "background.js");
 // Loaded in order below instead; the shim's importScripts does nothing.
@@ -60,14 +71,16 @@ function body(scriptUrlExpr, loadersExpr) {
     section("extension/page/*-bundle.js (named manifests)",
       "const WC_NAMED_BUNDLES = {\n"
       + [["USGS", "usgs"], ["SITE", "site"], ["NOAA", "noaa"], ["FCP", "forecastpoints"]]
-        .map(([g, file]) => `  ${g}: function () {\n${read(EXT, "page", `${file}-bundle.js`)}\n  },\n`).join("")
+        .map(([g, file]) => `  ${g}: function () {\n${quietly(read(EXT, "page", `${file}-bundle.js`))}\n  },\n`).join("")
       + "};"),
     section("extension/background.js (as the agent)",
       "function bootAgent(chrome) {\n"
       + "  const importScripts = () => {};\n"
       + "  const fetch = WC_NATIVE_FETCH;\n"
-      + background
-      + "\n  return { routeFor };\n}"),
+      // routeFor is returned from inside the block, where the wrapper
+      // puts every declaration the agent makes.
+      + quietly(`${background}\nreturn { routeFor };`, "globalThis.__wcQuiet")
+      + "\n}"),
     section("widget/src/model-host.js", read(SRC, "model-host.js")),
     section("widget/src/chrome-shim.js", read(SRC, "chrome-shim.js")),
     section("widget/src/ui.js", read(SRC, "ui.js")),
@@ -137,7 +150,18 @@ fs.writeFileSync(path.join(DIST, "web-llm-worker.mjs"), workerFile);
 fs.copyFileSync(path.join(EXT, "offscreen", "vendor", "web-llm.js"), path.join(DIST, "web-llm.js"));
 fs.copyFileSync(path.join(SRC, "index.d.ts"), path.join(DIST, "web-controls-widget.d.ts"));
 
-const kb = (f) => `${Math.round(fs.statSync(path.join(DIST, f)).size / 1024)} KB`;
+// Both outputs parsed in the mode they will run in: the script sloppy, the
+// module strict. A construct legal in one and not the other is exactly how
+// the npm build broke while every test of the script build passed.
+for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-llm-worker.mjs"]) {
+  try {
+    require("child_process").execFileSync(process.execPath, ["--check", path.join(DIST, f)], { stdio: "pipe" });
+  } catch (e) {
+    throw new Error(`dist/${f} does not parse:\n${String(e.stderr || e.message).split("\n").slice(0, 6).join("\n")}`);
+  }
+}
+
+const kb = (f) =>`${Math.round(fs.statSync(path.join(DIST, f)).size / 1024)} KB`;
 console.log(`web-controls widget ${pkg.version}`);
 for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-llm-worker.mjs", "web-llm.js", "web-controls-widget.d.ts"]) {
   console.log(`  dist/${f.padEnd(26)} ${kb(f)}`);

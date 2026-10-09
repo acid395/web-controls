@@ -30,6 +30,8 @@ export interface WidgetOptions {
   hotkey?: boolean;
   /** localStorage key the history is kept under. Default "web-controls". */
   storageKey?: string;
+  /** Log every ask and its result to the console. Default false. */
+  debug?: boolean;
 }
 
 /** A card, as the panel draws it. */

@@ -3166,6 +3166,50 @@ else {
   }
 }
 
+// "Show only the lower basin reservoirs", against a Basin dropdown holding
+// All basins, Upper Colorado and Lower Colorado, chose All basins: "basin"
+// matched it as well as "lower" matched Lower Colorado, and the tie went to
+// the first. The word naming the dropdown was voting for an option in it.
+// And the card said "Applied 3 controls" over rows that each read "no
+// change".
+{
+  const basinPage = `<!doctype html><html><body><main>
+    <label>Basin <select id="basin"><option value="all">All basins</option>
+      <option value="upper">Upper Colorado</option><option value="lower">Lower Colorado</option></select></label>
+    <label>Units <select id="units"><option value="maf">Million acre-feet</option>
+      <option value="km3">Cubic kilometers</option></select></label>
+    </main></body></html>`;
+  for (const [ask, want] of [
+    ["show only the lower basin reservoirs", "lower"],
+    ["show the upper basin", "upper"],
+  ]) {
+    const pg = loadPage(basinPage, { url: "https://reservoirs.example.org/" });
+    if (!pg) continue;
+    const bgB = loadBackground({ page: pg });
+    runAsync(async () => {
+      await bgB.__ask({ type: "smartAsk", instruction: ask });
+      check(`"${ask}" picks the option the request names, not the dropdown's own name`,
+        pg.document.getElementById("basin").value, want);
+    });
+  }
+  // Already set: pressing it changes nothing, and the card has to say so.
+  const pg = loadPage(basinPage, { url: "https://reservoirs.example.org/" });
+  if (pg) {
+    pg.document.getElementById("basin").value = "lower";
+    const bgN = loadBackground({ page: pg });
+    runAsync(async () => {
+      const r = await bgN.__ask({ type: "smartAsk", instruction: "show the lower basin" });
+      const rows = (r && r.display && r.display.rows) || [];
+      if (r && r.plannedBy === "page-match" && rows.length && rows.every((x) => x.value === "no change")) {
+        check("a run where nothing changed does not claim it applied anything", r.display.title, "Nothing changed");
+      } else {
+        ensure("a run where nothing changed does not claim it applied anything",
+          !(r && r.display && /^Applied/.test(r.display.title || "")), JSON.stringify(r && r.display).slice(0, 200));
+      }
+    });
+  }
+}
+
 // drought.gov's map switches sit past the two hundredth control, and the
 // list was cut at a hundred and twenty before anything was ranked - so
 // "jump the map to Alaska" could never be shown Jump to Alaska, and a model

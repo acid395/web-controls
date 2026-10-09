@@ -1,6 +1,6 @@
 {
   "name": "web-controls-widget",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A drop-in widget that lets visitors ask any page, in plain English, to do something or explain what it shows - answered by a model running on their own machine.",
   "main": "dist/web-controls-widget.js",
   "module": "dist/web-controls-widget.mjs",

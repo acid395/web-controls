@@ -3151,6 +3151,23 @@ function matchOption(control, words) {
   // number that was the entire point of the instruction ignored. Every
   // option is scored, and an option matched whole beats one matched in part.
   const phrase = words.join(" ");
+  // A word that names the dropdown does not name an option in it. "Show only
+  // the lower basin reservoirs" against a Basin select holding All basins,
+  // Upper Colorado and Lower Colorado chose All basins - "basin" matched it
+  // as well as "lower" matched Lower Colorado, and the tie went to whichever
+  // came first. "Basin" is what the request called the dropdown; only
+  // "lower" was choosing within it. The label as inventoried carries the
+  // option texts too, so they come off it first to leave the control's own
+  // name.
+  const ownName = (() => {
+    let t = ` ${String(control.label || "").toLowerCase()} `;
+    for (const o of options) {
+      const ot = String(o.text || "").toLowerCase().trim();
+      if (ot) t = t.split(ot).join(" ");
+    }
+    return t;
+  })();
+  const naming = new Set(words.filter((w) => wordMatchesText(w, ownName) === "exact"));
   let best = null, bestScore = 0;
   for (const o of options) {
     const text = String(o.text || o.value || "").toLowerCase();
@@ -3158,6 +3175,7 @@ function matchOption(control, words) {
     let score = 0;
     if (meaningfulWords(text).join(" ") === phrase) score += 10;
     for (const w of words) {
+      if (naming.has(w)) continue;
       const hit = wordMatchesText(w, text);
       if (hit === "exact") score += 2;
       else if (hit) score += 1;   // fuzzy, below exact, never instead of it
@@ -12993,6 +13011,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 return;
               }
             }
+            // Counted by what changed, not by what was pressed. "Show only the
+            // lower basin" reported "Applied 3 controls" over three rows that
+            // each read "no change" - a submit after the dropdown and a second
+            // dropdown named on one shared word - so the headline claimed the
+            // opposite of the rows under it.
+            const did = steps.filter((st) => st.ok && st.changed !== false).length;
             respond({
               ok: !failed,
               plannedBy: "page-match",
@@ -13000,7 +13024,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               error: failed ? `"${failed.call.args.selector}" failed: ${failed.error}` : undefined,
               unmatchedWords: guess.unmatchedWords.length ? guess.unmatchedWords : undefined,
               display: {
-                title: failed ? "Partly applied" : (steps.length > 1 ? `Applied ${steps.length} controls` : "Applied"),
+                title: failed ? "Partly applied"
+                  : did === 0 ? "Nothing changed"
+                  : did > 1 ? `Applied ${did} controls` : "Applied",
                 subtitle: guess.unmatchedWords.length
                   ? `nothing on this page matched: ${guess.unmatchedWords.join(", ")}`
                   : guess.phrase,
