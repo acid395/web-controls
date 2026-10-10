@@ -17,18 +17,47 @@
   // would leak memory.
   const FEED_URL_RE = /(\/api\/|\/rest\/|\/ogcapi\/|nwis|nwps|waterservices|waterdata|gridpoints|geoserver|\bwfs\b|\bwms\b|query\?|\.json(\?|$)|\.geojson(\?|$)|\.csv(\?|$)|observations|forecast|gauges?\/)/i;
   const FEED_LIMIT = 40;          // most recent N requests
-  const FEED_BODY_CAP = 200000;   // characters kept per response
+  // Per response, and for all of them together. 200,000 characters each cut
+  // off the one response that mattered most: a USGS monitoring location
+  // draws its chart from a single 885 KB request - seven days of readings at
+  // fifteen minutes - and a truncated body is never parsed, so the agent saw
+  // none of it. A budget across all of them keeps a long-lived page from
+  // holding forty such bodies at once: the oldest go first.
+  const FEED_BODY_CAP = 4000000;
+  const FEED_TOTAL_CAP = 24000000;
+  // Pictures are not data. NOAA's map requests its marker icons through a
+  // URL this pattern matches, and reading every PNG as text was memory spent
+  // on nothing.
+  const NOT_DATA = /^(image|font|audio|video)\/|octet-stream|protobuf/i;
   const feeds = [];
+  let held = 0;
+  // Absolute, before it is tested. A page's own requests are often relative:
+  // USGS fetches its flood stages from "/flood-stage/01646500/", which has
+  // none of the words the pattern looks for until the host is put back on -
+  // so the four numbers that answer "how far below flood stage" were never
+  // recorded. And fetch() takes a URL object as readily as a string.
+  const absolute = (u) => {
+    try {
+      const raw = typeof u === "string" ? u : (u && (u.href || u.url));
+      return raw ? new URL(String(raw), location.href).href : null;
+    } catch (e) { return null; }
+  };
   const record = (url, method, status, text, contentType) => {
     if (!url || !FEED_URL_RE.test(url)) return;
+    if (contentType && NOT_DATA.test(contentType)) return;
+    const body = text ? text.slice(0, FEED_BODY_CAP) : null;
+    held += body ? body.length : 0;
     feeds.push({
       url: String(url).slice(0, 400), method, status, contentType: contentType || null,
       at: new Date().toISOString(),
       bytes: text ? text.length : 0,
-      body: text ? text.slice(0, FEED_BODY_CAP) : null,
+      body,
       truncated: !!(text && text.length > FEED_BODY_CAP),
     });
-    while (feeds.length > FEED_LIMIT) feeds.shift();
+    while (feeds.length > FEED_LIMIT || (held > FEED_TOTAL_CAP && feeds.length > 1)) {
+      const gone = feeds.shift();
+      held -= gone.body ? gone.body.length : 0;
+    }
   };
 
   const nativeFetch = window.fetch;
@@ -36,12 +65,13 @@
     window.fetch = function (...args) {
       return nativeFetch.apply(this, args).then((res) => {
         try {
-          const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url);
-          if (url && FEED_URL_RE.test(url)) {
+          const url = absolute(args[0]);
+          const type = res.headers.get("content-type");
+          if (url && FEED_URL_RE.test(url) && !(type && NOT_DATA.test(type))) {
             // Clone first: reading the body the page is about to read
             // would consume the stream and break the page itself.
             res.clone().text()
-              .then((t) => record(url, (args[1] && args[1].method) || "GET", res.status, t, res.headers.get("content-type")))
+              .then((t) => record(url, (args[1] && args[1].method) || "GET", res.status, t, type))
               .catch(() => {});
           }
         } catch (e) { /* never let capture break a real request */ }
@@ -55,7 +85,7 @@
     const open = XHR.prototype.open;
     const send = XHR.prototype.send;
     XHR.prototype.open = function (method, url, ...rest) {
-      this.__wcMethod = method; this.__wcUrl = url;
+      this.__wcMethod = method; this.__wcUrl = absolute(url);
       return open.call(this, method, url, ...rest);
     };
     XHR.prototype.send = function (...args) {

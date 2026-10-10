@@ -384,6 +384,13 @@ const PLACE_FILLER = new Set([
   "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may",
   "jun", "june", "jul", "july", "aug", "august", "sep", "sept", "september",
   "oct", "october", "nov", "november", "dec", "december", "am", "pm",
+  // Measures of distance and degree, asked about a river rather than naming
+  // one. "How far is the river below flood stage" searched the country for
+  // a gauge called "far river" and never reached the flood stages the page
+  // had already downloaded. Only these two: the list also strips words
+  // before a question is matched to a table's columns, and "full" there is
+  // the column "Percent Full" in "how full is lake conroe".
+  "far", "close",
 ]);
 
 // Pulls the place out of an instruction by elimination: strip the parts we
@@ -2731,8 +2738,11 @@ const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|of
  */
 const ASKING_TO_READ_PLAINLY =
   /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
+// Including one that opens on a preposition. "At what gage height does this
+// location reach minor flood stage" was taken for a command, and the model
+// pressed a graph control instead of reading the flood stages off the page.
 const A_QUESTION =
-  /^\s*(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b/i;
+  /^\s*(?:please\s+)?(?:(?:at|in|on|by|from|to|for|of|with|under|after|before|since|until|above|below)\s+(?:what|which|how|when|where|whom)\b|(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b)/i;
 const ABOUT_WHAT_IS_HERE =
   /\b(?:here|this\s+(?:page|map|chart|graph|plot|table|site)|shown|showing|right\s+now|currently|current|at\s+the\s+moment|as\s+it\s+stands|in\s+effect)\b/i;
 // A request whose action depends on something it must first find out.
@@ -4171,7 +4181,7 @@ async function pageComputeRun({ fn, of, source = "auto" }) {
     const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
     const series = (feeds.ok && feeds.result && feeds.result.series) || [];
     const subject = meaningfulWords(word).filter((w) => !AGGREGATE_WORDS.has(w) && w.length > 2);
-    const named = series.find((sr) => subject.some((w) => wordMatchesText(w, sr.name.toLowerCase())));
+    const named = series.find((sr) => subject.some((w) => wordMatchesText(w, seriesHaystack(sr))));
     if (named && named.values.length) {
       const got = computeOver(fn, named.values.map(String));
       if (got) {
@@ -4955,14 +4965,8 @@ async function answerAfterActing(res, ask) {
         "choices on the page now:", ...choices.map((c) => `  ${c}`)].filter(Boolean).join("\n");
     }
   } catch (e) { /* the page text is still there to answer from */ }
-  const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
-  const series = ((feeds.ok && feeds.result && feeds.result.series) || []).filter((x) => x && x.count >= 3);
-  if (series.length) {
-    const lines = series.slice(0, 6).map((x) =>
-      `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
-    seen = [seen && seen !== "nothing readable" ? seen : null,
-      "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
-  }
+  const data = await pageDataLines(ask);
+  if (data.text) seen = [data.text, seen && seen !== "nothing readable" ? seen : null].filter(Boolean).join("\n");
   const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
     mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
   // A reply that would not parse still carries its words.
@@ -6335,16 +6339,18 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
-      const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
-      const series = ((feeds.ok && feeds.result && feeds.result.series) || [])
-        .filter((x) => x && x.count >= 3);
-      if (series.length) {
-        const lines = series.slice(0, 6).map((x) =>
-          `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
-        seen = [seen && seen !== "nothing readable" ? seen : null,
-          "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
-      }
       seen = withNamesWhereThin(seen, controls);
+      const data = await pageDataLines(goal);
+      if (data.text) seen = [data.text, seen && seen !== "nothing readable" ? seen : null].filter(Boolean).join("\n");
+      // Worked out already, from the page's own data. Measured live with a 3B:
+      // handed "Minor flood stage here is 10 ft; the latest reading, 2.71 ft,
+      // is 7.29 ft below it", it answered "2.71 ft". Asking it to restate a
+      // sentence it then garbles costs twenty seconds and the right answer.
+      if (data.direct && ASKING_TO_READ.test(goal) && !conditionalGoal) {
+        history.push({ did: "read the page", outcome: "answered from its data" });
+        return { ok: true, answer: data.answer, history, steps: history.length,
+          tookMs: Date.now() - began, said: lastSaid, fromData: true };
+      }
       if (seen) {
         observation = String(seen).slice(0, 2200);
         history.push({ did: "read the page", outcome: "got its values" });
@@ -6755,22 +6761,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // this extension had already captured, off the request the chart
       // itself made. Reading the picture is guesswork; reading what it drew
       // is not.
-      const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
-      const series = ((feeds.ok && feeds.result && feeds.result.series) || [])
-        .filter((x) => x && x.count >= 3);
-      if (series.length) {
-        const lines = series.slice(0, 6).map((x) =>
-          `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
+      const data = await pageDataLines(goal);
+      if (data.text) {
         const nothingRead = !read.ok || seen === "nothing readable";
-        seen = [
-          nothingRead ? null : seen,
-          "the series this page's charts are drawn from:",
-          ...lines,
-        ].filter(Boolean).join("\n").slice(0, 2200);
+        seen = [data.text, nothingRead ? null : seen].filter(Boolean).join("\n").slice(0, 2200);
       }
       observation = seen;
       history.push({ did: "read the page",
-        outcome: read.ok || series.length ? "got its values" : "failed" });
+        outcome: read.ok || data.text ? "got its values" : "failed" });
       continue;
     }
 
@@ -7786,6 +7784,207 @@ function actionToCall(act, control, s) {
       args: { selector: sel, value: hit ? (hit.value ?? hit.text) : String(s.value ?? "") } };
   }
   return null;
+}
+
+/* The data a page downloaded for its charts, as lines a reader can answer from.
+ *
+ * Three readers built this the same way - "name: N readings, lo to hi,
+ * latest x, mean y" - and appended it after the page's text, which was then
+ * cut to 2,200 characters. On a page with any text at all the data was cut
+ * off before the model saw it. And what survived said "latest 2.71" with no
+ * unit and no time, so "when was the latest reading taken" and "is it
+ * provisional" could not be answered from it however good the model was.
+ *
+ * Now: every series with its unit, its status, and the time of its latest,
+ * highest and lowest readings; the small facts fetched beside it (flood
+ * stages); the series the question names first; and the block goes in front
+ * of the page text, so trimming the page never trims the data.
+ */
+const seriesHaystack = (sr) => [sr.name, sr.from, sr.unit, sr.quantity]
+  .filter(Boolean).join(" ").toLowerCase();
+
+// The page's clock, which is the visitor's: what the chart's axis shows.
+function whenLocal(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric",
+    minute: "2-digit", timeZoneName: "short" });
+}
+
+function seriesLine(sr) {
+  const u = sr.unit ? ` ${sr.unit}` : "";
+  const at = (iso) => (whenLocal(iso) ? ` at ${whenLocal(iso)}` : "");
+  // A JSON container name is not a name: GeoJSON calls every series "features".
+  const own = sr.name.split(".").pop();
+  const label = [sr.from && sr.from !== "feed" ? sr.from : null,
+    /^(features|properties|values?|data|items|records|results)$/i.test(own) ? null : own]
+    .filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(" ") || "series";
+  const what = [sr.quantity, sr.unit].filter(Boolean).join(", ");
+  const parts = [
+    // "Taken", because that is how it is asked: "when was it taken" was
+    // answered with the value alone while the time sat on the same line.
+    `latest reading ${sr.last}${u}${sr.lastAt ? `, taken ${whenLocal(sr.lastAt)}` : ""}${sr.status ? ` (${sr.status})` : ""}`,
+    `highest ${sr.max}${u}${at(sr.maxAt)}`,
+    `lowest ${sr.min}${u}${at(sr.minAt)}`,
+    `average ${sr.mean}${u}`,
+  ];
+  if (typeof sr.change === "number") {
+    parts.push(`change ${sr.change > 0 ? "+" : ""}${sr.change}${u}${sr.firstAt ? ` since ${whenLocal(sr.firstAt)}` : ""}`);
+  }
+  return `${label}${what ? ` (${what})` : ""}, ${sr.count} readings: ${parts.join("; ")}`;
+}
+
+/* What the question asks of the data, answered here in a sentence.
+ *
+ * Measured on waterdata.usgs.gov with Llama 3.2 3B: given every statistic
+ * of the week's gage height and the flood stages beside them, it answered
+ * "2.71 ft" - the first number it saw - to the latest reading, to its
+ * approval status, to the distance below flood stage, and "2.80 ft" to the
+ * height of minor flood stage, which the data said was 10. More facts made
+ * it worse, not better. Picking the statistic and doing the subtraction are
+ * not what a small model does reliably, and the page's own data already
+ * holds the answer, so the sentence is written here and the model restates
+ * it. It still has the whole block below for anything this does not cover.
+ */
+const DATA_ASKS = [
+  ["stage", /\bflood(ing)?\b|\b(action|minor|moderate|major)\s+stage\b/i],
+  ["status", /\b(provisional|approved|approval|reliable|verified|final|status)\b/i],
+  ["max", /\b(highest|max(imum)?|peak(ed)?|crest(ed)?|top)\b/i],
+  ["min", /\b(lowest|min(imum)?|bottom(ed)?)\b/i],
+  ["change", /\b(chang\w*|rise|rose|risen|rising|fall|fell|fallen|falling|drop\w*|increas\w*|decreas\w*|trend\w*|differ\w*)\b/i],
+  // "Mean" the noun, not the verb: "what does that mean" is not asking for an average.
+  ["mean", /\b(average|typical)\b|\bthe\s+mean\b|\bmean\s+(value|level|height|flow|reading)\b/i],
+  ["latest", /\b(latest|current(ly)?|now|most recent|last reading|right now|today|taken)\b/i],
+];
+
+function dataAnswerFor(goal, series, stageLines) {
+  const asks = DATA_ASKS.filter(([, re]) => re.test(goal)).map(([k]) => k);
+  if (!asks.length || !series.length) return null;
+  const sr = series[0];
+  const u = sr.unit ? ` ${sr.unit}` : "";
+  const what = sr.quantity && /level|height/.test(sr.quantity) ? "the gage height" : "the reading";
+  const when = (iso) => whenLocal(iso) || "an unrecorded time";
+  const out = [];
+  if (asks.includes("stage") && stageLines.length) {
+    // The stage named, where one is. Plain "flood stage" is the minor one -
+    // that is what the National Weather Service means by it - and listing
+    // all four turned a one-number answer into a paragraph.
+    const named = /\b(action|minor|moderate|major)\b/i.exec(goal);
+    const parts = stageLines[0].parts;
+    const want = named ? named[1].toLowerCase() : /\bflood\s+stage\b/i.test(goal) ? "minor" : null;
+    const pick = want ? parts.filter((p) => p.name.toLowerCase() === want) : parts;
+    for (const p of (pick.length ? pick : parts)) {
+      const label = p.name === "action" ? "Action stage" : `${p.name[0].toUpperCase()}${p.name.slice(1)} flood stage`;
+      out.push(`${label} here is ${p.at}${u}; the latest reading, ${sr.last}${u}, is ${Math.abs(p.d)}${u} ${p.d >= 0 ? "below" : "above"} it.`);
+    }
+  }
+  if (asks.includes("status") && sr.status) {
+    out.push(`The latest reading, ${sr.last}${u} taken ${when(sr.lastAt)}, is ${sr.status}.`);
+  }
+  if (asks.includes("max")) out.push(`The highest was ${sr.max}${u}, at ${when(sr.maxAt)}.`);
+  if (asks.includes("min")) out.push(`The lowest was ${sr.min}${u}, at ${when(sr.minAt)}.`);
+  if (asks.includes("change") && typeof sr.change === "number") {
+    const dir = sr.change > 0 ? "rose" : sr.change < 0 ? "fell" : "did not change";
+    out.push(`Since ${when(sr.firstAt)}, ${what} ${dir}${sr.change ? ` by ${Math.abs(sr.change)}${u}` : ""}, from ${sr.first}${u} to ${sr.last}${u}.`);
+  }
+  if (asks.includes("mean")) out.push(`The average over ${sr.count} readings was ${sr.mean}${u}.`);
+  if (asks.includes("latest") && !out.some((x) => x.startsWith("The latest reading"))) {
+    out.push(`The latest reading is ${sr.last}${u}, taken ${when(sr.lastAt)}${sr.status ? ` (${sr.status})` : ""}.`);
+  }
+  return out.length ? out.join(" ") : null;
+}
+
+// Facts shaped like <quantity>.stages.<name> = number, with <quantity>.units
+// beside them, matched to the series measured in the same unit.
+function stageDistances(facts, series) {
+  const groups = new Map();
+  for (const x of facts) {
+    const m = /^(.*?)\.?stages\.([a-z_]+)$/i.exec(x.path);
+    if (m && typeof x.value === "number") {
+      if (!groups.has(m[1])) groups.set(m[1], { stages: [], unit: null });
+      groups.get(m[1]).stages.push({ name: m[2], at: x.value });
+    }
+  }
+  for (const x of facts) {
+    const m = /^(.*?)\.?units?$/i.exec(x.path);
+    if (m && groups.has(m[1]) && typeof x.value === "string") groups.get(m[1]).unit = x.value;
+  }
+  const out = [];
+  for (const [name, g] of groups) {
+    if (!g.unit || !g.stages.length) continue;
+    const sr = series.find((s) => s.unit && s.unit.toLowerCase() === g.unit.toLowerCase());
+    if (!sr) continue;
+    const round = (n) => Number(n.toFixed(2));
+    const parts = g.stages.sort((a, b) => a.at - b.at)
+      .map((st) => ({ name: st.name, at: st.at, d: round(st.at - sr.last) }));
+    const said = parts.map((p) => {
+      const label = p.name === "action" ? "action stage" : `${p.name} flood stage`;
+      return `${Math.abs(p.d)} ${g.unit} ${p.d >= 0 ? "below" : "above"} ${label} (${p.at} ${g.unit})`;
+    });
+    out.push({ line: `- ${name.replace(/_/g, " ")} now ${sr.last} ${g.unit}: ${said.join(", ")}`, parts });
+  }
+  return out;
+}
+
+async function pageDataLines(goal, { budget = 900 } = {}) {
+  const [s, f] = await Promise.all([
+    invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false })),
+    invokeOnActiveTab("capturedFacts", [{}]).catch(() => ({ ok: false })),
+  ]);
+  const series = ((s.ok && s.result && s.result.series) || []).filter((x) => x && x.count >= 3);
+  const facts = (f.ok && f.result && f.result.facts) || [];
+  if (!series.length && !facts.length) return { text: null, series, facts };
+
+  // The series the question names first; the longest first among equals.
+  const words = meaningfulWords(goal).filter((w) => w.length > 2);
+  const score = (sr) => words.filter((w) => wordMatchesText(w, seriesHaystack(sr))).length;
+  const ranked = series.map((sr) => ({ sr, n: score(sr) }))
+    .sort((a, b) => b.n - a.n || b.sr.count - a.sr.count).map((x) => x.sr);
+
+  const lines = ["Data this page downloaded for its charts (exact values, from its own requests):"];
+  let used = lines[0].length;
+  for (const sr of ranked) {
+    const line = `- ${seriesLine(sr)}`;
+    if (used + line.length > budget && lines.length > 1) break;
+    lines.push(line);
+    used += line.length;
+  }
+  const byFeed = new Map();
+  for (const x of facts) {
+    if (/(^|[._])(parameter_)?code$/i.test(x.path)) continue;   // a lookup key, not a fact
+    if (!byFeed.has(x.from)) byFeed.set(x.from, []);
+    byFeed.get(x.from).push(`${x.path} ${x.value}`);
+  }
+  // How far the latest reading is from each stage, worked out here. "How far
+  // is the river below flood stage" was answered "2.71 ft" - the reading,
+  // not the distance - with the stages two lines below it. Subtracting is
+  // not what a 3B model does reliably, and it does not have to.
+  const stages = stageDistances(facts, ranked);
+  for (const { line } of stages) {
+    if (used + line.length > budget) break;
+    lines.push(line);
+    used += line.length;
+  }
+  // The raw stages only where they were not already turned into distances.
+  const summarised = stages.length
+    ? new Set(facts.filter((x) => /\.stages\./.test(x.path)).map((x) => x.from)) : new Set();
+  for (const [from, items] of byFeed) {
+    if (summarised.has(from)) continue;
+    const line = `- ${from}: ${items.join("; ")}`.slice(0, 320);
+    if (used + line.length > budget) break;
+    lines.push(line);
+    used += line.length;
+  }
+  const answer = dataAnswerFor(goal, ranked, stages);
+  if (answer) lines.unshift(`Answer from this page's data: ${answer}`);
+  // Sure enough to answer without the model only when the question names
+  // what the series measures, or asks about flood stage and the page
+  // fetched its stages. "What is the latest discussion" on a page that also
+  // happens to chart something must not be answered with that chart.
+  const direct = !!answer && ((ranked.length && score(ranked[0]) > 0)
+    || (stages.length && DATA_ASKS[0][1].test(goal)));
+  return { text: lines.length > (answer ? 2 : 1) ? lines.join("\n") : null, series: ranked, facts, answer, direct };
 }
 
 // The page, short enough to put in front of a small model. Values and table
@@ -11610,7 +11809,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (agent && agent.ok && (agent.answer || didSomething)) {
               const acted = agent.history.filter((h) => h.did !== "read the page");
               respond({
-                ok: true, plannedBy: "model", steps: agent.history, answer: agent.answer || undefined,
+                ok: true, plannedBy: agent.fromData ? "page-data" : "model", steps: agent.history, answer: agent.answer || undefined,
                 display: {
                   title: agent.answer
                     // The first sentence as the headline, the whole thing
@@ -11631,7 +11830,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       // run the model never saw was still being reported as
                       // its work, which is the same dishonesty as a card
                       // claiming an action that did not happen.
-                      + (agent.withoutModel
+                      + (agent.fromData
+                        ? "worked out from the data this page downloaded, without asking the model"
+                        : agent.withoutModel
                         ? "matched by meaning, without asking the model"
                         : "decided by the local model"),
                     agent.history.some((h) => h.unrelated)
@@ -12504,22 +12705,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const series = (feeds.ok && feeds.result && feeds.result.series) || [];
           if (series.length) {
             const subject = meaningfulWords(wanted).filter((w) => !AGGREGATE_WORDS.has(w) && w.length > 2);
-            const named = series.find((sr) => subject.some((w) => wordMatchesText(w, sr.name.toLowerCase())));
+            const named = series.find((sr) => subject.some((w) => wordMatchesText(w, seriesHaystack(sr))));
             if (named) {
               const stat = wantsAgg ? wantsAgg.fn : null;
               const value = stat === "mean" ? named.mean : stat === "max" ? named.max
                 : stat === "min" ? named.min : stat === "sum" ? named.values.reduce((a, b) => a + b, 0)
                 : stat === "count" ? named.count : named.last;
+              // With its unit and its moment. "2.91" answered "what was the
+              // highest reading" and could not say in what, or when.
+              const u = named.unit ? ` ${named.unit}` : "";
+              const when = stat === "max" ? named.maxAt : stat === "min" ? named.minAt
+                : stat === null ? named.lastAt : null;
+              const whenText = whenLocal(when);
               respond({
                 ok: true, plannedBy: "page-data", series: named.name, from: named.from,
                 display: {
-                  title: `${wantsAgg ? wantsAgg.word + " " : ""}${named.name.split(".").pop()}`.trim(),
-                  subtitle: `${value} · ${wantsAgg ? `over ${named.count} points` : `latest of ${named.count} points`} the page itself downloaded`,
+                  title: `${wantsAgg ? wantsAgg.word + " " : ""}${named.quantity || named.name.split(".").pop()}`.trim(),
+                  subtitle: `${value}${u}${whenText ? ` at ${whenText}` : ""}${stat === null && named.status ? ` (${named.status})` : ""}`
+                    + ` · ${wantsAgg ? `over ${named.count} points` : `latest of ${named.count} points`} the page itself downloaded`,
                   stats: [
-                    { label: "latest", value: String(named.last) },
-                    { label: "low", value: String(named.min) },
-                    { label: "high", value: String(named.max) },
-                    { label: "mean", value: String(named.mean) },
+                    { label: "latest", value: `${named.last}${u}` },
+                    { label: "low", value: `${named.min}${u}` },
+                    { label: "high", value: `${named.max}${u}` },
+                    { label: "mean", value: `${named.mean}${u}` },
                   ],
                   rows: [],
                   caveat: `read from the page's own request to ${named.from || "this site"}, not from an agency`,

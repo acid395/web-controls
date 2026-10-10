@@ -3166,6 +3166,137 @@ else {
   }
 }
 
+// The data behind a chart, from what a live USGS monitoring location really
+// fetched (research/live-scoring/feeds/usgs.json, recorded through DevTools).
+// Four things kept the agent from it: the 885 KB response was cut at 200 KB
+// and never parsed; its values are numbers in quotes, which the reader
+// skipped; the time, unit and approval status beside each value were thrown
+// away; and the lines that survived were appended after the page text and
+// then trimmed off with it.
+{
+  const fsd = require("fs");
+  const pathd = require("path");
+  const root = pathd.join(__dirname, "..", "..", "research", "live-scoring");
+  const capFile = pathd.join(root, "feeds", "usgs.json");
+  const pageFile = pathd.join(root, "pages", "usgs.html");
+  if (fsd.existsSync(capFile) && fsd.existsSync(pageFile)) {
+    const cap = JSON.parse(fsd.readFileSync(capFile, "utf8"));
+    const html = fsd.readFileSync(pageFile, "utf8");
+    const withFeeds = (pg) => {
+      pg.__wcFeedCapture = { installedAt: cap.capturedAt, feeds: cap.feeds.map((f) => ({ url: f.url, method: "GET",
+        status: f.status, contentType: f.contentType, at: cap.capturedAt, bytes: f.bytes, body: f.body, truncated: false })) };
+      return pg;
+    };
+    const pg = loadPage(html, { url: cap.page });
+    if (pg) {
+      withFeeds(pg);
+      const got = pg.GENERIC.capturedSeries().series;
+      const gage = got.find((x) => x.unit === "ft" && x.count > 100);
+      ensure("the gage height series is read from numbers written as text", !!gage, JSON.stringify(got.map((x) => x.name)));
+      if (gage) {
+        check("with its unit", gage.unit, "ft");
+        check("and its approval status", gage.status, "Provisional");
+        ensure("and the time of its latest, highest and lowest readings", !!(gage.lastAt && gage.maxAt && gage.minAt));
+        check("in time order, so the latest is the last one taken", gage.lastAt, "2026-10-09T22:50:00.000Z");
+      }
+      // A basemap's zoom levels and a river's segment numbers are numbers,
+      // not readings.
+      check("map settings and identifiers are not taken for readings",
+        got.filter((x) => /lods|comid/i.test(x.name)).map((x) => x.name).join(", "), "");
+      const facts = pg.GENERIC.capturedFacts().facts;
+      ensure("the flood stages fetched beside the data are read too",
+        facts.some((x) => x.from === "flood-stage" && /gage_height\.stages\.minor/.test(x.path) && x.value === 10),
+        JSON.stringify(facts).slice(0, 300));
+    }
+
+    // What the model is shown: the data first, so trimming the page text
+    // never trims it.
+    const pgM = loadPage(html, { url: cap.page });
+    if (pgM) {
+      withFeeds(pgM);
+      const bgM = loadBackground({ page: pgM });
+      let shown = null;
+      bgM.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmEmbed") return { ok: false };
+        if (m.type === "llmStep") { shown = shown || m.observation; return { ok: true, step: { do: "finish", answer: "ok" } }; }
+        return undefined;
+      };
+      runAsync(async () => {
+        await bgM.__ask({ type: "smartAsk", instruction: "is the latest reading provisional or approved" });
+        const s = String(shown || "");
+        ensure("the model is shown the latest reading with its unit, time and status",
+          /latest reading 2\.71 ft, taken .+\(Provisional\)/.test(s), s.slice(0, 300));
+        ensure("and how far it is from each flood stage, worked out",
+          /7\.29 ft below minor flood stage \(10 ft\)/.test(s), s.slice(0, 700));
+        ensure("ahead of the page text, where trimming cannot reach it",
+          /^Answer from this page's data: .*\nData this page downloaded/.test(s), s.slice(0, 160));
+      });
+    }
+
+    // Without a model: a statistic of a series the question names, with its
+    // unit and its moment. Found by the unit's quantity, since the series is
+    // called nothing more than "features".
+    const pgD = loadPage(html, { url: cap.page });
+    if (pgD) {
+      withFeeds(pgD);
+      const bgD = loadBackground({ page: pgD });
+      bgD.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        const r = await bgD.__ask({ type: "smartAsk", instruction: "what was the highest gage height this week" });
+        ensure("the highest reading is answered from the data, in feet, with when",
+          r && r.plannedBy === "page-data" && /^2\.91 ft at /.test((r.display && r.display.subtitle) || ""),
+          JSON.stringify(r && r.display).slice(0, 300));
+        const f = await bgD.__ask({ type: "smartAsk", instruction: "how far is the river below flood stage" });
+        ensure("\"how far is the river\" is not a search for a gauge called \"far river\"",
+          !/No gauge named/.test((f && f.display && f.display.title) || ""), JSON.stringify(f && f.display).slice(0, 200));
+      });
+    }
+  }
+
+  // api.weather.gov's shape: the unit stated once above the series, each
+  // value timed by an interval.
+  const pgW = loadPage("<!doctype html><html><body><p>forecast</p></body></html>", { url: "https://forecast.weather.gov/" });
+  if (pgW) {
+    const body = JSON.stringify({ properties: { temperature: { uom: "wmoUnit:degC", values: [
+      { validTime: "2026-10-09T12:00:00+00:00/PT1H", value: 12.2 },
+      { validTime: "2026-10-09T13:00:00+00:00/PT2H", value: 14.8 },
+      { validTime: "2026-10-09T15:00:00+00:00/PT1H", value: 13.1 },
+    ] } } });
+    pgW.__wcFeedCapture = { installedAt: "x", feeds: [{ url: "https://api.weather.gov/gridpoints/MKX/1,1", method: "GET",
+      status: 200, contentType: "application/geo+json", at: "x", bytes: body.length, body, truncated: false }] };
+    const t = pgW.GENERIC.capturedSeries().series[0];
+    ensure("a unit stated above the series reaches it", !!t && t.unit === "degC" && t.quantity === "temperature", JSON.stringify(t));
+    ensure("and an interval's start is its time", !!t && t.maxAt === "2026-10-09T13:00:00.000Z", t && t.maxAt);
+  }
+
+  // Capture itself: the whole of a large response, and no pictures.
+  const pgC = loadPage("<!doctype html><html><body></body></html>", { url: "https://example.org/" });
+  if (pgC && typeof Response === "function") {
+    const big = JSON.stringify({ features: Array.from({ length: 12000 }, (_, i) => ({ properties: { time: `2026-10-0${1 + (i % 9)}T00:00:00Z`, value: String(i) } })) });
+    pgC.fetch = async (url) => (/png/.test(String(url))
+      ? new Response("\x89PNG", { headers: { "content-type": "image/png" } })
+      : new Response(big, { headers: { "content-type": "application/json" } }));
+    const src = fsd.readFileSync(pathd.join(__dirname, "..", "page", "feed-capture.js"), "utf8");
+    pgC.eval(src);
+    runAsync(async () => {
+      await pgC.fetch("https://api.example.org/data.json");
+      await pgC.fetch("https://api.example.org/icons/gauge.png");
+      // Relative, the way USGS asks for its flood stages: "/flood-stage/..."
+      // carries none of the words the pattern looks for until the host is
+      // put back on.
+      await pgC.fetch("/api/flood-stage/01646500/");
+      await new Promise((r) => setTimeout(r, 20));
+      const feeds = pgC.__wcFeedCapture.feeds;
+      ensure("a response well over 200 KB is kept whole", feeds.length >= 1 && feeds[0].truncated === false && feeds[0].bytes > 200000,
+        JSON.stringify(feeds.map((f) => ({ url: f.url, bytes: f.bytes, truncated: f.truncated }))));
+      ensure("and an image is not recorded as data", !feeds.some((f) => /png/.test(f.url)));
+      ensure("and a relative request is recorded, at its full address",
+        feeds.some((f) => f.url === "https://example.org/api/flood-stage/01646500/"), feeds.map((f) => f.url).join(" | "));
+    });
+  }
+}
+
 // "Show only the lower basin reservoirs", against a Basin dropdown holding
 // All basins, Upper Colorado and Lower Colorado, chose All basins: "basin"
 // matched it as well as "lower" matched Lower Colorado, and the tie went to

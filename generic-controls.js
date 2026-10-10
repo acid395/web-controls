@@ -1062,65 +1062,231 @@
    * which is the only way this works on a site nobody has looked at.
    * ========================================================================== */
   const NUMERIC_KEY = /^(value|val|v|y|reading|amount|measurement|data)$/i;
+  // Beside each number, what it was measured at, in, and how far to trust it.
+  // USGS sends every reading as {"time", "value": "2.84", "unit_of_measure":
+  // "ft", "approval_status": "Provisional"} - the number in quotes, which the
+  // walk below skipped entirely, and the three fields that answer "when was
+  // it taken", "in what" and "is it provisional" thrown away beside it.
+  const TIME_KEY = /^(time|date_?time|datetime|date|timestamp|ts|t|valid_?time|obs(ervation)?_?time|period|start|time_?stamp)$/i;
+  const UNIT_KEY = /^(unit|units|uom|unit_?of_?measure(ment)?|unit_?code|unitcode)$/i;
+  const STATUS_KEY = /^(approval_?status|status|qualifiers?|quality(_?code)?|qc|flags?)$/i;
+  // Numbers that are not measurements: identifiers, coordinates, the parts
+  // of a date, paging.
+  // Anything ending in "id" included: USGS flowlines number every river
+  // segment as nhdplus_comid, and 239 of those read as a series of readings.
+  const NOT_MEASURED = /(id|ids|(^|_)(lat|lon|lng|latitude|longitude|x|code|year|month|day|hour|minute|zoom|index|count|page|limit|offset|number_?returned|number_?matched|epoch|srid|level|resolution|scale))$/i;
+  // Requests that configure a map rather than carry data: tile pyramids,
+  // styles, sprites. A basemap's 24 zoom levels are numbers, not readings.
+  const MAP_PLUMBING = /MapServer\/?(\?|$)|\/tile(s)?\/|tilejson|\/style(s)?[\/.]|vector_styles|sprite|\/fonts?\//i;
+  // What a unit usually measures, so a series that names nothing but "ft"
+  // can still be recognised as the gage height the page is plotting.
+  const UNIT_QUANTITY = [
+    [/^(ft|feet|m|meters?)$/i, "height or level"],
+    [/^(ft3\/s|cfs|ft\^3\/s|m3\/s|cms)$/i, "discharge (flow)"],
+    [/^(deg ?c|degc|°c|deg ?f|degf|°f|wmounit:degc|wmounit:degf)$/i, "temperature"],
+    [/^(fnu|ntu)$/i, "turbidity"],
+    [/^(us\/cm|µs\/cm|uS\/cm @25c)$/i, "specific conductance"],
+    [/^(mg\/l|mg\/L)$/i, "concentration"],
+    [/^(in|inches|mm)$/i, "precipitation or depth"],
+    [/^(%|percent|wmounit:percent)$/i, "percent"],
+    [/^(std units|ph)$/i, "pH"],
+  ];
+
+  const asNumber = (v) => {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string" && /^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$/.test(v)) return Number(v);
+    return null;
+  };
+  const asTime = (v) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(v)) return null;
+    // An ISO interval ("2026-10-09T12:00:00+00:00/PT1H", api.weather.gov)
+    // starts where it starts.
+    const t = Date.parse(v.split("/")[0]);
+    return Number.isFinite(t) ? t : null;
+  };
+  // A row's moment, from a time field or from year/month/day/time_of_day,
+  // which is how USGS field measurements carry theirs.
+  const timeOf = (row, key) => {
+    if (key) return asTime(row[key]);
+    if (row.year && row.month && row.day) {
+      const p = (n) => String(n).padStart(2, "0");
+      const tod = typeof row.time_of_day === "string" ? row.time_of_day : "00:00:00+00:00";
+      return asTime(`${row.year}-${p(row.month)}-${p(row.day)}T${tod}`);
+    }
+    return null;
+  };
+  const sameString = (rows, key) => {
+    const vals = rows.map((r) => r[key]).filter((v) => typeof v === "string" && v.trim());
+    return vals.length && vals.every((v) => v === vals[0]) ? vals[0] : null;
+  };
+
+  // The endpoint, named by the last part of its path that says anything:
+  // ".../collections/continuous/items" is "continuous", not "items".
+  const feedName = (url) => {
+    try {
+      // Skipping identifiers too: ".../flood-stage/01646500/" is about flood
+      // stages, whichever site it is for.
+      const parts = new URL(url).pathname.split("/").filter(Boolean)
+        .filter((p) => !/^(items|v\d+|api|json|data|index\.json)$/i.test(p))
+        .filter((p) => !/^(USGS-)?[\d-]{4,}$/i.test(p));
+      return (parts.pop() || "feed").replace(/\.(json|geojson|csv)$/i, "");
+    } catch (e) { return "feed"; }
+  };
 
   function capturedSeries({ limit = 24 } = {}) {
     const store = window.__wcFeedCapture;
     if (!store) return { installed: false, series: [], note: "feed capture is not installed on this page" };
 
     const series = [];
-    const add = (name, values, sample) => {
-      const nums = values.filter((n) => typeof n === "number" && Number.isFinite(n));
-      if (nums.length < 3 || series.length >= limit) return;
+    // One series from rows of objects: the numbers under `key`, each with
+    // its time where the rows carry one.
+    const fromRows = (rows, key, path, ctx) => {
+      const timeKey = Object.keys(rows[0] || {}).find((k) => TIME_KEY.test(k) && asTime(rows[0][k]) !== null) || null;
+      const points = [];
+      for (const r of rows) {
+        const raw = r[key] && typeof r[key] === "object" ? r[key].value : r[key];
+        const v = asNumber(raw);
+        if (v === null) continue;
+        points.push({ v, t: timeOf(r, timeKey) });
+      }
+      // Mostly numbers, or it is a label column that happens to hold a few.
+      if (points.length < 3 || points.length < rows.length * 0.6) return;
+      const cell = rows.find((r) => r[key] && typeof r[key] === "object");
+      const unitKey = Object.keys(rows[0] || {}).find((k) => UNIT_KEY.test(k));
+      const unit = (unitKey && sameString(rows, unitKey))
+        || (cell && (cell[key].unitCode || cell[key].uom || cell[key].unit)) || ctx.unit || null;
+      const statusKey = Object.keys(rows[rows.length - 1] || {}).find((k) => STATUS_KEY.test(k)
+        && typeof rows[rows.length - 1][k] === "string");
+      add(NUMERIC_KEY.test(key) && path ? path : (path ? `${path}.${key}` : key), points,
+        { unit, status: statusKey ? rows[rows.length - 1][statusKey] : null, sample: rows[0][key] });
+    };
+    const add = (name, points, { unit = null, status = null, sample } = {}) => {
+      if (points.length < 3 || series.length >= limit) return;
+      // In time order where there are times: a feed listed newest-first
+      // otherwise makes its oldest reading look like the latest.
+      const timed = points.every((p) => p.t !== null);
+      if (timed) points = points.slice().sort((a, b) => a.t - b.t);
+      const nums = points.map((p) => p.v);
+      let lo = 0, hi = 0;
+      for (let i = 1; i < points.length; i++) {
+        if (points[i].v < points[lo].v) lo = i;
+        if (points[i].v > points[hi].v) hi = i;
+      }
+      const iso = (t) => (t === null ? null : new Date(t).toISOString());
+      const round = (n) => Number(n.toFixed(4));
+      const cleanUnit = unit ? String(unit).replace(/^wmoUnit:/i, "") : null;
+      const quantity = cleanUnit ? (UNIT_QUANTITY.find(([re]) => re.test(cleanUnit)) || [])[1] || null : null;
       series.push({
         name: String(name).slice(0, 60),
         count: nums.length,
         first: nums[0], last: nums[nums.length - 1],
-        min: Math.min(...nums), max: Math.max(...nums),
+        min: points[lo].v, max: points[hi].v,
         mean: Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(3)),
+        change: round(nums[nums.length - 1] - nums[0]),
+        unit: cleanUnit, quantity, status: status || null,
+        firstAt: timed ? iso(points[0].t) : null,
+        lastAt: timed ? iso(points[points.length - 1].t) : null,
+        minAt: timed ? iso(points[lo].t) : null,
+        maxAt: timed ? iso(points[hi].t) : null,
         values: nums.slice(0, 500),
         sample: sample === undefined ? undefined : String(sample).slice(0, 40),
       });
     };
 
-    const walk = (node, path, depth) => {
+    const walk = (node, path, depth, ctx) => {
       if (!node || depth > 6 || series.length >= limit) return;
       if (Array.isArray(node)) {
-        if (node.length >= 3 && node.every((x) => typeof x === "number")) {
-          add(path || "values", node);
+        if (node.length >= 3 && node.every((x) => asNumber(x) !== null)) {
+          add(path || "values", node.map((x) => ({ v: asNumber(x), t: null })), { unit: ctx.unit });
           return;
         }
-        // An array of readings: every numeric field in it is its own series.
-        const objects = node.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+        // GeoJSON: the readings are the features' properties.
+        let objects = node.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+        if (objects.length >= 3 && objects.every((o) => o.type === "Feature" && o.properties)) {
+          objects = objects.map((o) => o.properties);
+        }
         if (objects.length >= 3) {
           const keys = new Set();
           for (const o of objects.slice(0, 50)) for (const k of Object.keys(o)) keys.add(k);
           for (const k of keys) {
-            const vals = objects.map((o) => (o[k] && typeof o[k] === "object" ? o[k].value : o[k]));
-            const named = NUMERIC_KEY.test(k) && path ? path : (path ? `${path}.${k}` : k);
-            add(named, vals, objects[0] && objects[0][k]);
+            if (TIME_KEY.test(k) || UNIT_KEY.test(k) || NOT_MEASURED.test(k)) continue;
+            fromRows(objects, k, path, ctx);
           }
           return;
         }
-        for (let i = 0; i < Math.min(node.length, 8); i++) walk(node[i], path, depth + 1);
+        for (let i = 0; i < Math.min(node.length, 8); i++) walk(node[i], path, depth + 1, ctx);
         return;
       }
       if (typeof node === "object") {
+        // A unit stated once for the series under it: api.weather.gov's
+        // {"uom": "wmoUnit:degC", "values": [...]}.
+        const unitHere = Object.keys(node).find((k) => UNIT_KEY.test(k) && typeof node[k] === "string");
+        const here = unitHere ? { ...ctx, unit: node[unitHere] } : ctx;
         for (const [k, v] of Object.entries(node)) {
-          walk(v, path ? `${path}.${k}` : k, depth + 1);
+          if (k === "geometry" || k === "links") continue;
+          walk(v, path ? `${path}.${k}` : k, depth + 1, here);
         }
       }
     };
 
     for (const f of store.feeds) {
       if (!f.body || f.truncated || !/json/i.test(f.contentType || "")) continue;
+      if (MAP_PLUMBING.test(f.url)) continue;
       let parsed;
       try { parsed = JSON.parse(f.body); } catch (e) { continue; }
-      const from = (() => { try { return new URL(f.url).pathname.split("/").filter(Boolean).pop() || "feed"; }
-        catch (e) { return "feed"; } })();
-      walk(parsed, "", 0);
-      for (const sr of series) if (!sr.from) sr.from = from;
+      const before = series.length;
+      walk(parsed, "", 0, {});
+      const from = feedName(f.url);
+      for (const sr of series.slice(before)) { sr.from = from; sr.at = f.at; }
     }
     return { installed: true, count: series.length, series };
+  }
+
+  /* capturedFacts() - the small answers a page fetched alongside its data.
+   *
+   * Not every number the page holds is a series. The USGS page fetches a
+   * 234-byte flood-stage response - action at 5 ft, minor 10, moderate 12,
+   * major 14 - and those four numbers are what "how close is it to flooding"
+   * is asking about. Small JSON responses are flattened to their leaves.
+   */
+  const FACT_SKIP = /^(links?|href|url|uri|geometry|coordinates|bbox|crs|type|id|@context|@id|timeStamp|numberReturned|numberMatched|features|sprites?|glyphs|layers|sources|metadata|style)$/i;
+  function capturedFacts({ maxBytes = 8000, limit = 60 } = {}) {
+    const store = window.__wcFeedCapture;
+    if (!store) return { installed: false, facts: [] };
+    const facts = [];
+    for (const f of store.feeds) {
+      if (!f.body || f.truncated || f.body.length > maxBytes || !/json/i.test(f.contentType || "")) continue;
+      if (MAP_PLUMBING.test(f.url)) continue;
+      let parsed;
+      try { parsed = JSON.parse(f.body); } catch (e) { continue; }
+      const from = feedName(f.url);
+      const leaves = [];
+      const walk = (node, path, depth) => {
+        if (node === null || node === undefined || depth > 5 || leaves.length > 40) return;
+        if (Array.isArray(node)) {
+          // A list of rows is a series, not a fact; a short list is spelled out.
+          if (node.length > 4) return;
+          node.forEach((x, i) => walk(x, `${path}[${i}]`, depth + 1));
+          return;
+        }
+        if (typeof node === "object") {
+          for (const [k, v] of Object.entries(node)) {
+            if (FACT_SKIP.test(k)) continue;
+            walk(v, path ? `${path}.${k}` : k, depth + 1);
+          }
+          return;
+        }
+        if (typeof node === "string" && (node.length > 80 || /^https?:/i.test(node))) return;
+        leaves.push({ path, value: node });
+      };
+      walk(parsed, "", 0);
+      if (!leaves.length || leaves.length > 40) continue;
+      for (const l of leaves) {
+        if (facts.length >= limit) break;
+        facts.push({ from, path: l.path, value: l.value });
+      }
+    }
+    return { installed: true, count: facts.length, facts };
   }
 
   // One captured response in full, by URL substring - for actually reading
@@ -3158,7 +3324,7 @@
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
-    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries,
+    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
     disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     capturedPoints, findCapturedPoint, openCapturedPoint,
