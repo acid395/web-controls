@@ -1,14 +1,14 @@
-/*! web-controls widget 0.1.1 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.2.0 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.1.1",
+    version: "0.2.0",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.1.1";
+globalThis.WC_WIDGET_VERSION = "0.2.0";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -739,18 +739,47 @@ function installFeedCapture() {
   // would leak memory.
   const FEED_URL_RE = /(\/api\/|\/rest\/|\/ogcapi\/|nwis|nwps|waterservices|waterdata|gridpoints|geoserver|\bwfs\b|\bwms\b|query\?|\.json(\?|$)|\.geojson(\?|$)|\.csv(\?|$)|observations|forecast|gauges?\/)/i;
   const FEED_LIMIT = 40;          // most recent N requests
-  const FEED_BODY_CAP = 200000;   // characters kept per response
+  // Per response, and for all of them together. 200,000 characters each cut
+  // off the one response that mattered most: a USGS monitoring location
+  // draws its chart from a single 885 KB request - seven days of readings at
+  // fifteen minutes - and a truncated body is never parsed, so the agent saw
+  // none of it. A budget across all of them keeps a long-lived page from
+  // holding forty such bodies at once: the oldest go first.
+  const FEED_BODY_CAP = 4000000;
+  const FEED_TOTAL_CAP = 24000000;
+  // Pictures are not data. NOAA's map requests its marker icons through a
+  // URL this pattern matches, and reading every PNG as text was memory spent
+  // on nothing.
+  const NOT_DATA = /^(image|font|audio|video)\/|octet-stream|protobuf/i;
   const feeds = [];
+  let held = 0;
+  // Absolute, before it is tested. A page's own requests are often relative:
+  // USGS fetches its flood stages from "/flood-stage/01646500/", which has
+  // none of the words the pattern looks for until the host is put back on -
+  // so the four numbers that answer "how far below flood stage" were never
+  // recorded. And fetch() takes a URL object as readily as a string.
+  const absolute = (u) => {
+    try {
+      const raw = typeof u === "string" ? u : (u && (u.href || u.url));
+      return raw ? new URL(String(raw), location.href).href : null;
+    } catch (e) { return null; }
+  };
   const record = (url, method, status, text, contentType) => {
     if (!url || !FEED_URL_RE.test(url)) return;
+    if (contentType && NOT_DATA.test(contentType)) return;
+    const body = text ? text.slice(0, FEED_BODY_CAP) : null;
+    held += body ? body.length : 0;
     feeds.push({
       url: String(url).slice(0, 400), method, status, contentType: contentType || null,
       at: new Date().toISOString(),
       bytes: text ? text.length : 0,
-      body: text ? text.slice(0, FEED_BODY_CAP) : null,
+      body,
       truncated: !!(text && text.length > FEED_BODY_CAP),
     });
-    while (feeds.length > FEED_LIMIT) feeds.shift();
+    while (feeds.length > FEED_LIMIT || (held > FEED_TOTAL_CAP && feeds.length > 1)) {
+      const gone = feeds.shift();
+      held -= gone.body ? gone.body.length : 0;
+    }
   };
 
   const nativeFetch = window.fetch;
@@ -758,12 +787,13 @@ function installFeedCapture() {
     window.fetch = function (...args) {
       return nativeFetch.apply(this, args).then((res) => {
         try {
-          const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url);
-          if (url && FEED_URL_RE.test(url)) {
+          const url = absolute(args[0]);
+          const type = res.headers.get("content-type");
+          if (url && FEED_URL_RE.test(url) && !(type && NOT_DATA.test(type))) {
             // Clone first: reading the body the page is about to read
             // would consume the stream and break the page itself.
             res.clone().text()
-              .then((t) => record(url, (args[1] && args[1].method) || "GET", res.status, t, res.headers.get("content-type")))
+              .then((t) => record(url, (args[1] && args[1].method) || "GET", res.status, t, type))
               .catch(() => {});
           }
         } catch (e) { /* never let capture break a real request */ }
@@ -777,7 +807,7 @@ function installFeedCapture() {
     const open = XHR.prototype.open;
     const send = XHR.prototype.send;
     XHR.prototype.open = function (method, url, ...rest) {
-      this.__wcMethod = method; this.__wcUrl = url;
+      this.__wcMethod = method; this.__wcUrl = absolute(url);
       return open.call(this, method, url, ...rest);
     };
     XHR.prototype.send = function (...args) {
@@ -1869,65 +1899,231 @@ return (function () {
    * which is the only way this works on a site nobody has looked at.
    * ========================================================================== */
   const NUMERIC_KEY = /^(value|val|v|y|reading|amount|measurement|data)$/i;
+  // Beside each number, what it was measured at, in, and how far to trust it.
+  // USGS sends every reading as {"time", "value": "2.84", "unit_of_measure":
+  // "ft", "approval_status": "Provisional"} - the number in quotes, which the
+  // walk below skipped entirely, and the three fields that answer "when was
+  // it taken", "in what" and "is it provisional" thrown away beside it.
+  const TIME_KEY = /^(time|date_?time|datetime|date|timestamp|ts|t|valid_?time|obs(ervation)?_?time|period|start|time_?stamp)$/i;
+  const UNIT_KEY = /^(unit|units|uom|unit_?of_?measure(ment)?|unit_?code|unitcode)$/i;
+  const STATUS_KEY = /^(approval_?status|status|qualifiers?|quality(_?code)?|qc|flags?)$/i;
+  // Numbers that are not measurements: identifiers, coordinates, the parts
+  // of a date, paging.
+  // Anything ending in "id" included: USGS flowlines number every river
+  // segment as nhdplus_comid, and 239 of those read as a series of readings.
+  const NOT_MEASURED = /(id|ids|(^|_)(lat|lon|lng|latitude|longitude|x|code|year|month|day|hour|minute|zoom|index|count|page|limit|offset|number_?returned|number_?matched|epoch|srid|level|resolution|scale))$/i;
+  // Requests that configure a map rather than carry data: tile pyramids,
+  // styles, sprites. A basemap's 24 zoom levels are numbers, not readings.
+  const MAP_PLUMBING = /MapServer\/?(\?|$)|\/tile(s)?\/|tilejson|\/style(s)?[\/.]|vector_styles|sprite|\/fonts?\//i;
+  // What a unit usually measures, so a series that names nothing but "ft"
+  // can still be recognised as the gage height the page is plotting.
+  const UNIT_QUANTITY = [
+    [/^(ft|feet|m|meters?)$/i, "height or level"],
+    [/^(ft3\/s|cfs|ft\^3\/s|m3\/s|cms)$/i, "discharge (flow)"],
+    [/^(deg ?c|degc|°c|deg ?f|degf|°f|wmounit:degc|wmounit:degf)$/i, "temperature"],
+    [/^(fnu|ntu)$/i, "turbidity"],
+    [/^(us\/cm|µs\/cm|uS\/cm @25c)$/i, "specific conductance"],
+    [/^(mg\/l|mg\/L)$/i, "concentration"],
+    [/^(in|inches|mm)$/i, "precipitation or depth"],
+    [/^(%|percent|wmounit:percent)$/i, "percent"],
+    [/^(std units|ph)$/i, "pH"],
+  ];
+
+  const asNumber = (v) => {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string" && /^\s*-?\d+(\.\d+)?([eE][-+]?\d+)?\s*$/.test(v)) return Number(v);
+    return null;
+  };
+  const asTime = (v) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(v)) return null;
+    // An ISO interval ("2026-10-09T12:00:00+00:00/PT1H", api.weather.gov)
+    // starts where it starts.
+    const t = Date.parse(v.split("/")[0]);
+    return Number.isFinite(t) ? t : null;
+  };
+  // A row's moment, from a time field or from year/month/day/time_of_day,
+  // which is how USGS field measurements carry theirs.
+  const timeOf = (row, key) => {
+    if (key) return asTime(row[key]);
+    if (row.year && row.month && row.day) {
+      const p = (n) => String(n).padStart(2, "0");
+      const tod = typeof row.time_of_day === "string" ? row.time_of_day : "00:00:00+00:00";
+      return asTime(`${row.year}-${p(row.month)}-${p(row.day)}T${tod}`);
+    }
+    return null;
+  };
+  const sameString = (rows, key) => {
+    const vals = rows.map((r) => r[key]).filter((v) => typeof v === "string" && v.trim());
+    return vals.length && vals.every((v) => v === vals[0]) ? vals[0] : null;
+  };
+
+  // The endpoint, named by the last part of its path that says anything:
+  // ".../collections/continuous/items" is "continuous", not "items".
+  const feedName = (url) => {
+    try {
+      // Skipping identifiers too: ".../flood-stage/01646500/" is about flood
+      // stages, whichever site it is for.
+      const parts = new URL(url).pathname.split("/").filter(Boolean)
+        .filter((p) => !/^(items|v\d+|api|json|data|index\.json)$/i.test(p))
+        .filter((p) => !/^(USGS-)?[\d-]{4,}$/i.test(p));
+      return (parts.pop() || "feed").replace(/\.(json|geojson|csv)$/i, "");
+    } catch (e) { return "feed"; }
+  };
 
   function capturedSeries({ limit = 24 } = {}) {
     const store = window.__wcFeedCapture;
     if (!store) return { installed: false, series: [], note: "feed capture is not installed on this page" };
 
     const series = [];
-    const add = (name, values, sample) => {
-      const nums = values.filter((n) => typeof n === "number" && Number.isFinite(n));
-      if (nums.length < 3 || series.length >= limit) return;
+    // One series from rows of objects: the numbers under `key`, each with
+    // its time where the rows carry one.
+    const fromRows = (rows, key, path, ctx) => {
+      const timeKey = Object.keys(rows[0] || {}).find((k) => TIME_KEY.test(k) && asTime(rows[0][k]) !== null) || null;
+      const points = [];
+      for (const r of rows) {
+        const raw = r[key] && typeof r[key] === "object" ? r[key].value : r[key];
+        const v = asNumber(raw);
+        if (v === null) continue;
+        points.push({ v, t: timeOf(r, timeKey) });
+      }
+      // Mostly numbers, or it is a label column that happens to hold a few.
+      if (points.length < 3 || points.length < rows.length * 0.6) return;
+      const cell = rows.find((r) => r[key] && typeof r[key] === "object");
+      const unitKey = Object.keys(rows[0] || {}).find((k) => UNIT_KEY.test(k));
+      const unit = (unitKey && sameString(rows, unitKey))
+        || (cell && (cell[key].unitCode || cell[key].uom || cell[key].unit)) || ctx.unit || null;
+      const statusKey = Object.keys(rows[rows.length - 1] || {}).find((k) => STATUS_KEY.test(k)
+        && typeof rows[rows.length - 1][k] === "string");
+      add(NUMERIC_KEY.test(key) && path ? path : (path ? `${path}.${key}` : key), points,
+        { unit, status: statusKey ? rows[rows.length - 1][statusKey] : null, sample: rows[0][key] });
+    };
+    const add = (name, points, { unit = null, status = null, sample } = {}) => {
+      if (points.length < 3 || series.length >= limit) return;
+      // In time order where there are times: a feed listed newest-first
+      // otherwise makes its oldest reading look like the latest.
+      const timed = points.every((p) => p.t !== null);
+      if (timed) points = points.slice().sort((a, b) => a.t - b.t);
+      const nums = points.map((p) => p.v);
+      let lo = 0, hi = 0;
+      for (let i = 1; i < points.length; i++) {
+        if (points[i].v < points[lo].v) lo = i;
+        if (points[i].v > points[hi].v) hi = i;
+      }
+      const iso = (t) => (t === null ? null : new Date(t).toISOString());
+      const round = (n) => Number(n.toFixed(4));
+      const cleanUnit = unit ? String(unit).replace(/^wmoUnit:/i, "") : null;
+      const quantity = cleanUnit ? (UNIT_QUANTITY.find(([re]) => re.test(cleanUnit)) || [])[1] || null : null;
       series.push({
         name: String(name).slice(0, 60),
         count: nums.length,
         first: nums[0], last: nums[nums.length - 1],
-        min: Math.min(...nums), max: Math.max(...nums),
+        min: points[lo].v, max: points[hi].v,
         mean: Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(3)),
+        change: round(nums[nums.length - 1] - nums[0]),
+        unit: cleanUnit, quantity, status: status || null,
+        firstAt: timed ? iso(points[0].t) : null,
+        lastAt: timed ? iso(points[points.length - 1].t) : null,
+        minAt: timed ? iso(points[lo].t) : null,
+        maxAt: timed ? iso(points[hi].t) : null,
         values: nums.slice(0, 500),
         sample: sample === undefined ? undefined : String(sample).slice(0, 40),
       });
     };
 
-    const walk = (node, path, depth) => {
+    const walk = (node, path, depth, ctx) => {
       if (!node || depth > 6 || series.length >= limit) return;
       if (Array.isArray(node)) {
-        if (node.length >= 3 && node.every((x) => typeof x === "number")) {
-          add(path || "values", node);
+        if (node.length >= 3 && node.every((x) => asNumber(x) !== null)) {
+          add(path || "values", node.map((x) => ({ v: asNumber(x), t: null })), { unit: ctx.unit });
           return;
         }
-        // An array of readings: every numeric field in it is its own series.
-        const objects = node.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+        // GeoJSON: the readings are the features' properties.
+        let objects = node.filter((x) => x && typeof x === "object" && !Array.isArray(x));
+        if (objects.length >= 3 && objects.every((o) => o.type === "Feature" && o.properties)) {
+          objects = objects.map((o) => o.properties);
+        }
         if (objects.length >= 3) {
           const keys = new Set();
           for (const o of objects.slice(0, 50)) for (const k of Object.keys(o)) keys.add(k);
           for (const k of keys) {
-            const vals = objects.map((o) => (o[k] && typeof o[k] === "object" ? o[k].value : o[k]));
-            const named = NUMERIC_KEY.test(k) && path ? path : (path ? `${path}.${k}` : k);
-            add(named, vals, objects[0] && objects[0][k]);
+            if (TIME_KEY.test(k) || UNIT_KEY.test(k) || NOT_MEASURED.test(k)) continue;
+            fromRows(objects, k, path, ctx);
           }
           return;
         }
-        for (let i = 0; i < Math.min(node.length, 8); i++) walk(node[i], path, depth + 1);
+        for (let i = 0; i < Math.min(node.length, 8); i++) walk(node[i], path, depth + 1, ctx);
         return;
       }
       if (typeof node === "object") {
+        // A unit stated once for the series under it: api.weather.gov's
+        // {"uom": "wmoUnit:degC", "values": [...]}.
+        const unitHere = Object.keys(node).find((k) => UNIT_KEY.test(k) && typeof node[k] === "string");
+        const here = unitHere ? { ...ctx, unit: node[unitHere] } : ctx;
         for (const [k, v] of Object.entries(node)) {
-          walk(v, path ? `${path}.${k}` : k, depth + 1);
+          if (k === "geometry" || k === "links") continue;
+          walk(v, path ? `${path}.${k}` : k, depth + 1, here);
         }
       }
     };
 
     for (const f of store.feeds) {
       if (!f.body || f.truncated || !/json/i.test(f.contentType || "")) continue;
+      if (MAP_PLUMBING.test(f.url)) continue;
       let parsed;
       try { parsed = JSON.parse(f.body); } catch (e) { continue; }
-      const from = (() => { try { return new URL(f.url).pathname.split("/").filter(Boolean).pop() || "feed"; }
-        catch (e) { return "feed"; } })();
-      walk(parsed, "", 0);
-      for (const sr of series) if (!sr.from) sr.from = from;
+      const before = series.length;
+      walk(parsed, "", 0, {});
+      const from = feedName(f.url);
+      for (const sr of series.slice(before)) { sr.from = from; sr.at = f.at; }
     }
     return { installed: true, count: series.length, series };
+  }
+
+  /* capturedFacts() - the small answers a page fetched alongside its data.
+   *
+   * Not every number the page holds is a series. The USGS page fetches a
+   * 234-byte flood-stage response - action at 5 ft, minor 10, moderate 12,
+   * major 14 - and those four numbers are what "how close is it to flooding"
+   * is asking about. Small JSON responses are flattened to their leaves.
+   */
+  const FACT_SKIP = /^(links?|href|url|uri|geometry|coordinates|bbox|crs|type|id|@context|@id|timeStamp|numberReturned|numberMatched|features|sprites?|glyphs|layers|sources|metadata|style)$/i;
+  function capturedFacts({ maxBytes = 8000, limit = 60 } = {}) {
+    const store = window.__wcFeedCapture;
+    if (!store) return { installed: false, facts: [] };
+    const facts = [];
+    for (const f of store.feeds) {
+      if (!f.body || f.truncated || f.body.length > maxBytes || !/json/i.test(f.contentType || "")) continue;
+      if (MAP_PLUMBING.test(f.url)) continue;
+      let parsed;
+      try { parsed = JSON.parse(f.body); } catch (e) { continue; }
+      const from = feedName(f.url);
+      const leaves = [];
+      const walk = (node, path, depth) => {
+        if (node === null || node === undefined || depth > 5 || leaves.length > 40) return;
+        if (Array.isArray(node)) {
+          // A list of rows is a series, not a fact; a short list is spelled out.
+          if (node.length > 4) return;
+          node.forEach((x, i) => walk(x, `${path}[${i}]`, depth + 1));
+          return;
+        }
+        if (typeof node === "object") {
+          for (const [k, v] of Object.entries(node)) {
+            if (FACT_SKIP.test(k)) continue;
+            walk(v, path ? `${path}.${k}` : k, depth + 1);
+          }
+          return;
+        }
+        if (typeof node === "string" && (node.length > 80 || /^https?:/i.test(node))) return;
+        leaves.push({ path, value: node });
+      };
+      walk(parsed, "", 0);
+      if (!leaves.length || leaves.length > 40) continue;
+      for (const l of leaves) {
+        if (facts.length >= limit) break;
+        facts.push({ from, path: l.path, value: l.value });
+      }
+    }
+    return { installed: true, count: facts.length, facts };
   }
 
   // One captured response in full, by URL substring - for actually reading
@@ -3965,7 +4161,7 @@ return (function () {
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
-    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries,
+    mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
     disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     capturedPoints, findCapturedPoint, openCapturedPoint,
@@ -6207,6 +6403,13 @@ const PLACE_FILLER = new Set([
   "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may",
   "jun", "june", "jul", "july", "aug", "august", "sep", "sept", "september",
   "oct", "october", "nov", "november", "dec", "december", "am", "pm",
+  // Measures of distance and degree, asked about a river rather than naming
+  // one. "How far is the river below flood stage" searched the country for
+  // a gauge called "far river" and never reached the flood stages the page
+  // had already downloaded. Only these two: the list also strips words
+  // before a question is matched to a table's columns, and "full" there is
+  // the column "Percent Full" in "how full is lake conroe".
+  "far", "close",
 ]);
 
 // Pulls the place out of an instruction by elimination: strip the parts we
@@ -8554,8 +8757,11 @@ const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|of
  */
 const ASKING_TO_READ_PLAINLY =
   /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
+// Including one that opens on a preposition. "At what gage height does this
+// location reach minor flood stage" was taken for a command, and the model
+// pressed a graph control instead of reading the flood stages off the page.
 const A_QUESTION =
-  /^\s*(?:please\s+)?(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b/i;
+  /^\s*(?:please\s+)?(?:(?:at|in|on|by|from|to|for|of|with|under|after|before|since|until|above|below)\s+(?:what|which|how|when|where|whom)\b|(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b)/i;
 const ABOUT_WHAT_IS_HERE =
   /\b(?:here|this\s+(?:page|map|chart|graph|plot|table|site)|shown|showing|right\s+now|currently|current|at\s+the\s+moment|as\s+it\s+stands|in\s+effect)\b/i;
 // A request whose action depends on something it must first find out.
@@ -9994,7 +10200,7 @@ async function pageComputeRun({ fn, of, source = "auto" }) {
     const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
     const series = (feeds.ok && feeds.result && feeds.result.series) || [];
     const subject = meaningfulWords(word).filter((w) => !AGGREGATE_WORDS.has(w) && w.length > 2);
-    const named = series.find((sr) => subject.some((w) => wordMatchesText(w, sr.name.toLowerCase())));
+    const named = series.find((sr) => subject.some((w) => wordMatchesText(w, seriesHaystack(sr))));
     if (named && named.values.length) {
       const got = computeOver(fn, named.values.map(String));
       if (got) {
@@ -10778,14 +10984,8 @@ async function answerAfterActing(res, ask) {
         "choices on the page now:", ...choices.map((c) => `  ${c}`)].filter(Boolean).join("\n");
     }
   } catch (e) { /* the page text is still there to answer from */ }
-  const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
-  const series = ((feeds.ok && feeds.result && feeds.result.series) || []).filter((x) => x && x.count >= 3);
-  if (series.length) {
-    const lines = series.slice(0, 6).map((x) =>
-      `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
-    seen = [seen && seen !== "nothing readable" ? seen : null,
-      "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
-  }
+  const data = await pageDataLines(ask);
+  if (data.text) seen = [data.text, seen && seen !== "nothing readable" ? seen : null].filter(Boolean).join("\n");
   const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
     mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
   // A reply that would not parse still carries its words.
@@ -12158,16 +12358,18 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
-      const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
-      const series = ((feeds.ok && feeds.result && feeds.result.series) || [])
-        .filter((x) => x && x.count >= 3);
-      if (series.length) {
-        const lines = series.slice(0, 6).map((x) =>
-          `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
-        seen = [seen && seen !== "nothing readable" ? seen : null,
-          "the series this page's charts are drawn from:", ...lines].filter(Boolean).join("\n");
-      }
       seen = withNamesWhereThin(seen, controls);
+      const data = await pageDataLines(goal);
+      if (data.text) seen = [data.text, seen && seen !== "nothing readable" ? seen : null].filter(Boolean).join("\n");
+      // Worked out already, from the page's own data. Measured live with a 3B:
+      // handed "Minor flood stage here is 10 ft; the latest reading, 2.71 ft,
+      // is 7.29 ft below it", it answered "2.71 ft". Asking it to restate a
+      // sentence it then garbles costs twenty seconds and the right answer.
+      if (data.direct && ASKING_TO_READ.test(goal) && !conditionalGoal) {
+        history.push({ did: "read the page", outcome: "answered from its data" });
+        return { ok: true, answer: data.answer, history, steps: history.length,
+          tookMs: Date.now() - began, said: lastSaid, fromData: true };
+      }
       if (seen) {
         observation = String(seen).slice(0, 2200);
         history.push({ did: "read the page", outcome: "got its values" });
@@ -12578,22 +12780,14 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // this extension had already captured, off the request the chart
       // itself made. Reading the picture is guesswork; reading what it drew
       // is not.
-      const feeds = await invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false }));
-      const series = ((feeds.ok && feeds.result && feeds.result.series) || [])
-        .filter((x) => x && x.count >= 3);
-      if (series.length) {
-        const lines = series.slice(0, 6).map((x) =>
-          `${x.name}: ${x.count} readings, ${x.min} to ${x.max}, latest ${x.last}, mean ${x.mean}`);
+      const data = await pageDataLines(goal);
+      if (data.text) {
         const nothingRead = !read.ok || seen === "nothing readable";
-        seen = [
-          nothingRead ? null : seen,
-          "the series this page's charts are drawn from:",
-          ...lines,
-        ].filter(Boolean).join("\n").slice(0, 2200);
+        seen = [data.text, nothingRead ? null : seen].filter(Boolean).join("\n").slice(0, 2200);
       }
       observation = seen;
       history.push({ did: "read the page",
-        outcome: read.ok || series.length ? "got its values" : "failed" });
+        outcome: read.ok || data.text ? "got its values" : "failed" });
       continue;
     }
 
@@ -13609,6 +13803,207 @@ function actionToCall(act, control, s) {
       args: { selector: sel, value: hit ? (hit.value ?? hit.text) : String(s.value ?? "") } };
   }
   return null;
+}
+
+/* The data a page downloaded for its charts, as lines a reader can answer from.
+ *
+ * Three readers built this the same way - "name: N readings, lo to hi,
+ * latest x, mean y" - and appended it after the page's text, which was then
+ * cut to 2,200 characters. On a page with any text at all the data was cut
+ * off before the model saw it. And what survived said "latest 2.71" with no
+ * unit and no time, so "when was the latest reading taken" and "is it
+ * provisional" could not be answered from it however good the model was.
+ *
+ * Now: every series with its unit, its status, and the time of its latest,
+ * highest and lowest readings; the small facts fetched beside it (flood
+ * stages); the series the question names first; and the block goes in front
+ * of the page text, so trimming the page never trims the data.
+ */
+const seriesHaystack = (sr) => [sr.name, sr.from, sr.unit, sr.quantity]
+  .filter(Boolean).join(" ").toLowerCase();
+
+// The page's clock, which is the visitor's: what the chart's axis shows.
+function whenLocal(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric",
+    minute: "2-digit", timeZoneName: "short" });
+}
+
+function seriesLine(sr) {
+  const u = sr.unit ? ` ${sr.unit}` : "";
+  const at = (iso) => (whenLocal(iso) ? ` at ${whenLocal(iso)}` : "");
+  // A JSON container name is not a name: GeoJSON calls every series "features".
+  const own = sr.name.split(".").pop();
+  const label = [sr.from && sr.from !== "feed" ? sr.from : null,
+    /^(features|properties|values?|data|items|records|results)$/i.test(own) ? null : own]
+    .filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(" ") || "series";
+  const what = [sr.quantity, sr.unit].filter(Boolean).join(", ");
+  const parts = [
+    // "Taken", because that is how it is asked: "when was it taken" was
+    // answered with the value alone while the time sat on the same line.
+    `latest reading ${sr.last}${u}${sr.lastAt ? `, taken ${whenLocal(sr.lastAt)}` : ""}${sr.status ? ` (${sr.status})` : ""}`,
+    `highest ${sr.max}${u}${at(sr.maxAt)}`,
+    `lowest ${sr.min}${u}${at(sr.minAt)}`,
+    `average ${sr.mean}${u}`,
+  ];
+  if (typeof sr.change === "number") {
+    parts.push(`change ${sr.change > 0 ? "+" : ""}${sr.change}${u}${sr.firstAt ? ` since ${whenLocal(sr.firstAt)}` : ""}`);
+  }
+  return `${label}${what ? ` (${what})` : ""}, ${sr.count} readings: ${parts.join("; ")}`;
+}
+
+/* What the question asks of the data, answered here in a sentence.
+ *
+ * Measured on waterdata.usgs.gov with Llama 3.2 3B: given every statistic
+ * of the week's gage height and the flood stages beside them, it answered
+ * "2.71 ft" - the first number it saw - to the latest reading, to its
+ * approval status, to the distance below flood stage, and "2.80 ft" to the
+ * height of minor flood stage, which the data said was 10. More facts made
+ * it worse, not better. Picking the statistic and doing the subtraction are
+ * not what a small model does reliably, and the page's own data already
+ * holds the answer, so the sentence is written here and the model restates
+ * it. It still has the whole block below for anything this does not cover.
+ */
+const DATA_ASKS = [
+  ["stage", /\bflood(ing)?\b|\b(action|minor|moderate|major)\s+stage\b/i],
+  ["status", /\b(provisional|approved|approval|reliable|verified|final|status)\b/i],
+  ["max", /\b(highest|max(imum)?|peak(ed)?|crest(ed)?|top)\b/i],
+  ["min", /\b(lowest|min(imum)?|bottom(ed)?)\b/i],
+  ["change", /\b(chang\w*|rise|rose|risen|rising|fall|fell|fallen|falling|drop\w*|increas\w*|decreas\w*|trend\w*|differ\w*)\b/i],
+  // "Mean" the noun, not the verb: "what does that mean" is not asking for an average.
+  ["mean", /\b(average|typical)\b|\bthe\s+mean\b|\bmean\s+(value|level|height|flow|reading)\b/i],
+  ["latest", /\b(latest|current(ly)?|now|most recent|last reading|right now|today|taken)\b/i],
+];
+
+function dataAnswerFor(goal, series, stageLines) {
+  const asks = DATA_ASKS.filter(([, re]) => re.test(goal)).map(([k]) => k);
+  if (!asks.length || !series.length) return null;
+  const sr = series[0];
+  const u = sr.unit ? ` ${sr.unit}` : "";
+  const what = sr.quantity && /level|height/.test(sr.quantity) ? "the gage height" : "the reading";
+  const when = (iso) => whenLocal(iso) || "an unrecorded time";
+  const out = [];
+  if (asks.includes("stage") && stageLines.length) {
+    // The stage named, where one is. Plain "flood stage" is the minor one -
+    // that is what the National Weather Service means by it - and listing
+    // all four turned a one-number answer into a paragraph.
+    const named = /\b(action|minor|moderate|major)\b/i.exec(goal);
+    const parts = stageLines[0].parts;
+    const want = named ? named[1].toLowerCase() : /\bflood\s+stage\b/i.test(goal) ? "minor" : null;
+    const pick = want ? parts.filter((p) => p.name.toLowerCase() === want) : parts;
+    for (const p of (pick.length ? pick : parts)) {
+      const label = p.name === "action" ? "Action stage" : `${p.name[0].toUpperCase()}${p.name.slice(1)} flood stage`;
+      out.push(`${label} here is ${p.at}${u}; the latest reading, ${sr.last}${u}, is ${Math.abs(p.d)}${u} ${p.d >= 0 ? "below" : "above"} it.`);
+    }
+  }
+  if (asks.includes("status") && sr.status) {
+    out.push(`The latest reading, ${sr.last}${u} taken ${when(sr.lastAt)}, is ${sr.status}.`);
+  }
+  if (asks.includes("max")) out.push(`The highest was ${sr.max}${u}, at ${when(sr.maxAt)}.`);
+  if (asks.includes("min")) out.push(`The lowest was ${sr.min}${u}, at ${when(sr.minAt)}.`);
+  if (asks.includes("change") && typeof sr.change === "number") {
+    const dir = sr.change > 0 ? "rose" : sr.change < 0 ? "fell" : "did not change";
+    out.push(`Since ${when(sr.firstAt)}, ${what} ${dir}${sr.change ? ` by ${Math.abs(sr.change)}${u}` : ""}, from ${sr.first}${u} to ${sr.last}${u}.`);
+  }
+  if (asks.includes("mean")) out.push(`The average over ${sr.count} readings was ${sr.mean}${u}.`);
+  if (asks.includes("latest") && !out.some((x) => x.startsWith("The latest reading"))) {
+    out.push(`The latest reading is ${sr.last}${u}, taken ${when(sr.lastAt)}${sr.status ? ` (${sr.status})` : ""}.`);
+  }
+  return out.length ? out.join(" ") : null;
+}
+
+// Facts shaped like <quantity>.stages.<name> = number, with <quantity>.units
+// beside them, matched to the series measured in the same unit.
+function stageDistances(facts, series) {
+  const groups = new Map();
+  for (const x of facts) {
+    const m = /^(.*?)\.?stages\.([a-z_]+)$/i.exec(x.path);
+    if (m && typeof x.value === "number") {
+      if (!groups.has(m[1])) groups.set(m[1], { stages: [], unit: null });
+      groups.get(m[1]).stages.push({ name: m[2], at: x.value });
+    }
+  }
+  for (const x of facts) {
+    const m = /^(.*?)\.?units?$/i.exec(x.path);
+    if (m && groups.has(m[1]) && typeof x.value === "string") groups.get(m[1]).unit = x.value;
+  }
+  const out = [];
+  for (const [name, g] of groups) {
+    if (!g.unit || !g.stages.length) continue;
+    const sr = series.find((s) => s.unit && s.unit.toLowerCase() === g.unit.toLowerCase());
+    if (!sr) continue;
+    const round = (n) => Number(n.toFixed(2));
+    const parts = g.stages.sort((a, b) => a.at - b.at)
+      .map((st) => ({ name: st.name, at: st.at, d: round(st.at - sr.last) }));
+    const said = parts.map((p) => {
+      const label = p.name === "action" ? "action stage" : `${p.name} flood stage`;
+      return `${Math.abs(p.d)} ${g.unit} ${p.d >= 0 ? "below" : "above"} ${label} (${p.at} ${g.unit})`;
+    });
+    out.push({ line: `- ${name.replace(/_/g, " ")} now ${sr.last} ${g.unit}: ${said.join(", ")}`, parts });
+  }
+  return out;
+}
+
+async function pageDataLines(goal, { budget = 900 } = {}) {
+  const [s, f] = await Promise.all([
+    invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false })),
+    invokeOnActiveTab("capturedFacts", [{}]).catch(() => ({ ok: false })),
+  ]);
+  const series = ((s.ok && s.result && s.result.series) || []).filter((x) => x && x.count >= 3);
+  const facts = (f.ok && f.result && f.result.facts) || [];
+  if (!series.length && !facts.length) return { text: null, series, facts };
+
+  // The series the question names first; the longest first among equals.
+  const words = meaningfulWords(goal).filter((w) => w.length > 2);
+  const score = (sr) => words.filter((w) => wordMatchesText(w, seriesHaystack(sr))).length;
+  const ranked = series.map((sr) => ({ sr, n: score(sr) }))
+    .sort((a, b) => b.n - a.n || b.sr.count - a.sr.count).map((x) => x.sr);
+
+  const lines = ["Data this page downloaded for its charts (exact values, from its own requests):"];
+  let used = lines[0].length;
+  for (const sr of ranked) {
+    const line = `- ${seriesLine(sr)}`;
+    if (used + line.length > budget && lines.length > 1) break;
+    lines.push(line);
+    used += line.length;
+  }
+  const byFeed = new Map();
+  for (const x of facts) {
+    if (/(^|[._])(parameter_)?code$/i.test(x.path)) continue;   // a lookup key, not a fact
+    if (!byFeed.has(x.from)) byFeed.set(x.from, []);
+    byFeed.get(x.from).push(`${x.path} ${x.value}`);
+  }
+  // How far the latest reading is from each stage, worked out here. "How far
+  // is the river below flood stage" was answered "2.71 ft" - the reading,
+  // not the distance - with the stages two lines below it. Subtracting is
+  // not what a 3B model does reliably, and it does not have to.
+  const stages = stageDistances(facts, ranked);
+  for (const { line } of stages) {
+    if (used + line.length > budget) break;
+    lines.push(line);
+    used += line.length;
+  }
+  // The raw stages only where they were not already turned into distances.
+  const summarised = stages.length
+    ? new Set(facts.filter((x) => /\.stages\./.test(x.path)).map((x) => x.from)) : new Set();
+  for (const [from, items] of byFeed) {
+    if (summarised.has(from)) continue;
+    const line = `- ${from}: ${items.join("; ")}`.slice(0, 320);
+    if (used + line.length > budget) break;
+    lines.push(line);
+    used += line.length;
+  }
+  const answer = dataAnswerFor(goal, ranked, stages);
+  if (answer) lines.unshift(`Answer from this page's data: ${answer}`);
+  // Sure enough to answer without the model only when the question names
+  // what the series measures, or asks about flood stage and the page
+  // fetched its stages. "What is the latest discussion" on a page that also
+  // happens to chart something must not be answered with that chart.
+  const direct = !!answer && ((ranked.length && score(ranked[0]) > 0)
+    || (stages.length && DATA_ASKS[0][1].test(goal)));
+  return { text: lines.length > (answer ? 2 : 1) ? lines.join("\n") : null, series: ranked, facts, answer, direct };
 }
 
 // The page, short enough to put in front of a small model. Values and table
@@ -17433,7 +17828,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (agent && agent.ok && (agent.answer || didSomething)) {
               const acted = agent.history.filter((h) => h.did !== "read the page");
               respond({
-                ok: true, plannedBy: "model", steps: agent.history, answer: agent.answer || undefined,
+                ok: true, plannedBy: agent.fromData ? "page-data" : "model", steps: agent.history, answer: agent.answer || undefined,
                 display: {
                   title: agent.answer
                     // The first sentence as the headline, the whole thing
@@ -17454,7 +17849,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       // run the model never saw was still being reported as
                       // its work, which is the same dishonesty as a card
                       // claiming an action that did not happen.
-                      + (agent.withoutModel
+                      + (agent.fromData
+                        ? "worked out from the data this page downloaded, without asking the model"
+                        : agent.withoutModel
                         ? "matched by meaning, without asking the model"
                         : "decided by the local model"),
                     agent.history.some((h) => h.unrelated)
@@ -18327,22 +18724,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const series = (feeds.ok && feeds.result && feeds.result.series) || [];
           if (series.length) {
             const subject = meaningfulWords(wanted).filter((w) => !AGGREGATE_WORDS.has(w) && w.length > 2);
-            const named = series.find((sr) => subject.some((w) => wordMatchesText(w, sr.name.toLowerCase())));
+            const named = series.find((sr) => subject.some((w) => wordMatchesText(w, seriesHaystack(sr))));
             if (named) {
               const stat = wantsAgg ? wantsAgg.fn : null;
               const value = stat === "mean" ? named.mean : stat === "max" ? named.max
                 : stat === "min" ? named.min : stat === "sum" ? named.values.reduce((a, b) => a + b, 0)
                 : stat === "count" ? named.count : named.last;
+              // With its unit and its moment. "2.91" answered "what was the
+              // highest reading" and could not say in what, or when.
+              const u = named.unit ? ` ${named.unit}` : "";
+              const when = stat === "max" ? named.maxAt : stat === "min" ? named.minAt
+                : stat === null ? named.lastAt : null;
+              const whenText = whenLocal(when);
               respond({
                 ok: true, plannedBy: "page-data", series: named.name, from: named.from,
                 display: {
-                  title: `${wantsAgg ? wantsAgg.word + " " : ""}${named.name.split(".").pop()}`.trim(),
-                  subtitle: `${value} · ${wantsAgg ? `over ${named.count} points` : `latest of ${named.count} points`} the page itself downloaded`,
+                  title: `${wantsAgg ? wantsAgg.word + " " : ""}${named.quantity || named.name.split(".").pop()}`.trim(),
+                  subtitle: `${value}${u}${whenText ? ` at ${whenText}` : ""}${stat === null && named.status ? ` (${named.status})` : ""}`
+                    + ` · ${wantsAgg ? `over ${named.count} points` : `latest of ${named.count} points`} the page itself downloaded`,
                   stats: [
-                    { label: "latest", value: String(named.last) },
-                    { label: "low", value: String(named.min) },
-                    { label: "high", value: String(named.max) },
-                    { label: "mean", value: String(named.mean) },
+                    { label: "latest", value: `${named.last}${u}` },
+                    { label: "low", value: `${named.min}${u}` },
+                    { label: "high", value: `${named.max}${u}` },
+                    { label: "mean", value: `${named.mean}${u}` },
                   ],
                   rows: [],
                   caveat: `read from the page's own request to ${named.from || "this site"}, not from an agency`,
