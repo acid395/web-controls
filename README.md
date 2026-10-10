@@ -1,20 +1,17 @@
 # web-controls
 
-Ask a water or weather site a question in plain English, instead of hunting
-through it.
+Ask a water or weather site a question in plain English.
 
 Type *"max temperature in Hermantown MN on Wednesday"* and it reads the answer
 off the page you're looking at. Type *"gage height in Alaska"* and it fetches
 that from USGS, whatever page you happen to be on. Type *"select Alaska"* and
 it operates the page's own controls for you.
 
-Two parts live here:
+Two parts are here:
 
 - **`extension/`** — a Chrome extension. This is the thing you install and
   use. Start here.
-- **everything else** — the console scripts it grew out of, still usable on
-  their own by pasting into DevTools. The extension bundles these as its
-  per-site knowledge.
+- **everything else** — which are primarily per site examples.
 
 **Trying it out and reporting back?** [FEEDBACK.md](FEEDBACK.md) says what to
 install, what to type, what is already known to be broken, and what makes a
@@ -33,7 +30,7 @@ git clone <this repo> && cd web-controls
    this site** once and accept Chrome's prompt.
 5. Type a question and press **Ask**.
 
-Things worth trying, each exercising a different path:
+Example prompts.
 
 | Ask | What happens |
 |---|---|
@@ -43,8 +40,7 @@ Things worth trying, each exercising a different path:
 | `read this page` | Extracts the page's tables, values and charts. |
 | `select Alaska` | Operates the page's own controls. |
 
-No API key, no account, no server. Nothing is sent anywhere except to the
-public USGS, NOAA and NWS APIs.
+sent to the public NWS APIs.
 
 ## Run the tests
 
@@ -54,15 +50,8 @@ node extension/test/run-tests.js --live   # also calls the real agency APIs
 ```
 
 The offline tests need no setup. For the browser-DOM ones,
-`cd extension/test && npm install` pulls in jsdom; without it those skip
-rather than fail.
+`cd extension/test && npm install` pulls in jsdom.
 
-Almost every test exists because something once returned a **confidently
-wrong answer** — a statewide average of readings measured from different
-baselines, "Snake Creek, Georgia" for the Snake River, Kansas City resolving
-to the state of Kansas, Wednesday's question answered with Tuesday's number.
-None of those crash. Each looked right on screen. They're pinned by name so
-they can't come back quietly.
 
 ## How it works, briefly
 
@@ -83,10 +72,10 @@ A question takes the cheapest route that can answer it:
    it's opt-in rather than assumed.
 
 When it can't answer, it says what it understood, what it searched, and what
-the page can actually do — rather than failing blankly.
+the page can actually do.
 
 `extension/README.md` goes into the engineering detail, including the
-limitations that are real and permanent (a chart drawn to a canvas has no
+limitations(a chart drawn to a canvas has no
 numbers to read; maps mostly can't be clicked).
 
 ---
@@ -170,22 +159,7 @@ GENERIC.clickText('Download');
 `GENERIC.inventory()` is the same page-reading logic as `inventory-controls.js`,
 returned as data instead of printed as a table, with a CSS selector on every
 row so a caller (a person, or eventually an LLM) can act on whatever it just
-found. This is the piece that lets the toolkit reach a site nobody has looked
-at yet: no manifest to write first, just read the page and act on it.
-
-The trade is reliability. A hand-written manifest like `USGS` was checked
-against a real page and given proper names; `GENERIC` is guessing at intent
-from raw selectors every time. The plan is to use `GENERIC` to bootstrap new
-manifests automatically instead of by hand, and cache the result, rather than
-staying at "guess from raw selectors" forever.
-
-Confirmed live on EPA's How's My Waterway (`mywaterway.epa.gov`), a codebase
-with nothing in common with any of the four hand-written manifests (a
-different React setup, different CSS approach, different everything below
-the surface): `GENERIC.inventory()` found the real search box, buttons and
-mode tabs with no EPA-specific code at all. That's the actual generalization
-claim, and it held up on the first site it was pointed at that nobody had
-looked at before.
+found. This is the piece that lets the toolkit reach a site not accessed before.
 
 ## Maps
 
@@ -194,21 +168,9 @@ looked at before.
 Leaflet *can* put each marker in the DOM, so `WC` clicks them like any other
 element, but it's a choice each app makes, not a guarantee. Leaflet also
 supports rendering to a canvas, and it's the faster option once there are a
-lot of points. Confirmed live: the USGS National Water Dashboard, which plots
-stations nationwide, does exactly that, a canvas sits inside its Leaflet
-container and the marker panes are nearly empty. So "it's Leaflet" alone
-doesn't tell you which case you're in, `mapInfo()`'s `domMarkerCount` does.
+lot of points. 
 
 MapLibre GL, Mapbox GL, OpenLayers and Esri maps (water.noaa.gov,
 weather.gov/forecastpoints, EPA, Drought.gov) draw to a canvas by default.
 Nothing to click, but the map object has pan, zoom and query methods,
 reachable only if the page happens to expose it somewhere off `window`.
-
-That's a real limit, not a per-site bug to keep fixing. Confirmed on EPA's
-Esri map: the library is detected correctly, but its view object isn't
-reachable at all, even scanning six levels deep off `window`. Production apps
-generally don't leak internals onto `window` on purpose, so this isn't
-specific to EPA, it's the expected outcome on most production sites. Where a
-site's own map object happens to be reachable (seen so far mostly on smaller,
-less bundled pages), `mapInfo()`/`map-probe.js` finds it and it's drivable.
-Where it isn't, there is no way in from outside the page.
