@@ -3209,10 +3209,11 @@ else {
         JSON.stringify(facts).slice(0, 300));
     }
 
-    // What the model is shown: the data first, so trimming the page text
-    // never trims it.
-    const pgM = loadPage(html, { url: cap.page });
-    if (pgM) {
+    // What the model is shown, where the question is about the charted
+    // series: the data first, so trimming the page text never trims it.
+    const askShown = async (instruction) => {
+      const pgM = loadPage(html, { url: cap.page });
+      if (!pgM) return null;
       withFeeds(pgM);
       const bgM = loadBackground({ page: pgM });
       let shown = null;
@@ -3222,15 +3223,38 @@ else {
         if (m.type === "llmStep") { shown = shown || m.observation; return { ok: true, step: { do: "finish", answer: "ok" } }; }
         return undefined;
       };
+      const r = await bgM.__ask({ type: "smartAsk", instruction });
+      return { r, shown: String(shown || "") };
+    };
+    if (loadPage("<p>x</p>")) {
       runAsync(async () => {
-        await bgM.__ask({ type: "smartAsk", instruction: "is the latest reading provisional or approved" });
-        const s = String(shown || "");
+        const { shown: s } = await askShown("explain the gage height readings");
         ensure("the model is shown the latest reading with its unit, time and status",
           /latest reading 2\.71 ft, taken .+\(Provisional\)/.test(s), s.slice(0, 300));
         ensure("and how far it is from each flood stage, worked out",
           /7\.29 ft below minor flood stage \(10 ft\)/.test(s), s.slice(0, 700));
         ensure("ahead of the page text, where trimming cannot reach it",
-          /^Answer from this page's data: .*\nData this page downloaded/.test(s), s.slice(0, 160));
+          s.startsWith("Data this page downloaded"), s.slice(0, 160));
+        const { r } = await askShown("is the latest gage height reading provisional or approved");
+        ensure("a status asked of a named series is answered from the data",
+          r && r.plannedBy === "page-data" && /Provisional/.test((r.display && r.display.answer) || ""),
+          JSON.stringify(r && r.display).slice(0, 200));
+      });
+      // Not about the chart: the page first, and no answer worked out from
+      // the chart. "How far back do the peak measurements go" was handed "the
+      // highest was 2.91 ft" - "peak" is a word for highest - and repeated
+      // it; "which data types have been discontinued" was answered with the
+      // series' own label, the first line it was shown.
+      runAsync(async () => {
+        for (const [ask, answer] of [
+          ["how far back do the peak measurements go", /1931-04-03/],
+          ["which data types at this gauge have been discontinued", /Discontinued/],
+        ]) {
+          const { shown: s } = await askShown(ask);
+          ensure(`"${ask}" is not handed an answer worked out from the chart`, !/Answer from this page's data/.test(s), s.slice(0, 160));
+          ensure(`and is shown the page's own text first`, !s.startsWith("Data this page downloaded"), s.slice(0, 120));
+          ensure(`which holds the answer`, answer.test(s), s.slice(0, 400));
+        }
       });
     }
 
@@ -3293,6 +3317,136 @@ else {
       ensure("and an image is not recorded as data", !feeds.some((f) => /png/.test(f.url)));
       ensure("and a relative request is recorded, at its full address",
         feeds.some((f) => f.url === "https://example.org/api/flood-stage/01646500/"), feeds.map((f) => f.url).join(" | "));
+    });
+  }
+}
+
+// Fixes from the USGS live run of 2026-10-10, one test per failure seen.
+{
+  const fsx = require("fs");
+  const pathx = require("path");
+  const usgsFile = pathx.join(__dirname, "..", "..", "research", "live-scoring", "pages", "usgs.html");
+  const usgsUrl = "https://waterdata.usgs.gov/monitoring-location/01646500/";
+  const usgs = fsx.existsSync(usgsFile) ? fsx.readFileSync(usgsFile, "utf8") : null;
+
+  // The answers were in the page's prose, which the summary never reached.
+  const pgP = usgs && loadPage(usgs, { url: usgsUrl });
+  if (pgP) {
+    for (const [ask, answer] of [
+      ["what is the datum of this gage, according to the page", /Datum of gage is 37\.04 ft/],
+      ["which reservoirs affect low flow at this site, according to the page", /Savage River Reservoir/],
+      ["what does the page say about turbidity values above 1,000 FNU", /presumed to have lower accuracy/],
+      ["how many continuous data types are available at this location", /19 data types/],
+      ["how far back do the peak measurements go", /1931-04-03/],
+      ["which data types at this gauge have been discontinued", /\[Discontinued\]/],
+    ]) {
+      const got = pgP.GENERIC.findPassages(ask);
+      ensure(`the page's own sentence answering "${ask}" is found`, got.passages.some((p) => answer.test(p)),
+        got.passages.map((p) => p.slice(0, 80)).join(" | "));
+    }
+    check("a question with nothing distinctive in it finds nothing", pgP.GENERIC.findPassages("what is this").count, 0);
+  }
+
+  // "Graph the stream water level elevation above NAVD 1988" searched the
+  // country for a gauge called "graph stream".
+  const pgG = usgs && loadPage(usgs, { url: usgsUrl });
+  if (pgG) {
+    const bgG = loadBackground({ page: pgG });
+    bgG.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      const r = await bgG.__ask({ type: "smartAsk", instruction: "graph the stream water level elevation above NAVD 1988" });
+      ensure("a command to graph is not a search for a gauge named after the verb",
+        !/No gauge named/.test((r && r.display && r.display.title) || ""), JSON.stringify(r && r.display).slice(0, 160));
+    });
+  }
+
+  // "Turn on last year's data for comparison" pressed "1 year".
+  {
+    const bgS = loadBackground({});
+    check("a possessive is data from a period, not a span", bgS.daysInPhrase("turn on last year's data for comparison"), null);
+    check("and the previous week's map is a map, not a week", bgS.daysInPhrase("show the previous week's map"), null);
+    check("while the last year is still a year", bgS.daysInPhrase("change the time span to the last year"), 365);
+    check("and the past week a week", bgS.daysInPhrase("show the past week"), 7);
+  }
+
+  // "Show the peak measurements" pressed a field-measurements table row.
+  const pgQ = usgs && loadPage(usgs, { url: usgsUrl });
+  if (pgQ) {
+    const bgQ = loadBackground({ page: pgQ });
+    const controls = bgQ.controlsForModel(pgQ.GENERIC.inventory({ includeHidden: true }), { max: 400 });
+    const pick = (ask) => { const h = bgQ.sectionQualifierIn(ask, controls); return h ? h.c.label : null; };
+    check("the button for the section the request names", pick("show the peak measurements"),
+      "Show these data types (Peak measurements)");
+    check("by its section, among identical buttons", pick("show the daily data types"), "Show these data types (Daily data)");
+    // "On the graph" means the graph's own Field measurements switch.
+    check("not where the request says more than the section", pick("show the field measurements on the graph"), null);
+    check("nor where the verb is the opposite of the button's", pick("hide the peak measurements"), null);
+  }
+
+  // After an action, the series the pressed control names. "Graph the
+  // turbidity and tell me the latest value" was answered with the discharge:
+  // the most recent request is not the series asked about when the site
+  // reuses data it already fetched, but the control's own label says which.
+  const pgN = loadPage("<!doctype html><html><body><p>graphs</p></body></html>", { url: "https://example.org/" });
+  if (pgN) {
+    const rows = (unit, v, n) => JSON.stringify({ features: Array.from({ length: n }, (_, i) => (
+      { type: "Feature", properties: { time: `2026-10-0${1 + (i % 9)}T00:00:00Z`, value: String(v + i / 100), unit_of_measure: unit } })) });
+    pgN.__wcFeedCapture = { installedAt: "x", feeds: [
+      { url: "https://api.example.org/ogcapi/v0/collections/continuous/items?id=a", method: "GET", status: 200,
+        contentType: "application/json", at: "2026-10-10T01:00:00.000Z", body: rows("ft", 2.6, 30), truncated: false },
+      { url: "https://api.example.org/ogcapi/v0/collections/continuous/items?id=b", method: "GET", status: 200,
+        contentType: "application/json", at: "2026-10-10T01:05:00.000Z", body: rows("uS/cm @25C", 240, 30), truncated: false },
+      { url: "https://api.example.org/ogcapi/v0/collections/continuous/items?id=c", method: "GET", status: 200,
+        contentType: "application/json", at: "2026-10-10T00:55:00.000Z", body: rows("_FNU", 4.1, 30), truncated: false },
+    ] };
+    const bgN = loadBackground({ page: pgN });
+    runAsync(async () => {
+      const sc = await bgN.pageDataLines("tell me the latest value Graph Specific conductance, water, unfiltered, microsiemens per centimeter");
+      check("after graphing it, the series the control names comes first", sc.series[0] && sc.series[0].unit, "uS/cm @25C");
+      const tb = await bgN.pageDataLines("tell me the latest value Graph Turbidity, water, unfiltered, monochrome near infra-red LED light");
+      check("turbidity is found by its unit, written _FNU", tb.series[0] && tb.series[0].unit, "FNU");
+      const cold = await bgN.pageDataLines("tell me the most recent reading");
+      ensure("and without a name, nothing is assumed to be the subject", cold.about === false, JSON.stringify({ about: cold.about }));
+    });
+  }
+
+  // The page's own facts before passages from its prose. "What county is
+  // this gauge in" was answered Fairfax - from "8 mi east of Langley, Fairfax
+  // County" - over the location table's "County: Montgomery County".
+  {
+    const bgC = loadBackground({});
+    const out = bgC.composeObservation("location: County: Montgomery County",
+      "More of what this page says that bears on the question:\n- 8 mi east of Langley, Fairfax County", null, 2200);
+    ensure("the page's own facts come before passages from its prose",
+      out.indexOf("Montgomery") >= 0 && out.indexOf("Montgomery") < out.indexOf("Fairfax"), out);
+    const notAbout = bgC.composeObservation("summary", null, { about: false, text: "Data this page downloaded..." }, 2200);
+    ensure("and chart data the question is not about is left out", !/Data this page downloaded/.test(notAbout), notAbout);
+    const long = bgC.composeObservation("x".repeat(5000), "P".repeat(3000), null, 2200);
+    ensure("all of it inside the budget, with room kept for the passages", long.length <= 2201 && long.includes("PPP"), String(long.length));
+  }
+
+  // "Mean" the verb is not an average.
+  {
+    const bgA = loadBackground({});
+    check("\"what do the categories mean\" asks for no calculation",
+      bgA.aggregateWanted("explain what the D0 through D4 categories in the map legend mean"), null);
+    check("nor does \"what does that mean\"", bgA.aggregateWanted("is it provisional, and what does that mean"), null);
+    check("while \"the mean\" is still one", (bgA.aggregateWanted("what is the mean discharge this week") || {}).fn, "mean");
+    check("and \"average\" too", (bgA.aggregateWanted("average gage height") || {}).fn, "mean");
+  }
+
+  // "No active tab" forty-eight seconds into a run, with the page still open.
+  const pgT = loadPage("<!doctype html><html><body><button>Go</button></body></html>", { url: "https://example.org/" });
+  if (pgT) {
+    const bgT = loadBackground({ page: pgT });
+    runAsync(async () => {
+      const first = await bgT.invokeOnActiveTab("pageSignature", []);
+      const real = bgT.chrome.tabs.query;
+      bgT.chrome.tabs.query = async () => [];          // focus went to another window
+      const again = await bgT.invokeOnActiveTab("pageSignature", []).catch((e) => ({ ok: false, error: e.message }));
+      bgT.chrome.tabs.query = real;
+      ensure("the tab the run was working on is still reached when focus moves away",
+        first.ok !== false && again.ok !== false, JSON.stringify(again).slice(0, 120));
     });
   }
 }

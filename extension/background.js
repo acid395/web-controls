@@ -294,9 +294,21 @@ async function invokeOnTab(tabId, fn, args) {
   return { ...result, calledOn: route.global };
 }
 
+// The tab the last call reached, for when the active one cannot be found.
+// "Which reservoirs affect low flow at this site" failed forty-eight seconds
+// in with "no active tab": focus had moved to another window mid-run, so
+// "the active tab of the current window" named nothing - while the page the
+// run had been working on all along was still open. Only that tab, never
+// some other window's: acting on a different site would be worse than
+// failing.
+let lastPageTabId = null;
 async function invokeOnActiveTab(fn, args) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if ((!tab || !tab.id || !tab.url) && lastPageTabId !== null) {
+    tab = await chrome.tabs.get(lastPageTabId).catch(() => null);
+  }
   if (!tab || !tab.id || !tab.url) throw new Error("no active tab");
+  lastPageTabId = tab.id;
   const pattern = originPatternFor(tab.url);
   if (!pattern) throw new Error("can't determine this page's origin");
   const granted = await chrome.permissions.contains({ origins: [pattern] });
@@ -450,6 +462,11 @@ function extractPlaceHint(instruction, { stateMatched, parameterMatched, cityMat
   const raw = tail[1].split(/[^a-z0-9]+/).filter(Boolean);
   const words = raw.filter((w, i) => {
     if (w.length <= 1 || /^\d+$/.test(w)) return false;
+    // A command is not part of a name. "Graph the stream water level
+    // elevation above NAVD 1988" has a waterbody word in it, so everything
+    // before "stream" was taken as the place, and the country was searched
+    // for a gauge called "graph stream" instead of graphing anything.
+    if (verbFamily(w) || CONTROL_VERB.test(w) || /^(graph|plot|chart)$/.test(w)) return false;
     if (!PLACE_FILLER.has(w)) return true;
     // A measurement noun can also be half a town's name. "Pine Level, NC" is
     // a place; "water level" is a reading. What separates them is what comes
@@ -3968,7 +3985,12 @@ const SPAN_CUE = /\b(this|next|the)\s+(week|month)\b|\bover the (week|month|peri
 function aggregateWanted(text) {
   const t = (text || "").toLowerCase();
   const span = SPAN_CUE.test(t);
-  if (/\b(average|avg|mean)\b/.test(t)) return { fn: "mean", word: "average" };
+  // "Mean" the noun only. "Explain what the D0 through D4 categories mean"
+  // was taken for a request to average them, and came back as "nothing on
+  // this page gave ... as numbers to calculate over" - for a page that
+  // explains every one of the five categories in words.
+  const meanNoun = /\b(?:the|a|its|their)\s+mean\b|\bmean\s+(?:value|level|height|flow|discharge|temp|temperature|reading|stage|depth|of)\b/;
+  if (/\b(average|avg)\b/.test(t) || meanNoun.test(t)) return { fn: "mean", word: "average" };
   if (/\b(total|sum|combined|altogether)\b/.test(t)) return { fn: "sum", word: "total" };
   if (/\b(median)\b/.test(t)) return { fn: "median", word: "median" };
   if (/\b(how many|count of|number of)\b/.test(t)) return { fn: "count", word: "count" };
@@ -4965,8 +4987,15 @@ async function answerAfterActing(res, ask) {
         "choices on the page now:", ...choices.map((c) => `  ${c}`)].filter(Boolean).join("\n");
     }
   } catch (e) { /* the page text is still there to answer from */ }
-  const data = await pageDataLines(ask);
-  if (data.text) seen = [data.text, seen && seen !== "nothing readable" ? seen : null].filter(Boolean).join("\n");
+  // The data the action loaded, named by the control that was pressed.
+  // "Graph Turbidity..." says which series the question after it is about;
+  // the most recent request does not - USGS reuses data it already fetched,
+  // and "graph the turbidity and tell me the latest value" was answered with
+  // the discharge, which happened to have been fetched last.
+  const acted = [res.display && res.display.title,
+    ...((res.history || res.steps || []).map((h) => h && h.label))].filter(Boolean).join(" ");
+  const data = await pageDataLines(`${ask} ${acted}`);
+  seen = composeObservation(seen, await passagesFor(ask), data, 2200);
   const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
     mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
   // A reply that would not parse still carries its words.
@@ -6034,7 +6063,11 @@ function daysInPhrase(text) {
   }
   // A span with no number in front of it: "the past week", "a full year",
   // "this month". One of whatever unit is named.
-  const bare = t.match(/\b(?:the\s+)?(?:past|last|previous|this|full|whole|entire|coming|next)\s+(day|week|fortnight|month|quarter|year)\b/);
+  //
+  // Not a possessive. "Turn on last year's data for comparison" means the
+  // data from last year - USGS offers it as "Data for same time span in
+  // prior year" - and reading it as a one-year span pressed "1 year".
+  const bare = t.match(/\b(?:the\s+)?(?:past|last|previous|this|full|whole|entire|coming|next)\s+(day|week|fortnight|month|quarter|year)\b(?!['’]s)/);
   if (bare) return SPAN_DAYS[bare[1]];
   if (/\bannual(ly)?\b|\byearly\b/.test(t)) return 365;
   if (/\bmonthly\b/.test(t)) return 30;
@@ -6341,7 +6374,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       let seen = read.ok ? summariseForModel(read.result) : null;
       seen = withNamesWhereThin(seen, controls);
       const data = await pageDataLines(goal);
-      if (data.text) seen = [data.text, seen && seen !== "nothing readable" ? seen : null].filter(Boolean).join("\n");
+      seen = composeObservation(seen, await passagesFor(goal), data, 2200);
       // Worked out already, from the page's own data. Measured live with a 3B:
       // handed "Minor flood stage here is 10 ft; the latest reading, 2.71 ft,
       // is 7.29 ft below it", it answered "2.71 ft". Asking it to restate a
@@ -6493,7 +6526,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     }
     if (!history.length && !note && !onlyModel && !IS_CONDITIONAL.test(goal) && !ASKING_TO_READ.test(goal)
         && !SEARCH_CLAUSE.test(goal)) {
-      const whole = wholeNameIn(goal, controls);
+      const bySection = wholeNameIn(goal, controls) ? null : sectionQualifierIn(goal, controls);
+      const whole = wholeNameIn(goal, controls) || (bySection && bySection.c);
       if (whole) {
         if (whole.hidden && whole.revealedBy) {
           await invokeOnActiveTab("openDisclosure", [whole.revealedBy]).catch(() => null);
@@ -6509,7 +6543,9 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
             key: `click|${String(whole.label || "").toLowerCase()}`, did: `click "${whole.label}"`,
             outcome: moved ? "the page changed" : isSw ? "it was already so" : "pressed, though nothing on the page visibly changed",
             ok: true, changed: moved, satisfied: !moved && isSw, unconfirmed: !moved && !isSw || undefined,
-            label: whole.label, why: "every word of its name is in the request",
+            label: whole.label, why: bySection
+              ? `the request names its section, "${bySection.section}"`
+              : "every word of its name is in the request",
           });
           return { ok: true, answer: null, history, steps: history.length,
             tookMs: Date.now() - began, said: null, withoutModel: true };
@@ -6762,10 +6798,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // itself made. Reading the picture is guesswork; reading what it drew
       // is not.
       const data = await pageDataLines(goal);
-      if (data.text) {
-        const nothingRead = !read.ok || seen === "nothing readable";
-        seen = [data.text, nothingRead ? null : seen].filter(Boolean).join("\n").slice(0, 2200);
-      }
+      seen = composeObservation(read.ok ? seen : null, read.ok ? await passagesFor(goal) : null, data, 2200);
       observation = seen;
       history.push({ did: "read the page",
         outcome: read.ok || data.text ? "got its values" : "failed" });
@@ -7927,6 +7960,43 @@ function stageDistances(facts, series) {
   return out;
 }
 
+// The page's own sentences that bear on the question. The general summary
+// is the same whatever is asked - tables and readouts - and on a USGS
+// monitoring location the datum, the reservoirs that affect low flow, the
+// note on turbidity above 1,000 FNU and the number of data types are all in
+// prose the summary never reached: questions no model could answer because
+// none was shown the sentence that answers it.
+async function passagesFor(question) {
+  const got = await invokeOnActiveTab("findPassages", [question]).catch(() => ({ ok: false }));
+  const passages = ((got.ok && got.result && got.result.passages) || []).filter(Boolean);
+  if (!passages.length) return null;
+  return ["More of what this page says that bears on the question:", ...passages.map((p) => `- ${p}`)].join("\n");
+}
+
+/* What a reader is shown, in order, inside one budget.
+ *
+ * The charted data first, but only when the question is about it - shown to
+ * a question about something else, it was what a 3B answered from: "how far
+ * back do the peak measurements go" got the week's high, "which data types
+ * have been discontinued" got the series' own label. Then the page's own
+ * structured summary - its tables, readouts and label/value pairs - and then
+ * the passages. Passages ahead of the summary cost a right answer: "what
+ * county is this gauge in" was answered Fairfax, from "8 mi east of Langley,
+ * Fairfax County", over the location table's "County: Montgomery County".
+ */
+function composeObservation(summary, passages, data, cap) {
+  const body = summary && summary !== "nothing readable" ? String(summary) : null;
+  // And whenever the page has nothing else to read: a canvas chart is the
+  // whole of such a page, and its data the only account of what it shows.
+  const head = data && data.text && (data.about || !body) ? data.text : null;
+  let room = cap - (head ? head.length + 1 : 0);
+  // The passages keep up to half of what is left, the summary the rest.
+  const tail = passages ? passages.slice(0, Math.max(0, Math.min(passages.length, Math.floor(room / 2)))) : null;
+  room -= tail ? tail.length + 1 : 0;
+  const out = [head, body ? body.slice(0, Math.max(0, room)) : null, tail].filter(Boolean).join("\n");
+  return out || summary;
+}
+
 async function pageDataLines(goal, { budget = 900 } = {}) {
   const [s, f] = await Promise.all([
     invokeOnActiveTab("capturedSeries", [{}]).catch(() => ({ ok: false })),
@@ -7936,7 +8006,9 @@ async function pageDataLines(goal, { budget = 900 } = {}) {
   const facts = (f.ok && f.result && f.result.facts) || [];
   if (!series.length && !facts.length) return { text: null, series, facts };
 
-  // The series the question names first; the longest first among equals.
+  // The series the question names first (a caller that just pressed a
+  // control passes its label in with the question); the longest first
+  // among equals.
   const words = meaningfulWords(goal).filter((w) => w.length > 2);
   const score = (sr) => words.filter((w) => wordMatchesText(w, seriesHaystack(sr))).length;
   const ranked = series.map((sr) => ({ sr, n: score(sr) }))
@@ -7976,15 +8048,27 @@ async function pageDataLines(goal, { budget = 900 } = {}) {
     lines.push(line);
     used += line.length;
   }
-  const answer = dataAnswerFor(goal, ranked, stages);
+  // Whether the data is what the question is about: it names what a series
+  // measures, or it asks about flood stage and the page fetched the stages.
+  // Only then is an answer
+  // worked out from it, and only then does the data go first. Without this
+  // guard "how far back do the peak measurements go" was handed "the highest
+  // was 2.91 ft" - "peak" is a word for highest - and the model repeated it,
+  // and "which data types have been discontinued" was answered with the
+  // series' own label, the first line it was shown.
+  // Or it asks about "the data", "the chart", "the graph" outright - which
+  // "explain what the data is saying" does, on a page whose chart is the
+  // whole of it - and "which data types" does not.
+  const named = !!(ranked.length && score(ranked[0]) > 0);
+  const stageAsked = !!(stages.length && DATA_ASKS[0][1].test(goal));
+  const theChart = /\bthe\s+(?:data|chart|graph|plot|hydrograph|readings|numbers|values|series|trend)\b/i.test(goal);
+  const about = named || stageAsked || theChart;
+  const answer = about ? dataAnswerFor(goal, ranked, stages) : null;
   if (answer) lines.unshift(`Answer from this page's data: ${answer}`);
-  // Sure enough to answer without the model only when the question names
-  // what the series measures, or asks about flood stage and the page
-  // fetched its stages. "What is the latest discussion" on a page that also
-  // happens to chart something must not be answered with that chart.
-  const direct = !!answer && ((ranked.length && score(ranked[0]) > 0)
-    || (stages.length && DATA_ASKS[0][1].test(goal)));
-  return { text: lines.length > (answer ? 2 : 1) ? lines.join("\n") : null, series: ranked, facts, answer, direct };
+  // Without the model only where the question names the series or the
+  // stages: "the data" alone does not say which series it means.
+  const direct = !!answer && (named || stageAsked);
+  return { text: lines.length > (answer ? 2 : 1) ? lines.join("\n") : null, series: ranked, facts, answer, direct, about };
 }
 
 // The page, short enough to put in front of a small model. Values and table
@@ -9786,6 +9870,42 @@ function wholeNameIn(clause, controls) {
   const best = Math.max(...hits.map((h) => h.n));
   const top = hits.filter((h) => h.n === best);
   return top.length === 1 ? top[0].c : null;
+}
+
+/* The one of several identical buttons whose section the request names.
+ *
+ * USGS repeats "Show these data types" five times, once per collection, and
+ * the inventory tells them apart by their section: "Show these data types
+ * (Peak measurements)". Asked to "show the peak measurements", a 3B pressed
+ * a field-measurements table row instead - the request names the section
+ * completely and nothing else does. wholeNameIn skips labels that start
+ * with Show or Hide, because pressing a toggle can undo a state that is
+ * already right; here the label is the state - it says Show while the
+ * section is closed - so the request's verb has to match the label's.
+ */
+function sectionQualifierIn(clause, controls) {
+  const asked = new Set(meaningfulWords(clause));
+  const verbs = String(clause).toLowerCase().split(/[^a-z]+/).filter((w) => verbFamily(w));
+  if (!asked.size || !verbs.length) return null;
+  const parsed = (controls || []).map((c) => {
+    const m = /^(.*?)\s*\(([^()]{3,60})\)\s*$/.exec(String(c.label || "").trim());
+    return m ? { c, generic: m[1].toLowerCase(), section: m[2] } : null;
+  }).filter(Boolean);
+  const hits = parsed.filter((p) => {
+    // Siblings only: a label that merely ends in brackets is not one of a set.
+    if (parsed.filter((q) => q.generic === p.generic).length < 2) return false;
+    if (p.c.disabled || (p.c.hidden && !p.c.revealedBy)) return false;
+    const labelVerb = verbFamily(p.generic.split(/\s+/)[0]);
+    if (!labelVerb || !verbs.some((v) => verbFamily(v) === labelVerb)) return false;
+    const words = meaningfulWords(p.section);
+    if (!words.length || !words.every((w) => asked.has(w))) return false;
+    // And nothing else. "Show the field measurements on the graph" names the
+    // Field measurements section too, but "graph" says it means the graph's
+    // own Field measurements switch - a different control altogether.
+    const own = new Set([...words, ...meaningfulWords(p.generic)]);
+    return [...asked].every((w) => own.has(w) || verbFamily(w));
+  });
+  return hits.length === 1 ? hits[0] : null;
 }
 
 /* The one control on this page that offers the span a clause asks for.

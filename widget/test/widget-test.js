@@ -79,6 +79,7 @@ async function load(w, data = {}) {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+const ensure_ = (name, ok, detail) => check(name, !!ok, detail);
 const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
 
 (async () => {
@@ -312,6 +313,18 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     await waitFor(host);
     check("a worker that started but failed to load does not download it all again",
       calls.join(",") === "worker" && /out of memory/.test(host.status().error || ""), `${calls.join(",")} ${host.status().error}`);
+
+    // A page without crypto.randomUUID, as www.drought.gov turned out to
+    // be: WebLLM labels its worker messages with it, and the model never
+    // loaded there.
+    const boxU = { URL, setTimeout, clearTimeout, location: { href: "https://example.org/" }, Worker: function () {},
+      navigator: {}, crypto: { getRandomValues: (a) => require("crypto").getRandomValues(a) } };
+    boxU.globalThis = boxU;
+    vm.createContext(boxU);
+    vm.runInContext(`${src}\nthis.createModelHost = createModelHost;`, boxU);
+    boxU.createModelHost({ loadLib: async () => ({}), makeWorker: null });
+    ensure_("a page without crypto.randomUUID is given one",
+      typeof boxU.crypto.randomUUID === "function" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(boxU.crypto.randomUUID()));
 
     let interrupted = false;
     host = box.createModelHost({ loadLib: async () => ({

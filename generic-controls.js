@@ -1174,7 +1174,8 @@
       }
       const iso = (t) => (t === null ? null : new Date(t).toISOString());
       const round = (n) => Number(n.toFixed(4));
-      const cleanUnit = unit ? String(unit).replace(/^wmoUnit:/i, "") : null;
+      // USGS writes turbidity's unit "_FNU"; the underscore names nothing.
+      const cleanUnit = unit ? String(unit).replace(/^wmoUnit:/i, "").replace(/^[_\s]+/, "") : null;
       const quantity = cleanUnit ? (UNIT_QUANTITY.find(([re]) => re.test(cleanUnit)) || [])[1] || null : null;
       series.push({
         name: String(name).slice(0, 60),
@@ -3148,6 +3149,87 @@
   // the whole sample, twice over: once in the four thousand characters read
   // here, and again in the summary budget downstream, both of which exist to
   // carry what the page says.
+  /* findPassages(question) - the sentences on the page that bear on it.
+   *
+   * The model was shown the same summary of a page whatever it was asked -
+   * tables and readouts, cut at a couple of thousand characters - and the
+   * answers to most questions about a page are in its prose. On a USGS
+   * monitoring location: "what is the datum of this gage" (37.04 ft, in the
+   * station description), "which reservoirs affect low flow" (Stony River,
+   * Savage River, Jennings Randolph), "what does it say about turbidity
+   * above 1,000 FNU", "how many continuous data types" (19). None of those
+   * reached the model, so no model could have answered them.
+   *
+   * The page's whole readable text, split into sentences and scored by the
+   * question's distinctive words - a word few sentences use counts for more
+   * than one most of them do - best few returned, best first.
+   */
+  const PASSAGE_SKIP = new Set(("the a an and or of to in on at by for from with is are was were be been this that these those " +
+    "what which who whom when where why how does do did has have had can could would should will it its page according " +
+    "tell me about there their them they you your please show explain describe say says said here any all " +
+    // What the whole page is about, so no sentence on it is picked out by
+    // it: on a gauge's own page "gauge" ranked every "Gage height" line above
+    // the [Discontinued] ones "which data types at this gauge have been
+    // discontinued" was asking for.
+    "gauge gage site station").split(" "));
+  function findPassages(question, { limit = 4, size = 300 } = {}) {
+    const text = readableBodyText(document.body || document.documentElement, 400000);
+    const qWords = [...new Set(norm(question).split(/[^a-z0-9.,]+/)
+      .map((w) => w.replace(/[.,]+$/, "")).filter((w) => w.length > 1 && !PASSAGE_SKIP.has(w)))];
+    if (!qWords.length || !text) return { count: 0, passages: [] };
+    // Sentences, with long runs of label text cut to a readable size - in
+    // overlapping windows, so an answer is never split between two of them.
+    const pieces = [];
+    for (const s of text.split(/(?<=[.!?])\s+(?=[A-Z0-9])/)) {
+      if (s.length <= size) { pieces.push(s.trim()); continue; }
+      for (let i = 0; i < s.length - size / 2; i += size / 2) pieces.push(s.slice(i, i + size).trim());
+    }
+    // "Located" finds LOCATION, "gauge" finds gage.
+    const stem = (w) => (w.length > 5 ? w.replace(/(ations?|ions?|ed|ing|ies|es|s)$/, "") : w.replace(/s$/, ""));
+    const ALSO = { gauge: "gage", gage: "gauge", gauges: "gages" };
+    const hasWord = (piece, w) => {
+      const p = piece.toLowerCase();
+      return p.includes(w) || (w.length > 3 && p.includes(stem(w))) || (!!ALSO[w] && p.includes(ALSO[w]));
+    };
+    // How many sentences use each word: a word on half the page names nothing.
+    const df = new Map(qWords.map((w) => [w, pieces.filter((p) => hasWord(p, w)).length]));
+    const scored = [];
+    pieces.forEach((p, i) => {
+      if (p.length < 20) return;
+      let score = 0, matched = 0;
+      for (const w of qWords) {
+        if (!hasWord(p, w)) continue;
+        matched++;
+        // A word in a third of the sentences says almost nothing; one in a
+        // handful says what the question is about. Three common words used to
+        // outweigh the one rare one: "which data types have been discontinued"
+        // ranked "data type ... gage height" lines above the [Discontinued] one.
+        const idf = Math.max(0, Math.log(pieces.length / (1 + df.get(w))));
+        score += df.get(w) / pieces.length < 0.03 ? idf * 2 : idf;
+      }
+      if (matched) scored.push({ i, p, score, matched });
+    });
+    // At least two of the question's words where it has two to give - or its
+    // rarest one, which alone says what is asked: "which data types have been
+    // discontinued" is answered by sentences marked [Discontinued] that share
+    // no other word with it.
+    const need = qWords.length >= 2 ? 2 : 1;
+    const rarest = qWords.filter((w) => df.get(w) > 0).sort((a, b) => df.get(a) - df.get(b))[0];
+    const best = scored.filter((x) => x.matched >= need || (rarest && hasWord(x.p, rarest)))
+      .sort((a, b) => b.score - a.score);
+    const seen = new Set();
+    const out = [];
+    for (const x of best) {
+      const key = x.p.slice(0, 80);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(x);
+      if (out.length >= limit) break;
+    }
+    // Best first, so a reader that has to cut drops the weakest.
+    return { count: out.length, passages: out.map((x) => x.p) };
+  }
+
   function readableBodyText(root, limit) {
     const SKIP = /^(script|style|noscript|template|svg|iframe)$/i;
     let out = "";
@@ -3262,7 +3344,7 @@
     mapFeatures,
     readUrl,
     pageLinks,
-    capturedFeeds,
+    capturedFeeds, findPassages,
     capturedFeed,
     mapInfo,
     // What was clicked, in words. realClick hands back the element because
