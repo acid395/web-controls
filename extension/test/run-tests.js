@@ -3435,6 +3435,67 @@ else {
     check("and \"average\" too", (bgA.aggregateWanted("average gage height") || {}).fn, "mean");
   }
 
+  // From the 250-prompt live run: questions taken for commands.
+  {
+    const vmq = require("vm");
+    const bgQ2 = loadBackground({});
+    const isQuestion = (q) => vmq.runInContext(`ASKING_TO_READ.test(${JSON.stringify(q)})`, bgQ2);
+    check("a question naming its source first is still a question",
+      isQuestion("according to this week's drought summary, what weather pattern continued over the past week"), true);
+    check("and so is the hydrologic discussion one",
+      isQuestion("according to the national hydrologic discussion, where is coastal flooding expected"), true);
+    check("\"which X can I view\" asks what the page offers", isQuestion("which regions can I view separate drought maps for"), true);
+    check("while \"what can I do here\" is still about doing", isQuestion("what can I do here"), false);
+    check("and a command with a source in front is still a command", isQuestion("according to the page, open the summary"), false);
+  }
+
+  // A reply cut off at the token limit is still an answer. The panel's
+  // failure carried no `raw`, so the salvage that reads it never ran and
+  // "explain what the D0 through D4 categories mean" came back as "the model
+  // got nowhere" with a good answer in its error message.
+  {
+    const pgT2 = loadPage(`<!doctype html><html><body><h1>Legend</h1>
+      <p>D0 Abnormally Dry. D1 Moderate Drought. D2 Severe Drought. D3 Extreme Drought. D4 Exceptional Drought.</p>
+      </body></html>`, { url: "https://droughtmonitor.unl.edu/CurrentMap.aspx" });
+    if (pgT2) {
+      const bgT2 = loadBackground({ page: pgT2 });
+      const real = bgT2.chrome.runtime.sendMessage;
+      bgT2.chrome.runtime.sendMessage = (m, cb) => {
+        if (!m || m.target !== "panel") return real(m, cb);
+        const reply = m.type === "panelStep"
+          ? { ok: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+            text: "{\"answer\": \"The D0 through D4 categories show drought severity, from D0 abnormally dry to D4 exceptional drought, with each step" }
+          : m.type === "panelStatus" ? { ok: true, ready: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" }
+          : m.type === "panelEmbed" ? { ok: false } : { ok: true };
+        if (typeof cb === "function") { cb(reply); return undefined; }
+        return Promise.resolve(reply);
+      };
+      runAsync(async () => {
+        const r = await bgT2.__ask({ type: "smartAsk", instruction: "explain what the D0 through D4 categories on the legend mean" });
+        ensure("an answer cut off at the token limit is kept, not thrown away",
+          /D0 abnormally dry to D4 exceptional drought/.test(String((r && (r.answer || (r.display && r.display.answer))) || "")),
+          JSON.stringify(r && { ok: r.ok, error: r.error, answer: r.answer }).slice(0, 240));
+      });
+    }
+  }
+
+  // weather.gov keeps its search box in a menu; the ZIP code box, always on
+  // screen, outranked it and "search the site for heat safety" typed into it.
+  {
+    const bgB = loadBackground({});
+    const zip = { label: "Local forecast by \"City, St\" or ZIP code", type: "text", selector: "#inputstring" };
+    const site = { label: "Search For", type: "text", hidden: true, revealedBy: "#searchmenu", selector: "#query" };
+    check("a search of the site uses the site's search, not an always-visible place lookup",
+      bgB.findSearchBox([zip, site], "the weather service site").selector, "#query");
+    check("while a search that does not say \"site\" is left as it was",
+      bgB.findSearchBox([zip, site]).selector, "#inputstring");
+    check("unless the request names the place box", bgB.findSearchBox([zip, site], "the local forecast box").selector, "#inputstring");
+    const hood = { label: "How is drought affecting your neighborhood? Enter a location", type: "text", selector: "#hood" };
+    const query = { label: "Query", type: "search", selector: "#q" };
+    check("a named neighborhood search is still found", bgB.findSearchBox([hood, query], "the neighborhood drought search").selector, "#hood");
+    check("and a map search that says search is untouched", bgB.findSearchBox([{ label: "Search Locaction", type: "text", selector: "#loc" }]).selector, "#loc");
+  }
+
   // "No active tab" forty-eight seconds into a run, with the page still open.
   const pgT = loadPage("<!doctype html><html><body><button>Go</button></body></html>", { url: "https://example.org/" });
   if (pgT) {

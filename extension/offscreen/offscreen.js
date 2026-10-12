@@ -635,7 +635,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         };
         const parsed = globalThis.WC_FIRST_JSON_OBJECT(text);
         if (!parsed) {
-          sendResponse({ ok: false, cost,
+          // The text goes back too: a reply cut off at the token limit is still
+          // an answer, and the caller recovers it from `raw`.
+          sendResponse({ ok: false, cost, raw: text.slice(0, 1200),
             error: `model did not return usable JSON: ${text.slice(0, 200)}` });
           return;
         }

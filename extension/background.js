@@ -2803,9 +2803,22 @@ function admitsNoAnswer(text) {
   return !carries;
 }
 
+// A source named up front is still a question. "According to this week's
+// drought summary, what weather pattern continued" and "according to the
+// national hydrologic discussion, where is coastal flooding expected" were
+// taken for commands - every word of "Drought Summary" was in the request -
+// and the link was clicked instead of the page being read.
+const NAMED_SOURCE = /^\s*(?:according\s+to|based\s+on|per)\s+[^,?]{1,80},\s*/i;
+// And "which X can I see" asks what the page offers, not what to do: "which
+// regions can I view separate drought maps for" clicked Regions instead of
+// listing them. "What can I do here" stays a request about doing.
+const WHICH_CAN_I = /^\s*(?:please\s+)?which\s+\w+(?:\s+\w+)?\s+(?:can|could)\s+i\b/i;
 const ASKING_TO_READ = {
-  test: (s) => !ASKING_WHAT_I_DO.test(String(s || ""))
-    && (ASKING_TO_READ_PLAINLY.test(String(s || "")) || A_QUESTION.test(String(s || ""))),
+  test: (s) => {
+    const t = String(s || "").replace(NAMED_SOURCE, "");
+    return (!ASKING_WHAT_I_DO.test(t) || WHICH_CAN_I.test(t))
+      && (ASKING_TO_READ_PLAINLY.test(t) || A_QUESTION.test(t));
+  },
 };
 
 function scoreControl(control, words, phrase, opts = {}) {
@@ -3366,6 +3379,7 @@ function findSearchBox(controls, where = null) {
     && !/^(search|site|page|website|box|field|bar)$/.test(w)) : [];
   const typeOf = (c) => String(c.type || c.kind || "").toLowerCase();
   const textual = (c) => TEXT_INPUT_KINDS.has(typeOf(c)) || typeOf(c) === "textarea";
+  const siteWide = !!where && /\b(?:site|website|web\s+site|portal)\b/i.test(where);
 
   // Federal sites carry the same search twice - once in the header and once
   // inside the collapsed mobile menu - and taking the first in document
@@ -3384,6 +3398,15 @@ function findSearchBox(controls, where = null) {
     // text", and document order picked the second. A control called exactly
     // what a person would say it is beats one that qualifies the name.
     if (/^\s*search\s*$/i.test(c.label || "")) r += 1;
+    // A place lookup is not the site's search, when the site's search is what
+    // was asked for. weather.gov keeps its search box inside a menu, so the
+    // ZIP code box - always on screen - outranked it, and "search the site
+    // for heat safety" typed "heat safety" in as a place. Only where the
+    // request says "site": "search for Seattle" on a forecast page may well
+    // mean the place box, and that is left as it was. A box the request
+    // names still wins, by the +5 below.
+    if (siteWide && !/\bsearch\b/i.test(c.label || "")
+        && /\b(?:zip|city|address|location|forecast)\b/i.test(c.label || "")) r -= 3;
     for (const w of whereWords) if (wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact") r += 5;
     return r;
   };
@@ -5959,7 +5982,12 @@ async function askModelForStep(payload) {
         // model planning nothing - silently, which is the worst way.
         const parsed = globalThis.WC_FIRST_JSON_OBJECT(said.text || "");
         if (!parsed) {
-          return { ok: false, cost: said.cost,
+          // With the text itself. A reply cut off at the token limit is still
+          // an answer - "The D0 through D4 categories represent the level of
+          // drought severity, with D0 indicating abnormally dry..." - and the
+          // salvage that recovers it reads `raw`, which this never carried,
+          // so every such answer was thrown away as "the model got nowhere".
+          return { ok: false, cost: said.cost, raw: String(said.text || "").slice(0, 1200),
             error: `model did not return usable JSON: ${String(said.text || "").slice(0, 200)}` };
         }
         // The model named by the window that answered, so a card cannot
