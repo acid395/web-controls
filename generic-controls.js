@@ -151,7 +151,41 @@
         .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
       return clean(el.placeholder || el.title || outside || shorthand) || "dropdown";
     }
-    return clean(el.placeholder || el.title || rowText(el) || el.name || shortText(el) || "");
+    // Its own words before its tooltip. Wikipedia's Talk tab carries
+    // title="Discussion about the content page", and that was its name - so
+    // "open the talk page" found no Talk. The tooltip is kept as another
+    // name for it (see `hint` on the record), not as the name.
+    const own = clean(shortText(el));
+    if (/[a-z0-9]/i.test(own) && own.length <= 80) return own;
+    return clean(el.placeholder || el.title || (el.alt || "") || rowText(el) || el.name || own || "")
+      || iconName(el);
+  };
+
+  /* An icon with nothing else to go by is named by its picture.
+   *
+   * ifis.iowafloodcenter.org's whole menu is a column of images - no text, no
+   * alt, no title - so the model was shown none of it and could not open the
+   * flood maps however it was asked. The files say what they are:
+   * img/icon2/flood.png, community.png, weather2.png. A person reads the
+   * picture; this reads its name, which is the nearest thing to it.
+   */
+  const ICON_NOISE = /^(?:icons?|ic|img|image|images|btn|button|px|sprite|new|active|hover|default|normal|on|off|sm|md|lg|xl|white|black|dark|light|svg|png|fill|outline|outlined|round|rounded)$/;
+  const nameFromFile = (src) => {
+    const base = String(src || "").split(/[?#]/)[0].split("/").pop().replace(/\.[a-z0-9]+$/i, "");
+    return base.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^A-Za-z]+/)
+      .map((w) => w.toLowerCase()).filter((w) => w.length > 1 && !ICON_NOISE.test(w))
+      .join(" ").slice(0, 40);
+  };
+  const iconName = (el) => {
+    try {
+      const tag = String(el.tagName || "").toLowerCase();
+      if (tag === "img" || tag === "input") return nameFromFile(el.getAttribute("src"));
+      const imgs = el.querySelectorAll ? el.querySelectorAll("img") : [];
+      if (imgs.length === 1) return nameFromFile(imgs[0].getAttribute("src"));
+      const bg = getComputedStyle(el).backgroundImage || "";
+      const m = bg.match(/url\(["']?([^"')]+)/);
+      return m && !/^data:/.test(m[1]) ? nameFromFile(m[1]) : "";
+    } catch (e) { return ""; }
   };
 
   // What the row this control sits in is called. water.noaa.gov puts a bare
@@ -254,6 +288,12 @@
     // scrollIntoView, and without this every click threw there rather than
     // being exercised.
     if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center", inline: "center" });
+    // The pointer arrives before it presses, as a mouse's does. Menus that
+    // open on hover - ifis.iowafloodcenter.org's whole sidebar - never saw a
+    // press without one, and opened for a person and not for this.
+    el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
     el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
@@ -490,6 +530,21 @@
     if (el.hasAttribute("onclick")) return true;
     const p = reactProps(el);
     if (p && (p.onClick || p.onChange || p.onInput)) return true;
+    // Assigned in script rather than written in the markup - el.onclick =
+    // ..., or jQuery's .click()/.on(), which most older research and
+    // government apps are built on. Neither leaves an attribute, so an image
+    // that opens a whole menu was not a control at all. A hover-only handler
+    // counts only on something with no words of its own - an icon - since
+    // on text it is far more often a highlight than an action.
+    if (typeof el.onclick === "function" || typeof el.onmousedown === "function") return true;
+    try {
+      const jq = window.jQuery;
+      const ev = jq && typeof jq._data === "function" ? jq._data(el, "events") : null;
+      if (ev && (ev.click || ev.mousedown || ev.mouseup || ev.pointerdown || ev.touchstart)) return true;
+      const hoverOnly = (ev && (ev.mouseover || ev.mouseenter)) || typeof el.onmouseover === "function";
+      if (hoverOnly && !String(el.textContent || "").trim()
+          && (/^(img|svg|i|span|div|a|li)$/i.test(el.tagName) || el.querySelector("img, svg"))) return true;
+    } catch (e) { /* a page's own jQuery, broken or replaced */ }
     try {
       if (typeof getEventListeners === "function") {
         const ev = getEventListeners(el);
@@ -898,6 +953,9 @@
         expanded,
         revealedBy: opener ? cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
+        // What its tooltip calls it, where that differs: another name a
+        // request may use.
+        hint: (() => { const t = String(el.title || "").replace(/\s+/g, " ").trim(); return t && t !== lab ? t.slice(0, 80) : undefined; })(),
       };
       // Which one is chosen, not only what is on offer. Without it nothing
       // can tell whether a selection took, and a list that had just been set
@@ -2182,6 +2240,13 @@
         const key = cssPath(r);
         if (key && !state[key]) state[key] = { value: !!r.checked, label: rawLabelOf(r).slice(0, 60) || "map layer", tag: "input" };
       }
+      // A Google map says its zoom only in its scale bar - "20 km" becomes
+      // "5 km" - so pressing Zoom In on one was reported as changing nothing.
+      deepQueryAll(".gm-style").slice(0, 2).forEach((m, i) => {
+        const scale = [...m.querySelectorAll('button[aria-label^="Map Scale"], .gm-style-cc')]
+          .map((n) => n.getAttribute("aria-label") || n.textContent).join(" ").replace(/\s+/g, " ").trim();
+        if (scale) state[`gmap-zoom-${i}`] = { value: scale.slice(0, 60), label: "map zoom", tag: "map" };
+      });
     } catch (e) { /* no map here */ }
     // The headings on screen, and any dialog. Opening a tab or a report
     // changes no control's value, so "open the stations tab" switched the

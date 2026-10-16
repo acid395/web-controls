@@ -71,6 +71,7 @@ function mount(userOptions = {}) {
     storageKey: options.storageKey,
     onBroadcast: (m) => { if (ui) ui.progress(m); },
     beforeCall: ensureNamed,
+    onWarm: () => { if (ui) ui.loadModel(); },
   });
 
   // The model the site chose, unless the visitor has since picked another

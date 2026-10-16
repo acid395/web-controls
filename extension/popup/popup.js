@@ -659,6 +659,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // The first request that needs the model starts it here, where it lives,
+  // with the same progress line the picker shows.
+  if (msg.type === "panelWarm") {
+    (async () => {
+      try {
+        const mod = await panelModelModule();
+        if (!mod.status().ready && !mod.status().loading) {
+          setStatus("model loading...", "load");
+          watchLoad(mod, msg.model || (modelChoice && modelChoice.value));
+        }
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
   if (msg.type === "panelRelease") {
     (async () => {
       try { const mod = await panelModelModule(); await mod.release(); } catch (e) { /* nothing held */ }
@@ -1267,19 +1284,11 @@ if (modelChoice) {
       modelChoice.value = globalThis.WC_DEFAULT_MODEL || modelChoice.value;
     }
     showModelState();
-    // And start loading it here, because the panel is what answers now.
-    // Nothing else warms it any more: the service worker deliberately stops
-    // short while this window is open, so that only one copy of the weights
-    // is ever on the card.
-    chrome.storage.local.get("localModelEnabled", async ({ localModelEnabled }) => {
-      if (localModelEnabled === false) return;
-      try {
-        const mod = await panelModelModule();
-        if (mod.status().ready || mod.status().loading) return;
-        setStatus("model loading...", "load");
-        watchLoad(mod, modelChoice.value);
-      } catch (e) { /* it loads on the first instruction instead */ }
-    });
+    // Not loaded on opening. Two to five gigabytes taken from the machine
+    // the moment the panel appeared, whether or not anything was asked that
+    // needed it, is what made people say it slowed their computer down. The
+    // first request that needs the model asks for it ("panelWarm" below);
+    // choosing one from the picker loads it too.
   });
   modelChoice.addEventListener("change", () => {
     const chosen = modelChoice.options[modelChoice.selectedIndex].text;

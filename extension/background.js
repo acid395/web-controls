@@ -3418,7 +3418,15 @@ function findSearchBox(controls, where = null) {
     for (const w of whereWords) if (wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact") r += 5;
     return r;
   };
-  const boxes = controls.filter(textual);
+  // A box nobody can see is a search box only if it says so, or the request
+  // named it. hydroshare.org's home page has no search at all; its only text
+  // field is the Title of a create-resource form, closed - and "search for
+  // watershed" was typed into that and reported as searched.
+  const plausible = (c) => !c.hidden
+    || typeOf(c) === "search"
+    || /\b(?:search|find|query|look\s*up|keyword)/i.test(`${c.label || ""} ${c.revealedByLabel || ""}`)
+    || whereWords.some((w) => wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact");
+  const boxes = controls.filter((c) => textual(c) && plausible(c));
   if (!boxes.length) return null;
   return boxes.slice().sort((a, b) => rank(b) - rank(a))[0];
 }
@@ -5380,10 +5388,17 @@ function alsoCalled(label, control = null) {
     const flatOwn = own.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return flatOwn ? [flatOwn] : [];
   }
-  const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
-  if (!m) return [];
   const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  return [flat(m[1]), flat(m[2])].filter((x) => x.length >= 2);
+  const names = [];
+  // Its tooltip, where the page gave one that differs from its text.
+  if (control && control.hint) names.push(flat(control.hint));
+  // A list number is not part of the name: a contents link reading "15
+  // References" is the References link.
+  const unnumbered = flat(t).replace(/^\d+(?:\s\d+)*\s+(?=[a-z])/, "");
+  if (unnumbered && unnumbered !== flat(t)) names.push(unnumbered);
+  const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
+  if (m) names.push(flat(m[1]), flat(m[2]));
+  return names.filter((x) => x.length >= 2);
 }
 
 function namedByClause(all, clause) {
@@ -5447,8 +5462,15 @@ function namedByClause(all, clause) {
         if (!/^(?:on|in|at|within|inside)$/.test(words[i])) continue;
         const core = words.slice(0, i).join(" ").replace(/^the\s+/, "");
         if (!core) continue;
+        // What is cut off has to be somewhere on the page, or a word for a
+        // part of one. "Zoom in on omaha" pressed Zoom In and dropped Omaha
+        // without a word - half the request done and reported as all of it.
+        const tail = words.slice(i + 1).filter((w) => !/^(?:the|a|an|this|that|my)$/.test(w));
+        const onPage = (w) => /^(?:map|maps|graph|chart|plot|page|table|panel|screen|sidebar|menu|toolbar|left|right|top|bottom|location|site|window|view)$/.test(w)
+          || all.some((c) => ` ${flat(c.label)} `.includes(` ${w} `));
+        if (!tail.length || !tail.every(onPage)) continue;
         const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
-          && flat(c.label) === core && !opposite(flat(c.label)));
+          && (flat(c.label) === core || alsoCalled(c.label, c).includes(core)) && !opposite(flat(c.label)));
         if (hits.length === 1) { named = hits; cutExactly = true; }
       }
     }
@@ -5461,7 +5483,7 @@ function namedByClause(all, clause) {
         .replace(/^the\s+/, "");
       if (core && core !== bare) {
         const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
-          && flat(c.label) === core && !opposite(flat(c.label)));
+          && (flat(c.label) === core || alsoCalled(c.label, c).includes(core)) && !opposite(flat(c.label)));
         if (hits.length === 1) { named = hits; cutExactly = true; }
       }
     }
@@ -5726,6 +5748,36 @@ async function switchModelTo(id) {
   // without saying so.
   await releaseOffscreenModel();
   return { ok: true, model: id };
+}
+
+/* The model, started by the first request that needs it.
+ *
+ * Nothing loads it ahead of time any more - not the browser starting, not
+ * the panel opening - because holding gigabytes for a request that may never
+ * come is what slowed people's machines down. So the request that does need
+ * it starts it, and waits a short while: weights already in the browser's
+ * cache are ready in about ten seconds, and that request is then answered by
+ * the model rather than told to come back. A first download takes longer than
+ * anyone should sit through, and is reported as what it is.
+ */
+async function startModelIfIdle({ waitMs = 20000 } = {}) {
+  let st = await modelStatus({ maxAgeMs: 0 }).catch(() => null);
+  if (!st || st.ready || st.hasGpu === false || !(await isLocalModelEnabled())) return st;
+  // Only a load this started is waited on. One already under way was
+  // somebody else's, and its request has already been told.
+  if (st.loading || st.started) return st;
+  const chosen = await chrome.storage.local.get("llmModelId").then((g) => g.llmModelId).catch(() => null);
+  const id = (chosen && globalThis.WC_MODEL_IDS && globalThis.WC_MODEL_IDS.includes(chosen)) ? chosen : WC_DEFAULT_MODEL;
+  try {
+    await Promise.resolve(chrome.runtime.sendMessage({ target: "panel", type: "panelWarm", model: id })).catch(() => null);
+  } catch (e) { return st; }
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1000));
+    st = await modelStatus({ maxAgeMs: 0 }).catch(() => null);
+    if (!st || st.ready || st.error || (!st.loading && !st.started)) break;
+  }
+  return st;
 }
 
 async function releaseOffscreenModel() {
@@ -7377,10 +7429,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // model's job is which control; the value is in the words already.
     if (!optionWanted && (target.options || []).length) {
       const saidFlat = flatLabel(goal);
+      // The label left out only where it is a real name: a list with none
+      // is labelled with its own options run together - "-- select an
+      // option --Cedar Rapids (D)Des Moines" - and every option is "in" it.
+      // A tag in brackets is not part of the name: "Cedar Rapids (D)".
+      const ownText = flatLabel((target.options || []).map((o) => o.text || o.value).join(" "));
+      const realLabel = flatLabel(target.label) === ownText || ownText.startsWith(flatLabel(target.label).slice(0, 20))
+        ? "" : flatLabel(target.label);
       const inWords = (target.options || []).filter((o) => {
-        const t = flatLabel(o.text || o.value);
+        const t = flatLabel(String(o.text || o.value || "").replace(/\([^)]*\)/g, " "));
         return t && t.length >= 3 && String(o.value ?? "").trim()
-          && !flatLabel(target.label).includes(t)
+          && !(realLabel && realLabel.includes(t))
           && new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(saidFlat);
       });
       if (inWords.length === 1) optionWanted = inWords[0].text || inWords[0].value;
@@ -11832,7 +11891,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         if (!forceBaseline) {
-          const status = await modelStatus();
+          // Started here if nothing has started it: this request needs it.
+          const status = (await startModelIfIdle().catch(() => null)) || await modelStatus();
           if (!status || !status.ready) {
             // Named, and with its progress where there is any. "The local
             // model is still loading" gave no way to tell whether a model

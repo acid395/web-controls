@@ -19,7 +19,7 @@
  * Everything else it touches at load - side panels, offscreen documents,
  * content-script registration - has no meaning here and is a no-op.
  */
-function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall } = {}) {
+function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm } = {}) {
   const messageHandlers = [];
   const updatedListeners = new Set();
   const changeListeners = new Set();
@@ -178,6 +178,12 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       case "panelEmbed":
         try { return { ok: true, vectors: await modelHost.embed(m.texts || []) }; }
         catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+      // The first request that needs the model starts it - through the
+      // panel, so the progress bar shows it, where there is one.
+      case "panelWarm":
+        if (onWarm) { try { onWarm(m.model); } catch (e) { modelHost.load(m.model); } }
+        else modelHost.load(m.model);
+        return { ok: true };
       case "panelRelease":
         await modelHost.release();
         return { ok: true };
