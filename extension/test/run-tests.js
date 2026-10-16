@@ -4644,7 +4644,7 @@ for (const b of budgets) {
     runAsync(async () => {
       // Routed past the instant path on purpose: the question here is what a
       // card says when the model was not available, not which path was quickest.
-      const r = await bgl.__ask({ type: "smartAsk", instruction: "click the gage height box" });
+      const r = await bgl.__ask({ type: "smartAsk", instruction: "click the gage height control" });
       ensure("a card not planned by the model says why",
         /still loading/.test(String((r.display || {}).note || "")), (r.display || {}).note);
     });
@@ -4655,7 +4655,7 @@ for (const b of budgets) {
       const bgw = loadBackground({ page: noGpuPage });
       bgw.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
       runAsync(async () => {
-        const r = await bgw.__ask({ type: "smartAsk", instruction: "click the gage height box" });
+        const r = await bgw.__ask({ type: "smartAsk", instruction: "click the gage height control" });
         ensure("and names WebGPU when that is the reason",
           /WebGPU/.test(String((r.display || {}).note || "")), (r.display || {}).note);
       });
@@ -12263,6 +12263,103 @@ function installSummaryHooks() {
         `\n    cd extension/test && npm install`);
     }
     process.exitCode = failed || !bodyDone ? 1 : 0;
+  });
+}
+
+section("slow, hidden and chained: an app that loads as you go");
+// A research portal of the ordinary kind: tabs that load their content from
+// a server, a list filled in only once another is chosen, a dialog behind a
+// menu. Every one of these failed a different way, none of them site-specific.
+{
+  const vmc = require("vm");
+  const bgSplit = loadBackground({});
+  const split = (s) => vmc.runInContext(`${JSON.stringify(s)}.split(STEP_BOUNDARY).map((t) => t.trim()).filter(Boolean)`, bgSplit);
+  check("a comma before a verb starts a new step",
+    JSON.stringify(split("open the model run tab, select Mississippi as the basin, then select Baton Rouge")),
+    JSON.stringify(["open the model run tab", "select Mississippi as the basin", "select Baton Rouge"]));
+  check("and so does \"and run\"",
+    JSON.stringify(split("pick Morgan City and run the forecast")), JSON.stringify(["pick Morgan City", "run the forecast"]));
+  check("a comma inside a place name does not",
+    JSON.stringify(split("Search fremont, ca, usa and click on it")), JSON.stringify(["Search fremont, ca, usa", "click on it"]));
+  check("nor one in a list of things to show",
+    JSON.stringify(split("show discharge, gage height")), JSON.stringify(["show discharge, gage height"]));
+}
+const tabbed = loadPage(`<!doctype html><html><head><title>Portal</title></head><body>
+  <div class="tabs"><span data-tab="overview">Overview</span><span data-tab="model">Model run</span>
+    <a href="#bs-pane">Settings</a></div>
+  <section id="overview"><h2>Overview</h2></section>
+  <section id="model" hidden><label>Basin <select id="basin"><option>Choose</option><option>Mississippi</option></select></label></section>
+  <div id="bs-pane" hidden><label><input type="checkbox" id="metric"> Metric units</label></div>
+  </body></html>`, { url: "https://portal.example.edu/" });
+if (!tabbed) skip("tabs that name their panel", "jsdom not installed");
+else {
+  const inv = tabbed.GENERIC.inventory({ includeHidden: true }).controls;
+  const basin = inv.find((c) => c.id === "basin");
+  ensure("a list on a closed tab is still offered", !!basin, inv.map((c) => c.label));
+  ensure("with the tab that opens it", basin && /data-tab|span/.test(String(basin.revealedBy)) && basin.revealedByLabel === "Model run",
+    basin && { by: basin.revealedBy, label: basin.revealedByLabel });
+  const metric = inv.find((c) => c.id === "metric");
+  ensure("and a Bootstrap-style href=#pane tab the same way", metric && metric.revealedByLabel === "Settings",
+    metric && { by: metric.revealedBy, label: metric.revealedByLabel });
+}
+const loading = loadPage(`<!doctype html><html><head><title>Portal</title></head><body>
+  <div id="spin" class="spinner"></div><div id="empty" class="loading-indicator-container"></div>
+  <select id="st"><option>Loading…</option></select><p id="note">Running water quality</p>
+  </body></html>`, { url: "https://portal.example.edu/" });
+if (!loading) skip("waiting on a loading page", "jsdom not installed");
+else {
+  const G = loading.GENERIC;
+  const spin = loading.document.getElementById("spin");
+  const empty = loading.document.getElementById("empty");
+  const st = loading.document.getElementById("st");
+  // jsdom lays nothing out; a zero box is what an empty wrapper has.
+  const real = loading.Element.prototype.getBoundingClientRect;
+  empty.getBoundingClientRect = () => ({ width: 700, height: 0, top: 0, left: 0, right: 700, bottom: 0 });
+  check("a spinner on screen is loading", /indicator/.test(G.busyNow().loading || ""), true);
+  spin.remove();
+  check("a list that reads Loading… is loading", /list reads/.test(G.busyNow().loading || ""), true);
+  st.innerHTML = "<option>Baton Rouge</option>";
+  check("an empty, zero-height spinner holder is not, nor is a heading that starts with Running",
+    G.busyNow().loading, null);
+  void real;
+  runAsync(async () => {
+    const s2 = loading.document.createElement("div");
+    s2.className = "spinner";
+    loading.document.body.appendChild(s2);
+    setTimeout(() => s2.remove(), 900);
+    const began = Date.now();
+    const r = await G.settle();
+    ensure("settle waits for the spinner to go", Date.now() - began >= 850 && r.waitedForLoading === true,
+      { waited: Date.now() - began, r });
+    const began2 = Date.now();
+    await G.settle();
+    ensure("and returns promptly when nothing is loading", Date.now() - began2 < 1500, Date.now() - began2);
+  });
+}
+const shown = loadPage(`<!doctype html><html><head><title>Portal</title></head><body>
+  <span id="tab">Stations</span><section id="panel" hidden><h2>Stations</h2></section></body></html>`,
+  { url: "https://portal.example.edu/" });
+if (!shown) skip("a tab that shows a section", "jsdom not installed");
+else {
+  const G = shown.GENERIC;
+  const before = G.pageSignature();
+  shown.document.getElementById("panel").hidden = false;
+  check("a heading coming into view counts as a change", G.signatureDiff(before, G.pageSignature()).changed, true);
+  const back = G.pageSignature();
+  shown.document.getElementById("panel").hidden = true;
+  check("one going away alone does not", G.signatureDiff(back, G.pageSignature()).changed, false);
+}
+const dialogPage = loadPage(`<!doctype html><html><head><title>Portal</title></head><body>
+  <button id="rep" onclick="document.getElementById('dlg').hidden=false">Reports</button>
+  <div id="dlg" role="dialog" hidden><h3>Spring flood report</h3><button onclick="document.getElementById('dlg').hidden=true">Close</button></div>
+  </body></html>`, { url: "https://portal.example.edu/" });
+if (!dialogPage) skip("closing what was just opened", "jsdom not installed");
+else {
+  const bgD = loadBackground({ page: dialogPage });
+  runAsync(async () => {
+    await bgD.__ask({ type: "smartAsk", instruction: "click reports and close it" });
+    check("\"close it\" closes what was opened, not \"close it reports\"",
+      dialogPage.document.getElementById("dlg").hidden, true);
   });
 }
 

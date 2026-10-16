@@ -126,11 +126,10 @@ Two failures are worth separating, because they are not equally bad:
 ## If you want to check the numbers yourself
 
 ```
-node extension/test/run-tests.js       # 1216 tests, no network
-node research/live-scoring/score.js    # 44 hand-written asks on saved pages
-node research/live-scoring/generate.js && node research/live-scoring/score-generated.js
+node extension/test/run-tests.js       # the full suite, no network
+node widget/test/widget-test.js        # the widget
 ```
 
-Currently 42/44 hand-written and 69/69 generated. `research/live-scoring/README.md`
-explains what those two sets measure and, importantly, what the 69/69 does not
-mean.
+The 250-prompt set the live runs are scored against is in
+`research/live-scoring/submission-set.js`; `research/live-scoring/README.md`
+says how it is built and what the offline column does and does not mean.

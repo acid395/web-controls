@@ -90,7 +90,13 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     active: true,
     url: location.href,
     title: document.title,
-    status: document.readyState === "complete" ? "complete" : "loading",
+    // Loading only while the document is still being parsed. Waiting for
+    // readyState "complete" meant waiting for the load event, which one hung
+    // image or tracker holds off forever - and nothing announced it when it
+    // did come. So on such a page every ask sat out waitForPageLoad's full
+    // ten seconds (twenty when waitForNavigation took "loading" for a
+    // navigation), for a page whose controls had been there all along.
+    status: document.readyState === "loading" ? "loading" : "complete",
   });
 
   // A client-side route change is the only navigation this page lives
@@ -117,6 +123,16 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       try { checkUrl(); } catch (e) { /* never break the app's router */ }
       return out;
     };
+  }
+  // Mounted from a module before the document finished parsing: a wait
+  // that began then hears when it has.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      const done = { ...thisTab(), status: "complete" };
+      for (const fn of updatedListeners) {
+        try { fn(done.id, { status: "complete" }, done); } catch (e) { /* theirs */ }
+      }
+    }, { once: true });
   }
   window.addEventListener("popstate", checkUrl);
   window.addEventListener("hashchange", checkUrl);

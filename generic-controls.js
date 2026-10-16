@@ -76,6 +76,8 @@
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
   let ariaIndex = null;
+  // The page's menu button, found once per pass: undefined until looked for.
+  let drawerToggle;
   let labelForIndex = null, labelForRoot = null;
 
   // Reads the text that identifies a control, original case, whitespace
@@ -457,7 +459,7 @@
   // the whole reason to ask again, and a cache that survived a click reported
   // every revealed control as still hidden - which is the opposite of what
   // the disclosure work is for. Speed inside a pass, never across an action.
-  const pageTouched = () => { visCache = null; ariaIndex = null; labelForIndex = null; };
+  const pageTouched = () => { visCache = null; ariaIndex = null; labelForIndex = null; drawerToggle = undefined; };
   const isVisible = (el) => {
     if (!el) return false;
     if (visCache && visCache.has(el)) return visCache.get(el);
@@ -633,6 +635,18 @@
       }
       const byAria = ariaIndex.get(id);
       if (byAria && isVisible(byAria)) return byAria;
+      // Tabs that name their panel some other way. Bootstrap and jQuery UI
+      // point at it with href="#id" or data-(bs-)target, and many apps with
+      // data-tab="id" - no aria-controls, so every control on a closed tab
+      // was hidden with no way in and dropped, and "select the Mississippi
+      // basin" on a page that had one said nothing matched.
+      try {
+        const q = (window.CSS && CSS.escape) ? CSS.escape(id) : id.replace(/["\\]/g, (c) => `\\${c}`);
+        const named = document.querySelectorAll(
+          `a[href="#${q}"], [data-target="#${q}"], [data-bs-target="#${q}"], [data-target="${q}"], [data-bs-target="${q}"], [data-tab="${q}"], [data-panel="${q}"], [data-pane="${q}"]`);
+        const opener = [...named].find((t) => isVisible(t) && !hiddenAncestor.contains(t));
+        if (opener) return opener;
+      } catch (e) { /* an id no selector can name */ }
     }
     if (hiddenAncestor.tagName === "DETAILS" || hiddenAncestor.closest) {
       const details = hiddenAncestor.tagName === "DETAILS" ? hiddenAncestor : hiddenAncestor.closest("details");
@@ -723,6 +737,35 @@
         if (first && isVisible(first) && !first.contains(el) && first !== el) return first;
       }
     }
+    /* A drawer opened by the page's one menu button, from anywhere.
+     *
+     * A slide-out navigation - <div id="drawer">, <nav class="offcanvas">,
+     * a sidenav - sits nowhere near the "☰ Menu" that opens it, and nothing
+     * in the markup joins the two. Every item in it was hidden with no way
+     * in, so "go to reports" was told the page had no Reports. The drawer
+     * says what it is in its id, class or role; the button says what it is
+     * in its label, its class, or the ☰ it shows.
+     */
+    const DRAWERISH = /(^|[\s_-])(drawer|offcanvas|off-canvas|sidenav|side-nav|sidebar|sidemenu|nav|navigation|menu|mobile-menu)([\s_-]|$)/i;
+    const drawerLike = (n) => n && (n.tagName === "NAV"
+      || /^(navigation|menu)$/i.test((n.getAttribute && n.getAttribute("role")) || "")
+      || DRAWERISH.test(String(n.id || "")) || saysMenu(n)
+      || DRAWERISH.test(String((n.className && n.className.baseVal) || n.className || "")));
+    if (drawerLike(hiddenAncestor) && drawerToggle === undefined) {
+      drawerToggle = null;
+      const TOGGLE = /hamburger|navbar-toggler|menu-toggle|menu-btn|menu-button|nav-toggle|drawer-toggle|sidenav-toggle|offcanvas-toggle/i;
+      for (const t of deepQueryAll('button, a, [role=button], [onclick], [class*=hamburger], [class*=toggle], [aria-label]').slice(0, 400)) {
+        if (hiddenAncestor.contains(t) || t.contains(el) || !isVisible(t)) continue;
+        const said = `${(t.getAttribute && t.getAttribute("aria-label")) || ""} ${t.textContent || ""}`.replace(/\s+/g, " ").trim();
+        if (TOGGLE.test(String((t.className && t.className.baseVal) || t.className || ""))
+            || /^(?:☰|≡)?\s*(?:open\s+|main\s+|site\s+)?(?:menu|navigation|nav)$/i.test(said) || /^(?:☰|≡)$/.test(said)) {
+          drawerToggle = t;
+          break;
+        }
+      }
+    }
+    if (drawerToggle && drawerLike(hiddenAncestor) && !hiddenAncestor.contains(drawerToggle)
+        && !drawerToggle.contains(el) && isVisible(drawerToggle)) return drawerToggle;
     return null;
   }
 
@@ -748,7 +791,7 @@
 
   function inventory({ includeHidden = false } = {}) {
     freshPass();
-    ariaIndex = null; labelForIndex = null;
+    ariaIndex = null; labelForIndex = null; drawerToggle = undefined;
     const seen = new Set();
     const all = [];
     for (const el of walk(document.documentElement)) {
@@ -1946,9 +1989,122 @@
   // defaults - a reveal that meant to wait 120ms waited 220, and nothing
   // anywhere said so. Taking either name means no caller can get it wrong,
   // which matters more here than picking a winner.
-  function settle({ quiet, timeout, quietMs, timeoutMs } = {}) {
+  /* Is the page still fetching what the action asked for?
+   *
+   * Quiet was taken for finished. An app that puts up "Loading stations..."
+   * and then waits two seconds on its server changes nothing in between, so
+   * 220ms of quiet arrived long before the data did - the card said "Nothing
+   * changed" on a tab that was loading, and the next step of a chain, or the
+   * explanation after it, read the spinner instead of the table.
+   *
+   * Two signals, both the page's own: a request still out that started
+   * around the action, and a loading indicator on screen. Either keeps the
+   * wait going, up to a cap, so a page that polls forever or shows a spinner
+   * that never leaves costs a bounded wait rather than a hang.
+   */
+  const REQUESTS = (() => {
+    // Shared with any other copy of this bundle in the page, so a second
+    // injection does not wrap fetch a second time.
+    if (window.__wcRequests) return window.__wcRequests;
+    const out = { pending: new Map(), seq: 0 };
+    window.__wcRequests = out;
+    const begin = () => { const id = ++out.seq; out.pending.set(id, Date.now()); return id; };
+    const end = (id) => { out.pending.delete(id); };
+    try {
+      const nativeFetch = window.fetch;
+      if (typeof nativeFetch === "function") {
+        window.fetch = function (...args) {
+          const id = begin();
+          let p;
+          try { p = nativeFetch.apply(this, args); } catch (e) { end(id); throw e; }
+          // Settled when the headers arrive, which is when the page's own
+          // code gets to run. Waiting on the body would wait on a stream.
+          Promise.resolve(p).then(() => end(id), () => end(id));
+          return p;
+        };
+      }
+      const XHR = window.XMLHttpRequest;
+      if (XHR && XHR.prototype && XHR.prototype.send) {
+        const send = XHR.prototype.send;
+        XHR.prototype.send = function (...args) {
+          const id = begin();
+          this.addEventListener("loadend", () => end(id), { once: true });
+          try { return send.apply(this, args); } catch (e) { end(id); throw e; }
+        };
+      }
+    } catch (e) { /* a page that froze fetch: the indicator check still runs */ }
+    return out;
+  })();
+  // Requests the action could have started: begun no earlier than a moment
+  // before the wait did, and not so long ago they are a stream or a poll.
+  const requestsSince = (t) => {
+    let n = 0;
+    const now = Date.now();
+    for (const at of REQUESTS.pending.values()) if (at >= t && now - at < 15000) n++;
+    return n;
+  };
+
+  // A spinner, a progress bar with no value, or a short "Loading..." line.
+  // Class names are matched as whole words or as spinner/loading/loader, so
+  // a "load-more" button or a determinate progress bar is not taken for one.
+  // Only as loading messages are written: trailing dots, or the bare word.
+  // "Running water quality" is a heading, "Running…" is a status.
+  const LOADING_TEXT = /^\s*(?:(?:loading|fetching|retrieving|processing|running|searching|updating|calculating|computing)\b[^.…]{0,30}(?:\.{2,}|…)|loading|please wait\b.{0,30})\s*$/i;
+  // What on the page says it is still loading, in words, or "" for nothing.
+  function loadingShown() {
+    const describe = (el, why) => `${why}: ${String(el.tagName || "").toLowerCase()}${el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).slice(0, 3).join(".") : ""}`;
+    try {
+      const marked = document.querySelectorAll(
+        "[aria-busy=\"true\"], [role=progressbar]:not([aria-valuenow]), [class*=spinner], [class*=loading], [class*=loader]");
+      for (const el of [...marked].slice(0, 60)) {
+        if (/\bloaded\b/i.test(String(el.className || ""))) continue;
+        // On screen with a size of its own. waterdata.usgs.gov keeps an
+        // empty "loading-indicator-container" on every page, 0px tall, its
+        // spinner display:none until something loads - counted as shown,
+        // every action there waited out the whole twelve seconds.
+        let box = null;
+        try { box = el.getBoundingClientRect(); } catch (e) { /* detached */ }
+        if (!box || box.width < 3 || box.height < 3) continue;
+        // And a holder whose spinner is hidden is not one, whatever its box -
+        // the same container, measured where nothing is laid out, or given
+        // padding. An empty spinner div has no children and still counts.
+        if (el.children && el.children.length && !String(el.textContent || "").trim()
+            && ![...el.children].some((k) => isVisible(k))) continue;
+        if (isVisible(el)) return describe(el, "indicator");
+      }
+      // Text, for pages that say it in words. Bounded: short text nodes only.
+      const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+      let seen = 0;
+      for (let t = walker.nextNode(); t && seen < 4000; t = walker.nextNode(), seen++) {
+        const v = t.nodeValue;
+        if (!v || v.length > 45 || !LOADING_TEXT.test(v)) continue;
+        const holder = t.parentElement;
+        if (!holder || /^(SCRIPT|STYLE|NOSCRIPT)$/.test(holder.tagName)) continue;
+        // A list being filled in says so in its own chosen option: picking a
+        // basin fills "Station" a couple of seconds later, and until then the
+        // station asked for is not in it to pick.
+        if (holder.tagName === "OPTION") {
+          const list = holder.closest && holder.closest("select");
+          if (list && list.selectedOptions && list.selectedOptions[0] === holder && isVisible(list)) return describe(list, `list reads "${v.trim()}"`);
+          continue;
+        }
+        if (isVisible(holder)) return describe(holder, `text "${v.trim()}"`);
+      }
+    } catch (e) { /* unreadable page: treat as not loading */ }
+    return "";
+  }
+  // Why a wait is still going, for whoever has to find out.
+  function busyNow() {
+    const since = Date.now() - 15000;
+    return { requests: requestsSince(since), loading: loadingShown() || null };
+  }
+
+  function settle({ quiet, timeout, quietMs, timeoutMs, busyTimeoutMs } = {}) {
     quiet = quiet != null ? quiet : (quietMs != null ? quietMs : 220);
     timeout = timeout != null ? timeout : (timeoutMs != null ? timeoutMs : 2500);
+    // How long a page that says it is still working is waited on.
+    const busyTimeout = Math.max(timeout, busyTimeoutMs != null ? busyTimeoutMs : 12000);
+    const since = Date.now() - 1500;
     return new Promise((resolve) => {
       let lastChange = Date.now();
       let mutations = 0;
@@ -1960,14 +2116,24 @@
         childList: true, subtree: true, attributes: true, characterData: true,
       });
       const started = Date.now();
+      let busySeen = false;
       const tick = () => {
         const idleFor = Date.now() - lastChange;
-        if (idleFor >= quiet || Date.now() - started >= timeout) {
-          observer.disconnect();
-          resolve({ mutations, waitedMs: Date.now() - started, timedOut: Date.now() - started >= timeout });
-          return;
+        const elapsed = Date.now() - started;
+        if (idleFor >= quiet || elapsed >= timeout) {
+          // Quiet, but only finished if nothing says it is still on its way.
+          const busy = elapsed < busyTimeout && (requestsSince(since) > 0 || !!loadingShown());
+          if (!busy) {
+            observer.disconnect();
+            resolve({ mutations, waitedMs: elapsed, timedOut: elapsed >= busyTimeout || (!busySeen && elapsed >= timeout), waitedForLoading: busySeen });
+            return;
+          }
+          busySeen = true;
+          // Something is still loading: what counts as quiet starts again
+          // from when it finishes, so the content it brings is waited for too.
+          if (idleFor >= quiet) lastChange = Date.now() - quiet + 120;
         }
-        setTimeout(tick, 60);
+        setTimeout(tick, busySeen ? 120 : 60);
       };
       setTimeout(tick, 60);
     });
@@ -2017,7 +2183,22 @@
         if (key && !state[key]) state[key] = { value: !!r.checked, label: rawLabelOf(r).slice(0, 60) || "map layer", tag: "input" };
       }
     } catch (e) { /* no map here */ }
-    return { url: location.href, title: document.title, controls: state, count: n };
+    // The headings on screen, and any dialog. Opening a tab or a report
+    // changes no control's value, so "open the stations tab" switched the
+    // tab, loaded the table, and the card said nothing changed. A heading
+    // that was not there before is the page showing something new. Ones in
+    // a carousel or a live region are left out: those change on their own.
+    const shownHeadings = [];
+    try {
+      for (const h of deepQueryAll("h1, h2, h3, [role=heading], dialog[open], [role=dialog], [role=alertdialog]")) {
+        if (shownHeadings.length >= 40) break;
+        if (!isVisible(h)) continue;
+        if (h.closest && h.closest('[aria-live], [class*=carousel], [class*=slider], [class*=slick], [class*=swiper], [class*=marquee], [class*=ticker]')) continue;
+        const text = norm(rawLabelOf(h) || h.textContent || "").slice(0, 60);
+        if (text) shownHeadings.push(text);
+      }
+    } catch (e) { /* unreadable: the controls still speak */ }
+    return { url: location.href, title: document.title, controls: state, count: n, headings: shownHeadings };
   }
 
   // What actually changed between two snapshots, in terms a person can read.
@@ -2058,6 +2239,15 @@
     // fired. What matters is only whether the fragment it landed on is
     // empty - "#" carries no view, and a map writing "#@=-83,43,5" does.
     const cosmeticHash = hashOnly && !String(after.url).split("#")[1];
+
+    // Something new on show. Only appearances count: a heading that went
+    // away with nothing in its place is as likely a menu closing as the
+    // action working.
+    const hadBefore = new Set(before.headings || []);
+    const shown = (after.headings || []).filter((h) => !hadBefore.has(h));
+    if (shown.length && before.headings) {
+      changes.push({ selector: "heading", label: shown[0], appeared: true, now: shown.slice(0, 3).join("; ") });
+    }
 
     return {
       changed: changes.length > 0 || (before.url !== after.url && !cosmeticHash),
@@ -2704,7 +2894,7 @@
   // The only way in is to press the thing and look again.
   function disclosures({ limit = 6, match = "" } = {}) {
     freshPass();
-    ariaIndex = null;
+    ariaIndex = null; drawerToggle = undefined;
     const out = [];
     const seen = new Set();
     const NAMES = /\b(layer|layers|menu|filter|filters|options|settings|more|panel|legend|tools|expand|show)\b/i;
@@ -3337,7 +3527,7 @@
     restore,
     goBack,
     scrollToElement,
-    settle,
+    settle, busyNow,
     pageSignature,
     signatureDiff,
     hoverSeries,

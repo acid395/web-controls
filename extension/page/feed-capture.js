@@ -28,7 +28,10 @@
   // Pictures are not data. NOAA's map requests its marker icons through a
   // URL this pattern matches, and reading every PNG as text was memory spent
   // on nothing.
-  const NOT_DATA = /^(image|font|audio|video)\/|octet-stream|protobuf/i;
+  // Nor is a stream that never ends. Reading a clone of a server-sent
+  // events feed to its end waits forever, holding every event it has sent
+  // so far - on a live dashboard, memory that only grows.
+  const NOT_DATA = /^(image|font|audio|video)\/|octet-stream|protobuf|event-stream|x-mixed-replace/i;
   const feeds = [];
   let held = 0;
   // Absolute, before it is tested. A page's own requests are often relative:

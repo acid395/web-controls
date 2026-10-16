@@ -171,13 +171,33 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     const began = Date.now();
     let timer = null;
     let reply;
+    // Streamed, and gathered here. Not for speed: WebLLM's non-streaming
+    // completion checks its interrupt flag before the step that clears it,
+    // so after one interrupted generation every later request aborted on
+    // the spot with an empty reply - one slow turn, and the model said
+    // nothing for the rest of the page's life. A streamed request clears the
+    // flag as it starts. Measured: an empty "abort" in 3ms before, "4" in
+    // 350ms after, on the same engine straight after an interrupt.
+    const gather = async () => {
+      const chunks = await engine.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 192,
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+      let content = "";
+      let usage = null;
+      for await (const c of chunks) {
+        const ch = c && c.choices && c.choices[0];
+        if (ch && ch.delta && ch.delta.content) content += ch.delta.content;
+        if (c && c.usage) usage = c.usage;
+      }
+      return { choices: [{ message: { content } }], usage };
+    };
     try {
       reply = await Promise.race([
-        engine.chat.completions.create({
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: 192,
-        }),
+        gather(),
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             // Stopped, not just abandoned. A generation nobody is waiting

@@ -214,7 +214,11 @@ async function autoPublish(tabId, url) {
 // throws at the top level of the service worker, which kills the worker
 // outright - every ask then fails with no error anyone can see, which is the
 // single worst failure this extension has.
-if (chrome.tabs && chrome.tabs.onUpdated) {
+// Only while publishing is on. Otherwise every page load in every tab woke
+// the worker, and on an enabled site injected the page bundle and called
+// mcpRegister - which does nothing in a browser without modelContext - for
+// a feature parked behind PUBLISH_WEBMCP.
+if (PUBLISH_WEBMCP && chrome.tabs && chrome.tabs.onUpdated) {
   chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
     if (info.status === "complete" && tab && tab.url) autoPublish(tabId, tab.url);
   });
@@ -236,7 +240,7 @@ async function registerFeedCapture() {
     if (!origins.length) return;
     const drop = await chrome.scripting.getRegisteredContentScripts({ ids: [PUBLISH_TOOLS_ID] }).catch(() => []);
     if (drop.length) await chrome.scripting.unregisterContentScripts({ ids: [PUBLISH_TOOLS_ID] });
-    await chrome.scripting.registerContentScripts([{
+    const scripts = [{
       id: FEED_CAPTURE_ID,
       matches: origins,
       js: [FEED_CAPTURE],
@@ -256,7 +260,11 @@ async function registerFeedCapture() {
       runAt: "document_end",
       world: "MAIN",
       allFrames: false,
-    }]);
+    }];
+    // The page bundle is 180 KB, parsed on every page load of every enabled
+    // site, for publish-tools.js to return on its first line while
+    // publishing is parked. The bundle is injected when somebody asks.
+    await chrome.scripting.registerContentScripts(PUBLISH_WEBMCP ? scripts : scripts.slice(0, 1));
   } catch (e) {
     // Registration is an enhancement: without it capture still works for
     // requests made after an ask, just not for the page's startup load.
@@ -3427,6 +3435,12 @@ function figuresAgree(asked, have) {
 function planGenericTool(instruction, inventory) {
   const controls = (inventory && inventory.controls) || [];
   if (!controls.length) return null;
+  // "Go to reports" is "open reports". The verb was kept as a word to match,
+  // so a control called Reports answered only part of the request, and on a
+  // page whose menu items are plain clickable divs - most apps - nothing was
+  // pressed. "go back" and "go forward" are the browser's, not a control's.
+  instruction = String(instruction || "")
+    .replace(/^\s*(?:please\s+)?(?:go|navigate|head|jump)\s+(?!back\b|forward\b)(?:over\s+)?to\s+|^\s*(?:please\s+)?(?:take|bring)\s+me\s+to\s+|^\s*(?:please\s+)?visit\s+/i, "open ");
 
   const allWords = meaningfulWords(instruction);
   if (!allWords.length) return null;
@@ -5270,7 +5284,7 @@ const ACTION_SYNONYMS = new Map(Object.entries({
 // A bare "and" only separates where a verb follows it, because the first half
 // of "click forecasts and outlooks and click key messages" is the name of a
 // control.
-const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull";
+const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load";
 // "and press go", "and hit enter", "and get the forecast" finish the step
 // before them - the Go of a jump menu, the submit of a typed box - and as a
 // step of their own they went looking for a Go button on the page the first
@@ -5433,6 +5447,19 @@ function namedByClause(all, clause) {
         if (!/^(?:on|in|at|within|inside)$/.test(words[i])) continue;
         const core = words.slice(0, i).join(" ").replace(/^the\s+/, "");
         if (!core) continue;
+        const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
+          && flat(c.label) === core && !opposite(flat(c.label)));
+        if (hits.length === 1) { named = hits; cutExactly = true; }
+      }
+    }
+    // What kind of thing it is, said after its name. "Open the stations tab"
+    // is the tab called Stations - "tab" is not part of the name, and with it
+    // the clause was a name nothing wore, so it waited on the model. Exactly
+    // one control must wear what is left, as with the place cut above.
+    if (!named.length && !ordinalIn(text)) {
+      const core = bare.replace(/\s+(?:tab|button|link|menu item|menu|option|checkbox|check box|toggle|dropdown|drop down|list|box|page|section|panel|pane|item|icon)$/, "")
+        .replace(/^the\s+/, "");
+      if (core && core !== bare) {
         const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
           && flat(c.label) === core && !opposite(flat(c.label)));
         if (hits.length === 1) { named = hits; cutExactly = true; }
@@ -9110,8 +9137,12 @@ async function warmModel() {
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmWarm" });
   } catch (e) { /* best effort - a real llmPing later will surface any real error */ }
 }
-chrome.runtime.onStartup.addListener(warmModel);
-chrome.runtime.onInstalled.addListener(warmModel);
+// Not on browser start any more. The default is five gigabytes, and the
+// hidden document holds it for as long as the browser is open - so on an
+// eight gigabyte machine, merely having the extension installed took most of
+// the memory from everything else on the computer, all day, whether or not
+// it was ever asked anything. The panel loads its own copy when it opens,
+// which is when somebody is about to ask.
 
 // The download, on the toolbar, whether or not the panel is open.
 //
@@ -10872,6 +10903,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // them apart afterwards.
       let modelUsed = null;
       let modelSaid = null;
+      // The model was asked and gave no answer at all - timed out, or replied
+      // with nothing usable - before it took a step. Not the same as refusing.
+      let modelNeverAnswered = false;
       // Why the run stopped, in its own words. The loop works out something
       // specific - that a name fits more than one control, that it kept
       // choosing one that is not there - and a generic "did not find a way
@@ -11880,6 +11914,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const flags = {};
               let failed = null;
               for (const part of parts) {
+                // A part that names one control on the page as it now is -
+                // after the parts before it ran - needs no decision. The
+                // all-at-once check above plans every part before pressing
+                // anything, so a list that fills in only once the one before
+                // it is chosen ("select Mississippi as the basin, then select
+                // Vicksburg") made the whole sentence uncertain, and a 3B
+                // spent a minute and a half on it and picked the wrong
+                // station. Checked here, part by part, it is certain when its
+                // turn comes.
+                if (!forceModel) {
+                  const sure = await certainClausePlan(route.global, part).catch(() => null);
+                  if (sure) {
+                    const did = await sure.run().catch(() => null);
+                    if (did) {
+                      all.push({ did: sure.label || part, ok: true, changed: did.changed !== false,
+                        outcome: "named on the page exactly, so the model was not asked" });
+                      continue;
+                    }
+                  }
+                }
                 const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
                   .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
                 for (const h of one.history || []) all.push(h);
@@ -12042,6 +12096,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             modelGaveUp = (agent && (agent.gaveUp || agent.error)) || null;
             // A model that was asked and got nowhere does not hand the job
             // to the scorer. See below.
+            //
+            // But one that never answered was not asked anything it could
+            // refuse. A timeout or an empty reply before a single step is the
+            // machine failing, not the model judging the request - and the
+            // page's own matching is what every machine without a model gets.
+            // "Open the stations tab" ran in six seconds with no model and
+            // came back "nothing here clearly does that" with one that timed
+            // out on its first turn.
+            if (agent && !(agent.history && agent.history.length)
+                && (agent.outOfTime || agent.modelUnavailable || /did not answer in time|timed out|usable JSON|no reply|empty reply/i
+                  .test(String(agent.error || agent.gaveUp || "")))) {
+              modelNeverAnswered = true;
+            }
           }
         }
 
@@ -12083,7 +12150,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               || [...labels].some((l) => closeName(bare, l));
           });
         }
-        if (modelTried && isCommand(wanted) && !forceBaseline && !namesSomethingExactly) {
+        if (modelTried && !modelNeverAnswered && isCommand(wanted) && !forceBaseline && !namesSomethingExactly) {
           respond({
             ok: false, plannedBy: "model",
             error: "nothing on this page clearly does that",
@@ -12138,7 +12205,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // separates steps only where a verb follows it, which is what makes
           // the second half an instruction rather than the rest of a name.
           const parts = String(msg.instruction)
-            .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read)\b)/i)
+            .split(STEP_BOUNDARY)
             .map((t) => t.trim()).filter(Boolean);
           // Eight, not four. A five-part instruction fell out of the sequence
           // and was handled as one command, which on the page tested pressed
@@ -12156,6 +12223,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const own = meaningfulWords(part)
                 .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
               if (own.length) { carried = own.join(" "); return part; }
+              // Except shutting something. "Open the menu, go to reports and
+              // close it" means the report that just opened, whose button
+              // says "Close" - and "close it reports" matched nothing.
+              if (/^\s*(?:close|dismiss|exit|cancel|hide)\b/i.test(part)) return part;
               return carried ? `${part} ${carried}` : part;
             });
             const plans = resolved.map((text, i) => ({

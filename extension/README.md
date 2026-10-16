@@ -342,8 +342,7 @@ the same failure shape as every other bug in this file: plausible, and wrong.
 It had already bitten: `noaaSetBasemap` only works once the layers panel is
 open, and called cold it fails invisibly.
 
-`verify-usgs.js` has done this for one manifest all along - call, read the DOM
-back, assert it changed. `runVerified()` generalises it: snapshot every
+`runVerified()` checks every action the same way: snapshot every
 control's state, act, wait, snapshot again, report what moved. A no-op is now
 said out loud, with the likeliest reason.
 

@@ -21,11 +21,7 @@ const PAGES = {
   // select shp" runs here on someone else's machine and did not on ours, and
   // a case that only exists in a screenshot cannot be fixed twice.
   droughtmap: "https://droughtmonitor.unl.edu/CurrentMap.aspx",
-  usgsstate: "https://waterdata.usgs.gov/nwis/rt",
-  quakes: "https://earthquake.usgs.gov/earthquakes/map/",
-  airnow: "https://www.airnow.gov/",
   weather: "https://www.weather.gov/",
-  climate: "https://www.ncei.noaa.gov/access/monitoring/monthly-report/",
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {

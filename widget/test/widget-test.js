@@ -132,6 +132,24 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("and is still there after the page reloads", echoes.includes("show the monthly reports"), echoes.join(" | "));
   }
 
+  // A page whose load event never comes - one hung image or tracker - is
+  // still a page that can be used. Every ask on one waited out a ten-second
+  // timeout for a "complete" nobody was going to announce.
+  console.log("a page still loading its last image");
+  {
+    const w = page();
+    await load(w);
+    Object.defineProperty(w.document, "readyState", { configurable: true, get: () => "interactive" });
+    const wc = w.WebControls.mount();
+    const pressed = [];
+    w.document.getElementById("t-rep").addEventListener("click", () => pressed.push("reports"));
+    const began = Date.now();
+    await wc.ask("show the monthly reports");
+    const took = Date.now() - began;
+    check("is acted on", pressed.includes("reports"));
+    check("without waiting for the load event", took < 5000, `${took}ms`);
+  }
+
   console.log("asking, with a model");
   {
     const w = page();

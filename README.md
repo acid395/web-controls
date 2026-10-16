@@ -91,14 +91,11 @@ Built for USGS and NOAA water data sites. The generic layer works anywhere.
 
 | File | What it does |
 |---|---|
-| `inventory-controls.js` | Lists every interactive control on a page. Use it to map a new site. |
-| `map-probe.js` | Checks whether a page's map can be driven by script. |
 | `generic-controls.js` | Works on any page with no site-specific code. See "Any site" below. |
 | `web-controls.js` | Tools for `waterdata.usgs.gov/state/<state>/`. |
 | `site-controls.js` | Tools for `waterdata.usgs.gov/monitoring-location/USGS-<id>/`. |
 | `noaa-controls.js` | Tools for `water.noaa.gov/`. Partial. |
 | `forecastpoints-controls.js` | Tools for `weather.gov/forecastpoints`. |
-| `verify-usgs.js` | Self-test for `web-controls.js`. 17/17 passing. |
 
 ## Use
 
@@ -133,7 +130,7 @@ fact that USGS parameter `00060` is discharge.
 
 ## Adding a site
 
-Paste `inventory-controls.js` to list the controls, copy the `WC` block from
+Paste `generic-controls.js` and run `GENERIC.inventory()` to list the controls, copy the `WC` block from
 any file, and write a manifest:
 
 ```js
@@ -156,14 +153,13 @@ GENERIC.selectOption('#basemap-select', 'satellite');
 GENERIC.clickText('Download');
 ```
 
-`GENERIC.inventory()` is the same page-reading logic as `inventory-controls.js`,
-returned as data instead of printed as a table, with a CSS selector on every
+`GENERIC.inventory()` returns every control as data, with a CSS selector on every
 row so a caller (a person, or eventually an LLM) can act on whatever it just
 found. This is the piece that lets the toolkit reach a site not accessed before.
 
 ## Maps
 
-`map-probe.js` / `GENERIC.mapInfo()` report what's possible on a given map.
+`GENERIC.mapInfo()` reports what's possible on a given map.
 
 Leaflet *can* put each marker in the DOM, so `WC` clicks them like any other
 element, but it's a choice each app makes, not a guarantee. Leaflet also
