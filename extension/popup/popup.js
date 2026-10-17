@@ -786,11 +786,21 @@ async function currentModelStatus() {
 
 function benchSiteFor(url) {
   const sets = globalThis.WC_BENCH_PROMPTS || {};
-  const host = (() => { try { return new URL(url).host; } catch (e) { return ""; } })();
+  // The set whose address this page is under, the longest first: two apps
+  // on one host - hydroinformatics.tulane.edu/lab/radarviz/ and /lab/fims/ -
+  // are two sets, and matching on the host alone gave both the first one.
+  let page;
+  try { page = new URL(url); } catch (e) { return null; }
+  let best = null;
   for (const [site, meta] of Object.entries(sets)) {
-    try { if (new URL(meta.url).host === host) return { site, meta }; } catch (e) { /* skip */ }
+    let u;
+    try { u = new URL(meta.url); } catch (e) { continue; }
+    if (u.host !== page.host) continue;
+    const dir = u.pathname.replace(/[^/]*$/, "");
+    const under = page.pathname.startsWith(dir) ? dir.length : (dir === "/" ? 0 : -1);
+    if (under >= 0 && (!best || under > best.under)) best = { site, meta, under };
   }
-  return null;
+  return best ? { site: best.site, meta: best.meta } : null;
 }
 
 async function resetTo(url) {

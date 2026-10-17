@@ -498,3 +498,57 @@ const MORE = {
   ],
 };
 for (const [site, extra] of Object.entries(MORE)) module.exports[site].prompts.push(...extra);
+
+// Two research apps from the Tulane HydroInformatics Lab, added 2026-10-17:
+// a radar viewer with a three-step picker and tabs, and a flood-map viewer
+// whose panels only exist once a layer is ticked. Both draw on a map.
+// `later` throughout: the later steps appear only after the first has
+// loaded something from the server.
+module.exports.radarviz = {
+  url: "https://hydroinformatics.tulane.edu/lab/radarviz/",
+  note: "NEXRAD Level 2 radar viewer: pick a site, a date, a product; animate; QPE. The radar image is a picture on a Google map.",
+  prompts: [
+    { say: "search radar sites for miami, select the miami radar, then set the year to 2023", kind: "multistep",
+      steps: ["Search Radar Sites", "KAMX - Miami, FL", "Year"], later: true },
+    { say: "search radar sites for new orleans, select the radar, set the year to 2024 and the month to august, then pick the first day listed", kind: "multistep",
+      steps: ["Search Radar Sites", "KLIX - New Orleans, LA", "Year", "Month", "Day"], later: true },
+    { say: "choose correlation coefficient, set high resolution, then select the highest elevation available", kind: "multistep",
+      steps: ["Radar Product", "Resolution", "Scan Level (Elevation) - Select to Display"], later: true },
+    { say: "open the animate tab, set the window to 2 hours and the speed to 6 fps, then build the animation", kind: "multistep",
+      steps: ["Animate", "2h", "Speed", "Build Animation"], later: true },
+    { say: "go to the precipitation tab, set the CC threshold to 0.90, switch to sliding, and run QPE", kind: "multistep",
+      steps: ["Precipitation", "CC Threshold", "Sliding", "Run QPE"], later: true },
+    { say: "open settings, switch volume units to acre-feet and distance units to miles, then clear the cached data", kind: "multistep",
+      steps: ["Settings", "Volume units", "Distance units", "Clear"], later: true },
+    { say: "search for houston and select the radar, reset all filters and selections, then search for dallas and select that radar", kind: "multistep",
+      steps: ["Search Radar Sites", "KHGX - Houston/Galveston, TX", "Reset all filters and selections", "KFWS - Dallas/Fort Worth, TX"], later: true },
+    { say: "search radar sites for new orleans, select the radar, and tell me what step 2 asks for", kind: "action+explain",
+      steps: ["Search Radar Sites", "KLIX - New Orleans, LA"], explain: true, later: true },
+    { say: "what radar products can be displayed here", kind: "explain", explain: true },
+    { say: "read this page", kind: "explain", explain: true },
+  ],
+};
+module.exports.fims = {
+  url: "https://hydroinformatics.tulane.edu/lab/fims/",
+  note: "Flood inundation map viewer: layer checkboxes open panels that fill in from the server. The flood map is drawn on a Google map.",
+  prompts: [
+    { say: "turn on flood map set (scenario), then choose cedar rapids", kind: "multistep",
+      steps: ["Flood Map Set (Scenario)", "Cedar Rapids (D)"], later: true },
+    { say: "turn on flood map set (scenario), choose cedar rapids, open layer settings and switch the color scale to viridis", kind: "multistep",
+      steps: ["Flood Map Set (Scenario)", "Cedar Rapids (D)", "Layer Settings", "Viridis"], later: true },
+    { say: "turn on flood map set (scenario), choose cedar rapids, open the metrics tab and enable total dollar damage", kind: "multistep",
+      steps: ["Flood Map Set (Scenario)", "Cedar Rapids (D)", "Metrics", "Total Dollar Damage"], later: true },
+    { say: "enable comparison sets, choose cedar rapids as the first scenario and des moines as the second, then start the comparison", kind: "multistep",
+      steps: ["Comparison Sets", "Cedar Rapids (D)", "Des Moines (M) (D)", "Start Comparison"], later: true },
+    { say: "turn on flood map set (scenario), choose des moines, then switch the map to satellite and turn on labels", kind: "multistep",
+      steps: ["Flood Map Set (Scenario)", "Des Moines (M) (D)", "Show satellite imagery", "Labels"], later: true },
+    { say: "turn on flood depth, choose cedar rapids, then switch the layer order", kind: "multistep",
+      steps: ["Flood Depth", "Cedar Rapids (D)", "Switch Layer Order"], later: true },
+    { say: "open the geospatial file uploader, set the type to damage layer, and name it test layer", kind: "multistep",
+      steps: ["Geospatial File", "Type", "Name"], later: true },
+    { say: "turn on flood map set (scenario), choose cedar rapids, and tell me which models are available", kind: "action+explain",
+      steps: ["Flood Map Set (Scenario)", "Cedar Rapids (D)"], explain: true, later: true },
+    { say: "which cities have flood map scenarios", kind: "explain", explain: true },
+    { say: "what map layers can be turned on here", kind: "explain", explain: true },
+  ],
+};

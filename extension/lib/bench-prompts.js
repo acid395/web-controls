@@ -1,7 +1,7 @@
 /* bench-prompts.js - the prompt set, frozen, so a live run and an offline
  * one are the same experiment.
  *
- * 250 prompts, 5 sites, 50 each, hand-written against the controls
+ * 270 prompts, 7 sites, 38.57142857142857 each, hand-written against the controls
  * and data each page really carries. Two kinds of thing and their
  * combinations: an action that visibly changes the page, a question
  * answered from the page's data, an action followed by an explanation,
@@ -12,7 +12,7 @@
  * the first happen on a page the first one opens.
  *
  * `offline` is what the grounding layer alone did with the prompt, model
- * off, against the captured page - 102 of 250 are false. jsdom applies
+ * off, against the captured page - 115 of 270 are false. jsdom applies
  * no stylesheet and cannot follow a link, so it is a floor, not a
  * forecast, and says nothing about steps on a second page. A reading
  * passes offline whenever the page has text to read, since explaining is
@@ -302,6 +302,38 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"show state lines and county lines on the map","kind":"multistep","steps":["Show State Lines","Show County Lines"],"on":"Show County Lines","want":{"clicked":"Show County Lines"},"offline":false},
    {"say":"open the California-Nevada region page, then open the latest drought update","kind":"multistep","steps":["California-Nevada","Latest Drought Update"],"later":true,"on":"California-Nevada","want":{"clicked":"California-Nevada"},"offline":false},
    {"say":"jump the map to Puerto Rico, then back to the continental U.S.","kind":"multistep","steps":["Jump to Puerto Rico","Jump to CONUS"],"on":"Jump to CONUS","want":{"clicked":"Jump to CONUS"},"offline":false}
+  ]
+ },
+ "radarviz": {
+  "url": "https://hydroinformatics.tulane.edu/lab/radarviz/",
+  "note": "NEXRAD Level 2 radar viewer: pick a site, a date, a product; animate; QPE. The radar image is a picture on a Google map.",
+  "prompts": [
+   {"say":"search radar sites for miami, select the miami radar, then set the year to 2023","kind":"multistep","steps":["Search Radar Sites","KAMX - Miami, FL","Year"],"later":true,"on":"Search Radar Sites","want":{"clicked":"Search Radar Sites"},"offline":false},
+   {"say":"search radar sites for new orleans, select the radar, set the year to 2024 and the month to august, then pick the first day listed","kind":"multistep","steps":["Search Radar Sites","KLIX - New Orleans, LA","Year","Month","Day"],"later":true,"on":"Search Radar Sites","want":{"clicked":"Search Radar Sites"},"offline":false},
+   {"say":"choose correlation coefficient, set high resolution, then select the highest elevation available","kind":"multistep","steps":["Radar Product","Resolution","Scan Level (Elevation) - Select to Display"],"later":true,"on":"Radar Product","want":{"clicked":"Radar Product"},"offline":false},
+   {"say":"open the animate tab, set the window to 2 hours and the speed to 6 fps, then build the animation","kind":"multistep","steps":["Animate","2h","Speed","Build Animation"],"later":true,"on":"Animate","want":{"clicked":"Animate"},"offline":true},
+   {"say":"go to the precipitation tab, set the CC threshold to 0.90, switch to sliding, and run QPE","kind":"multistep","steps":["Precipitation","CC Threshold","Sliding","Run QPE"],"later":true,"on":"Precipitation","want":{"clicked":"Precipitation"},"offline":true},
+   {"say":"open settings, switch volume units to acre-feet and distance units to miles, then clear the cached data","kind":"multistep","steps":["Settings","Volume units","Distance units","Clear"],"later":true,"on":"Settings","want":{"clicked":"Settings"},"offline":true},
+   {"say":"search for houston and select the radar, reset all filters and selections, then search for dallas and select that radar","kind":"multistep","steps":["Search Radar Sites","KHGX - Houston/Galveston, TX","Reset all filters and selections","KFWS - Dallas/Fort Worth, TX"],"later":true,"on":"Search Radar Sites","want":{"clicked":"Search Radar Sites"},"offline":false},
+   {"say":"search radar sites for new orleans, select the radar, and tell me what step 2 asks for","kind":"action+explain","steps":["Search Radar Sites","KLIX - New Orleans, LA"],"explain":true,"later":true,"on":"Search Radar Sites","want":{"clicked":"Search Radar Sites","read":true},"offline":false},
+   {"say":"what radar products can be displayed here","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":false},
+   {"say":"read this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":false}
+  ]
+ },
+ "fims": {
+  "url": "https://hydroinformatics.tulane.edu/lab/fims/",
+  "note": "Flood inundation map viewer: layer checkboxes open panels that fill in from the server. The flood map is drawn on a Google map.",
+  "prompts": [
+   {"say":"turn on flood map set (scenario), then choose cedar rapids","kind":"multistep","steps":["Flood Map Set (Scenario)","Cedar Rapids (D)"],"later":true,"on":"Flood Map Set (Scenario)","want":{"clicked":"Flood Map Set (Scenario)"},"offline":false},
+   {"say":"turn on flood map set (scenario), choose cedar rapids, open layer settings and switch the color scale to viridis","kind":"multistep","steps":["Flood Map Set (Scenario)","Cedar Rapids (D)","Layer Settings","Viridis"],"later":true,"on":"Flood Map Set (Scenario)","want":{"clicked":"Flood Map Set (Scenario)"},"offline":false},
+   {"say":"turn on flood map set (scenario), choose cedar rapids, open the metrics tab and enable total dollar damage","kind":"multistep","steps":["Flood Map Set (Scenario)","Cedar Rapids (D)","Metrics","Total Dollar Damage"],"later":true,"on":"Flood Map Set (Scenario)","want":{"clicked":"Flood Map Set (Scenario)"},"offline":false},
+   {"say":"enable comparison sets, choose cedar rapids as the first scenario and des moines as the second, then start the comparison","kind":"multistep","steps":["Comparison Sets","Cedar Rapids (D)","Des Moines (M) (D)","Start Comparison"],"later":true,"on":"Comparison Sets","want":{"clicked":"Comparison Sets"},"offline":false},
+   {"say":"turn on flood map set (scenario), choose des moines, then switch the map to satellite and turn on labels","kind":"multistep","steps":["Flood Map Set (Scenario)","Des Moines (M) (D)","Show satellite imagery","Labels"],"later":true,"on":"Flood Map Set (Scenario)","want":{"clicked":"Flood Map Set (Scenario)"},"offline":false},
+   {"say":"turn on flood depth, choose cedar rapids, then switch the layer order","kind":"multistep","steps":["Flood Depth","Cedar Rapids (D)","Switch Layer Order"],"later":true,"on":"Flood Depth","want":{"clicked":"Flood Depth"},"offline":false},
+   {"say":"open the geospatial file uploader, set the type to damage layer, and name it test layer","kind":"multistep","steps":["Geospatial File","Type","Name"],"later":true,"on":"Geospatial File","want":{"clicked":"Geospatial File"},"offline":false},
+   {"say":"turn on flood map set (scenario), choose cedar rapids, and tell me which models are available","kind":"action+explain","steps":["Flood Map Set (Scenario)","Cedar Rapids (D)"],"explain":true,"later":true,"on":"Flood Map Set (Scenario)","want":{"clicked":"Flood Map Set (Scenario)","read":true},"offline":false},
+   {"say":"which cities have flood map scenarios","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
+   {"say":"what map layers can be turned on here","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true}
   ]
  }
 };

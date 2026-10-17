@@ -1,0 +1,3184 @@
+<html lang="en"><head><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-TJR9R6TLKR"></script><script>window.dataLayer = window.dataLayer || [];   
+        function gtag(){dataLayer.push(arguments);}   
+        gtag('js', new Date());    
+        gtag('config', 'G-TJR9R6TLKR');</script><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="NEXRAD Level 2 Radar Data Viewer - Interactive map-based radar site and data selection"><title>NEXRAD Radar Viewer</title><script defer="defer" src="bundle.js"></script><style>/* ============================================
+   NEXRAD Radar Viewer - Professional Minimalist Theme
+   ============================================ */
+
+/* ============================================
+   CSS Custom Properties (Design Tokens)
+   ============================================ */
+:root {
+  /* Color Palette - Muted & Professional */
+  --color-primary: #4a5568;
+  --color-primary-light: #718096;
+  --color-primary-dark: #2d3748;
+  --color-accent: #5a7a9e;
+  --color-accent-hover: #4a6a8e;
+
+  /* Neutral Colors */
+  --color-text-primary: #2d3748;
+  --color-text-secondary: #4a5568;
+  --color-text-muted: #718096;
+  --color-text-inverse: #ffffff;
+
+  /* Background Colors */
+  --color-bg-panel: rgba(255, 255, 255, 0.92);
+  --color-bg-panel-hover: rgba(255, 255, 255, 0.98);
+  --color-bg-input: #ffffff;
+  --color-bg-disabled: #e2e8f0;
+  --color-bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* Border Colors */
+  --color-border: #cbd5e0;
+  --color-border-focus: #5a7a9e;
+  --color-border-hover: #a0aec0;
+
+  /* Status Colors - Muted */
+  --color-success: #38a169;
+  --color-success-bg: #f0fdf4;
+  --color-success-border: #c6f6d5;
+  --color-error: #c53030;
+  --color-error-bg: #fff5f5;
+  --color-error-border: #feb2b2;
+  --color-warning: #c05621;
+  --color-warning-bg: #fffaf0;
+  --color-warning-border: #feebc8;
+  --color-info: #2c5282;
+  --color-info-bg: #ebf8ff;
+  --color-info-border: #bee3f8;
+
+  /* Spacing Scale */
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  /* Typography */
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* Border Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index Layers */
+  --z-map: 0;
+  --z-panel: 100;
+  --z-header: 200;
+  --z-modal: 1000;
+}
+
+/* ============================================
+   CSS Reset & Base Styles
+   ============================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-primary);
+  overflow: hidden;
+}
+
+/* ============================================
+   Full-Screen Map Container
+   ============================================ */
+#map {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: var(--z-map);
+}
+
+/* ============================================
+   Panel Header (Inside Left Panel)
+   ============================================ */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panel-header__title {
+  font-size: 0.95rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.02em;
+  margin: 0;
+  line-height: 1.1;
+}
+
+/* ============================================
+   Floating Panels
+   ============================================ */
+.panel {
+  position: fixed;
+  z-index: var(--z-panel);
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--color-border);
+  max-height: calc(100vh - 8rem);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: box-shadow var(--transition-base);
+}
+
+.panel:hover {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+.panel__content {
+  padding: 0.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+}
+
+/* Custom Scrollbar */
+.panel__content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.panel__content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel__content::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+.panel__content::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/* Left Panel (Unified) */
+.panel--left {
+  top: var(--space-lg);
+  left: var(--space-lg);
+  width: 420px;
+  max-height: calc(100vh - 3rem);
+}
+
+/* Precipitation Panel (Right) */
+.panel--precipitation {
+  top: var(--space-lg);
+  right: var(--space-lg);
+  width: 400px;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================
+   Typography
+   ============================================ */
+.panel__heading {
+  font-size: 0.95rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 0.5rem 0;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--color-border);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.panel__label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-sm);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+/* ============================================
+   Accordion
+   ============================================ */
+.accordion-section {
+  margin-bottom: 0;
+}
+
+.accordion-section--disabled,
+.accordion-section--closed {
+  display: none;
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.5rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  font-family: inherit;
+  min-height: 1.75rem;
+}
+
+.accordion-header--static {
+  cursor: default;
+}
+
+.accordion-header:not(.accordion-header--static):hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.accordion-header:not(.accordion-header--static):focus-visible {
+  outline: none;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.accordion-header__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  line-height: 1.2;
+}
+
+.accordion-header__step {
+  font-size: 0.7rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+  letter-spacing: 0.02em;
+}
+
+.accordion-header__text {
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.accordion-header__icon {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+
+.accordion-header__status {
+  font-size: 0.7rem;
+  color: var(--color-success);
+  font-weight: var(--font-weight-semibold);
+}
+
+.accordion-content {
+  padding: 0.4rem 0.5rem 0.5rem 0.5rem;
+  background: var(--color-bg-panel);
+  animation: accordionSlideDown var(--transition-base) ease-out;
+}
+
+@keyframes accordionSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================
+   Form Elements
+   ============================================ */
+
+/* Input Base Styles */
+.input,
+.select {
+  width: 100%;
+  padding: 0.3rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  color: var(--color-text-primary);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  outline: none;
+}
+
+.input:hover:not(:disabled),
+.select:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(90, 122, 158, 0.1);
+}
+
+.input:disabled,
+.select:disabled {
+  background: var(--color-bg-disabled);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Search Input */
+.input--search {
+  padding-left: var(--space-md);
+}
+
+.input--search::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Select Dropdown */
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 viewBox=%270 0 12 12%27%3E%3Cpath fill=%27%234a5568%27 d=%27M6 9L1 4h10z%27/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-sm) center;
+  background-size: 12px;
+  padding-right: var(--space-xl);
+  cursor: pointer;
+}
+
+/* Input Group */
+.input-group {
+  margin-bottom: 0.4rem;
+}
+
+.input-group:last-child {
+  margin-bottom: 0;
+}
+
+.input-group__label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  margin-bottom: 0.15rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Date Selectors Grid */
+.date-selectors {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+}
+
+/* ============================================
+   Buttons
+   ============================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  outline: none;
+  white-space: nowrap;
+}
+
+.btn:focus-visible {
+  box-shadow: 0 0 0 3px rgba(90, 122, 158, 0.3);
+}
+
+.btn--primary {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn--primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn--primary:disabled {
+  background: var(--color-bg-disabled);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn--full {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.btn--reset {
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  font-size: 0.7rem;
+}
+
+.btn--reset:hover:not(:disabled) {
+  background: var(--color-bg-disabled);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-hover);
+  transform: none;
+  box-shadow: none;
+}
+
+.btn--reset:active:not(:disabled) {
+  background: var(--color-border);
+}
+
+.btn--back-step {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  font-family: var(--font-family-base);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-left: auto;
+  margin-right: 0.4rem;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.btn--back-step:hover {
+  background: var(--color-bg-disabled);
+  color: var(--color-text-primary);
+}
+.btn--back-step:active {
+  background: var(--color-border);
+}
+
+.btn--secondary {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--color-bg-disabled);
+  border-color: var(--color-border-hover);
+  transform: translateY(-1px);
+}
+
+.btn--secondary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* ============================================
+   Site Selection Display
+   ============================================ */
+.site-selection {
+  margin-top: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  background: var(--color-bg-disabled);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  min-height: 1.6rem;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+}
+
+.site-selection:empty {
+  display: none;
+}
+
+.search-section {
+  margin-bottom: 0.4rem;
+}
+
+.search-dropdown {
+  position: fixed;
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  /* Above the settings panel (1100) and corner widgets so site results aren't covered. */
+  z-index: 1200;
+  overflow: hidden;
+}
+
+.search-dropdown__item {
+  padding: 0.45rem 0.65rem;
+  font-size: 0.72rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-dropdown__item:hover {
+  background: var(--color-bg-disabled);
+  color: var(--color-text-primary);
+}
+
+/* ============================================
+   Status Messages
+   ============================================ */
+.status-message {
+  padding: 0.35rem 0.4rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  line-height: 1.3;
+  margin-bottom: 0.4rem;
+  border: 1px solid transparent;
+  display: none;
+}
+
+.status-message.success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border-color: var(--color-success-border);
+  display: block;
+}
+
+.status-message.error {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border-color: var(--color-error-border);
+  display: block;
+}
+
+.status-message.warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border-color: var(--color-warning-border);
+  display: block;
+}
+
+.status-message.loading {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-color: var(--color-info-border);
+  display: block;
+}
+
+.status-message.info {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-color: var(--color-info-border);
+  display: block;
+}
+
+/* Status Icons */
+.spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(44, 82, 130, 0.2);
+  border-top-color: var(--color-info);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.3rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.checkmark,
+.error-icon,
+.info-icon {
+  display: inline-block;
+  margin-right: 0.3rem;
+  font-weight: var(--font-weight-semibold);
+  vertical-align: middle;
+  font-size: 0.75rem;
+}
+
+.checkmark {
+  color: var(--color-success);
+}
+
+.error-icon {
+  color: var(--color-error);
+}
+
+.info-icon {
+  color: var(--color-info);
+}
+
+/* ============================================
+   Time Selector
+   ============================================ */
+.time-selector {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.time-selector__heading {
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: 0.35rem;
+}
+
+.times-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 0.2rem;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 1px;
+}
+
+/* Custom scrollbar for times grid */
+.times-grid::-webkit-scrollbar {
+  width: 6px;
+}
+
+.times-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.times-grid::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+.times-grid::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+.time-item {
+  padding: 0.2rem 0.3rem;
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--color-text-secondary);
+}
+
+.time-item:hover {
+  background: var(--color-bg-panel-hover);
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.time-item.selected {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-inverse);
+  box-shadow: var(--shadow-sm);
+}
+
+.time-item:active {
+  transform: translateY(0);
+}
+
+/* Disabled time selector */
+.time-selector.disabled .time-item {
+  pointer-events: none;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+   Map Info Window Styling
+   ============================================ */
+.site-info-window {
+  padding: var(--space-sm);
+  font-size: var(--font-size-sm);
+  min-width: 200px;
+}
+
+.site-info-window h4 {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-xs);
+}
+
+.site-info-window p {
+  margin: var(--space-xs) 0;
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+/* ============================================
+   Custom Map Marker Styles
+   ============================================ */
+.custom-marker-wrapper {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.custom-marker {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid white;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+  z-index: 2;
+}
+
+.custom-marker-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  margin-left: -9px;
+  border-radius: 50%;
+  background: rgba(90, 122, 158, 0.9);
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Pulsating animation */
+@keyframes markerPulsate {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(3.5);
+    opacity: 0;
+  }
+}
+
+.custom-marker-wrapper.pulsating .custom-marker-pulse {
+  animation: markerPulsate 1.5s ease-out infinite;
+}
+
+/* ============================================
+   Data Info Card (Progressive Information Display)
+   ============================================ */
+.data-info-card {
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.data-info-card__header {
+  display: none; /* Hidden when expanded, shown when collapsed */
+  align-items: center;
+  justify-content: space-between;
+}
+
+.data-info-card.collapsed .data-info-card__header {
+  display: flex;
+}
+
+.data-info-card__site-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+}
+
+.data-info-card__toggle {
+  background: none;
+  border: none;
+  padding: 0.25rem;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+}
+
+.data-info-card__toggle:hover {
+  color: var(--color-accent);
+}
+
+.data-info-card__toggle-arrow {
+  font-size: 0.7rem;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+/* Base ▼ points down when collapsed; flip to point up when expanded. */
+.data-info-card:not(.collapsed) .data-info-card__toggle-arrow {
+  transform: rotate(180deg);
+}
+
+.data-info-card__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+
+.data-info-card.collapsed .data-info-card__content {
+  display: none;
+}
+
+/* Thin full-width collapse bar along the card's bottom edge. Only available from
+   step 3 onward (card marked .data-info-card--scan) and only while expanded. */
+.data-info-card__collapse {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% + 1rem);
+  margin: 0.5rem -0.5rem -0.5rem;   /* cancel the card padding so it touches the edges */
+  padding: 3px 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: var(--color-bg-disabled);
+  color: var(--color-text-secondary);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.data-info-card--scan:not(.collapsed) .data-info-card__collapse {
+  display: flex;
+}
+.data-info-card__collapse:hover {
+  background: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.data-info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.data-info-label {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+}
+
+.data-info-value {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+/* ============================================
+   Zoom Controls & Cross-Sectional Data
+   ============================================ */
+.info-icon {
+  display: inline-block;
+  margin-right: var(--space-xs);
+  font-weight: var(--font-weight-semibold);
+  vertical-align: middle;
+  color: var(--color-info);
+}
+
+/* ============================================
+   Zoom Window (Inline in Step 3)
+   ============================================ */
+.zoom-window-inline {
+  margin-top: 0.5rem;
+  background: var(--color-bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.zoom-window__header {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.zoom-window__title {
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.zoom-window__coords {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  flex: 1;
+  min-width: 0;
+}
+
+.zoom-window__controls {
+  display: flex;
+  gap: 0.15rem;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.zoom-control-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.zoom-control-btn:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.zoom-control-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.zoom-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--color-bg-input);
+}
+
+.zoom-window__map-container {
+  position: relative;
+  width: 330px;
+  height: 330px;
+  overflow: hidden;
+}
+
+.zoom-window__map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 330px;
+  height: 330px;
+  z-index: 1;
+}
+
+.zoom-window__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 330px;
+  height: 330px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.zoom-window__loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 330px;
+  height: 330px;
+  background-color: rgba(128, 128, 128, 0.5);
+  z-index: 3;
+  pointer-events: none;
+  transition: opacity 0.15s ease-in-out;
+}
+
+/* Dragging state for zoom window */
+.zoom-window-inline.dragging .zoom-window__map-container {
+  opacity: 0.4;
+  filter: grayscale(50%);
+  transition: opacity 0.1s ease-in-out, filter 0.1s ease-in-out;
+}
+
+.zoom-window-inline.dragging .zoom-window__overlay {
+  opacity: 0.4;
+  filter: grayscale(50%);
+  transition: opacity 0.1s ease-in-out, filter 0.1s ease-in-out;
+}
+
+/* ============================================
+   Vertical Cross-Section Window
+   ============================================ */
+.cross-section-window {
+  margin-top: var(--space-md);
+  background: var(--color-bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.cross-section-window__header {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cross-section-window__title {
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.cross-section-window__info {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.cross-section-window__canvas-container {
+  padding: var(--space-sm);
+  background: #ffffff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow-x: hidden;
+}
+
+.cross-section-window__canvas {
+  width: 100%;
+  max-width: 380px;
+  height: 300px;
+  border-radius: var(--radius-xs);
+}
+
+/* ============================================
+   Map Controls (Zoom & Pan)
+   ============================================ */
+.map-controls {
+  position: fixed;
+  /* 12px above the logo (logo: bottom 40 + height 92 = top 132). Refined in JS. */
+  bottom: 144px;
+  left: var(--space-lg);
+  z-index: var(--z-panel);
+  background: #ffffff;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--color-border);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  transition: all var(--transition-base);
+}
+
+.map-controls:hover {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+.map-controls__title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 var(--space-sm) 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.map-controls__pan {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: var(--space-xs);
+}
+
+.map-controls__zoom {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--color-border);
+  justify-content: center;
+}
+
+.map-controls__pan-horizontal {
+  display: flex;
+  gap: 2px;
+}
+
+.map-control-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+}
+
+.map-control-btn:hover:not(:disabled) {
+  background: var(--color-bg-panel-hover);
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.map-control-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.map-control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.map-control-btn--zoom {
+  font-size: 18px;
+}
+
+.map-control-btn--pan {
+  font-size: 14px;
+}
+
+/* ============================================
+   Reflectivity Legend
+   ============================================ */
+.legend {
+  position: fixed;
+  /* Right of the logo: 12px gap from the logo's right edge (left 24 + width 92 = 116). Refined in JS. */
+  bottom: 40px;
+  left: 128px;
+  z-index: var(--z-panel);
+  background: #ffffff;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--color-border);
+  transition: all var(--transition-base);
+}
+
+.legend:hover {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+.legend__content {
+  padding: var(--space-xs) var(--space-sm);
+  min-width: 240px;
+}
+
+.legend__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.legend__canvas {
+  width: 100%;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.legend__labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ── QPE precipitation value tooltip (follows cursor on main map) ── */
+.precip-tooltip {
+  position: fixed;
+  z-index: 10000;
+  background: rgba(15, 20, 30, 0.88);
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+/* ── QPE accumulation legend bar (inside results panel) ── */
+.qpe-legend-bar {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.qpe-legend-bar__canvas {
+  width: 100%;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.qpe-legend-bar__labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 0.66rem;
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ============================================
+   Responsive Design
+   ============================================ */
+@media (max-width: 1024px) {
+  .panel--left,
+  .panel--precipitation {
+    width: 340px;
+  }
+
+  .date-selectors {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .panel-header__title {
+    font-size: var(--font-size-lg);
+  }
+
+  .panel--left {
+    top: var(--space-sm);
+    left: var(--space-sm);
+    width: calc(100vw - 2rem);
+    max-width: 340px;
+    max-height: calc(100vh - 3rem);
+  }
+
+  .panel--precipitation {
+    top: auto;
+    bottom: var(--space-sm);
+    right: var(--space-sm);
+    left: var(--space-sm);
+    width: auto;
+    max-height: 50vh;
+  }
+
+  .times-grid {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .panel--left,
+  .panel--precipitation {
+    max-width: none;
+  }
+
+  .date-selectors {
+    gap: var(--space-xs);
+  }
+
+  .times-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ============================================
+   Radar Loading Marker
+   ============================================ */
+.radar-loading-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: 3px solid #D4A017;
+  width: 120px;
+  height: 120px;
+  justify-content: center;
+}
+
+.radar-loading-marker__icon {
+  width: 45px;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-loading-marker__icon svg {
+  width: 100%;
+  height: 100%;
+  fill: #D4A017;
+  animation: radarPulse 2s ease-in-out infinite;
+}
+
+.radar-loading-marker__text {
+  font-size: 0.7rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  text-align: center;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.radar-loading-marker__spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(212, 160, 23, 0.2);
+  border-top-color: #D4A017;
+  border-radius: 50%;
+  animation: markerSpin 0.8s linear infinite;
+}
+
+@keyframes radarPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes markerSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================
+   Accessibility
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus visible for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .panel {
+    border-width: 2px;
+  }
+
+  .btn--primary {
+    border: 2px solid var(--color-accent-hover);
+  }
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ============================================
+   Floating Panels (Detail View & Cross-Sections)
+   ============================================ */
+.floating-panel {
+  position: fixed;
+  z-index: var(--z-panel);
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.floating-panel:hover {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+/* Vertical Cross-Section - Top Right Corner */
+.floating-panel--vertical {
+  top: var(--space-lg);
+  right: var(--space-lg);
+}
+
+/* Detail View (Zoom) - Left of Vertical Cross-Section */
+.floating-panel--zoom {
+  top: var(--space-lg);
+  right: calc(var(--space-lg) + 350px);
+}
+
+/* Horizontal Cross-Section - Below Vertical Cross-Section */
+.floating-panel--horizontal {
+  top: calc(var(--space-lg) + 380px);
+  right: var(--space-lg);
+}
+
+.floating-panel__header {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-height: 66.47px;
+}
+
+.floating-panel__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.floating-panel__info,
+.floating-panel__coords {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  flex: 1;
+}
+
+.floating-panel__controls {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* Zoom panel specific header layout */
+.floating-panel__header--zoom {
+  display: block;
+  width: 330px;
+}
+
+.floating-panel__header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.floating-panel__header--zoom .floating-panel__coords {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.floating-panel__canvas-container,
+.floating-panel__map-container {
+  position: relative;
+  width: 330px;
+  height: 300px;
+}
+
+.floating-panel__canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.floating-panel__map {
+  width: 100%;
+  height: 100%;
+}
+
+.floating-panel__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.floating-panel__loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(128, 128, 128, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Dragging state for zoom window */
+.floating-panel--zoom.dragging .floating-panel__map-container::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(128, 128, 128, 0.5);
+  pointer-events: none;
+}
+
+/* ============================================
+   Floating Status Panel (Bottom-Right)
+   ============================================ */
+.floating-panel--status {
+  bottom: var(--space-lg);
+  right: var(--space-lg);
+  min-width: 200px;
+  max-width: 350px;
+  opacity: 1;
+  z-index: 300;
+}
+
+.floating-panel--status.fading-out {
+  opacity: 0;
+  transition: opacity 5s ease;
+}
+
+.status-panel__content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.status-panel__message {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+  white-space: pre-line;
+}
+
+.status-panel__spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(90, 122, 158, 0.2);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Status panel states */
+.floating-panel--status.loading {
+  border-color: var(--color-info-border);
+}
+
+.floating-panel--status.loading .status-panel__message {
+  color: var(--color-info);
+}
+
+.floating-panel--status.success {
+  border-color: var(--color-success-border);
+}
+
+.floating-panel--status.success .status-panel__message {
+  color: var(--color-success);
+}
+
+.floating-panel--status.error {
+  border-color: var(--color-error-border);
+}
+
+.floating-panel--status.error .status-panel__message {
+  color: var(--color-error);
+}
+
+.floating-panel--status.warning {
+  border-color: var(--color-warning-border);
+}
+
+.floating-panel--status.warning .status-panel__message {
+  color: var(--color-warning);
+}
+
+/* ============================================
+   QPE Panel
+   ============================================ */
+
+.btn--qpe {
+  background: linear-gradient(135deg, #2c5282, #4a7ab5);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: var(--space-sm);
+}
+
+.btn--qpe:hover {
+  background: linear-gradient(135deg, #2a4a75, #3d6aa0);
+}
+
+.floating-panel--qpe {
+  position: fixed;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  width: 320px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-floating);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.floating-panel__close {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+
+.floating-panel__close:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-disabled);
+}
+
+.qpe-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.qpe-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qpe-section-break {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.qpe-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qpe-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qpe-select {
+  font-size: 0.82rem;
+}
+
+/* Tooltip icon */
+.qpe-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-bg-disabled);
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  cursor: default;
+  position: relative;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.qpe-tip-icon::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 200px;
+  background: #1a202c;
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.4;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s;
+  z-index: 9999;
+  white-space: normal;
+}
+
+.qpe-tip-icon:hover::after,
+.qpe-tip-icon:focus::after {
+  opacity: 1;
+}
+
+/* Z-R method is the first row — shift its tooltip down so it clears the panel header */
+.qpe-row:first-child .qpe-tip-icon::after {
+  top: 0;
+  transform: none;
+}
+
+/* Rows where the tooltip drops below the ? icon, centred on it */
+.qpe-row--tip-below .qpe-tip-icon::after {
+  left: 50%;
+  top: calc(100% + 6px);
+  transform: translateX(-50%);
+}
+
+/* Recommendation strip */
+.qpe-recommend {
+  background: #ebf8ff;
+  border: 1px solid #bee3f8;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+}
+
+.qpe-recommend-text {
+  font-size: 0.73rem;
+  color: #2c5282;
+}
+
+/* Inline row (input + unit) */
+.qpe-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qpe-cap-input {
+  width: 70px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+}
+
+/* ── Playback mode bar (Cumulative / Sliding + window) ── */
+.qpe-pb-modebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qpe-pb-modebar .qpe-mode-group {
+  flex: 1;
+}
+.qpe-pb-window {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+.qpe-pb-window .qpe-cap-input {
+  width: 56px;
+}
+.qpe-pb-window--disabled {
+  opacity: 0.5;
+}
+
+/* ── Accumulation mode toggle (Cumulative / Sliding) ── */
+.qpe-mode-group {
+  display: flex;
+  gap: 4px;
+}
+.qpe-mode-btn {
+  flex: 1;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+.qpe-mode-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-disabled);
+}
+.qpe-mode-btn--active {
+  color: var(--color-text-inverse);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.qpe-row--disabled {
+  opacity: 0.5;
+}
+
+.qpe-unit {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+/* Accumulation period buttons */
+.qpe-accum-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.qpe-accum-btn {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.qpe-accum-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.qpe-accum-btn--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.qpe-file-count {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* Region buttons */
+.qpe-region-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.btn--sm {
+  padding: 5px 10px;
+  font-size: 0.78rem;
+}
+
+.qpe-region-status {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  min-height: 14px;
+}
+
+/* Run / Animate row */
+.qpe-action-row {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.qpe-action-row .qpe-run-btn {
+  flex: 1;
+  margin-top: 0;
+}
+
+.qpe-run-btn {
+  margin-top: var(--space-xs);
+}
+
+/* ── Animation player ── */
+.qpe-anim-player {
+  margin-top: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-bg-input);
+}
+
+.qpe-anim-timestamp {
+  font-size: 0.72rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  text-align: center;
+  margin-bottom: var(--space-xs);
+}
+
+.qpe-anim-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.qpe-anim-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  flex-shrink: 0;
+}
+
+.qpe-anim-btn:hover { background: var(--color-bg-disabled); }
+
+.qpe-anim-btn--play {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+  border-color: var(--color-accent);
+}
+
+.qpe-anim-btn--play:hover { background: var(--color-accent-hover); }
+
+.qpe-anim-scrubber {
+  flex: 1;
+  height: 4px;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+.qpe-anim-counter {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.qpe-anim-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-xs);
+}
+
+.qpe-anim-speeds {
+  display: flex;
+  gap: 2px;
+}
+
+.qpe-anim-speed {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+.qpe-anim-speed:hover { background: var(--color-bg-disabled); }
+
+.qpe-anim-speed--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+/* Progress */
+.qpe-progress {
+  margin-top: var(--space-xs);
+}
+
+.qpe-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--color-bg-disabled);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.qpe-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a7ab5, #2c5282);
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
+
+.qpe-progress-text {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+/* Results */
+.qpe-results {
+  margin-top: var(--space-xs);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-xs);
+}
+
+.qpe-results-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.qpe-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.qpe-stat {
+  background: #f7fafc;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.qpe-stat-label {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qpe-stat-values {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 3px;
+}
+
+.qpe-stat-value {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.qpe-stat-unit {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.qpe-stat-sep {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.qpe-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.qpe-filter-checkbox {
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.qpe-results-meta {
+  margin-top: 8px;
+  font-size: 0.71rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+/* ============================================
+   Right Panel (Tabbed Analysis Panel)
+   ============================================ */
+.right-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  height: 100vh;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+  border-left: 1px solid var(--color-border);
+  z-index: var(--z-panel);
+}
+
+.right-panel__tabs {
+  display: flex;
+  background: var(--color-primary-dark);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px 4px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.78rem;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+  letter-spacing: 0.02em;
+}
+
+.tab-btn:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn--active {
+  color: #ffffff;
+  border-bottom-color: var(--color-accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Sub-tabs (segmented control under a top tab) ── */
+.right-panel__subtabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--color-bg-disabled);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.subtab-btn {
+  flex: 1;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.subtab-btn:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.subtab-btn--active {
+  color: var(--color-text-inverse);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.subtab-btn--active:hover {
+  color: var(--color-text-inverse);
+  background: var(--color-accent-hover);
+}
+
+/* ── Sub-tab panes ── */
+.subtab-pane {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.subtab-pane--active {
+  display: flex;
+}
+
+.subtab-pane--scroll {
+  overflow-y: auto;
+}
+
+.subtab-pane--scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.subtab-pane--scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.subtab-pane--scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+/* ── Placeholder for sub-tabs awaiting future content ── */
+.subtab-placeholder {
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.subtab-placeholder__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+}
+
+.subtab-placeholder__text {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.right-panel__body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Tab pane base ── */
+.tab-pane {
+  display: none;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tab-pane--active {
+  display: flex;
+}
+
+/* ── Shared pane header ── */
+.tab-pane__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.5);
+  flex-shrink: 0;
+}
+
+.tab-pane__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.tab-pane__controls {
+  display: flex;
+  gap: 4px;
+}
+
+/* ── Zoom ± buttons inside Detail header ── */
+.zoom-control-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.zoom-control-btn:hover {
+  background: var(--color-bg-disabled);
+  border-color: var(--color-border-hover);
+}
+
+.zoom-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Coords bar (Detail tab) ── */
+.tab-pane__coords {
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  background: rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid var(--color-border);
+  min-height: 22px;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+
+/* ── Map / canvas area (Detail tab) ── */
+.tab-pane__map-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 220px;
+}
+
+.tab-pane__map {
+  width: 100%;
+  height: 100%;
+}
+
+.tab-pane__canvas-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.tab-pane__loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* ── Info bar (cross-section tabs) ── */
+.tab-pane__info {
+  padding: 8px 12px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+/* ── Canvas area (cross-section tabs) ── */
+.tab-pane__canvas-area {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.tab-pane__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ── Views tab: scrollable, three sections stacked ── */
+.tab-pane--views {
+  overflow: hidden;
+}
+
+.views-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.views-section:last-child {
+  border-bottom: none;
+}
+
+/* Fixed height for the detail mini-map so the canvas fits exactly */
+.views-section .tab-pane__map-area {
+  height: 360px;
+  flex: none;
+}
+
+/* ── QPE tab body ── */
+.tab-pane--qpe {
+  overflow: hidden;
+}
+
+/* ════════════════════════════════════════════════════════════
+   Animate sub-tab
+   ════════════════════════════════════════════════════════════ */
+.anim-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.anim-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.anim-section--qpe {
+  border-color: var(--color-border);
+  opacity: 1;
+}
+
+.anim-section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.15rem;
+}
+
+.anim-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.anim-label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  min-width: 72px;
+  flex-shrink: 0;
+}
+
+.anim-value {
+  font-size: 0.78rem;
+  color: var(--color-text);
+}
+
+.anim-select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+}
+
+.anim-btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.anim-pick-btn {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  line-height: 1.5;
+}
+.anim-pick-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
+.anim-pick-btn--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.anim-action-row {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: 0.3rem;
+}
+
+.anim-run-btn { flex: 1; }
+
+.anim-error {
+  font-size: 0.75rem;
+  color: #e74c3c;
+  padding: 0.3rem 0.5rem;
+  background: rgba(231, 76, 60, 0.08);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(231, 76, 60, 0.25);
+}
+
+/* Progress */
+.anim-progress { margin-top: 0.2rem; }
+.anim-progress-track {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.anim-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.2s ease;
+}
+.anim-progress-text {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  margin-top: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Player */
+.anim-player {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.anim-player-mode {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+
+/* Shared playback card: holds progress + player for either animation mode */
+.anim-playback-card {
+  border-color: var(--color-accent);
+}
+.anim-playback-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+.anim-playback-mode {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--color-accent);
+}
+.anim-progress-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: 0.3rem;
+}
+.anim-progress-foot .anim-progress-text { margin-top: 0; }
+
+/* QPE cumulative playback strip (Precipitation tab) */
+.qpe-playback {
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.qpe-playback--hidden { display: none; }
+
+.qpe-chart {
+  width: 100%;
+  height: 190px;
+  margin-top: var(--space-sm);
+}
+.qpe-chart--hidden { display: none; }
+.qpe-playback__title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+
+/* Player sits inside the playback card, so it doesn't need its own border */
+.anim-player--bare {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+/* QPE settings summary + per-frame window/total readouts */
+.anim-settings {
+  font-size: 0.66rem;
+  line-height: 1.3;
+  color: var(--color-text-secondary);
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.anim-frame-stats {
+  font-size: 0.7rem;
+  color: var(--color-text);
+}
+.anim-frame-stats strong { color: var(--color-accent); font-weight: 600; }
+.anim-timestamp {
+  font-size: 0.75rem;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+.anim-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.anim-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.65rem;
+  padding: 0.2rem 0.45rem;
+  line-height: 1;
+}
+.anim-btn:hover { background: var(--color-surface-hover); }
+.anim-btn--play { min-width: 2.2rem; text-align: center; }
+.anim-scrubber {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-accent);
+  height: 4px;
+}
+
+/* ── Sliding-window block slider (sliding playback) ── */
+.qpe-window-slider {
+  flex: 1;
+  min-width: 0;
+}
+.qpe-window-track {
+  position: relative;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-disabled);
+  cursor: pointer;
+  touch-action: none;
+}
+.qpe-window-block {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15) inset;
+}
+
+.anim-counter {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.anim-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.anim-speeds {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.anim-speed-label {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+.anim-fps-select {
+  padding: 0.12rem 1.4rem 0.12rem 0.4rem;
+  font-size: 0.72rem;
+  width: auto;
+}
+.anim-speed-btn {
+  padding: 0.12rem 0.4rem;
+  font-size: 0.68rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.anim-speed-btn--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.anim-qpe-hint {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.tab-pane__qpe-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm) var(--space-md);
+  position: relative;
+  z-index: 2;
+}
+
+.tab-pane__qpe-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.tab-pane__qpe-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tab-pane__qpe-body::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+/* ── QPE region results section ── */
+.qpe-results-title--region {
+  margin-top: 10px;
+  color: var(--color-accent);
+}
+
+/* ── QPE section separator ── */
+.qpe-section-break {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-xs);
+  margin-top: 2px;
+}
+
+/* ── Bottom-left logo ── */
+.hi-logo {
+  position: fixed;
+  bottom: 40px;
+  left: 24px;
+  /* Square sized to the pan/zoom controls' width; refined in JS (layoutCornerWidgets). */
+  width: 92px;
+  height: 92px;
+  box-sizing: border-box;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  z-index: 1000;
+  display: block;
+}
+.hi-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* ── QPE playback regeneration loading bar ── */
+.qpe-pb-loading {
+  height: 6px;
+  margin: 6px 0;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+.qpe-pb-loading__fill {
+  height: 100%;
+  width: 0%;
+  background: var(--color-accent);
+  border-radius: var(--radius-full);
+  transition: width 0.15s linear;
+}
+/* Indeterminate sweep until the first frame arrives */
+.qpe-pb-loading--indeterminate .qpe-pb-loading__fill {
+  width: 40%;
+  animation: qpe-pb-sweep 1s ease-in-out infinite;
+}
+@keyframes qpe-pb-sweep {
+  0%   { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+/* ── Gauge markers (QPE evaluation) ── */
+.gauge-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #9e9e9e;
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  pointer-events: auto;
+  /* AdvancedMarker anchors content bottom-centre on the point; recentre the dot. */
+  transform: translateY(50%);
+}
+
+.gauge-tip {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
+  max-width: 240px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #111;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.gauge-tip__id { color: #666; font-weight: 400; }
+.gauge-tip__hr { border: none; border-top: 1px solid #ddd; margin: 4px 0; }
+
+.eval__disclaimer {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+  background: #fff8e1;
+  border: 1px solid #ffe08a;
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+/* ── Advanced tab: QPE evaluation vs gauges ── */
+.eval { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.eval__intro { margin: 0 0 2px; font-size: 12px; color: var(--color-text-muted); line-height: 1.4; }
+.eval__row { display: flex; align-items: center; gap: 8px; }
+.eval__label { flex: 0 0 88px; font-size: 12px; color: var(--color-text); }
+.eval__input {
+  flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text);
+}
+.eval__hint { margin: -2px 0 2px; font-size: 11px; color: var(--color-text-muted); }
+.eval__hint a { color: var(--color-accent); }
+.eval__status { margin: 4px 0; font-size: 12px; color: var(--color-text-muted); min-height: 16px; }
+
+.eval__results { display: flex; flex-direction: column; gap: 10px; }
+.eval__metrics {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.eval__metric {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 8px; background: var(--color-surface-alt, #f5f6f8);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+}
+.eval__metric span { font-size: 10px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.eval__metric b { font-size: 13px; color: var(--color-text); }
+
+.eval__chart { width: 100%; height: 200px; }
+
+.eval__tablewrap { max-height: 220px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.eval__table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.eval__table th, .eval__table td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--color-border); }
+.eval__table th:first-child, .eval__table td:first-child { text-align: left; }
+.eval__table thead th {
+  position: sticky; top: 0; background: var(--color-surface-alt, #f5f6f8);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-muted);
+}
+.eval__table tbody tr:last-child td { border-bottom: none; }
+.eval__pos { color: #c62828; }
+.eval__neg { color: #1565c0; }
+.eval__export-btn { width: 100%; margin-top: 4px; }
+
+/* ============================================
+   Settings panel (collapsed bar below left panel)
+   ============================================ */
+.settings-panel {
+  position: fixed;
+  left: var(--space-lg);
+  top: calc(var(--space-lg) + 60px);   /* JS repositions to sit under the left panel */
+  width: 420px;
+  max-width: calc(100vw - 2 * var(--space-lg));
+  /* Above the bottom-left widgets (map controls / logo z:1000 / legend) when expanded */
+  z-index: 1100;
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  /* visible so help tooltips can escape the panel; rows stay inside the rounded box */
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-panel__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  transition: background var(--transition-fast);
+}
+.settings-panel--open .settings-panel__bar { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.settings-panel__bar:hover { background: var(--color-bg-panel-hover); }
+
+.settings-panel__bar-arrow {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  transition: transform var(--transition-fast);
+}
+.settings-panel--open .settings-panel__bar-arrow { transform: rotate(180deg); }
+
+.settings-panel__body {
+  padding: 0.5rem 0.75rem 0.75rem;
+  border-top: 1px solid var(--color-border);
+  /* overflow visible so help tooltips aren't clipped; content is short (a handful
+     of compact rows) so it fits without an internal scrollbar */
+  overflow: visible;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+.settings-row__label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+.settings-row__input {
+  width: 130px;
+  flex-shrink: 0;
+}
+input.settings-row__input { text-align: right; }
+
+.settings-note {
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: var(--color-text-muted);
+  margin: 0.25rem 0 0;
+}
+.settings-note--warn { color: var(--color-warning); }
+
+/* Help dot with hover/focus tooltip */
+.settings-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+  color: var(--color-text-primary);
+  font-size: 0.62rem;
+  font-weight: var(--font-weight-semibold);
+  cursor: help;
+  position: relative;
+  flex-shrink: 0;
+}
+.settings-help::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  width: 220px;
+  padding: 0.5rem 0.6rem;
+  background: var(--color-primary-dark);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: var(--font-weight-normal);
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-fast);
+  z-index: var(--z-modal);
+  pointer-events: none;
+}
+.settings-help:hover::after,
+.settings-help:focus::after { opacity: 1; visibility: visible; }
+
+/* Toggle switch */
+.settings-switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.settings-switch input { opacity: 0; width: 0; height: 0; }
+.settings-switch__slider {
+  position: absolute;
+  inset: 0;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+  transition: background var(--transition-fast);
+}
+.settings-switch__slider::before {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast);
+}
+.settings-switch input:checked + .settings-switch__slider { background: var(--color-accent); }
+.settings-switch input:checked + .settings-switch__slider::before { transform: translateX(18px); }
+.settings-switch input:focus-visible + .settings-switch__slider {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* Clear-cache control */
+.settings-cache {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  width: 130px;
+}
+.settings-cache__btn { padding: 0.3rem 0.7rem; font-size: var(--font-size-sm); }
+.settings-cache__size {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  min-width: 56px;
+  text-align: right;
+}
+</style><script src="https://maps.googleapis.com/maps/api/js?libraries=maps&amp;key=AIzaSyCE8ZLpT539dYVYWB0p8plmWrb2uMVd4C0&amp;v=3.64&amp;callback=google.maps.__ib__"></script></head><body><div id="map" role="application" aria-label="Interactive map of NEXRAD radar sites"></div><aside class="panel panel--left" aria-label="Radar site and data selection"><div class="panel__content"><header class="panel-header"><h1 class="panel-header__title">NEXRAD Level 2 Radar Viewer</h1><button id="resetBtn" class="btn btn--reset" title="Reset all filters and selections" aria-label="Reset all filters and selections">Reset</button></header><div id="dataInfoCard" class="data-info-card" style="display: none;"><div class="data-info-card__header" id="dataInfoCardHeader"><span class="data-info-card__site-name" id="cardHeaderSiteName"></span> <button class="data-info-card__toggle" id="dataInfoCardToggle" aria-label="Toggle data info"><span class="data-info-card__toggle-arrow">▾</span></button></div><div class="data-info-card__content" id="dataInfoCardContent"><div id="cardSiteInfo" class="data-info-item" style="display: none;"><span class="data-info-label">Site:</span> <span class="data-info-value" id="cardSiteName"></span></div><div id="cardDateTime" class="data-info-item" style="display: none;"><span class="data-info-label">Date:</span> <span class="data-info-value" id="cardDate"></span></div><div id="cardTime" class="data-info-item" style="display: none;"><span class="data-info-label">Time:</span> <span class="data-info-value" id="cardTimeValue"></span></div><div id="cardVCP" class="data-info-item" style="display: none;"><span class="data-info-label">VCP:</span> <span class="data-info-value" id="cardVCPValue"></span></div><div id="cardScans" class="data-info-item" style="display: none;"><span class="data-info-label">Elevations:</span> <span class="data-info-value" id="cardScansValue"></span></div><div id="cardRange" class="data-info-item" style="display: none;"><span class="data-info-label">Max Range:</span> <span class="data-info-value" id="cardRangeValue"></span></div><div id="cardElevation" class="data-info-item" style="display: none;"><span class="data-info-label">Elevation:</span> <span class="data-info-value" id="cardElevationValue"></span></div><div id="cardReflectivity" class="data-info-item" style="display: none;"><span class="data-info-label">Reflectivity:</span> <span class="data-info-value" id="cardReflectivityValue"></span></div></div><button id="dataInfoCardCollapse" class="data-info-card__collapse" type="button" title="Collapse" aria-label="Collapse info card">▴</button></div><div class="accordion-section" data-step="1"><div class="accordion-header accordion-header--static" id="step1Header" aria-expanded="true"><span class="accordion-header__title"><span class="accordion-header__step">Step 1:</span> <span class="accordion-header__text">Select Radar Site</span> </span><span class="accordion-header__status" id="step1Status"></span></div><div class="accordion-content" id="step1Content"><div class="search-section"><label for="siteSearch" class="input-group__label">Search Radar Sites</label><div class="search-input-wrapper"><input id="siteSearch" class="input input--search" placeholder="Search by code, name, or state..." autocomplete="off"></div></div><button id="selectRadarBtn" class="btn btn--primary btn--full" disabled="disabled">Select Radar</button></div></div><div class="accordion-section accordion-section--disabled" data-step="2"><div class="accordion-header accordion-header--static" id="step2Header" aria-expanded="false"><span class="accordion-header__title"><span class="accordion-header__step">Step 2:</span> <span class="accordion-header__text">Select Date &amp; Time</span> </span><span class="accordion-header__status" id="step2Status"></span></div><div class="accordion-content" id="step2Content" style="display: none;"><div id="dateTimeControls" class="date-selectors"><div class="input-group"><label for="yearSelect" class="input-group__label">Year</label> <select id="yearSelect" class="select" aria-required="true"><option value="">Select Year</option></select></div><div class="input-group"><label for="monthSelect" class="input-group__label">Month</label> <select id="monthSelect" class="select" disabled="disabled" aria-required="true"><option value="">Select Month</option></select></div><div class="input-group"><label for="daySelect" class="input-group__label">Day</label> <select id="daySelect" class="select" disabled="disabled" aria-required="true"><option value="">Select Day</option></select></div></div><section id="timeSelector" class="time-selector" style="display: none;" aria-label="Available scan times"><h3 class="time-selector__heading">Available Times (Click to Load)</h3><div id="timesList" class="times-grid"></div></section></div></div><div class="accordion-section accordion-section--disabled" data-step="3"><div class="accordion-header accordion-header--static" id="step3Header" aria-expanded="false"><span class="accordion-header__title"><span class="accordion-header__step">Step 3:</span> <span class="accordion-header__text">Select Scan Information</span> </span><button id="backToStep2Btn" class="btn btn--back-step" title="Back to Step 2" style="display:none;">← Step 2</button> <span class="accordion-header__status" id="step3Status"></span></div><div class="accordion-content" id="step3Content" style="display: none;"><div id="radarControls"><div class="input-group"><label for="momentSelect" class="input-group__label">Radar Product</label> <select id="momentSelect" class="select"><option value="REF" selected="selected">Reflectivity (dBZ)</option><option value="ZDR">Differential Reflectivity (dB)</option><option value="RHO">Correlation Coefficient (ρ)</option><option value="PHI">Differential Phase (°)</option></select></div><div class="input-group"><label for="resolutionSelect" class="input-group__label">Resolution</label> <select id="resolutionSelect" class="select"><option value="">Select Resolution</option><option value="auto">Auto (All Scans)</option><option value="360">Low Resolution (360 radials)</option><option value="720">High Resolution (720 radials)</option></select></div><div class="input-group"><label for="scanLevelSelect" class="input-group__label">Scan Level (Elevation) - Select to Display</label> <select id="scanLevelSelect" class="select" disabled="disabled"><option value="">Select Resolution First</option></select></div></div></div></div></div></aside><aside id="settingsPanel" class="settings-panel" aria-label="Application settings"><button id="settingsToggle" class="settings-panel__bar" type="button" aria-expanded="false" aria-controls="settingsBody"><span class="settings-panel__bar-title">⚙ Settings</span> <span class="settings-panel__bar-arrow" aria-hidden="true">▾</span></button><div id="settingsBody" class="settings-panel__body" style="display: none;"><div class="settings-row"><label class="settings-row__label" for="setWorkers">Processing workers <span class="settings-help" tabindex="0" data-tip="CPU worker threads used to download &amp; parse radar files in parallel for Animate and QPE. Higher = faster builds, more CPU/RAM. Range 1 to (CPU cores − 1).">?</span></label> <input type="number" id="setWorkers" class="input settings-row__input" min="1" step="1" inputmode="numeric"></div><p class="settings-note settings-note--warn">Increasing number of workers too high raises system resource usage and may cause the app to lag or crash.</p><div class="settings-row"><label class="settings-row__label" for="setGauge">Parallel gauge requests <span class="settings-help" tabindex="0" data-tip="Parallel HTTP requests to the rain-gauge API in QPE Advanced evaluation. Network-bound (not CPU). Higher = faster gauge loading, but may be throttled by the server. Range 1–16.">?</span></label> <input type="number" id="setGauge" class="input settings-row__input" min="1" max="16" step="1" inputmode="numeric"></div><div class="settings-row"><label class="settings-row__label" for="setResolution">Image resolution <span class="settings-help" tabindex="0" data-tip="Pixel size of rendered rasters for Animate frames, QPE playback, and the QPE accumulation heatmap. Higher = sharper but more memory and slower rendering.">?</span></label> <select id="setResolution" class="select settings-row__input"></select></div><div class="settings-row"><label class="settings-row__label" for="setPrecipUnit">Precipitation units <span class="settings-help" tabindex="0" data-tip="Display units for precipitation (legends, tooltips, metrics, charts). Radar math stays internal; only the display changes.">?</span></label> <select id="setPrecipUnit" class="select settings-row__input"><option value="mm">Millimetres (mm)</option><option value="in">Inches (in)</option></select></div><div class="settings-row"><label class="settings-row__label" for="setDistanceUnit">Distance units <span class="settings-help" tabindex="0" data-tip="Display units for distances (range readouts, cross-section axes, range rings labels).">?</span></label> <select id="setDistanceUnit" class="select settings-row__input"><option value="km">Kilometres (km)</option><option value="mi">Miles (mi)</option></select></div><div class="settings-row"><label class="settings-row__label" for="setVolumeUnit">Volume units <span class="settings-help" tabindex="0" data-tip="Display units for total accumulated water volume in the QPE metrics (cubic meters or acre-feet).">?</span></label> <select id="setVolumeUnit" class="select settings-row__input"><option value="m3">Cubic meters (m³)</option><option value="ac-ft">Acre-feet (ac-ft)</option></select></div><div class="settings-row settings-row--cache"><label class="settings-row__label">Cached data <span class="settings-help" tabindex="0" data-tip="Parsed radar data stored in your browser (IndexedDB) to avoid re-downloading. Clearing also resets these settings to defaults.">?</span></label><div class="settings-cache"><button id="setClearCache" class="btn btn--secondary settings-cache__btn" type="button">Clear</button> <span id="setCacheSize" class="settings-cache__size">…</span></div></div></div></aside><aside id="mapControls" class="map-controls" style="display: none;" aria-label="Map zoom and pan controls"><div class="map-controls__pan"><button id="mapPanUp" class="map-control-btn map-control-btn--pan" title="Pan up" aria-label="Pan up">▲</button><div class="map-controls__pan-horizontal"><button id="mapPanLeft" class="map-control-btn map-control-btn--pan" title="Pan left" aria-label="Pan left">◀</button> <button id="mapPanRight" class="map-control-btn map-control-btn--pan" title="Pan right" aria-label="Pan right">▶</button></div><button id="mapPanDown" class="map-control-btn map-control-btn--pan" title="Pan down" aria-label="Pan down">▼</button></div><div class="map-controls__zoom"><button id="mapZoomOut" class="map-control-btn map-control-btn--zoom" title="Zoom out" aria-label="Zoom out">−</button> <button id="mapZoomIn" class="map-control-btn map-control-btn--zoom" title="Zoom in" aria-label="Zoom in">+</button></div></aside><aside id="reflectivityLegend" class="legend" style="display: none;" aria-label="Radar product scale legend"><div class="legend__content"><h3 class="legend__title" id="legendTitle">Reflectivity (dBZ)</h3><canvas id="legendCanvas" class="legend__canvas"></canvas><div class="legend__labels" id="legendLabels"></div></div></aside><div id="precipTooltip" class="precip-tooltip" style="display:none;"></div><aside id="statusPanel" class="floating-panel floating-panel--status warning" style="display: block;"><div class="status-panel__content"><span id="statusMessage" class="status-panel__message">Radar data is cached locally and may use significant memory over time.
+Use Settings → Clear Cache to manage storage.</span> <span id="statusSpinner" class="status-panel__spinner" style="display: none;"></span></div></aside><aside id="rightPanel" class="right-panel" style="display: none;" aria-label="Analysis panels"><div class="right-panel__tabs" role="tablist"><button class="tab-btn tab-btn--active" data-tab="views" role="tab" aria-controls="tabViews">Visualizations</button> <button class="tab-btn" data-tab="qpe" role="tab" aria-controls="tabQPE">Precipitation</button></div><div class="right-panel__body"><div id="tabViews" class="tab-pane tab-pane--active tab-pane--views" data-tab="views" role="tabpanel"><div class="right-panel__subtabs" role="tablist"><button class="subtab-btn subtab-btn--active" data-subtab="scanviews" role="tab">Scan Views</button> <button class="subtab-btn" data-subtab="animate" role="tab">Animate</button></div><div class="subtab-pane subtab-pane--active subtab-pane--scroll" data-subtab="scanviews" role="tabpanel"><div class="views-section"><div class="tab-pane__header"><span class="tab-pane__title">Detail View</span><div class="tab-pane__controls"><button id="zoomOutBtn" class="zoom-control-btn" title="Zoom out (larger area)" aria-label="Zoom out">−</button> <button id="zoomInBtn" class="zoom-control-btn" title="Zoom in (smaller area)" aria-label="Zoom in">+</button></div></div><div class="tab-pane__coords" id="zoomCoords"></div><div class="tab-pane__map-area"><div id="zoomMap" class="tab-pane__map"></div><canvas id="zoomCanvas" class="tab-pane__canvas-overlay"></canvas><div id="zoomLoadingOverlay" class="tab-pane__loading-overlay" style="display: none;"></div></div></div><div class="views-section"><div class="tab-pane__header"><span class="tab-pane__title">Vertical Cross-Section</span></div><div class="tab-pane__info" id="crossSectionInfo">Click and drag on the map to view.</div><div class="tab-pane__canvas-area"><canvas id="crossSectionCanvas" class="tab-pane__canvas"></canvas></div></div><div class="views-section"><div class="tab-pane__header"><span class="tab-pane__title">Arc Cross-Section</span></div><div class="tab-pane__info" id="arcCrossSectionInfo">Click and drag on the map to view.</div><div class="tab-pane__canvas-area"><canvas id="horizontalCrossSectionCanvas" class="tab-pane__canvas"></canvas></div></div></div><div class="subtab-pane" data-subtab="animate" role="tabpanel"><div class="anim-body"><div class="anim-section"><div class="anim-section-title">Radar Products</div><div class="anim-row"><label class="anim-label">Time Window</label><div class="anim-btn-group" id="animTimeGroup"><button class="anim-pick-btn" data-val="0.5">30m</button> <button class="anim-pick-btn anim-pick-btn--active" data-val="1">1h</button> <button class="anim-pick-btn" data-val="2">2h</button> <button class="anim-pick-btn" data-val="4">4h</button> <button class="anim-pick-btn" data-val="6">6h</button></div></div><div class="anim-row"><label class="anim-label" for="animProductSelect">Product</label> <select id="animProductSelect" class="select anim-select"></select></div><div class="anim-row"><label class="anim-label" for="animElevSelect">Elevation</label> <select id="animElevSelect" class="select anim-select"></select></div><div class="anim-action-row"><button id="animBuildBtn" class="btn btn--primary anim-run-btn">Build Animation</button></div></div><div id="animError" class="anim-error" style="display:none;"></div><div id="animPlaybackCard" class="anim-section anim-playback-card" style="display:none;"><div class="anim-section-title anim-playback-head"><span>Playback</span> <span id="animPlayerMode" class="anim-playback-mode"></span></div><div id="animProgress" class="anim-progress" style="display:none;"><div class="anim-progress-track"><div id="animProgressFill" class="anim-progress-fill" style="width:0%"></div></div><div class="anim-progress-foot"><div id="animProgressText" class="anim-progress-text"></div><button id="animCancelBtn" class="btn btn--secondary btn--sm" style="display:none;">Cancel</button></div></div><div id="animPlayer" class="anim-player anim-player--bare" style="display:none;"><div class="anim-timestamp" id="animTimestamp"></div><div class="anim-frame-stats" id="animFrameStats" style="display:none;"></div><div class="anim-controls"><button id="animPrev" class="anim-btn" title="Previous frame">◀</button> <button id="animPlay" class="anim-btn anim-btn--play" title="Play/Pause">▶</button> <button id="animNext" class="anim-btn" title="Next frame">▶</button> <input id="animScrubber" type="range" class="anim-scrubber" min="0" value="0" step="1"> <span id="animCounter" class="anim-counter">1/1</span></div><div class="anim-footer"><div class="anim-speeds"><label class="anim-speed-label" for="animFpsSelect">Speed</label> <select id="animFpsSelect" class="select anim-fps-select"><option value="1">1 fps</option><option value="2">2 fps</option><option value="4" selected="selected">4 fps</option><option value="6">6 fps</option><option value="12">12 fps</option></select></div><button id="animDiscard" class="btn btn--secondary btn--sm">Discard</button></div></div></div></div></div></div><div id="tabQPE" class="tab-pane tab-pane--qpe" data-tab="qpe" role="tabpanel"><div class="right-panel__subtabs" role="tablist"><button class="subtab-btn subtab-btn--active" data-subtab="qpeanalysis" role="tab">QPE Analysis</button> <button class="subtab-btn" data-subtab="advanced" role="tab">Advanced</button></div><div class="subtab-pane subtab-pane--active" data-subtab="qpeanalysis" role="tabpanel"><div class="tab-pane__qpe-body"><div class="qpe-row"><div class="qpe-label-row"><label for="qpeZRMethod" class="qpe-label">Z-R Method</label> <span class="qpe-tip-icon" tabindex="0" data-tip="The Z-R relationship converts radar reflectivity (Z) to rain rate (R). Different relationships are tuned for different storm types. An auto-recommendation based on VCP and site latitude is shown below.">?</span></div><select id="qpeZRMethod" class="select qpe-select"></select><div class="qpe-recommend" id="qpeRecommend" style="display:none;"><span id="qpeRecommendText" class="qpe-recommend-text"></span></div></div><div class="qpe-row"><div class="qpe-label-row"><label for="qpeElevation" class="qpe-label">Elevation Tilt</label> <span class="qpe-tip-icon" tabindex="0" data-tip="Which elevation tilt to use for QPE. Lower tilts sample closer to the surface for more accurate surface precipitation estimates. Defaults to the currently displayed scan.">?</span></div><select id="qpeElevation" class="select qpe-select"></select></div><div class="qpe-row"><div class="qpe-label-row"><label for="qpeRhoThreshold" class="qpe-label">CC Threshold</label> <span class="qpe-tip-icon" tabindex="0" data-tip="Correlation Coefficient (ρ) gates below this value are likely non-meteorological (insects, clutter, chaff) and are excluded. 'No threshold' skips this quality-control step entirely.">?</span></div><select id="qpeRhoThreshold" class="select qpe-select"><option value="none">No threshold</option><option value="0.7">0.70</option><option value="0.8" selected="selected">0.80</option><option value="0.9">0.90</option><option value="0.95">0.95</option></select></div><div class="qpe-row"><div class="qpe-label-row"><label class="qpe-label">dBZ Floor / Cap</label> <span class="qpe-tip-icon" tabindex="0" data-tip="Floor: gates below this reflectivity are ignored (rejects noise and clear-air echoes). Cap: values above this are clamped before Z-R conversion to suppress hail overestimation.">?</span></div><div class="qpe-inline-row"><input type="number" id="qpeDbzFloor" class="input qpe-cap-input" min="-50" max="200" step="1" value="10"> <span class="qpe-unit">–</span> <input type="number" id="qpeDbzCap" class="input qpe-cap-input" min="-50" max="200" step="1" value="55"> <span class="qpe-unit">dBZ</span></div></div><div class="qpe-row qpe-row--tip-below"><div class="qpe-label-row"><label for="qpeAccumHours" class="qpe-label">Accumulation Period</label> <span class="qpe-tip-icon" tabindex="0" data-tip="Time window (in hours) ending at the selected scan time. QPE sums rain rates over all files in this window. Longer periods process more files.">?</span></div><div class="qpe-inline-row"><input type="number" id="qpeAccumHours" class="input qpe-cap-input" min="0.25" max="199.99" step="0.25" value="6.00"> <span class="qpe-unit">hours</span></div><div class="qpe-file-count" id="qpeFileCount"></div></div><div class="qpe-row qpe-section-break qpe-row--tip-below"><div class="qpe-label-row"><label class="qpe-label">Region Selection</label> <span class="qpe-tip-icon" tabindex="0" data-tip="Draw a rectangle or polygon on the map. While drawing, map pan/zoom and the detail view are frozen. The region is locked once drawn. If a region is selected, QPE metrics are also computed for gates inside it.">?</span></div><div class="qpe-region-btns"><button id="qpeDrawRect" class="btn btn--secondary btn--sm">Rectangle</button> <button id="qpeDrawPoly" class="btn btn--secondary btn--sm">Polygon</button> <button id="qpeClearRegion" class="btn btn--secondary btn--sm" disabled="disabled">Clear</button></div><div id="qpeRegionStatus" class="qpe-region-status"></div></div><div class="qpe-action-row"><button id="qpeRunBtn" class="btn btn--primary qpe-run-btn">Run QPE</button> <button id="qpeCancelBtn" class="btn btn--secondary qpe-run-btn" style="display:none;">Cancel</button></div><div id="qpeProgress" class="qpe-progress" style="display: none;"><div class="qpe-progress-track"><div id="qpeProgressFill" class="qpe-progress-fill" style="width: 0%"></div></div><div id="qpeProgressText" class="qpe-progress-text"></div></div><div id="qpeResults" class="qpe-results" style="display: none;"><div class="qpe-results-title" id="qpeDomainTitle">Full Domain</div><div class="qpe-stat-grid"><div class="qpe-stat"><span class="qpe-stat-label">Max Rate</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeMaxRate">—</span><span class="qpe-stat-unit" id="qpeMaxRateUnit">mm/h</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Mean Rate</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeMeanRate">—</span><span class="qpe-stat-unit" id="qpeMeanRateUnit">mm/h</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Max Accum.</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeMaxAccum">—</span><span class="qpe-stat-unit" id="qpeMaxAccumUnit">mm</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Mean Accum.</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeMeanAccum">—</span><span class="qpe-stat-unit" id="qpeMeanAccumUnit">mm</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Precip Area</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpePrecipArea">—</span><span class="qpe-stat-unit" id="qpePrecipAreaUnit">km²</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Total Accum.</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeTotalAccum">—</span><span class="qpe-stat-unit" id="qpeTotalAccumUnit">L</span></div></div></div><div id="qpeRegionResults" style="display: none;"><div class="qpe-results-title qpe-results-title--region" id="qpeRegionTitle">Region</div><div class="qpe-stat-grid"><div class="qpe-stat"><span class="qpe-stat-label">Max Rate</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeRegMaxRate">—</span><span class="qpe-stat-unit" id="qpeRegMaxRateUnit">mm/h</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Mean Rate</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeRegMeanRate">—</span><span class="qpe-stat-unit" id="qpeRegMeanRateUnit">mm/h</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Max Accum.</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeRegMaxAccum">—</span><span class="qpe-stat-unit" id="qpeRegMaxAccumUnit">mm</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Mean Accum.</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeRegMeanAccum">—</span><span class="qpe-stat-unit" id="qpeRegMeanAccumUnit">mm</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Precip Area</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeRegPrecipArea">—</span><span class="qpe-stat-unit" id="qpeRegPrecipAreaUnit">km²</span></div></div><div class="qpe-stat"><span class="qpe-stat-label">Total Accum.</span><div class="qpe-stat-values"><span class="qpe-stat-value" id="qpeRegTotalAccum">—</span><span class="qpe-stat-unit" id="qpeRegTotalAccumUnit">L</span></div></div></div></div><div id="qpeChart" class="qpe-chart qpe-chart--hidden"></div><div class="qpe-legend-bar"><canvas id="qpeLegendCanvas" class="qpe-legend-bar__canvas"></canvas><div class="qpe-legend-bar__labels" id="qpeLegendLabels"><span>0.1</span> <span>1</span> <span>5</span> <span>25</span> <span>100+ mm</span></div></div><label class="qpe-filter-row" id="qpeFilterRow" style="display:none;"><input type="checkbox" id="qpeFilterAbove1mm" class="qpe-filter-checkbox"> <span>Only show ≥ 1 mm</span></label><div class="qpe-results-meta" id="qpeResultsMeta"></div></div><div id="qpePlayback" class="qpe-playback qpe-playback--hidden"><div class="qpe-playback__title">Playback</div><div class="qpe-pb-modebar"><div class="qpe-mode-group" id="qpeModeGroup"><button type="button" class="qpe-mode-btn qpe-mode-btn--active" data-mode="cumulative">Cumulative</button> <button type="button" class="qpe-mode-btn" data-mode="sliding">Sliding</button></div><div class="qpe-pb-window qpe-pb-window--disabled" id="qpeWindowRow"><label for="qpeWindowHours">Window</label> <input type="number" id="qpeWindowHours" class="input qpe-cap-input" min="0.25" max="99.75" step="0.25" value="1.00" disabled="disabled"> <span class="qpe-unit">h</span></div></div><div class="qpe-pb-loading" id="qpePbLoading" style="display:none;"><div class="qpe-pb-loading__fill" id="qpePbLoadingFill"></div></div><div class="anim-timestamp" id="qpePbTime"></div><div class="anim-frame-stats" id="qpePbStats"></div><div class="anim-controls"><button id="qpePbPrev" class="anim-btn" title="Previous frame">◀</button> <button id="qpePbPlay" class="anim-btn anim-btn--play" title="Play/Pause">▶</button> <button id="qpePbNext" class="anim-btn" title="Next frame">▶</button> <input id="qpePbScrubber" type="range" class="anim-scrubber" min="0" value="0" step="1"><div id="qpePbWindow" class="qpe-window-slider" style="display:none;"><div class="qpe-window-track"><div id="qpePbWindowBlock" class="qpe-window-block"></div></div></div><span id="qpePbCounter" class="anim-counter">1/1</span></div><div class="anim-speeds"><label class="anim-speed-label" for="qpePbFpsSelect">Speed</label> <select id="qpePbFpsSelect" class="select anim-fps-select"><option value="1">1 fps</option><option value="2">2 fps</option><option value="4" selected="selected">4 fps</option><option value="6">6 fps</option><option value="12">12 fps</option></select></div></div><div class="qpe-action-row" id="qpeRemoveRow" style="display:none;"><button id="qpeRemoveBtn" class="btn btn--secondary qpe-run-btn">Remove Precipitation Image</button></div></div></div><div class="subtab-pane subtab-pane--scroll" data-subtab="advanced" role="tabpanel"><div class="eval"><p class="eval__intro">Compare the radar QPE accumulation against independent daily cumulative rain gauge values inside the selected region and time window.</p><div class="eval__row"><label class="eval__label" for="evalSource">Gauge source</label> <select id="evalSource" class="anim-select"><option value="cuahsi-ghcn">GHCN daily (CUAHSI)</option></select></div><button id="evalRunBtn" class="btn btn--primary qpe-run-btn" disabled="disabled">Run Evaluation</button><p class="eval__status" id="evalStatus">Run a QPE accumulation first, then evaluate.</p><div class="eval__results" id="evalResults" style="display:none;"><div class="eval__row" id="evalDayModeRow" style="display:none;"><label class="eval__label" for="evalDayMode">Compare days</label> <select id="evalDayMode" class="anim-select"></select></div><div class="eval__metrics" id="evalMetrics"></div><p class="eval__disclaimer" id="evalDisclaimer"></p><div class="eval__chart" id="evalChart"></div><div class="eval__tablewrap"><table class="eval__table" id="evalTable"><thead><tr><th>Gauge</th><th id="evalThGauge">Gauge mm</th><th id="evalThRadar">Radar mm</th><th id="evalThDiff">Diff</th></tr></thead><tbody></tbody></table></div></div><button id="evalExportBtn" class="btn btn--primary eval__export-btn" style="display:none;">↓ Export PDF</button></div></div></div></div></aside><a class="hi-logo" href="https://hydroinformatics.tulane.edu/" target="_blank" rel="noopener"><img id="hiLogo" alt="HydroInformatics Lab" src="https://hydroinformatics.tulane.edu/lab/radarviz/d69d5e56c570f763f82f.png"></a><script>(g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+            key: "AIzaSyCE8ZLpT539dYVYWB0p8plmWrb2uMVd4C0",
+            v: "3.64" // Window canvas drawing is not supported 3.65+
+        });</script><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a4bd4172a99deb2c',t:'MTc5MjIxODYzNw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><iframe height="1" width="1" style="position: absolute; top: 0px; left: 0px; border-width: medium; border-style: none; border-color: currentcolor; border-image: none; visibility: hidden;"></iframe><div class="search-dropdown" hidden=""></div></body></html>
