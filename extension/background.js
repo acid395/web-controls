@@ -5295,7 +5295,7 @@ const ACTION_SYNONYMS = new Map(Object.entries({
 // A bare "and" only separates where a verb follows it, because the first half
 // of "click forecasts and outlooks and click key messages" is the name of a
 // control.
-const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load";
+const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load|reset|clear|remove|delete|build|start|stop|pause|discard|export|save|upload|add|rename|submit|cancel|confirm|refresh|reload|generate|compute|calculate|draw|activate|deactivate|rotate|tilt|pan|name|rename";
 // "and press go", "and hit enter", "and get the forecast" finish the step
 // before them - the Go of a jump menu, the submit of a typed box - and as a
 // step of their own they went looking for a Go button on the page the first
@@ -5304,7 +5304,16 @@ const FINISHES_THE_STEP = "(?:press|click|hit|tap)\\s+(?:go|enter|submit|search)
 const STEP_BOUNDARY = new RegExp(
   `\\s*(?:,\\s*then\\s+|\\s+then\\s+|\\s+and then\\s+)\\s*`
   + `|\\s*,\\s*(?:and\\s+)?(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`
-  + `|\\s+and\\s+(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`, "i");
+  + `|\\s+and\\s+(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`
+  // "switch volume units to acre-feet and distance units to miles" is two
+  // settings. Without a verb after "and" the second stayed glued to the
+  // first and was never set.
+  + `|\\s+and\\s+(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9])`
+  // "set the year to 2024, the month to july": a comma before the next
+  // assignment is a step boundary too.
+  + `|\\s*,\\s*(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9])`
+  // "choose cedar rapids as the first scenario and des moines as the second"
+  + `|\\s+and\\s+(?=[a-z][a-z0-9\\s().-]{1,40}?\\s+as\\s+(?:the\\s+)?(?:first|second|third|fourth|last|1st|2nd|3rd|4th)\\b)`, "i");
 function splitIntoSteps(instruction) {
   return String(instruction || "")
     // plot, graph and chart are asked for as often as click on these sites -
@@ -5401,6 +5410,10 @@ function alsoCalled(label, control = null) {
   if (unnumbered && unnumbered !== flat(t)) names.push(unnumbered);
   const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
   if (m) names.push(flat(m[1]), flat(m[2]));
+  // Every trailing tag, one letter included: "Cedar Rapids (D)" and "Des
+  // Moines (M) (D)" are Cedar Rapids and Des Moines.
+  const untagged = flat(t.replace(/(?:\s*\([^()]{1,24}\))+\s*$/, ""));
+  if (untagged && untagged !== flat(t)) names.push(untagged);
   return names.filter((x) => x.length >= 2);
 }
 
@@ -5482,7 +5495,7 @@ function namedByClause(all, clause) {
     // the clause was a name nothing wore, so it waited on the model. Exactly
     // one control must wear what is left, as with the place cut above.
     if (!named.length && !ordinalIn(text)) {
-      const core = bare.replace(/\s+(?:tab|button|link|menu item|menu|option|checkbox|check box|toggle|dropdown|drop down|list|box|page|section|panel|pane|item|icon)$/, "")
+      const core = bare.replace(/\s+(?:tab|button|link|menu item|menu|option|checkbox|check box|toggle|dropdown|drop down|list|box|page|section|panel|pane|item|icon|uploader|upload|tool|widget|form|dialog|window|viewer|picker|selector|control|setting|settings|layer|view)$/, "")
         .replace(/^the\s+/, "");
       if (core && core !== bare) {
         const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
@@ -5505,7 +5518,11 @@ function namedByClause(all, clause) {
     const ownName = named.filter((c) => { const l = flat(c.label); return l === bare || l === whole || l === plainWhole; });
     const byName = ownName.length ? ownName : named;
     const notDoors = byName.filter((c) => !c.opensPanel);
-    const kept = notDoors.length ? notDoors : byName;
+    // On screen beats behind something. "Choose des moines" with Des Moines
+    // (M) (D) showing in the open panel and a plain "Des Moines" in a closed
+    // one opened the closed one, switching layers under the request.
+    const shown = notDoors.filter((c) => !c.hidden);
+    const kept = shown.length ? shown : (notDoors.length ? notDoors : byName);
     // Whether the name was worn exactly or reached for. The caller needs to
     // know: an exact name is already handled richly elsewhere, and this only
     // has to step in where that would miss.
@@ -6472,6 +6489,36 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       }
     }
 
+    // Look-alikes folded. A radar picker lists 160 sites as buttons of one
+    // shape, and every decision carried all of them - 1,800 tokens a turn,
+    // thirty to a hundred seconds of prefill on an ordinary laptop, and a
+    // chain that timed out on its third step. A run of the same shape keeps
+    // the members that share a word with the request and two examples, with
+    // a count; the model can still name any of them, and "find" lists them.
+    if (offered.length > 30) {
+      const gw = new Set(meaningfulWords(goal).filter((w) => w.length > 2));
+      const groups = new Map();
+      offered.forEach((c, i) => { const k = `${c.kind}:${shapeOfLabel(c.label)}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+      const drop = new Set();
+      const moreAt = new Map();
+      for (const idx of groups.values()) {
+        // Only a run with a shape of its own - a code, a time, a figure in
+        // it. Two plain words are the shape of half the controls on any
+        // page, and folding those would hide the one the request meant.
+        const shape = shapeOfLabel(offered[idx[0]].label);
+        if (idx.length < 8 || !/[9\-:,.()/%]/.test(shape)) continue;
+        const named = idx.filter((i) => meaningfulWords(offered[i].label).some((w) => gw.has(w)));
+        const keep = new Set([...named.slice(0, 6), ...idx.slice(0, 2)]);
+        let last = -1; let folded = 0;
+        for (const i of idx) { if (keep.has(i)) last = i; else { drop.add(i); folded++; } }
+        if (folded && last >= 0) moreAt.set(last, folded);
+      }
+      if (drop.size) {
+        offered = offered.map((c, i) => (moreAt.has(i) ? { ...c, more: moreAt.get(i) } : c)).filter((c, i) => !drop.has(i));
+        if (!narrowedFrom) narrowedFrom = wide.length;
+      }
+    }
+
     // A question is read first, not asked about.
     //
     // The prompt tells the model "Question: read, do not press", and a 3B
@@ -6488,6 +6535,24 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
+      // What a list offers answers "what products can be displayed": the
+      // choices live in a dropdown, which the page's prose never spells out.
+      // Lists whose name shares a word with the question are read out with
+      // their options, hidden ones included - a closed step is still an
+      // answer to what the page can do.
+      if (ASKING_TO_READ.test(goal)) {
+        const qWords = meaningfulWords(goal).filter((w) => w.length > 3 && !/^(?:what|which|here|this|page|displayed|available|there|does|tell|show|shown|list|listed|options?|choices?)$/.test(w));
+        const stem = (w) => w.replace(/(?:ies|es|s)$/, "");
+        const lines = [];
+        for (const c of controls) {
+          if (!(c.options || []).length || lines.length >= 6) continue;
+          const lab = String(c.label || "").toLowerCase();
+          if (!qWords.some((w) => wordMatchesText(w, lab) || lab.includes(stem(w)))) continue;
+          const opts = c.options.filter((o) => !placeholderOption(o)).map((o) => String(o.text || o.value).trim()).filter(Boolean);
+          if (opts.length) lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
+        }
+        if (lines.length) seen = `${seen && seen !== "nothing readable" ? seen + "\n" : ""}Choices on this page:\n${lines.join("\n")}`;
+      }
       // Said outright, so neither the model nor the reader takes the text
       // around a radar image or a map for the whole of what the page shows.
       // A request to read the page as a whole leads with what the page is:
@@ -6756,6 +6821,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         goal,
         controls: offered.map((c) => ({
           label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
+          // How many look-alikes were folded behind this one, for the prompt.
+          more: c.more,
         })),
         history, observation, note, narrowedFrom,
       }),
@@ -8690,8 +8757,17 @@ async function runVerified(routeGlobal, toolCall) {
   // Actions are asynchronous far more often than not - a click starts a
   // fetch or a re-render - so comparing immediately would report a working
   // action as a no-op.
-  const settled = await invokeOnActiveTab("settle", []).catch(() => ({ ok: false }));
+  // Capped. A settle that never comes back - a page whose observer fires
+  // without end - held every step after it; twenty seconds is past the
+  // longest wait settle itself allows.
+  const settleT = Date.now();
+  const settled = await Promise.race([
+    invokeOnActiveTab("settle", []).catch(() => ({ ok: false })),
+    new Promise((r) => setTimeout(() => r({ ok: false, capped: true }), 20000)),
+  ]);
+  const sigT = Date.now();
   const after = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  debugLog(`[verify] ${toolCall && toolCall.name}: settle ${sigT - settleT}ms${settled.capped ? " (capped)" : ""}, signature ${Date.now() - sigT}ms`);
   if (!after.ok) return result;
 
   const diff = await invokeOnActiveTab("signatureDiff", [before.result, after.result]).catch(() => ({ ok: false }));
@@ -10163,6 +10239,232 @@ async function fillZipAndSend(routeGlobal, box, zip) {
   return sent || { ok: false, error: "could not submit the box" };
 }
 
+/* The button a step made usable, pressed as part of that step.
+ *
+ * Choosing a radar site on a picker highlights it and enables "Select
+ * Radar"; nothing happens until that is pressed, and "set the year" after
+ * it found no year to set. Apply, Go, Run, Submit after a choice is how most
+ * apps are built. A button is pressed here only if the step itself made it
+ * usable - disabled or out of sight before, usable after - and either its
+ * words are all in the step ("Select Radar" in "select the miami radar") or
+ * it is the only one that appeared and is named like a confirmation.
+ */
+const CONFIRMISH = /^\s*(?:select|apply|go|submit|ok|okay|confirm|load|run|next|continue|update|search|proceed|done|get)\b/i;
+function usableButtons(inv) {
+  return ((inv && inv.ok && inv.result && inv.result.controls) || [])
+    .filter((c) => !c.hidden && !c.disabled && c.label
+      && (/^(?:button|submit|a|link)$/i.test(String(c.kind || c.tag || "")) || /^submit$/i.test(String(c.type || ""))));
+}
+const beforeStepForConfirm = (before, now) => before || now;
+async function pressConfirmIfRevealed(routeGlobal, clause, before) {
+  if (!before) return null;
+  const after = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  const was = new Set(usableButtons(before).map((c) => c.selector));
+  const fresh = usableButtons(after).filter((c) => !was.has(c.selector));
+  debugLog(`[chain] after "${clause}": ${fresh.length} button(s) became usable${fresh.length ? " - " + fresh.map((c) => c.label).slice(0, 4).join(" / ") : ""}`);
+  if (!fresh.length) return null;
+  const words = new Set(meaningfulWords(clause));
+  const named = fresh.filter((c) => { const w = meaningfulWords(c.label); return w.length && w.every((x) => words.has(x)); });
+  const pick = named.length === 1 ? named[0]
+    : (fresh.length === 1 && CONFIRMISH.test(String(fresh[0].label)) ? fresh[0] : null);
+  if (!pick) return null;
+  const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: pick.selector } });
+  forgetPageTools();
+  return ran && ran.ok !== false ? pick : null;
+}
+
+/* "Select the radar" straight after "search for new orleans" is the radar
+ * the search turned up. An unnamed step - the verb and a kind word, or
+ * "it" - after a search is resolved against what is on screen now and
+ * carries the search's words: one such control, and that is the one.
+ */
+const UNNAMED_PICK = /^\s*(?:please\s+)?(?:select|click|choose|pick|open|press|tap|take)\s+(?:on\s+)?(?:the|that|this|its|it)?\s*(?:first\s+|top\s+|matching\s+|found\s+|only\s+)?(?:[a-z]+)?\s*$/i;
+async function pickSearchResult(routeGlobal, clause, lastSearch) {
+  if (!lastSearch || !lastSearch.words || !/^\s*(?:please\s+)?(?:select|click|choose|pick|open|press|tap|take)\b/i.test(clause)) return null;
+  const want = meaningfulWords(lastSearch.words).filter((w) => w.length > 1);
+  if (!want.length) return null;
+  const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+  const all = (inv && inv.ok && inv.result && inv.result.controls) || [];
+  const carries = all.filter((c) => !c.hidden && !c.disabled && c.label
+    && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+    && want.every((w) => wordMatchesText(w, String(c.label).toLowerCase())));
+  // Named or not. "Select the miami radar" after searching miami is the
+  // result too: every word of the step that names anything on the page
+  // has to be on the result, and words naming nothing ("radar") are the
+  // kind of thing it is.
+  let hits = carries;
+  if (!UNNAMED_PICK.test(clause)) {
+    const said = meaningfulWords(String(clause).replace(CLAUSE_LEAD, "")).filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
+    // Words no result carries are the kind of thing it is: "radar" in
+    // "select the miami radar" is on the search box, not on KAMX - Miami.
+    const naming = said.filter((w) => carries.some((c) => wordMatchesText(w, String(c.label).toLowerCase())));
+    if (!naming.length) return null;
+    hits = carries.filter((c) => naming.every((w) => wordMatchesText(w, String(c.label).toLowerCase())));
+  }
+  // The same result twice - a row and the button inside it - is one result.
+  // The real control first: a button or link over the wrapper it sits in.
+  const byLabel = new Map();
+  for (const h of hits) {
+    const k = String(h.label).toLowerCase().replace(/\s+/g, " ").trim();
+    const real = /^(?:button|submit|a|link|option|menuitem|tab)$/i.test(String(h.kind || h.tag || ""));
+    if (!byLabel.has(k) || (real && !byLabel.get(k).real)) byLabel.set(k, { h, real });
+  }
+  const distinct = [...byLabel.values()].map((x) => x.h);
+  debugLog(`[chain] "${clause}" after search "${lastSearch.words}": ${distinct.length} on screen carry it${distinct.length ? " - " + distinct.map((h) => h.label).slice(0, 3).join(" / ") : ""}`);
+  if (distinct.length !== 1) return null;
+  const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: distinct[0].selector } });
+  if (!ran || ran.ok === false) return null;
+  return { control: distinct[0], ran };
+}
+
+/* "Set the year to 2023", "switch distance units to miles", "pick the first
+ * day listed": a list named by the words before "to", an option named by
+ * the words after it, with no model in the loop. One list and one option,
+ * or nothing: two lists called Name is the ambiguity the model is for.
+ */
+const SET_TO = /^\s*(?:please\s+)?(?:set|switch|change|put|turn|make|adjust|move)?\s*(?:the\s+)?([a-z][a-z0-9\s()?.-]{1,40}?)\s+to\s+(.+?)\s*$/i;
+const NTH_OF = /^\s*(?:please\s+)?(?:pick|select|choose|take)\s+(?:the\s+)?(first|last|top|bottom)\s+(?:available\s+|listed\s+)?([a-z][a-z0-9\s()?.-]{1,40}?)(?:\s+(?:listed|available|shown|option|in\s+the\s+list))?\s*$/i;
+// The words of a list's name, verbs and all: "Type" and "Name" are lists
+// here, whatever else those words are elsewhere.
+const LIST_STOP = new Set(["the", "a", "an", "to", "of", "for", "in", "on", "at", "it", "its", "this", "that", "my", "and", "or"]);
+const listWords = (s) => String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !LIST_STOP.has(w));
+function selectsNamed(all, name) {
+  const words = listWords(name);
+  if (!words.length) return [];
+  return all.filter((c) => !c.disabled && /^(?:select|combobox|listbox|select-one)$/i.test(String(c.type || c.kind || ""))
+    && (c.options || []).length && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+}
+function placeholderOption(o) {
+  return !String(o.value ?? "").trim() || /^\s*(?:-+|select|choose|pick|please|none|--)/i.test(String(o.text || ""));
+}
+function optionNamed(control, value) {
+  const want = String(value || "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+  if (!want) return null;
+  const opts = (control.options || []).filter((o) => !placeholderOption(o));
+  const flat = (o) => String(o.text || o.value || "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+  let hit = opts.filter((o) => flat(o) === want);
+  if (!hit.length) hit = opts.filter((o) => { const f = flat(o); return f.startsWith(want + " ") || f.startsWith(want + " (") || new RegExp(`(?:^| )${want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`).test(f); });
+  if (!hit.length) {
+    const ws = want.split(" ").filter((w) => w.length > 1);
+    if (ws.length) hit = opts.filter((o) => ws.every((w) => wordMatchesText(w, flat(o))));
+  }
+  return hit.length === 1 ? hit[0] : null;
+}
+const AS_NTH = /^\s*(?:please\s+)?(?:(?:choose|select|pick|set|use|put|make)\s+)?(.+?)\s+(?:as|for)\s+(?:the\s+)?(first|second|third|fourth|last|1st|2nd|3rd|4th)(?:\s+(?:one|option|choice|[a-z][a-z0-9\s-]{0,30}))?\s*$/i;
+function setToPlan(routeGlobal, clause, all) {
+  // "Cedar rapids as the first scenario": the lists holding that option, in
+  // page order, and the one the ordinal says.
+  const asNth = String(clause).match(AS_NTH);
+  if (asNth) {
+    debugLog(`[chain] "${clause}": as-nth "${asNth[1]}" #${asNth[2]}; lists holding it: ${all.filter((c) => (c.options || []).length && optionNamed(c, asNth[1])).map((c) => `${c.label}${c.hidden ? " (hidden)" : ""}${c.disabled ? " (disabled)" : ""}`).join(" / ") || "none"}`);
+    const n = { first: 0, "1st": 0, second: 1, "2nd": 1, third: 2, "3rd": 2, fourth: 3, "4th": 3 }[asNth[2].toLowerCase()];
+    const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, asNth[1]));
+    const pick = asNth[2].toLowerCase() === "last" ? holders[holders.length - 1] : holders[n];
+    if (pick) { const o = optionNamed(pick, asNth[1]); return { control: pick, option: o, label: `${pick.label}: ${o.text || o.value}` }; }
+    return null;
+  }
+  const nth = String(clause).match(NTH_OF);
+  if (nth) {
+    const lists = selectsNamed(all, nth[2]);
+    if (lists.length === 1) {
+      const opts = (lists[0].options || []).filter((o) => !placeholderOption(o));
+      const o = /^(?:first|top)$/i.test(nth[1]) ? opts[0] : opts[opts.length - 1];
+      if (o) return { control: lists[0], option: o, label: `${lists[0].label}: ${o.text || o.value}` };
+    }
+    return null;
+  }
+  const m = String(clause).match(SET_TO);
+  if (m) {
+    const lists = selectsNamed(all, m[1]);
+    const found = lists.map((c) => ({ c, o: optionNamed(c, m[2]) })).filter((x) => x.o);
+    if (found.length === 1) return { control: found[0].c, option: found[0].o, label: `${found[0].c.label}: ${found[0].o.text || found[0].o.value}` };
+    if (found.length > 1) return null;
+  }
+  // "Choose reflectivity": a value with no list named, in exactly one list
+  // on screen. The model path has always done this; the page's own path
+  // did not, so a plain choice waited on the model.
+  const bare = String(clause).replace(CLAUSE_LEAD, "").replace(/^\s*(?:the|a|an)\s+/i, "").trim();
+  if (bare && bare.length >= 2 && !/\s(?:to|as|for|in|on)\s/i.test(bare)) {
+    const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, bare));
+    if (holders.length === 1) { const o = optionNamed(holders[0], bare); return { control: holders[0], option: o, label: `${holders[0].label}: ${o.text || o.value}` }; }
+  }
+  return null;
+}
+
+/* "Pick the first time listed" where the times are a run of plain divs.
+ *
+ * The list a step produced is the list the next step picks from: the
+ * controls that appeared since the step before, grouped by the shape of
+ * their label ("00:01:25 UTC" and "00:06:27 UTC" are one shape). The group
+ * the ordinal's noun fits - a time looks like a time - or the only group;
+ * then its first or last member.
+ */
+const shapeOfLabel = (l) => String(l || "").replace(/[A-Z]/g, "A").replace(/[a-z]/g, "a").replace(/\d/g, "9").replace(/a+/g, "a").replace(/A+/g, "A").replace(/9+/g, "9").slice(0, 40);
+const ORDINAL_WORD = { first: 0, "1st": 0, top: 0, second: 1, "2nd": 1, third: 2, "3rd": 2, fourth: 3, "4th": 3, fifth: 4, "5th": 4 };
+const NTH_LISTED = /^\s*(?:please\s+)?(?:pick|select|choose|take|click|open)\s+(?:the\s+)?(first|second|third|fourth|fifth|last|top|bottom|1st|2nd|3rd|4th|5th)\s+(?:available\s+|listed\s+)?([a-z][a-z0-9\s-]{0,40}?)(?:\s+(?:listed|available|shown|in\s+the\s+list|option|entry|item))?\s*$/i;
+function looksLike(noun, label) {
+  const n = String(noun || "").toLowerCase();
+  if (/\btime|scan|hour|minute/.test(n)) return /\d{1,2}:\d{2}/.test(label);
+  if (/\bdate|day\b/.test(n)) return /\d/.test(label);
+  if (/\byear/.test(n)) return /\b(?:19|20)\d{2}\b/.test(label);
+  return true;
+}
+async function pickNthOfList(routeGlobal, clause, before) {
+  const m = String(clause).match(NTH_LISTED);
+  if (!m) return null;
+  const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+  const all = ((inv && inv.ok && inv.result && inv.result.controls) || [])
+    .filter((c) => !c.hidden && !c.disabled && c.label && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+      && !/^(?:select|select-one|combobox)$/i.test(String(c.type || c.kind || "")));
+  const was = new Set((((before && before.ok && before.result && before.result.controls) || [])).map((c) => c.selector));
+  const groupsOf = (list) => {
+    const g = new Map();
+    for (const c of list) { const k = shapeOfLabel(c.label); if (!g.has(k)) g.set(k, []); g.get(k).push(c); }
+    return [...g.values()].filter((x) => x.length >= 3);
+  };
+  let groups = groupsOf(all.filter((c) => !was.has(c.selector))).filter((g) => looksLike(m[2], g[0].label));
+  if (!groups.length) groups = groupsOf(all).filter((g) => looksLike(m[2], g[0].label));
+  if (groups.length !== 1) {
+    // Several runs on screen: the one whose members say the noun, else the largest fresh one.
+    const saying = groups.filter((g) => g.some((c) => wordMatchesText(String(m[2]).split(/\s+/)[0], String(c.label).toLowerCase())));
+    if (saying.length === 1) groups = saying;
+    else if (groups.length > 1) groups = [groups.sort((x, y) => y.length - x.length)[0]];
+  }
+  if (!groups.length) return null;
+  const g = groups[0];
+  const which = m[1].toLowerCase();
+  const pick = /^(?:last|bottom)$/.test(which) ? g[g.length - 1] : g[ORDINAL_WORD[which] || 0];
+  if (!pick) return null;
+  debugLog(`[chain] "${clause}": ${g.length} look-alikes, taking "${pick.label}"`);
+  const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: pick.selector } });
+  if (!ran || ran.ok === false) return null;
+  return { control: pick, ran };
+}
+
+/* A list the step names that is still filling in. After "set the resolution
+ * to auto" the scan levels arrive from the server a moment later, and the
+ * next step found the list disabled and did something else. A list named by
+ * the step and not yet usable is given a few seconds.
+ */
+async function awaitNamedListReady(clause, { waitMs = 8000 } = {}) {
+  const words = listWords(String(clause).replace(CLAUSE_LEAD, ""));
+  if (!words.length) return;
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    const lists = ((inv && inv.ok && inv.result && inv.result.controls) || [])
+      .filter((c) => !c.hidden && String(c.label || "").length <= 60 && !/--|\|/.test(String(c.label || "")) && /^(?:select|select-one|combobox|listbox)$/i.test(String(c.type || c.kind || ""))
+        && words.some((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+    const pending = lists.filter((c) => c.disabled || !(c.options || []).some((o) => !placeholderOption(o)));
+    if (!lists.length || !pending.length || Date.now() > until) {
+      if (pending.length && lists.length) debugLog(`[chain] "${clause}": gave up waiting for ${pending.map((c) => c.label).join(" / ")}`);
+      return;
+    }
+    forgetInventory();
+    await new Promise((r) => setTimeout(r, 700));
+  }
+}
+
 async function certainClausePlan(routeGlobal, clause) {
   const asSearch = String(clause || "").match(SEARCH_CLAUSE);
   if (asSearch && asSearch[1].trim()) {
@@ -10182,6 +10484,22 @@ async function certainClausePlan(routeGlobal, clause) {
 
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
+  const setTo = setToPlan(routeGlobal, clause, all);
+  if (setTo) {
+    return {
+      label: setTo.label,
+      run: async () => {
+        if (setTo.control.hidden && setTo.control.revealedBy) {
+          await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
+          forgetPageTools();
+        }
+        const ran = await runVerified(routeGlobal, { name: "pageSelectOption",
+          args: { selector: setTo.control.selector, value: setTo.option.value || setTo.option.text } });
+        if (!ran || ran.ok === false) return null;
+        return { changed: didItMove(ran) };
+      },
+    };
+  }
   const span = soleSpanControl(clause, all);
   if (span) {
     return {
@@ -10218,6 +10536,7 @@ async function certainClausePlan(routeGlobal, clause) {
   const times = timesAsked(clause);
   const core = times > 1 ? String(clause).replace(REPEAT_TAIL, "").trim() : clause;
   const { named, n } = namedByClause(all, core);
+  debugLog(`[chain] "${clause}": named by clause: ${named.map((c) => `${c.label}${c.hidden ? " (hidden)" : ""}`).slice(0, 4).join(" / ") || "nothing"} (of ${all.length}; core "${core}"; same-named: ${all.filter((c) => String(c.label).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === String(core).replace(/^\s*(?:please\s+)?(?:switch|set|change|turn\s+on|turn\s+off|open|click|choose|select|enable|disable)\s+(?:the\s+)?(?:map\s+to\s+)?/i, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).map((c) => `${c.label}|${c.kind}|${c.confidence}|${c.hidden ? "hidden" : "shown"}|${c.disabled ? "off" : "on"}`).join(", ") || "none"})`);
   if (named.length !== 1) return null;
   const only = n === null ? named[0] : nthOf(named[0], n);
   if (!only) return null;
@@ -12010,7 +12329,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // one that may never reach the second half.
             const parts = splitIntoSteps(wanted);
             let agent;
-            if (parts.length > 1 && parts.length <= 6) {
+            // Fourteen, as in the page-only path. At six, a ten-step task fell
+            // through to a single run, whose search shortcut typed the whole
+            // sentence into the search box.
+            if (parts.length > 1 && parts.length <= 14) {
               // One clock for the whole instruction rather than one per
               // part - four parts at thirty seconds each is two minutes of a
               // panel saying "still running", which reads exactly like a
@@ -12033,6 +12355,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const answers = [];
               const flags = {};
               let failed = null;
+              let lastSearchInChain = null;
               for (const part of parts) {
                 // A part that names one control on the page as it now is -
                 // after the parts before it ran - needs no decision. The
@@ -12043,19 +12366,80 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // spent a minute and a half on it and picked the wrong
                 // station. Checked here, part by part, it is certain when its
                 // turn comes.
+                let sureNamed = false;
+                let beforeStep = null;
                 if (!forceModel) {
+                  beforeStep = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+                  const searched = await searchClause(route.global, part).catch(() => null);
+                  if (searched) {
+                    lastSearchInChain = searched;
+                    all.push({ did: `search "${String(searched.words).slice(0, 40)}"`, ok: true, changed: true,
+                      outcome: "named on the page exactly, so the model was not asked" });
+                    continue;
+                  }
+                  const found = await pickSearchResult(route.global, part, lastSearchInChain).catch(() => null);
+                  if (found) {
+                    lastSearchInChain = null;
+                    const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
+                    all.push({ did: confirmed ? `${found.control.label}, then ${confirmed.label}` : found.control.label,
+                      ok: true, changed: true, outcome: "the one the search turned up" });
+                    continue;
+                  }
+                  await awaitNamedListReady(part).catch(() => null);
+                  const nthPick = await pickNthOfList(route.global, part, beforeStep).catch(() => null);
+                  if (nthPick) {
+                    const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
+                    all.push({ did: confirmed ? `${nthPick.control.label}, then ${confirmed.label}` : nthPick.control.label,
+                      ok: true, changed: true, outcome: "the one the list shows" });
+                    continue;
+                  }
                   const sure = await certainClausePlan(route.global, part).catch(() => null);
+                  sureNamed = !!sure;
                   if (sure) {
                     const did = await sure.run().catch(() => null);
                     if (did) {
-                      all.push({ did: sure.label || part, ok: true, changed: did.changed !== false,
+                      const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
+                      all.push({ did: confirmed ? `${sure.label}, then ${confirmed.label}` : (sure.label || part),
+                        ok: true, changed: did.changed !== false || !!confirmed,
                         outcome: "named on the page exactly, so the model was not asked" });
+                      continue;
+                    }
+                  }
+                }
+                // The control a step names may be arriving - a tab the page
+                // draws once the layer before it has loaded. Asked a moment
+                // too early, the model chose Switch Layer Order for "open
+                // layer settings". Two short looks before the model is asked.
+                // Only where nothing was named at all. A plan that ran and
+                // came back empty - a toggle whose press reads as "opened" -
+                // has already pressed, and pressing again undoes it.
+                if (!forceModel && !sureNamed) {
+                  let late = null;
+                  for (let look = 0; look < 2 && !late; look++) {
+                    await new Promise((r) => setTimeout(r, 1500));
+                    forgetInventory();
+                    late = await certainClausePlan(route.global, part).catch(() => null);
+                  }
+                  if (late) {
+                    const did = await late.run().catch(() => null);
+                    if (did) {
+                      const beforeNow = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+                      const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStepForConfirm(beforeStep, beforeNow)).catch(() => null);
+                      all.push({ did: confirmed ? `${late.label}, then ${confirmed.label}` : (late.label || part),
+                        ok: true, changed: did.changed !== false || !!confirmed,
+                        outcome: "named on the page once it had drawn it" });
                       continue;
                     }
                   }
                 }
                 const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
                   .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
+                // A button the model's step made usable is its confirmation
+                // as much as a page-matched step's is.
+                if (!forceModel && (one.history || []).some((h) => h.changed || h.ok)) {
+                  const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
+                  if (confirmed) (one.history || []).push({ did: `${confirmed.label}`, ok: true, changed: true, outcome: "pressed to confirm the step" });
+                }
                 for (const h of one.history || []) all.push(h);
                 // Which part it was still on. "ran out of time" on its own
                 // does not say what was left undone.
@@ -12331,7 +12715,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // and was handled as one command, which on the page tested pressed
           // Reset - a step from the middle of the sentence, chosen alone.
           // Falling through to "do part of it" is worse than the length.
-          if (parts.length > 1 && parts.length <= 8) {
+          // Fourteen: a real task on a stepped app is ten clauses - site, date,
+          // time, product, resolution, scan, tab, setting, action - and at
+          // eight the whole sentence fell through to a single instruction
+          // that set the year and stopped.
+          if (parts.length > 1 && parts.length <= 14) {
             // "Search fremont, ca, usa and click on it" split correctly and
             // then failed on the second half, because "click on it" is three
             // stop words and names nothing at all. A step with nothing of its
@@ -12365,6 +12753,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // same machinery a single instruction gets, multi-step and all.
             if (plans.length > 1) {
               const steps = [];
+              let lastSearch = null;
+              let lastClauseT = 0;
               for (const { part, text, call } of plans) {
                 let result;
                 // The page's own controls first, as everywhere else. This
@@ -12377,15 +12767,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // Searching first: "search arizona" names no control, so
                 // every path below it looks for one and reports that nothing
                 // matched.
+                const clauseT = Date.now();
+                if (steps.length) debugLog(`[chain] previous clause took ${Date.now() - (lastClauseT || clauseT)}ms`);
+                lastClauseT = clauseT;
+                const beforeStep = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+                debugLog(`[chain] "${text}": inventory ${Date.now() - clauseT}ms`);
                 const searched = await searchClause(route.global, text).catch(() => null);
                 if (searched) {
+                  lastSearch = searched;
                   steps.push({ part, ok: true, changed: true, unconfirmed: false });
                   continue;
                 }
+                const found = await pickSearchResult(route.global, text, lastSearch).catch(() => null);
+                if (found) {
+                  lastSearch = null;
+                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
+                  steps.push({ part, ok: true, changed: true, unconfirmed: false,
+                    did: confirmed ? `${found.control.label}, then ${confirmed.label}` : found.control.label });
+                  continue;
+                }
+                await awaitNamedListReady(text).catch(() => null);
+                const nthPick = await pickNthOfList(route.global, text, beforeStep).catch(() => null);
+                if (nthPick) {
+                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
+                  steps.push({ part, ok: true, changed: true, unconfirmed: false,
+                    did: confirmed ? `${nthPick.control.label}, then ${confirmed.label}` : nthPick.control.label });
+                  continue;
+                }
+                const sure = await certainClausePlan(route.global, text).catch(() => null);
+                debugLog(`[chain] "${text}": certain plan ${sure ? "= " + sure.label : "none"}`);
+                if (sure) {
+                  const runT = Date.now();
+                  const did = await sure.run().catch(() => null);
+                  debugLog(`[chain] "${text}": plan ran in ${Date.now() - runT}ms -> ${did ? "ok" : "nothing"}`);
+                  if (did) {
+                    const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
+                    steps.push({ part, ok: true, changed: did.changed !== false || !!confirmed, unconfirmed: false,
+                      did: confirmed ? `${sure.label}, then ${confirmed.label}` : sure.label });
+                    continue;
+                  }
+                  debugLog(`[chain] "${text}": the certain plan did not run`);
+                }
                 const exact = await actOnExactlyNamedClause(route.global, text).catch(() => null);
+                debugLog(`[chain] "${text}": exact ${exact ? "= acted" : "none"}`);
                 if (exact) {
-                  steps.push({ part, ok: true, changed: exact.verified.changed !== false,
-                    unconfirmed: !!exact.unconfirmed });
+                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
+                  steps.push({ part, ok: true, changed: exact.verified.changed !== false || !!confirmed,
+                    unconfirmed: !!exact.unconfirmed && !confirmed });
                   continue;
                 }
                 const own = await pursueGoal(route.global, text).catch(() => null);
@@ -12400,7 +12828,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   result = { ok: true, verified: { changed: true } };
                 } else if (ownActed.length) {
                   result = { ok: true, unconfirmed: true };
-                } else if (call) {
+                }
+                if (ownActed.length) {
+                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
+                  if (confirmed) result = { ok: true, verified: { changed: true }, confirmed: confirmed.label };
+                }
+                if (!result && call) {
                   // A manifest tool call and a planTool result have different
                   // shapes; both end up at the same executor.
                   result = call.name

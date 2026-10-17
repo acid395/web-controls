@@ -60,7 +60,9 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note,
       : "";
     const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
     const label = collides.has(i) ? String(c.label || "").slice(0, 52) : short[i];
-    return `- ${label}${what}${state}${opts}`;
+    // A run of look-alikes folded behind this one: say the one you mean.
+    const more = c.more ? ` (+${c.more} more like this; name the one you mean)` : "";
+    return `- ${label}${what}${state}${opts}${more}`;
   }).join("\n");
 
   const done = history.length
@@ -163,11 +165,15 @@ globalThis.WC_BUILD_STEP_PROMPT = buildStepPrompt;
  * to answer in. Nothing about controls, because none will be touched.
  */
 function buildReadPrompt({ goal, observation, note }) {
+  // A request to read the page as a whole wants a description, not a
+  // figure: asked to "read this page" with the rules below, a 3B answered
+  // with the page's heading and nothing else.
+  const whole = /^\s*(?:please\s+)?(?:read|describe|summari[sz]e|explain|interpret)\s+(?:me\s+)?(?:this|the)\s+(?:page|site|screen|app|tool|dashboard|map|chart|graph)\b|^\s*what\s+(?:is|does)\s+this\s+(?:page|site|map|chart|graph)\b/i.test(String(goal || ""));
   return [
     "Answer the question using only what this page shows.",
     "Reply with one JSON object only.",
     "",
-    `Question: ${goal}`,
+    whole ? `Question: ${goal} - say what this page is for, what it shows right now, and what can be done on it.` : `Question: ${goal}`,
     "",
     "What the page shows:",
     String(observation || "nothing readable").slice(0, 2200),
@@ -183,12 +189,12 @@ function buildReadPrompt({ goal, observation, note }) {
     // "what is the latest gage height reading and when was it taken" was
     // answered with the time alone; the value was on the line above it.
     "- If the question asks for more than one thing, answer each of them.",
-    "- Two or three sentences. Say what the values mean, not what the page is.",
+    whole ? "- Two or three sentences, in plain words: the purpose of the page, what it shows now, what it lets you do." : "- Two or three sentences. Say what the values mean, not what the page is.",
     // Said as one fixed sentence, because what happens next depends on it:
     // a page that does not hold the answer is where the run goes to look
     // for the page that does, and a reply that hedges in its own words is a
     // reply nothing can act on.
-    '- If the values do not answer the question, answer exactly: "not on this page".',
+    whole ? "- Describe what is there; never answer \"not on this page\" to a request to read the page." : '- If the values do not answer the question, answer exactly: "not on this page".',
   ].filter(Boolean).join("\n");
 }
 

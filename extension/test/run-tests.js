@@ -4644,7 +4644,7 @@ for (const b of budgets) {
     runAsync(async () => {
       // Routed past the instant path on purpose: the question here is what a
       // card says when the model was not available, not which path was quickest.
-      const r = await bgl.__ask({ type: "smartAsk", instruction: "click the gage height control" });
+      const r = await bgl.__ask({ type: "smartAsk", instruction: "click the gage height one for me" });
       ensure("a card not planned by the model says why",
         /still loading/.test(String((r.display || {}).note || "")), (r.display || {}).note);
     });
@@ -4655,7 +4655,7 @@ for (const b of budgets) {
       const bgw = loadBackground({ page: noGpuPage });
       bgw.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
       runAsync(async () => {
-        const r = await bgw.__ask({ type: "smartAsk", instruction: "click the gage height control" });
+        const r = await bgw.__ask({ type: "smartAsk", instruction: "click the gage height one for me" });
         ensure("and names WebGPU when that is the reason",
           /WebGPU/.test(String((r.display || {}).note || "")), (r.display || {}).note);
       });
@@ -6962,6 +6962,7 @@ for (const b of budgets) {
     if (!ep) continue;
     const bge = loadBackground({ page: ep });
     let shown = null;
+    let folded = 0;
     bge.__model = (m) => {
       if (m.type === "llmStatus") return { ready: true, hasGpu: true };
       if (m.type === "llmEmbed") {
@@ -6970,6 +6971,7 @@ for (const b of budgets) {
       }
       if (m.type === "llmStep") {
         shown = m.controls.length;
+        folded = m.controls.reduce((n, c) => n + (c.more || 0), 0);
         return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" };
       }
       return undefined;
@@ -6980,7 +6982,11 @@ for (const b of budgets) {
       if (hasEmbedder) {
         ensure("and rather fewer than the page carries", shown < 30, shown);
       } else {
-        ensure("and nothing is hidden from it", shown > 30, shown);
+        // Forty "Station note N" links are one run: two of them are shown
+        // with a count of the rest, and the two real controls are shown
+        // whole. Every one of the forty can still be named.
+        ensure("and a run of look-alikes is folded with its count, the rest shown whole",
+          shown >= 4 && shown < 30 && shown + folded >= 42, `shown ${shown}, folded ${folded}`);
       }
     });
   }

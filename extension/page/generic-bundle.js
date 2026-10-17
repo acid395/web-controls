@@ -2078,12 +2078,18 @@
     if (window.__wcRequests) return window.__wcRequests;
     const out = { pending: new Map(), seq: 0 };
     window.__wcRequests = out;
+    // Pictures are not the page working. A map fetches tiles for as long as
+    // it is panned, and counting them kept every step on a map page waiting
+    // out the whole busy allowance.
+    const PICTURE = /\.(?:png|jpe?g|gif|webp|svg|ico|bmp|woff2?|ttf|otf|pbf|mvt)(?:[?#]|$)|\/(?:tiles?|vt|mapvt|arcgis\/rest\/services\/[^?]*\/tile)\b|\bmaps\.googleapis\.com\/maps\/vt|\bmt[0-3]\.google|tile\.openstreetmap|\bgstatic\.com\/|\bkh\.google/i;
+    const urlOf = (u) => { try { return String(typeof u === "string" ? u : (u && (u.href || u.url)) || ""); } catch (e) { return ""; } };
     const begin = () => { const id = ++out.seq; out.pending.set(id, Date.now()); return id; };
     const end = (id) => { out.pending.delete(id); };
     try {
       const nativeFetch = window.fetch;
       if (typeof nativeFetch === "function") {
         window.fetch = function (...args) {
+          if (PICTURE.test(urlOf(args[0]))) return nativeFetch.apply(this, args);
           const id = begin();
           let p;
           try { p = nativeFetch.apply(this, args); } catch (e) { end(id); throw e; }
@@ -2096,7 +2102,10 @@
       const XHR = window.XMLHttpRequest;
       if (XHR && XHR.prototype && XHR.prototype.send) {
         const send = XHR.prototype.send;
+        const openX = XHR.prototype.open;
+        XHR.prototype.open = function (method, url, ...rest) { this.__wcPicture = PICTURE.test(urlOf(url)); return openX.call(this, method, url, ...rest); };
         XHR.prototype.send = function (...args) {
+          if (this.__wcPicture) return send.apply(this, args);
           const id = begin();
           this.addEventListener("loadend", () => end(id), { once: true });
           try { return send.apply(this, args); } catch (e) { end(id); throw e; }
@@ -2215,9 +2224,16 @@
   function pageSignature({ limit = 400 } = {}) {
     const state = {};
     let n = 0;
-    for (const el of deepQueryAll("input, select, textarea, [role=radio], [role=checkbox], [aria-pressed], [aria-selected], [aria-expanded]")) {
+    for (const el of deepQueryAll("input, select, textarea, [role=radio], [role=checkbox], [aria-pressed], [aria-selected], [aria-expanded], [aria-checked], [role=menuitemradio], [role=menuitemcheckbox], [role=tab]")) {
       if (n >= limit) break;
-      if (!isVisible(el)) continue;
+      // A styled checkbox or radio is drawn by its label; the input itself is
+      // out of sight, and its change went uncounted - "choose the 1% return
+      // period" set it and was reported as unverifiable.
+      if (!isVisible(el)) {
+        const styled = /^(checkbox|radio)$/.test(String(el.type || ""))
+          && (() => { const l = (el.labels && el.labels[0]) || (el.closest && el.closest("label")); return !!(l && l !== el && isVisible(l)); })();
+        if (!styled) continue;
+      }
       const key = cssPath(el);
       if (!key) continue;
       const tag = tagOf(el);
@@ -2226,7 +2242,9 @@
       else if (el.type === "checkbox" || el.type === "radio") value = !!el.checked;
       else if (tag === "input" || tag === "textarea") value = String(el.value || "").slice(0, 80);
       else {
-        value = el.getAttribute("aria-pressed") || el.getAttribute("aria-selected") || el.getAttribute("aria-expanded");
+        // aria-checked too: a Google map's Map/Satellite/Night buttons say
+        // which is on that way, and a switch between them read as no change.
+        value = el.getAttribute("aria-pressed") || el.getAttribute("aria-selected") || el.getAttribute("aria-expanded") || el.getAttribute("aria-checked");
       }
       if (value === undefined || value === null) continue;
       // The label travels with the value. Without it a diff can only report
@@ -2275,6 +2293,16 @@
         if (text) shownHeadings.push(text);
       }
     } catch (e) { /* unreadable: the controls still speak */ }
+    // How many controls are on screen. A step that opens the next part of a
+    // form changes no control's value, so "select the radar" - which puts a
+    // date picker on screen - read as nothing changed.
+    let onScreen = 0;
+    try {
+      for (const el of deepQueryAll("button, a[href], select, input, textarea, [role=button], [role=tab], [role=menuitem]")) {
+        if (isVisible(el)) onScreen++;
+      }
+      state["controls-on-screen"] = { value: onScreen, label: "controls on screen", tag: "page" };
+    } catch (e) { /* unreadable: the values still speak */ }
     return { url: location.href, title: document.title, controls: state, count: n, headings: shownHeadings };
   }
 
