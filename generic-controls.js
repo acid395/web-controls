@@ -1558,7 +1558,11 @@
   function readPairs(limit = 40) {
     const pairs = [];
     // definition lists
+    // On screen only. Google Maps keeps its keyboard-shortcut table in a
+    // closed dialog on every page, and "read this page" on a radar viewer
+    // came back as "←: Move left, →: Move right" and nothing of the page.
     for (const dl of deepQueryAll("dl")) {
+      if (!isVisible(dl)) continue;
       const kids = [...dl.children];
       for (let i = 0; i < kids.length - 1; i++) {
         if (kids[i].tagName === "DT" && kids[i + 1].tagName === "DD") {
@@ -1568,6 +1572,7 @@
     }
     // two-cell rows, the usual shape of a "current conditions" table
     for (const tr of deepQueryAll("tr")) {
+      if (!isVisible(tr)) continue;
       if (tr.cells && tr.cells.length === 2) {
         const label = readableTextOf(tr.cells[0]), value = readableTextOf(tr.cells[1]);
         if (label && value && label.length < 60) pairs.push({ label: label.slice(0, 60), value: value.slice(0, 60) });
@@ -3500,6 +3505,14 @@
       if (n.nodeType === 3) { out += n.nodeValue || ""; return; }
       if (n.nodeType !== 1) return;              // comments and the rest are not text
       if (SKIP.test(n.nodeName)) return;
+      // Hidden text is not what the page shows. Google Maps keeps its
+      // keyboard-shortcut help in a closed dialog on every page it draws,
+      // and this read it out as the page's own words.
+      if (n.hidden || (n.getAttribute && n.getAttribute("aria-hidden") === "true")) return;
+      try {
+        const cs = getComputedStyle(n);
+        if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return;
+      } catch (e) { /* no layout here: read it */ }
       // A space per element boundary, for the same reason readableTextOf
       // puts one there: without it this sample read "Latest value7.45
       // ftProvisional TimeResult 2026-09-25 12:503.09", which is the page's

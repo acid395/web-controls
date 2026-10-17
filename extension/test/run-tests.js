@@ -4058,7 +4058,7 @@ if (repeater) {
     if (m.type === "llmStatus") return { ready: true, hasGpu: true };
     if (m.type === "llmStep") {
       turns++;
-      return { ok: true, step: { n: m.controls.findIndex((c) => /30 days/.test(c.label)), do: "click" } };
+      return { ok: true, step: { n: (m.controls || []).findIndex((c) => /30 days/.test(c.label)), do: "click" } };
     }
     return undefined;
   };
@@ -4105,7 +4105,7 @@ if (reflowPage) {
     if (m.type === "llmStep") {
       calls++;
       const want = /revision/i.test(m.goal) ? /revisions/i : /related links/i;
-      return { ok: true, step: { n: m.controls.findIndex((c) => want.test(c.label)), do: "click" } };
+      return { ok: true, step: { n: (m.controls || []).findIndex((c) => want.test(c.label)), do: "click" } };
     }
     return undefined;
   };
@@ -4187,7 +4187,7 @@ if (wrongAct) {
   bg4.__model = (m) => {
     if (m.type === "llmStatus") return { ready: true, hasGpu: true };
     if (m.type === "llmStep") {
-      const n = m.controls.findIndex((c) => /related links/i.test(c.label));
+      const n = (m.controls || []).findIndex((c) => /related links/i.test(c.label));
       return { ok: true, step: { n, do: "check" } };
     }
     return undefined;
@@ -4259,7 +4259,7 @@ if (partial) {
   bgp.__model = (m) => {
     if (m.type === "llmStatus") return { ready: true, hasGpu: true };
     if (m.type === "llmStep") {
-      const i = m.controls.findIndex((c) => /related links/i.test(c.label));
+      const i = (m.controls || []).findIndex((c) => /related links/i.test(c.label));
       if (/related/i.test(m.goal) && i >= 0) return { ok: true, step: { n: i, do: "click" } };
       return { ok: false, error: "the model stopped answering" };
     }
@@ -4290,7 +4290,7 @@ if (answerPart) {
   bgq.__model = (m) => {
     if (m.type === "llmStatus") return { ready: true, hasGpu: true };
     if (m.type === "llmStep") {
-      const i = m.controls.findIndex((c) => /revisions/i.test(c.label));
+      const i = (m.controls || []).findIndex((c) => /revisions/i.test(c.label));
       if (/revisions/i.test(m.goal) && i >= 0) return { ok: true, step: { n: i, do: "click" } };
       return { ok: true, step: { do: "finish", answer: "412 cfs" } };
     }
@@ -4316,7 +4316,7 @@ if (chain) {
     if (m.type === "llmStatus") return { ready: true, hasGpu: true };
     if (m.type === "llmStep") {
       const n = (m.history || []).length;
-      if (!n) return { ok: true, step: { n: m.controls.findIndex((c) => /learn more/i.test(c.label)), do: "click" } };
+      if (!n) return { ok: true, step: { n: (m.controls || []).findIndex((c) => /learn more/i.test(c.label)), do: "click" } };
       if (n === 1) return { ok: true, step: { do: "read" } };
       return { ok: true, step: { do: "finish", answer: "drought rose from 40% to 55%" } };
     }
@@ -4465,7 +4465,7 @@ for (const b of budgets) {
     if (m.type === "llmStep") {
       turns++;
       const g = String(m.goal).toLowerCase();
-      const i = m.controls.findIndex((c) => g.split(/\s+/).filter((w) => w.length > 3)
+      const i = (m.controls || []).findIndex((c) => g.split(/\s+/).filter((w) => w.length > 3)
         .some((w) => String(c.label || "").toLowerCase().includes(w)));
       if (i < 0) return { ok: true, step: { do: "finish", answer: "nothing here does that" } };
       return { ok: true, step: m.controls[i].type === "checkbox"
@@ -4532,12 +4532,12 @@ for (const b of budgets) {
       if (m.type === "llmStatus") return { ready: true, hasGpu: true };
       if (m.type === "llmStep") {
         // a model that opens the disclosure first, then looks again
-        const t = m.controls.findIndex((c) => /tabular/i.test(c.label || ""));
+        const t = (m.controls || []).findIndex((c) => /tabular/i.test(c.label || ""));
         if ((m.history || []).length) {
           return t >= 0 ? { ok: true, step: { n: t, do: "click" } }
             : { ok: true, step: { do: "finish", answer: "not here" } };
         }
-        return { ok: true, step: { n: m.controls.findIndex((c) => /related links/i.test(c.label || "")), do: "click" } };
+        return { ok: true, step: { n: (m.controls || []).findIndex((c) => /related links/i.test(c.label || "")), do: "click" } };
       }
       return undefined;
     };
@@ -4592,7 +4592,7 @@ for (const b of budgets) {
       if (m.type === "llmStatus") return { ready: true, hasGpu: true };
       if (m.type === "llmStep") {
         turns++;
-        return { ok: true, step: { n: m.controls.findIndex((c) => /gage height/i.test(c.label || "")),
+        return { ok: true, step: { n: (m.controls || []).findIndex((c) => /gage height/i.test(c.label || "")),
           do: "check", on: true } };
       }
       return undefined;
@@ -4828,7 +4828,7 @@ for (const b of budgets) {
       if (m.type === "llmStatus") return { ready: true, hasGpu: true };
       if (m.type === "llmStep") {
         turns++;
-        return { ok: true, step: { n: m.controls.findIndex((c) => /ascending/i.test(c.label || "")), do: "click" } };
+        return { ok: true, step: { n: (m.controls || []).findIndex((c) => /ascending/i.test(c.label || "")), do: "click" } };
       }
       return undefined;
     };
@@ -5161,7 +5161,7 @@ for (const b of budgets) {
         // right about the water level, silent otherwise
         if (/water level|how high|stage|height of the water|surface elevation/.test(g)) {
           return { ok: true,
-            step: { n: m.controls.findIndex((c) => /gage height/i.test(c.label)), do: "check" } };
+            step: { n: (m.controls || []).findIndex((c) => /gage height/i.test(c.label)), do: "check" } };
         }
         return { ok: true, step: { do: "finish", answer: "" } };
       }

@@ -2761,8 +2761,11 @@ const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|of
  * right now, the current alerts. Without that, it stays with the controls,
  * where going somewhere is still possible.
  */
+// "Read this page" is a request to read, not a control to find. Taken for
+// a command, a 3B spent 110 seconds choosing a radar site to click on a page
+// it had been asked to describe.
 const ASKING_TO_READ_PLAINLY =
-  /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
+  /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|read\s+(?:me\s+)?(?:this|the|what)\b|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
 // Including one that opens on a preposition. "At what gage height does this
 // location reach minor flood stage" was taken for a command, and the model
 // pressed a graph control instead of reading the flood stages off the page.
@@ -5699,7 +5702,13 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
 
   const value = await Promise.race([
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" }).catch(() => null),
-    new Promise((r) => setTimeout(() => r(null), 1500)),
+    // Six seconds, not one and a half. The document was created and awaited
+    // just above, so a reply normally takes milliseconds; the race is for a
+    // document that died. But with the card busy generating, a status reply
+    // can take longer than 1.5s, and losing the race read as "no model" - so
+    // the page's own matching took over from a model that was ready, and
+    // the suite's sequence checks flipped whenever the machine was loaded.
+    new Promise((r) => setTimeout(() => r(null), 6000)),
   ]);
   // What it said about the machine is worth keeping whatever it said about
   // the model: the graphics card does not change between one status call and
@@ -6479,7 +6488,45 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
+      // Said outright, so neither the model nor the reader takes the text
+      // around a radar image or a map for the whole of what the page shows.
+      // A request to read the page as a whole leads with what the page is:
+      // its title, headings and own words, then its controls by name. The
+      // summary is built for answering a question, so it keeps the tables and
+      // figures and drops the rest - and "read this page" came back as a
+      // handful of label/value pairs with no page around them.
+      if (/^\s*(?:please\s+)?(?:read|describe|summari[sz]e|explain|interpret)\s+(?:me\s+)?(?:this|the)\s+(?:page|site|screen|app|tool|dashboard|map|chart|graph)\b|^\s*what\s+(?:is|does)\s+this\s+(?:page|site|map|chart|graph)\b/i.test(goal) && read.ok && read.result) {
+        const r = read.result;
+        // Look-alikes folded: a page listing 160 radar sites as buttons is
+        // one list, said once with its size and a couple of examples.
+        const shapeOf = (l) => l.replace(/[A-Z]/g, "A").replace(/[a-z]/g, "a").replace(/\d/g, "9").replace(/a{2,}/g, "a").replace(/A{2,}/g, "A").replace(/9+/g, "9");
+        const groups = new Map();
+        for (const c of controls) {
+          if (c.hidden || !c.label || String(c.label).length > 50) continue;
+          const l = String(c.label).trim();
+          const g = groups.get(shapeOf(l)) || [];
+          if (!g.includes(l)) g.push(l);
+          groups.set(shapeOf(l), g);
+        }
+        const names = [];
+        for (const g of groups.values()) {
+          if (g.length >= 6) names.push(`${g.length} like "${g[0]}", "${g[1]}"`);
+          else names.push(...g);
+          if (names.length >= 30) break;
+        }
+        const lead = [
+          r.title ? `Page: ${String(r.title).slice(0, 120)}` : null,
+          (r.headings || []).length ? `Headings: ${r.headings.slice(0, 8).join(" | ")}` : null,
+          r.text ? String(r.text).replace(/\s+/g, " ").slice(0, 700) : null,
+          names.length ? `Controls on the page: ${names.join(", ")}` : null,
+        ].filter(Boolean).join("\n");
+        seen = seen && seen !== "nothing readable" ? `${lead}\n${seen}` : lead;
+      }
       seen = withNamesWhereThin(seen, controls);
+      const canvases = read.ok && read.result && read.result.chart ? (read.result.chart.canvasCount || 0) : 0;
+      if (canvases && seen) {
+        seen += `\nThis page also draws ${canvases === 1 ? "a map or chart" : canvases + " maps or charts"} on a canvas. Its pixels cannot be read; only the text, legends and downloaded data around it can.`;
+      }
       const data = await pageDataLines(goal);
       seen = composeObservation(seen, await passagesFor(goal), data, 2200);
       // Worked out already, from the page's own data. Measured live with a 3B:

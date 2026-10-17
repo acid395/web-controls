@@ -1081,6 +1081,21 @@ chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
 // whoever is waiting rather than to a default nobody can reach.
 const modelChoice = document.getElementById("modelChoice");
 const modelState = document.getElementById("modelState");
+// Loading on request. Nothing loads the model ahead of a request any more,
+// and somebody about to ask a run of questions would rather pay the wait
+// once, now, than inside the first answer.
+const loadModelBtn = document.getElementById("loadModel");
+if (loadModelBtn) {
+  loadModelBtn.addEventListener("click", async () => {
+    try {
+      const mod = await panelModelModule();
+      const st = mod.status();
+      if ((st.ready && st.model === modelChoice.value) || st.loading) return;
+      setStatus("model loading...", "load");
+      watchLoad(mod, modelChoice.value);
+    } catch (e) { setStatus(`could not load: ${String((e && e.message) || e).slice(0, 80)}`, "load"); }
+  });
+}
 const loadWrap = document.getElementById("loadWrap");
 const loadFill = document.getElementById("loadFill");
 const loadWhat = document.getElementById("loadWhat");
@@ -1253,6 +1268,7 @@ function showModelState() {
     const name = (id) => (globalThis.WC_MODEL_NAME ? WC_MODEL_NAME(id) : id);
     modelState.className = res.loading ? "modelstate loading"
       : (have && have === want) ? "modelstate ready" : "modelstate";
+    if (loadModelBtn) loadModelBtn.hidden = !!(res.loading || (have && have === want));
     if (res.loading) showLoading(res.progress, res.fraction);
     else if (have && have === want) { if (loadWrap) loadWrap.className = "loadwrap"; }
     modelState.textContent = !have ? "nothing loaded yet - the next instruction loads it"
