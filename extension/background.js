@@ -6544,14 +6544,40 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         const qWords = meaningfulWords(goal).filter((w) => w.length > 3 && !/^(?:what|which|here|this|page|displayed|available|there|does|tell|show|shown|list|listed|options?|choices?)$/.test(w));
         const stem = (w) => w.replace(/(?:ies|es|s)$/, "");
         const lines = [];
-        for (const c of controls) {
+        const listed = [];
+        // The wide pool, not the hundred and twenty offered for acting: a
+        // radar picker's 160 site buttons filled those before any dropdown.
+        for (const c of (wide.length > controls.length ? wide : controls)) {
           if (!(c.options || []).length || lines.length >= 6) continue;
           const lab = String(c.label || "").toLowerCase();
-          if (!qWords.some((w) => wordMatchesText(w, lab) || lab.includes(stem(w)))) continue;
+          const hits = qWords.filter((w) => wordMatchesText(w, lab) || lab.includes(stem(w))).length;
+          if (!hits) continue;
           const opts = c.options.filter((o) => !placeholderOption(o)).map((o) => String(o.text || o.value).trim()).filter(Boolean);
-          if (opts.length) lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
+          if (!opts.length) continue;
+          lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
+          listed.push({ line: lines[lines.length - 1], hits, opts, hidden: !!c.hidden });
         }
         if (lines.length) seen = `${seen && seen !== "nothing readable" ? seen + "\n" : ""}Choices on this page:\n${lines.join("\n")}`;
+        // "What radar products can be displayed here" is the list, read out.
+        // Handed exactly that list, a 3B still answered with the page title
+        // one run in two. Where one list answers a what-can-be-chosen
+        // question, the page answers it, and the model is not asked.
+        const WHAT_CAN = /^\s*(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:be|i|you|we|one)\b|are\s+(?:available|offered|listed|there|possible|supported|provided)|is\s+available|options?|choices?)/i;
+        // The best-matching list, where the rest are subsets of it or far
+        // smaller: "Radar Product" with four products over the animation
+        // tab's "Product" with one of them.
+        debugLog(`[read] "${goal}": words ${JSON.stringify(qWords)}; lists ${listed.map((l) => l.line.slice(0, 30)).join(" / ") || "none"}; what-can ${WHAT_CAN.test(goal)}; controls ${controls.length}, with options ${controls.filter((c) => (c.options || []).length).length}`);
+        if (listed.length && WHAT_CAN.test(goal) && !conditionalGoal) {
+          const ranked = listed.slice().sort((x, y) => y.hits - x.hits || (x.hidden - y.hidden) || y.opts.length - x.opts.length);
+          const top = ranked[0];
+          const lesser = (o) => o.opts.every((v) => top.opts.includes(v)) || o.opts.length * 2 <= top.opts.length;
+          // Or named by more of the question's words than any other list.
+          if (ranked.slice(1).every((o) => o.hits < top.hits || lesser(o))) {
+            history.push({ did: "read the page", outcome: "answered from the list it offers" });
+            return { ok: true, answer: top.line, history, steps: history.length,
+              tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
+          }
+        }
       }
       // Said outright, so neither the model nor the reader takes the text
       // around a radar image or a map for the whole of what the page shows.
@@ -12536,7 +12562,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       // run the model never saw was still being reported as
                       // its work, which is the same dishonesty as a card
                       // claiming an action that did not happen.
-                      + (agent.fromData
+                      + (agent.fromList
+                        ? "read off the list this page offers, without asking the model"
+                        : agent.fromData
                         ? "worked out from the data this page downloaded, without asking the model"
                         : agent.withoutModel
                         ? "matched by meaning, without asking the model"
