@@ -10226,9 +10226,22 @@ function searchParts(clause) {
 async function searchClause(routeGlobal, clause) {
   const parts = searchParts(clause);
   if (!parts) return null;
-  const words = parts.query;
   const sinv = await readInventory();
-  const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []), parts.where);
+  const all = (sinv.ok && sinv.result && sinv.result.controls) || [];
+  let { query: words, where } = parts;
+  // The box named without "the": "search radar sites for new orleans" is the
+  // Search Radar Sites box and the words new orleans - and all of it was
+  // typed in. Where everything before "for" is in a text box's name, it
+  // names the box.
+  if (!where) {
+    const m = words.match(/^([a-z][a-z\s-]{1,40}?)\s+for\s+(.+)$/i);
+    const nameWords = m ? meaningfulWords(m[1]).filter((w) => !/^(?:search|site|page|website|box|field|bar)$/.test(w)) : [];
+    if (nameWords.length && all.some((c) => (TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()))
+        && nameWords.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())))) {
+      where = m[1]; words = m[2].trim();
+    }
+  }
+  const box = findSearchBox(all, where);
   if (!box) return null;
   if (box.hidden && box.revealedBy) {
     await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);

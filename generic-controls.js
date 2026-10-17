@@ -886,7 +886,14 @@
       if (nestedDuplicate) continue;
       // A control behind a closed panel is still a control. Recorded with
       // what would have to be opened first, so using it can open it.
-      const shown = isVisible(el);
+      // A styled checkbox is drawn by its label, the input itself tucked out
+      // of sight under a checkmark span - fims on hydroinformatics.tulane.edu
+      // builds its whole layer list that way, and every layer was dropped as
+      // hidden with no way in, so "click flood map set" pressed Map Scale.
+      // The label on screen is the control on screen.
+      const labelShown = /^(checkbox|radio)$/.test(String(el.type || "")) && !isVisible(el)
+        && (() => { const l = (el.labels && el.labels[0]) || (el.closest && el.closest("label")); return !!(l && l !== el && isVisible(l)); })();
+      const shown = isVisible(el) || labelShown;
       if (!shown && !includeHidden) continue;
       const opener = shown ? null : disclosureFor(el);
       if (!shown && !opener) continue;   // hidden with no way in is not usable
