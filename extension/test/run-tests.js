@@ -10121,9 +10121,7 @@ else {
       // as better paths won, which is the mistake the note above describes
       // and this is the second time it has caught one.
       ensure("against a real control",
-        /Applied|done|choose|click|select/i.test((cmd.display || {}).title || "")
-          || /set to|\u2192|->|already/i.test((cmd.display || {}).subtitle || ""),
-        cmd.display);
+        realPage.document.getElementById("layer").value === "p30", cmd.display);
       const caps = await ask("what can I do here");
       ensure("capabilities answer", caps.ok === true, caps.error || caps);
       ensure("and count the page's controls", caps.pageControls > 0, caps.pageControls);

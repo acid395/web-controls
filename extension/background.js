@@ -3558,13 +3558,19 @@ function planGenericTool(instruction, inventory) {
       return !!l && (l === askedFlat || closeName(askedFlat, l));
     };
     const whole = tied.filter((x) => isWholeRequest(x.control));
-    if (whole.length === 1 && tied.length > 1) {
+    // Or one of them is on screen and the rest are tucked away: FIMS has
+    // "Cedar Rapids (D)" in the open layer panel and "Cedar Rapids" in a
+    // closed one, and the one in view is the one meant.
+    const shown = tied.filter((x) => !x.control.hidden);
+    const pick = tied.length > 1 && (whole.length === 1 ? whole[0] : shown.length === 1 ? shown[0] : null);
+    if (pick) {
       // Not a tie after all. Put it at the front and let the normal path act.
-      const pick = whole[0];
       scored.splice(scored.indexOf(pick), 1);
       scored.unshift(pick);
       tied.length = 0;
       tied.push(pick);
+      whole.length = 0;
+      whole.push(pick);
     }
     const bestNow = scored[0];
     const runnerUpNow = scored[1];
@@ -6321,6 +6327,16 @@ function listChoicesFor(goal, pool) {
     if (!opts.length) continue;
     lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
     listed.push({ line: lines[lines.length - 1], hits, opts, hidden: !!c.hidden });
+  }
+  // "What can be turned on here" is the switches, which no dropdown lists.
+  if (!listed.length && /\b(?:turn(?:ed)?\s+on|enabled?|toggled?|switch(?:ed)?\s+on|activated?|checked)\b/i.test(goal)) {
+    const names = pool.filter((x) => !x.hidden && /checkbox|switch/i.test(`${x.type || ""} ${x.kind || ""} ${x.role || ""}`))
+      .map((x) => String(x.label || "").trim()).filter((l) => l && l.length <= 60);
+    const uniq = [...new Set(names)];
+    if (uniq.length) {
+      lines.push(`Can be turned on: ${uniq.slice(0, 12).join(", ")}${uniq.length > 12 ? `, and ${uniq.length - 12} more` : ""}`);
+      listed.push({ line: lines[0], hits: 1, opts: uniq, hidden: false });
+    }
   }
   let direct = null;
   if (listed.length && WHAT_CAN.test(goal)) {
@@ -10573,21 +10589,32 @@ async function runSetToPlan(routeGlobal, setTo) {
  * rule for every path. Returns null where nothing on the page settles it,
  * and the caller decides what to ask the model.
  */
-async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = true, lateLooks = 0 } = {}) {
-  const before = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
-  const searched = await searchClause(routeGlobal, clause).catch(() => null);
+async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = true, lateLooks = 0, narrow = false } = {}) {
+  // Narrow: only what nothing else on the single-instruction path does - the
+  // first of a run, a list or box named with its value. The rest of that
+  // path keeps its own judgement (an accordion title is not the checkbox
+  // inside it; a link to "#" is not a press), and no extra reads.
+  const before = narrow ? null : await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  const searched = narrow ? null : await searchClause(routeGlobal, clause).catch(() => null);
   if (searched) return { kind: "search", searched };
-  const confirmAfter = async () => pressConfirmIfRevealed(routeGlobal, clause, before).catch(() => null);
+  const confirmAfter = async () => (narrow ? null : pressConfirmIfRevealed(routeGlobal, clause, before).catch(() => null));
   const done = (kind, label, changed, outcome, unconfirmed, confirmed) => ({
     kind, changed: changed || !!confirmed, unconfirmed: !!unconfirmed && !confirmed,
     did: confirmed ? `${label}, then ${confirmed.label}` : label, outcome, confirmed: !!confirmed,
   });
-  const found = await pickSearchResult(routeGlobal, clause, lastSearch).catch(() => null);
+  const found = narrow ? null : await pickSearchResult(routeGlobal, clause, lastSearch).catch(() => null);
   if (found) return done("pick", found.control.label, true, "the one the search turned up", false, await confirmAfter());
-  await awaitNamedListReady(clause).catch(() => null);
+  if (!narrow) await awaitNamedListReady(clause).catch(() => null);
   const nth = await pickNthOfList(routeGlobal, clause, before).catch(() => null);
   if (nth) return done("nth", nth.control.label, true, "the one the list shows", false, await confirmAfter());
-  let sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
+  let sure = null;
+  if (narrow) {
+    const inv = await readInventory();
+    const st = setToPlan(routeGlobal, clause, ((inv.ok && inv.result && inv.result.controls) || []));
+    if (st) sure = { label: st.label, run: () => runSetToPlan(routeGlobal, st) };
+  } else {
+    sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
+  }
   const named = !!sure;
   debugLog(`[chain] "${clause}": certain plan ${sure ? "= " + sure.label : "none"}`);
   if (sure) {
@@ -11834,6 +11861,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
           }
         }
+        // One clause, settled by the page where the page can settle it - the
+        // same resolver every chain step runs through: the result a search
+        // turned up, the first of a run, a list or box with its value, a
+        // control named outright, then the confirmation it made usable.
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted) && splitIntoSteps(wanted).length === 1) {
+          const step = await resolveStep(route.global, wanted, { narrow: true, exact: false }).catch(() => null);
+          if (step && step.kind !== "search") {
+            respond({ ok: true, plannedBy: "exact-match", display: {
+              title: String(step.did || wanted).slice(0, 60),
+              subtitle: step.unconfirmed ? "pressed, though nothing on the page visibly changed" : (step.outcome || "named on the page"),
+              stats: [], rows: [], note: "so this did not wait for the model", source: "this page" } });
+            return;
+          }
+        }
 
         // One control, named - and the sequence runner could already act on
         // that while a single instruction could not.
@@ -12090,31 +12131,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // itself does not vary like that, so where the descriptors miss, the
         // inventory is asked the same question: is exactly one control named
         // this, and is it a real control rather than a way in to one.
-        // The chain resolvers, for a single step too: "open the first
-        // earthquake in the list" went to the word scorer and toggled "Only
-        // List Earthquakes Shown on Map"; "sort the list by largest magnitude
-        // first" names a list the page draws only when opened.
-        if (!instant && !forceBaseline && !forceModel && !conditional && isCommand(wanted)
-            && splitIntoSteps(wanted).length === 1) {
-          const nth = await pickNthOfList(route.global, wanted, null).catch(() => null);
-          if (nth) {
-            respond({ ok: true, plannedBy: "exact-match", display: {
-              title: String(nth.control.label).slice(0, 60), subtitle: "the one the list shows, in that position",
-              stats: [], rows: [], note: "taken from the run of like entries on the page, without the model", source: "this page" } });
-            return;
-          }
-          const sinv = await readInventory();
-          const st = setToPlan(route.global, wanted, ((sinv.ok && sinv.result && sinv.result.controls) || []));
-          if (st) {
-            const did = await runSetToPlan(route.global, st).catch(() => null);
-            if (did) {
-              respond({ ok: true, plannedBy: "exact-match", display: {
-                title: String(st.label).slice(0, 60), subtitle: did.changed === false ? "set, though nothing visibly changed" : "set",
-                stats: [], rows: [], note: "the list and the value were both named, so this did not wait for the model", source: "this page" } });
-              return;
-            }
-          }
-        }
         if (!instant && !forceBaseline && !forceModel && !conditional && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
           const binv = await readInventory();

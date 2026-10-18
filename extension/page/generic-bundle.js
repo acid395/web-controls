@@ -148,9 +148,14 @@
         || role.toLowerCase().replace("listbox", "list of choices");
     }
     if ((el.tagName || "").toLowerCase() === "select") {
-      const own = clean(el.textContent);
-      const around = clean(rowText(el));
-      const outside = own && around.includes(own) ? clean(around.split(own).join(" ")) : around;
+      // Every select in the row is taken out, not just this one: FIMS puts
+      // three side by side, and the empty one was named by its neighbour's
+      // options.
+      let outside = clean(rowText(el));
+      for (const s of (el.parentElement ? el.parentElement.querySelectorAll("select") : [])) {
+        const t = clean(s.textContent);
+        if (t && outside.includes(t)) outside = clean(outside.split(t).join(" "));
+      }
       const shorthand = clean(el.name || el.id || "")
         .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
       return clean(el.placeholder || el.title || outside || shorthand) || "dropdown";
