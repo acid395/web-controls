@@ -162,7 +162,19 @@
     const own = clean(shortText(el));
     if (/[a-z0-9]/i.test(own) && own.length <= 80) return own;
     return clean(el.placeholder || el.title || (el.alt || "") || rowText(el) || el.name || own || "")
-      || iconName(el);
+      || iconName(el) || hrefName(el);
+  };
+  // A link with no words at all is named by where it goes: "/drought/maps"
+  // is "drought maps". Last resort, and never for a bare "#".
+  const hrefName = (el) => {
+    try {
+      if (String(el.tagName).toUpperCase() !== "A") return "";
+      const href = el.getAttribute("href") || "";
+      if (!href || /^(?:#|javascript:|mailto:|tel:)/i.test(href)) return "";
+      const path = new URL(href, location.href).pathname.replace(/\/+$/, "");
+      const last = path.split("/").filter(Boolean).pop() || new URL(href, location.href).hostname.replace(/^www\./, "");
+      return last.replace(/\.[a-z0-9]{1,5}$/i, "").replace(/[-_+.]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim().slice(0, 40);
+    } catch (e) { return ""; }
   };
 
   /* An icon with nothing else to go by is named by its picture.
@@ -250,6 +262,11 @@
         if (c.nodeType === 3) { out += c.nodeValue || ""; continue; }
         if (c.nodeType !== 1) continue;
         if (String(c.tagName).toUpperCase() === "BR") { out += " "; continue; }
+        // A picture's words are its alt, an icon's its <title>: a link that
+        // holds only a logo is named for the logo, as a screen reader names it.
+        const tag = String(c.tagName).toUpperCase();
+        if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
+        if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
         walk(c);
       }
     };

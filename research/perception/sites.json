@@ -1,0 +1,22 @@
+[
+  ["nps-yosemite", "https://www.nps.gov/yose/index.htm"],
+  ["epa-home", "https://www.epa.gov/"],
+  ["wikipedia-river", "https://en.wikipedia.org/wiki/Mississippi_River"],
+  ["hydroshare-discover", "https://www.hydroshare.org/search/"],
+  ["ncei-cag", "https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/national/time-series"],
+  ["quake-map", "https://earthquake.usgs.gov/earthquakes/map/"],
+  ["census-quickfacts", "https://www.census.gov/quickfacts/fact/table/US/PST045224"],
+  ["data-gov", "https://catalog.data.gov/dataset?q=water"],
+  ["cdc-home", "https://www.cdc.gov/"],
+  ["usa-gov", "https://www.usa.gov/"],
+  ["nws-forecast", "https://forecast.weather.gov/MapClick.php?lat=29.95&lon=-90.07"],
+  ["bls-data", "https://www.bls.gov/data/"],
+  ["usgs-waterwatch", "https://waterwatch.usgs.gov/index.php?id=ww_current"],
+  ["nasa-worldview", "https://worldview.earthdata.nasa.gov/"],
+  ["cpc-outlooks", "https://www.cpc.ncep.noaa.gov/"],
+  ["fema-msc", "https://msc.fema.gov/portal/home"],
+  ["usfs-home", "https://www.fs.usda.gov/"],
+  ["noaa-tides", "https://tidesandcurrents.noaa.gov/stations.html"],
+  ["nrcs-snotel", "https://wcc.sc.egov.usda.gov/nwcc/inventory"],
+  ["gbif", "https://www.gbif.org/occurrence/search"]
+]

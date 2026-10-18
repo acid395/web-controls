@@ -3,3 +3,7 @@ package-lock.json
 dist/
 research/live-scoring/pages/prof/
 widget/package/
+
+# the perception corpus is captured on demand, not committed
+research/perception/pages/
+research/perception/.profile/
