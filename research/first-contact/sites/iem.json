@@ -50,7 +50,7 @@
   {
    "q": "what is the aggregate request limit when stations are selected",
    "kind": "explain",
-   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/1,?000\\\\b/].filter((r) => r.test(t)).length >= 1; }"
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/1,?000\\b/].filter((r) => r.test(t)).length >= 1; }"
   }
  ]
 }

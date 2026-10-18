@@ -1,0 +1,31 @@
+Question	Website	Kind	Result	What it said
+switch the units to metric	cocorahs-daily	act	PASS	View Data : List Daily Precipitation Reports: Metric | named on the page exactly, so the model was not asked | at /ViewData/ListDailyPrecipReports.aspx | CoCoRaHS - Community Collaborative Rain, Hail 
+put denver in the station fields and tick station name	cocorahs-daily	chain	FAIL	navigated | at / | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+set the location to united states	cocorahs-daily	act	FAIL	navigated | at / | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+set the precip value to gauge catch, the operator to >= and the value to 0.5, then search	cocorahs-daily	chain	FAIL	navigated | at /ViewData/ListDailyPrecipReports.aspx | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+go to the next page of results	cocorahs-daily	act	PASS	navigated | at /ViewData/ListDailyPrecipReports.aspx | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+open the station precip summary	cocorahs-daily	act	FAIL	navigated | at / | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+show the daily comments reports	cocorahs-daily	act	FAIL	navigated | at / | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+how many records were found	cocorahs-daily	explain	FAIL	50 | 1 step (0 on the page), decided by the local model | 50 | at /ViewData/ListDailyPrecipReports.aspx | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+what report date is being searched	cocorahs-daily	explain	PASS	10/18/2026 | 1 step (0 on the page), decided by the local model | 10/18/2026 | at /ViewData/ListDailyPrecipReports.aspx | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+which station reported the highest gauge catch on this page	cocorahs-daily	explain	FAIL	CO-DN-326 | 1 step (0 on the page), decided by the local model | CO-DN-326 | at /ViewData/ListDailyPrecipReports.aspx | CoCoRaHS - Community Collaborative Rain, Hail & Sn
+accept the disclaimer	cdc-fluview	act	FAIL	timed out | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+close the disclaimer, then change the season to 2025-26	cdc-fluview	chain	FAIL	navigated | at /fluview/surveillance/2026-week-40.html | Weekly US Influenza Surveillance Report: Key Updat
+close the disclaimer and set the surveillance area to hhs regions	cdc-fluview	chain	FAIL	10 steps, planned at once by Llama 3.2 3B | 1 of 10 failed | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+switch viral surveillance to clinical labs	cdc-fluview	act	FAIL	15 steps, planned at once by Llama 3.2 3B | 5 of 15 failed | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+go back one week	cdc-fluview	act	FAIL	Previous Week Button | Previous Week Button is the 7 days asked for | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+show the cumulative data on the map	cdc-fluview	act	PASS	11 steps, planned at once by Llama 3.2 3B | ran in order - 9 of 11 changed nothing visible | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+switch the pie chart to cumulative	cdc-fluview	act	FAIL	12 steps, planned at once by Llama 3.2 3B | 1 of 12 failed | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+what season is selected	cdc-fluview	explain	PASS	2026-27 | 1 step (0 on the page), decided by the local model | 2026-27 | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Level Outpatient Ill
+what week is the data for	cdc-fluview	explain	PASS	2026-27 Season, week ending Oct 10, 2026 | 1 step (0 on the page), decided by the local model | 2026-27 Season, week ending Oct 10, 2026 | at /grasp/fluview/fluportaldashboard.html | National, Regiona
+who reports the influenza positive tests	cdc-fluview	explain	PASS	U.S. | 1 step (0 on the page), decided by the local model | U.S. Influenza/NREVSS Collaborating Laboratories and ILINet | at /grasp/fluview/fluportaldashboard.html | National, Regional, and State Leve
+choose the daily summaries dataset and enter boulder as the search term	ncei-cdo-search	chain	FAIL	navigated | at / | National Centers for Environmental Information (NC
+set the dataset to global summary of the month	ncei-cdo-search	act	FAIL	navigated | at /search?affiliate=NCDC&query=Global+Summary+of+the+Month | Search Temporarily Unavailable - NCDC
+search for zip codes instead of stations	ncei-cdo-search	act	FAIL	navigated | at /search?affiliate=NCDC&query=zip+codes+instead+of+stations | Search Temporarily Unavailable - NCDC
+pick the daily summaries dataset, set search for to cities and enter denver as the search term	ncei-cdo-search	chain	FAIL	navigated | at /search?affiliate=NCDC&query=Daily+Summaries | Search Temporarily Unavailable - NCDC
+open the mapping tool	ncei-cdo-search	act	FAIL	navigated | at / | National Oceanic and Atmospheric Administration Ho
+open the datasets page	ncei-cdo-search	act	FAIL	2 steps, planned at once by Llama 3.2 3B | ran in order - 2 of 2 changed nothing visible | at /cdo-web/search | Search | Climate Data Online (CDO) | National Clim
+view the cart	ncei-cdo-search	act	FAIL	navigated | at /access/monitoring/products/ | Climate Monitoring | National Centers for Environm
+how many items are in the cart	ncei-cdo-search	explain	FAIL	0 items | 1 step (0 on the page), decided by the local model | 0 items | at /cdo-web/search | Search | Climate Data Online (CDO) | National Clim
+what identifiers can I use when searching for stations	ncei-cdo-search	explain	FAIL	ZIP codes, FIPS identifiers | 1 step (0 on the page), decided by the local model | ZIP codes, FIPS identifiers | at /cdo-web/search | Search | Climate Data Online (CDO) | National Clim
+what does the date range default to	ncei-cdo-search	explain	PASS	The date range defaults to the latest available year for the selected dataset or produc... | 1 step (0 on the page), decided by the local model | The date range defaults to the latest available year f

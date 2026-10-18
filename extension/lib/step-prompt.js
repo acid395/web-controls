@@ -174,7 +174,7 @@ function planNames(controls) {
   });
 }
 globalThis.WC_PLAN_NAMES = planNames;
-function buildPlanPrompt({ goal, controls = [], history = [] }) {
+function buildPlanPrompt({ goal, controls = [], history = [], optionsShown = 8 }) {
   const gw = new Set(String(goal || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
   const names = planNames(controls);
   const lines = controls.map((c, i) => {
@@ -184,7 +184,7 @@ function buildPlanPrompt({ goal, controls = [], history = [] }) {
     const all = c.options || [];
     // The options the request names come first, so they are among the few shown.
     const named = all.filter((o) => String(o.text || o.value || "").toLowerCase().split(/[^a-z0-9]+/).some((w) => gw.has(w)));
-    const shown = [...named, ...all.filter((o) => !named.includes(o))].slice(0, 8).map((o) => String(o.text || o.value).slice(0, 18));
+    const shown = [...named, ...all.filter((o) => !named.includes(o))].slice(0, optionsShown).map((o) => String(o.text || o.value).slice(0, 18));
     const opts = all.length ? ` [${shown.join("|")}${all.length > shown.length ? ` +${all.length - shown.length} more` : ""}]` : "";
     return `- ${names[i]}${what}${state}${opts}${c.hidden ? " (hidden)" : ""}`;
   }).join("\n");
@@ -207,6 +207,8 @@ function buildPlanPrompt({ goal, controls = [], history = [] }) {
     "  control often shares no word with the request.",
     "- For select, value is one of that control's listed options. For type,",
     "  value is the text the request gives.",
+    "- A link that leaves this page is right only when the request asks to go",
+    "  somewhere; setting, choosing or typing happens on this page.",
     '- If nothing on the list does it, reply {"steps":[]}.',
   ].join("\n");
 }

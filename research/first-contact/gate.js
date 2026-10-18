@@ -134,6 +134,11 @@ async function main() {
     }
   }
   if (LOOK) return process.exit(0);
+  if (BASELINE) {
+    const bad = rows.filter((r) => r.result === "PASS");
+    console.log(bad.length ? `${bad.length} check(s) pass on an untouched page - fix them before running` : "every check fails on an untouched page, as it should");
+    return process.exit(bad.length ? 1 : 0);
+  }
   const out = path.join(__dirname, `run-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}${MODEL ? "-" + MODEL_ID.replace(/-Instruct.*|-q4f16.*/, "") : "-off"}.tsv`);
   fs.writeFileSync(out, ["Question\tWebsite\tKind\tResult\tWhat it said", ...rows.map((r) => [r.q, r.site, r.kind, r.result, r.said].join("\t"))].join("\n") + "\n");
   const share = (list) => `${list.filter((r) => r.result === "PASS").length}/${list.length}`;

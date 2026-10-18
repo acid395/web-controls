@@ -45,12 +45,12 @@
   {
    "q": "what is the 100-year 24-hour precipitation depth",
    "kind": "explain",
-   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/9\\\\.91/].filter((r) => r.test(t)).length >= 1; }"
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/9\\.91/].filter((r) => r.test(t)).length >= 1; }"
   },
   {
    "q": "which map types can be chosen",
    "kind": "explain",
-   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/labels/i, /\\\\bmap\\\\b/i, /satellite/i].filter((r) => r.test(t)).length >= 2; }"
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/labels/i, /\\bmap\\b/i, /satellite/i].filter((r) => r.test(t)).length >= 2; }"
   }
  ]
 }

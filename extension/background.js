@@ -6375,8 +6375,13 @@ function shortlistFor(goal, controls, max = 20) {
     return { c, i, n };
   });
   const top = scored.filter((x) => x.n > 0).sort((a, b) => b.n - a.n || a.i - b.i).slice(0, max);
-  // Padded in page order where the words catch little, so the page's shape is in view.
-  for (const x of scored) { if (top.length >= max) break; if (!top.includes(x) && !x.c.hidden) top.push(x); }
+  // Padded where the words catch little - with the page's form, not its
+  // navigation. Page order starts with the menu bar, and a 3B shown "Home"
+  // first pressed it for four different requests about a form below it.
+  // A link that leaves the page is offered only when the request's words
+  // reach it.
+  const leaves = (c) => !!(c.goesTo && !/^#/.test(String(c.goesTo)));
+  for (const x of scored) { if (top.length >= max) break; if (!top.includes(x) && !x.c.hidden && !leaves(x.c)) top.push(x); }
   return top.sort((a, b) => a.i - b.i).map((x) => x.c);
 }
 
@@ -6389,7 +6394,10 @@ function shortlistFor(goal, controls, max = 20) {
 async function planWithModel(routeGlobal, goal) {
   const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
   if (!inv || !inv.ok || !inv.result) return null;
-  const shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }));
+  // A larger model is shown more: a 3B reads twenty lines in seconds and
+  // loses its way past that, an 8B on a workstation reads forty as fast.
+  const big = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL)) >= 4000;
+  const shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }), big ? 40 : 20);
   if (!shortlist.length) return null;
   const began = Date.now();
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -6405,19 +6413,26 @@ async function planWithModel(routeGlobal, goal) {
   let calls = 0;
   let cost = null;
   for (let round = 0; round < 2; round++) {
-  const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
+  const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, optionsShown: big ? 16 : 8, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
   calls++;
   if (asked && asked.cost) cost = asked.cost;
   const steps = asked && asked.ok && asked.step && Array.isArray(asked.step.steps) ? asked.step.steps : [];
   debugLog(`[plan] "${goal}": ${steps.length} step(s) over ${shortlist.length} controls in ${asked && asked.ms ? asked.ms : Date.now() - began}ms${round ? " (second plan)" : ""}${asked && asked.error ? ` - ${asked.error}` : ""}`);
   if (!steps.length) break;
-  for (const st of steps.slice(0, 12)) {
+  // A plan no longer than the request: a 3B answered a two-part request with
+  // fifteen steps. Three a part and one to confirm is room for every real
+  // step and a bound on an invented one.
+  for (const st of steps.slice(0, Math.min(12, evident * 3 + 1))) {
     let act = String(st.do || "click").toLowerCase();
     // The same step twice is once.
     const key = `${act}|${flat(st.name)}|${flat(st.value)}`;
     if (done.has(key)) continue;
     done.add(key);
     if (act === "search") {
+      // Only when the request asks to search. "Set the dataset to global
+      // summary of the month" was typed into the site's search box and the
+      // page left for a results page nobody wanted.
+      if (!/\b(?:search|look\s*up|find|query|lookup)\b/i.test(goal)) { history.push({ did: `search "${String(st.value || "").slice(0, 40)}"`, ok: false, changed: false, outcome: "the request did not ask to search" }); continue; }
       const searched = await searchClause(routeGlobal, `search for ${String(st.value || "").trim()}`).catch(() => null);
       history.push({ did: `search "${String(st.value || "").slice(0, 40)}"`, ok: !!searched, changed: !!searched,
         outcome: searched ? "searched" : "no search box for that here" });

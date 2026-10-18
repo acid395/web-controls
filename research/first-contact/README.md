@@ -32,10 +32,18 @@ MODEL=0 node gate.js ...                page layer alone
 | 1 | NASS Quick Stats, EIA Electricity Data Browser, PRISM Explorer | 1.93.0 | off | 4/30 |
 | 1 | same | 1.93.0 | Llama 3.2 3B, Chrome window off-screen | 7/20 on NASS + EIA; not valid, see below |
 | 1 | same | 1.94.0 | Llama 3.2 3B, window on screen | 7/15 (NASS 4/10, EIA 3/5; stopped to build the planner) |
-| 2 | CDC WONDER, IEM ASOS download, NOAA PFDS | 1.95.0 (one-call planner) | Llama 3.2 3B, window on screen | 9/30: WONDER 5/10, IEM 4/10, PFDS 0/10 (the page defines a global `Map`; the widget crashed at boot) |
+| 2 | CDC WONDER, IEM ASOS download, NOAA PFDS | 1.95.0 (one-call planner) | Llama 3.2 3B, window on screen | 10/30: WONDER 5/10, IEM 5/10, PFDS 0/10 (the page defines a global `Map`; the widget crashed at boot) |
+| 3 | CoCoRaHS daily reports, CDC FluView, NCEI CDO search | 1.96.0 | Llama 3.2 3B, window on screen | 9/30: CoCoRaHS 3/10, FluView 4/10, CDO 2/10 - explains 5/9, acts 3/15, chains 0/6 |
+
+Two rows above were re-scored from the recorded answers after four checks
+turned out to carry a doubled backslash in their regular expressions (the
+IEM request-limit answer "1000" and the CDO cart answer "0 items" had been
+marked FAIL by broken checks). The TSVs keep the original marks.
 
 Round 1 sites are retired: the naming fixes in 1.94.0 were written with
-their pages open. Round 2 sites are retired the same way after 1.95.0:
+their pages open. Round 3 sites are retired after 1.96.0 (the shortlist no longer offers
+page-leaving links as padding, a plan may search only when asked to, and a
+plan is no longer than the request). Round 2 sites are retired the same way after 1.95.0:
 the fixes that followed (built-ins taken from a clean source, lists named
 by what they hold, an instant match yielding to the planner when words are
 left over, a second choice adding to a multi-select) were written with

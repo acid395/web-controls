@@ -40,7 +40,7 @@
   {
    "q": "how many items are in the cart",
    "kind": "explain",
-   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/\\\\b0 items|\\\\bzero\\\\b|\\\\bno items|\\\\b0\\\\b/i].filter((r) => r.test(t)).length >= 1; }"
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/\\b0 items|\\bzero\\b|\\bno items|\\b0\\b/i].filter((r) => r.test(t)).length >= 1; }"
   },
   {
    "q": "what identifiers can I use when searching for stations",

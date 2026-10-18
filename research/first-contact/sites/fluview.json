@@ -5,17 +5,17 @@
   {
    "q": "accept the disclaimer",
    "kind": "act",
-   "check": "() => ![...document.querySelectorAll(\".modal, [role=dialog], .ui-dialog\")].some((m) => m.offsetParent !== null && getComputedStyle(m).display !== \"none\" && /Disclaimer/i.test(m.textContent))"
+   "check": "() => ![...document.querySelectorAll(\"div, section, dialog\")].some((m) => { const r = m.getBoundingClientRect(); const s = getComputedStyle(m); return r.height > 80 && r.width > 200 && s.display !== \"none\" && s.visibility !== \"hidden\" && /^\\s*Disclaimer/.test(m.textContent) && /Viral Surveillance/.test(m.textContent) && m.querySelector(\"button\"); })"
   },
   {
    "q": "close the disclaimer, then change the season to 2025-26",
    "kind": "chain",
-   "check": "() => ![...document.querySelectorAll(\".modal, [role=dialog], .ui-dialog\")].some((m) => m.offsetParent !== null && getComputedStyle(m).display !== \"none\" && /Disclaimer/i.test(m.textContent)) && /2025-26/.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Season:/.test(b.textContent)) || {}).textContent || \"\") && !/Season:\\s*2026-27/.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Season:/.test(b.textContent)) || {}).textContent || \"\")"
+   "check": "() => ![...document.querySelectorAll(\"div, section, dialog\")].some((m) => { const r = m.getBoundingClientRect(); const s = getComputedStyle(m); return r.height > 80 && r.width > 200 && s.display !== \"none\" && s.visibility !== \"hidden\" && /^\\s*Disclaimer/.test(m.textContent) && /Viral Surveillance/.test(m.textContent) && m.querySelector(\"button\"); }) && /2025-26/.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Season:/.test(b.textContent)) || {}).textContent || \"\") && !/Season:\\s*2026-27/.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Season:/.test(b.textContent)) || {}).textContent || \"\")"
   },
   {
    "q": "close the disclaimer and set the surveillance area to hhs regions",
    "kind": "chain",
-   "check": "() => ![...document.querySelectorAll(\".modal, [role=dialog], .ui-dialog\")].some((m) => m.offsetParent !== null && getComputedStyle(m).display !== \"none\" && /Disclaimer/i.test(m.textContent)) && /Surveillance Area:\\s*HHS/i.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Surveillance Area:/.test(b.textContent)) || {}).textContent || \"\")"
+   "check": "() => ![...document.querySelectorAll(\"div, section, dialog\")].some((m) => { const r = m.getBoundingClientRect(); const s = getComputedStyle(m); return r.height > 80 && r.width > 200 && s.display !== \"none\" && s.visibility !== \"hidden\" && /^\\s*Disclaimer/.test(m.textContent) && /Viral Surveillance/.test(m.textContent) && m.querySelector(\"button\"); }) && /Surveillance Area:\\s*HHS/i.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Surveillance Area:/.test(b.textContent)) || {}).textContent || \"\")"
   },
   {
    "q": "switch viral surveillance to clinical labs",
