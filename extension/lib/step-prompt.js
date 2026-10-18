@@ -147,6 +147,80 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note,
 
 globalThis.WC_BUILD_STEP_PROMPT = buildStepPrompt;
 
+/* The whole request, planned in one call.
+ *
+ * The step prompt asks "what next" once per turn, and on a 3B a turn is
+ * twenty to sixty seconds of prefill before a word comes back - so a four
+ * part request was four prefills, and the budget ran out with half of it
+ * undone. Shown a shortlist of the controls nearest the request, the model
+ * says every step at once; the page then carries them out and checks each.
+ * Named, not numbered: a 3B's numbers ran 1, 2, 3 down the list whatever
+ * line held the control, while its values were right every time. The schema
+ * handed to WebLLM alongside this makes the name one of the list's names
+ * and the action one of five, so a plan cannot name a control that is not
+ * there.
+ */
+// Each control's name as the plan must spell it: cut to a length, and told
+// apart where two cut the same.
+function planNames(controls) {
+  const seen = new Map();
+  return controls.map((c) => {
+    let name = String(c.label || "").replace(/\s+/g, " ").trim().slice(0, 40) || "(unnamed)";
+    const k = name.toLowerCase();
+    const n = (seen.get(k) || 0) + 1;
+    seen.set(k, n);
+    if (n > 1) name = `${name} (${n})`;
+    return name;
+  });
+}
+globalThis.WC_PLAN_NAMES = planNames;
+function buildPlanPrompt({ goal, controls = [], history = [] }) {
+  const gw = new Set(String(goal || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+  const names = planNames(controls);
+  const lines = controls.map((c, i) => {
+    const kind = c.type || c.kind || "";
+    const what = !kind || kind === "link" || kind === "a" ? "" : ` (${kind})`;
+    const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
+    const all = c.options || [];
+    // The options the request names come first, so they are among the few shown.
+    const named = all.filter((o) => String(o.text || o.value || "").toLowerCase().split(/[^a-z0-9]+/).some((w) => gw.has(w)));
+    const shown = [...named, ...all.filter((o) => !named.includes(o))].slice(0, 8).map((o) => String(o.text || o.value).slice(0, 18));
+    const opts = all.length ? ` [${shown.join("|")}${all.length > shown.length ? ` +${all.length - shown.length} more` : ""}]` : "";
+    return `- ${names[i]}${what}${state}${opts}${c.hidden ? " (hidden)" : ""}`;
+  }).join("\n");
+  return [
+    "Plan how to carry out this request on the web page. Reply with one JSON object only.",
+    "",
+    `Request: ${goal}`,
+    "",
+    "Controls:",
+    lines || "(none)",
+    "",
+    history.length ? `Already done:\n${history.map((h, i) => `${i + 1}. ${h.did}${h.outcome ? ` -> ${h.outcome}` : ""}`).join("\n")}\n` : "",
+    history.length ? "Reply with the steps still missing, in order. NAME is a control's name from the list, exactly as written:"
+      : "Reply with every step needed, in order. NAME is a control's name from the list, exactly as written:",
+    '{"steps":[{"name":"NAME","do":"click"},{"name":"NAME","do":"check","on":true},{"name":"NAME","do":"select","value":"OPTION"},{"name":"NAME","do":"type","value":"TEXT"},{"do":"search","value":"WORDS"}]}',
+    "",
+    "Rules:",
+    "- One step for each thing the request asks for, in the order asked.",
+    "- Work out what is meant, then pick the control that does it; the right",
+    "  control often shares no word with the request.",
+    "- For select, value is one of that control's listed options. For type,",
+    "  value is the text the request gives.",
+    '- If nothing on the list does it, reply {"steps":[]}.',
+  ].join("\n");
+}
+globalThis.WC_BUILD_PLAN_PROMPT = buildPlanPrompt;
+globalThis.WC_PLAN_SCHEMA = (controls) => JSON.stringify({
+  type: "object",
+  properties: { steps: { type: "array", maxItems: 12, items: { type: "object",
+    properties: { name: { type: "string", enum: planNames(controls) },
+      do: { type: "string", enum: ["click", "check", "select", "type", "search"] },
+      value: { type: "string" }, on: { type: "boolean" } },
+    required: ["do"] } } },
+  required: ["steps"],
+});
+
 /* A question is not an operation, and was being asked as one.
  *
  * "Explain this data" went to the model with a hundred and fifteen control

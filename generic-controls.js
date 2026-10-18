@@ -284,8 +284,12 @@
     for (const dir of ["previousElementSibling", "nextElementSibling"]) {
       let sib = el[dir];
       for (let seen = 0; sib && seen < 3; seen++, sib = sib[dir]) {
-        if (/^(input|select|textarea)$/i.test(sib.tagName || "")) break;  // the next control along
-        const t = clean(shortText(sib));
+        // The next control along ends the row, whatever it is drawn as: NASS's
+        // search box was "Search Clear", the two buttons beside it. A bare
+        // checkbox is the exception - it has no words of its own, and the
+        // button beside it (an accordion's title) is what it is called.
+        if (isControlish(sib) && !box) break;
+        const t = clean(shortText(sib, { skipControls: true }));
         if (t && t.length <= 60) return t;
       }
     }
@@ -323,6 +327,9 @@
   // set the state list. A container's text, read for a control inside it,
   // leaves out what belongs to the other controls in it.
   const CONTROLISH = /^(?:A|BUTTON|INPUT|SELECT|TEXTAREA)$/;
+  const CONTROL_ROLE = /^(?:button|link|tab|menuitem|option|checkbox|radio|switch)$/;
+  const isControlish = (n) => CONTROLISH.test(String(n.tagName || "").toUpperCase())
+    || CONTROL_ROLE.test(String((n.getAttribute && n.getAttribute("role")) || ""));
   const shortText = (el, { skipControls = false } = {}) => {
     if (!el) return "";
     let out = "";
@@ -344,7 +351,7 @@
         // A picture's words are its alt, an icon's its <title>: a link that
         // holds only a logo is named for the logo, as a screen reader names it.
         const tag = String(c.tagName).toUpperCase();
-        if (UNWORDED.test(tag) || (skipControls && CONTROLISH.test(tag))) continue;
+        if (UNWORDED.test(tag) || (skipControls && isControlish(c))) continue;
         if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
         if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
         walk(c);
@@ -362,7 +369,7 @@
       if (node.nodeType === 3) out += node.nodeValue || "";
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
       else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
-        && !(skipControls && CONTROLISH.test(String(node.tagName).toUpperCase()))) walk(node);
+        && !(skipControls && isControlish(node))) walk(node);
       if (out.length > 200) break;
     }
     return out.slice(0, 200);
@@ -608,6 +615,11 @@
     const r = el.getBoundingClientRect();
     let out;
     if (!r.width && !r.height) out = false;
+    // Parked off the page - Dojo keeps a real <input> at left:-10000px
+    // behind every drawn button, and it was a second "Get Data" the model
+    // could not tell from the first. Page coordinates, so something merely
+    // scrolled past still counts as on the page.
+    else if (r.right + window.scrollX < -500 || r.bottom + window.scrollY < -500) out = false;
     else {
       const s = getComputedStyle(el);
       out = s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
@@ -954,6 +966,9 @@
     for (const el of walk(document.documentElement)) {
       const tag = tagOf(el);
       const role = el.getAttribute("role");
+      // ARIA says presentation strips the element of meaning, and that is
+      // what Dojo wraps each button in; the button proper is inside it.
+      if (role === "presentation" || role === "none") continue;
       const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
       // Real signals (a native interactive tag, an ARIA role, a tab stop, or
       // an actual handler) vs. cursor:pointer alone. Found live on

@@ -166,7 +166,7 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       case "panelStatus": return { ok: true, ...modelHost.status() };
       case "panelStep":
         try {
-          const out = await modelHost.step(m.model, m.prompt, { timeoutMs: m.timeoutMs });
+          const out = await modelHost.step(m.model, m.prompt, { timeoutMs: m.timeoutMs, schema: m.schema || null });
           return { ok: true, ...out, model: modelHost.status().model };
         } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
       case "panelBench":

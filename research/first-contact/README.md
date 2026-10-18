@@ -31,7 +31,8 @@ MODEL=0 node gate.js ...                page layer alone
 |---|---|---|---|---|
 | 1 | NASS Quick Stats, EIA Electricity Data Browser, PRISM Explorer | 1.93.0 | off | 4/30 |
 | 1 | same | 1.93.0 | Llama 3.2 3B, Chrome window off-screen | 7/20 on NASS + EIA; not valid, see below |
-| 1 | same | 1.94.0 | Llama 3.2 3B, window on screen | (next) |
+| 1 | same | 1.94.0 | Llama 3.2 3B, window on screen | 7/15 (NASS 4/10, EIA 3/5; stopped to build the planner) |
+| 2 | CDC WONDER, IEM ASOS download, NOAA PFDS | 1.95.0 (one-call planner) | Llama 3.2 3B, window on screen | (running) |
 
 Round 1 sites are retired: the naming fixes in 1.94.0 were written with
 their pages open.

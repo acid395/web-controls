@@ -79,15 +79,20 @@ export function status() {
 
 // One decision. The same shape the offscreen document answers with, so the
 // caller cannot tell which one served it apart from the speed.
-export async function step(modelId, prompt, { timeoutMs = 45000 } = {}, onProgress) {
+export async function step(modelId, prompt, { timeoutMs = 45000, schema = null } = {}, onProgress) {
   const engine = await engineFor(modelId, onProgress);
   const began = Date.now();
+  // A schema, where one is given, keeps the reply inside it - a plan can
+  // only name controls on its list. A model that cannot take one is asked
+  // again without it.
+  const create = (withSchema) => engine.chat.completions.create({
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0,
+    max_tokens: withSchema ? 320 : 192,
+    ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
+  });
   const reply = await Promise.race([
-    engine.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
-      max_tokens: 192,
-    }),
+    schema ? create(schema).catch(() => create(null)) : create(null),
     new Promise((_, reject) => setTimeout(
       () => reject(new Error(`inference timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)),
   ]);

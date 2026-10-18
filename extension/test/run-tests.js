@@ -2316,6 +2316,47 @@ else {
   });
 }
 
+// The planner: one model call for the whole request, carried out and
+// checked step by step by the page. The request shares no word with the
+// controls - that is the model's job - and the stub answers the plan call
+// by number, as the schema makes a real model do.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <label for="layer">Data layer</label>
+    <select id="layer"><option value="cur">Current</option><option value="p30">30-Day Precipitation</option></select>
+    <label><input type="checkbox" id="leg"> Show legend</label>
+    <button id="go">Apply</button></body></html>`, { url: "https://www.drought.gov/" });
+  if (page) {
+    const bg = loadBackground({ page });
+    let plans = 0; let turns = 0;
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") {
+        plans++;
+        const named = (re) => (m.controls.find((c) => re.test(String(c.label))) || {}).label;
+        return { ok: true, step: { steps: [
+          { name: named(/data layer/i), do: "select", value: "30-Day Precipitation" },
+          { name: named(/show legend/i), do: "check", on: true },
+          { name: named(/apply/i), do: "click" }] } };
+      }
+      turns++;
+      return { ok: true, step: { do: "finish", answer: "x" } };
+    };
+    page.document.getElementById("go").addEventListener("click", () => page.document.body.appendChild(page.document.createElement("hr")));
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: "show me the last month of rain with the key visible and run it" });
+      ensure("the planner answers a request that shares no word with the page", r.plannedBy === "plan", r.plannedBy);
+      ensure("one plan call, no per-step turns", plans === 1 && turns === 0, `${plans} plans, ${turns} turns`);
+      ensure("every planned step ran against the page", page.document.getElementById("layer").value === "p30"
+        && page.document.getElementById("leg").checked === true, r.display);
+      ensure("and the card says so step by step", ((r.display || {}).rows || []).length === 3
+        && !/planned nothing/.test(String((r.display || {}).note || "")), r.display);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

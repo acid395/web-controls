@@ -1,0 +1,31 @@
+Question	Website	Kind	Result	What it said
+open the topics tab	cdc-wonder	act	FAIL	
+open the a-z index tab	cdc-wonder	act	FAIL	
+close the data & site updates notice	cdc-wonder	act	FAIL	
+search wonder for mortality	cdc-wonder	act	FAIL	
+open the topics tab, then go back to the wonder systems tab	cdc-wonder	chain	PASS	
+open the underlying cause of death database	cdc-wonder	act	FAIL	
+open frequently asked questions	cdc-wonder	act	FAIL	
+when was this page last reviewed	cdc-wonder	explain	FAIL	
+what databases are listed under national notifiable conditions	cdc-wonder	explain	FAIL	
+what does the triangle symbol next to a link mean	cdc-wonder	explain	FAIL	
+set the data format to tab delimited and include latitude and longitude	iem-download	chain	FAIL	
+select air temperature in fahrenheit and dew point in fahrenheit as the data	iem-download	chain	FAIL	
+set the start date to march 5 2024 and the end date to march 10 2024	iem-download	chain	FAIL	
+set the timezone to america/chicago	iem-download	act	FAIL	
+turn off specials and turn on madis hfmetar / 5 minute asos	iem-download	chain	FAIL	
+filter the stations for ames, select it and add it to the selected stations	iem-download	chain	FAIL	
+represent missing data as an empty string	iem-download	act	FAIL	
+how many stations are available	iem-download	explain	FAIL	
+up to what time does this archive contain observations	iem-download	explain	FAIL	
+what is the aggregate request limit when stations are selected	iem-download	explain	FAIL	
+set the data type to precipitation intensity and the units to metric	noaa-pfds	chain	FAIL	
+switch the time series type to annual maximum	noaa-pfds	act	FAIL	
+enter latitude 39.1 and longitude -94.6, then submit	noaa-pfds	chain	FAIL	
+choose the station topeka	noaa-pfds	act	FAIL	
+show stations on the map	noaa-pfds	act	FAIL	
+open the pf graphical tab	noaa-pfds	act	FAIL	
+pick annual maximum, switch units to metric and open the supplementary information tab	noaa-pfds	chain	FAIL	
+what is the current location name	noaa-pfds	explain	FAIL	
+what is the 100-year 24-hour precipitation depth	noaa-pfds	explain	FAIL	
+which map types can be chosen	noaa-pfds	explain	FAIL	

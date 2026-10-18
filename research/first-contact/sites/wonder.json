@@ -1,0 +1,56 @@
+{
+ "name": "cdc-wonder",
+ "url": "https://wonder.cdc.gov/",
+ "prompts": [
+  {
+   "q": "open the topics tab",
+   "kind": "act",
+   "check": "() => /welcomet\\.html$/i.test(location.pathname)"
+  },
+  {
+   "q": "open the a-z index tab",
+   "kind": "act",
+   "check": "() => /welcomea\\.html$/i.test(location.pathname)"
+  },
+  {
+   "q": "close the data & site updates notice",
+   "kind": "act",
+   "check": "() => { const b = document.querySelector(\".wonder-btn-close\"); return !b || b.offsetParent === null; }"
+  },
+  {
+   "q": "search wonder for mortality",
+   "kind": "act",
+   "check": "() => location.pathname !== \"/\" && /mortality/i.test(document.body.innerText.slice(0, 4000))"
+  },
+  {
+   "q": "open the topics tab, then go back to the wonder systems tab",
+   "kind": "chain",
+   "check": "() => /^\\/(?:welcome\\.html|index\\.html)?$/i.test(location.pathname) && /welcomet\\.html/i.test(document.referrer) && /WONDER Systems/.test(document.body.innerText)"
+  },
+  {
+   "q": "open the underlying cause of death database",
+   "kind": "act",
+   "check": "() => /ucd|underlying/i.test(location.href) || /Underlying Cause of Death/i.test(document.title)"
+  },
+  {
+   "q": "open frequently asked questions",
+   "kind": "act",
+   "check": "() => /faq/i.test(location.href) || /Frequently Asked/i.test(document.title)"
+  },
+  {
+   "q": "when was this page last reviewed",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/October 14,? 2026/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what databases are listed under national notifiable conditions",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/NNDSS Annual Summary/i, /NNDSS Annual Tables/i, /NNDSS Weekly Tables/i].filter((r) => r.test(t)).length >= 2; }"
+  },
+  {
+   "q": "what does the triangle symbol next to a link mean",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/numerical data/i].filter((r) => r.test(t)).length >= 1; }"
+  }
+ ]
+}

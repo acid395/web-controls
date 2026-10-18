@@ -166,7 +166,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     try { const e = await held; if (e && e.unload) await e.unload(); } catch (e) { /* gone */ }
   }
 
-  async function step(modelId, prompt, { timeoutMs = 45000 } = {}) {
+  async function step(modelId, prompt, { timeoutMs = 45000, schema = null } = {}) {
     const engine = await engineFor(modelId);
     const began = Date.now();
     let timer = null;
@@ -178,14 +178,18 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     // nothing for the rest of the page's life. A streamed request clears the
     // flag as it starts. Measured: an empty "abort" in 3ms before, "4" in
     // 350ms after, on the same engine straight after an interrupt.
-    const gather = async () => {
+    // A schema keeps a plan inside its list of controls; a model that
+    // cannot take one is asked again without it.
+    const gather = async (withSchema = schema) => {
       const chunks = await engine.chat.completions.create({
         messages: [{ role: "user", content: prompt }],
         temperature: 0,
-        max_tokens: 192,
+        max_tokens: withSchema ? 320 : 192,
+        ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
         stream: true,
         stream_options: { include_usage: true },
-      });
+      }).catch((e) => { if (withSchema) return null; throw e; });
+      if (!chunks) return gather(null);
       let content = "";
       let usage = null;
       for await (const c of chunks) {

@@ -1,0 +1,56 @@
+{
+ "name": "iem-download",
+ "url": "https://mesonet.agron.iastate.edu/request/download.phtml",
+ "prompts": [
+  {
+   "q": "set the data format to tab delimited and include latitude and longitude",
+   "kind": "chain",
+   "check": "() => String((document.querySelector(\"select[name=format]\") || { value: \"\" }).value) === \"onlytdf\" && String((document.querySelector(\"select[name=latlon]\") || { value: \"\" }).value) === \"yes\""
+  },
+  {
+   "q": "select air temperature in fahrenheit and dew point in fahrenheit as the data",
+   "kind": "chain",
+   "check": "() => { const p = [...(document.querySelector(\"select[name=data]\") || { selectedOptions: [] }).selectedOptions].map((o) => o.value); return p.includes(\"tmpf\") && p.includes(\"dwpf\") && !p.includes(\"all\"); }"
+  },
+  {
+   "q": "set the start date to march 5 2024 and the end date to march 10 2024",
+   "kind": "chain",
+   "check": "() => String((document.querySelector(\"select[name=year1]\") || { value: \"\" }).value) === \"2024\" && String((document.querySelector(\"select[name=month1]\") || { value: \"\" }).value) === \"3\" && String((document.querySelector(\"select[name=day1]\") || { value: \"\" }).value) === \"5\" && String((document.querySelector(\"select[name=year2]\") || { value: \"\" }).value) === \"2024\" && String((document.querySelector(\"select[name=month2]\") || { value: \"\" }).value) === \"3\" && String((document.querySelector(\"select[name=day2]\") || { value: \"\" }).value) === \"10\""
+  },
+  {
+   "q": "set the timezone to america/chicago",
+   "kind": "act",
+   "check": "() => String((document.querySelector(\"select[name=tz]\") || { value: \"\" }).value) === \"America/Chicago\""
+  },
+  {
+   "q": "turn off specials and turn on madis hfmetar / 5 minute asos",
+   "kind": "chain",
+   "check": "() => !((document.querySelector(\"#rt4\") || {}).checked === true) && ((document.querySelector(\"#rt1\") || {}).checked === true)"
+  },
+  {
+   "q": "filter the stations for ames, select it and add it to the selected stations",
+   "kind": "chain",
+   "check": "() => [...document.querySelectorAll(\"#stations_out option\")].some((o) => o.value === \"AMW\")"
+  },
+  {
+   "q": "represent missing data as an empty string",
+   "kind": "act",
+   "check": "() => String((document.querySelector(\"select[name=missing]\") || { value: \"\" }).value) === \"empty\""
+  },
+  {
+   "q": "how many stations are available",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/\\b62\\b/].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "up to what time does this archive contain observations",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/2026-10-1\\d[T ]\\d\\d:\\d\\d/].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what is the aggregate request limit when stations are selected",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/1,?000 station[- ]years/i].filter((r) => r.test(t)).length >= 1; }"
+  }
+ ]
+}

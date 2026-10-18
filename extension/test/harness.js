@@ -50,8 +50,12 @@ function loadBackground({ onFetch, page } = {}) {
         // Without one, nothing answers - which is also the real behaviour on
         // a machine where the model has not loaded.
         sendMessage(m, cb) {
-          const reply = (sandbox.__model && m && m.target === "offscreen")
-            ? sandbox.__model(m) : undefined;
+          // A plan request is answered "nothing planned" unless a test opts in
+          // with __plans: the scripted decisions below are for the per-step
+          // loop, and the planner asking first would eat their first reply.
+          const reply = (m && m.target === "offscreen" && m.type === "llmStep" && m.mode === "plan" && !sandbox.__plans)
+            ? { ok: true, step: { steps: [] } }
+            : (sandbox.__model && m && m.target === "offscreen") ? sandbox.__model(m) : undefined;
           if (typeof cb === "function") { cb(reply); return undefined; }
           return Promise.resolve(reply);
         },

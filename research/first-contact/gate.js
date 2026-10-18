@@ -26,6 +26,8 @@ const MODEL_ID = process.env.MODEL_ID || "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 const LOOK = !!process.env.LOOK;
 const BASELINE = !!process.env.BASELINE;
 const GATE = +(process.env.GATE || 0.8);
+// How long a model may take to load: a first visit to an origin downloads it.
+const LOAD_MS = +(process.env.LOAD_MS || 900000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const OFF = `{ status: () => ({ ready: false, loading: false, hasGpu: false }), async step() { throw new Error("off"); },
   load() {}, embed: async () => { throw new Error("off"); }, release: async () => {} }`;
@@ -111,14 +113,14 @@ async function main() {
           await w.setModel(${JSON.stringify(MODEL_ID)});
           await w.loadModel();
           const t0 = Date.now();
-          while (!w.modelStatus().ready && !w.modelStatus().error && Date.now() - t0 < 2400000) await new Promise((r) => setTimeout(r, 2000));
+          while (!w.modelStatus().ready && !w.modelStatus().error && Date.now() - t0 < ${LOAD_MS}) await new Promise((r) => setTimeout(r, 2000));
           if (!w.modelStatus().ready) return { title: "model not ready", sub: String(w.modelStatus().error || "") };
         }
         const r = await Promise.race([w.ask(${JSON.stringify(p.q)}), new Promise((res) => setTimeout(() => res({ error: "timed out" }), ${PER}))]);
         const d = r.display || {};
         return { by: r.plannedBy || "", title: String(d.title || ""), sub: String(d.subtitle || r.error || ""),
           answer: String(d.answer || r.answer || ""), rows: (d.rows || []).map((x) => x.name + ": " + x.value) };
-      })()`, PER + 2460000);
+      })()`, PER + LOAD_MS + 30000);
       await sleep(3000);
       const card = asked.value || { title: asked.error || "no card", sub: "" };
       const checked = await run(`(${p.check})(${JSON.stringify(card)})`, 15000);

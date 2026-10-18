@@ -1,0 +1,56 @@
+{
+ "name": "noaa-pfds",
+ "url": "https://hdsc.nws.noaa.gov/pfds/pfds_map_cont.html",
+ "prompts": [
+  {
+   "q": "set the data type to precipitation intensity and the units to metric",
+   "kind": "chain",
+   "check": "() => String((document.querySelector(\"#type\") || { value: \"\" }).value) === \"intensity\" && String((document.querySelector(\"#units\") || { value: \"\" }).value) === \"metric\""
+  },
+  {
+   "q": "switch the time series type to annual maximum",
+   "kind": "act",
+   "check": "() => String((document.querySelector(\"#series\") || { value: \"\" }).value) === \"ams\""
+  },
+  {
+   "q": "enter latitude 39.1 and longitude -94.6, then submit",
+   "kind": "chain",
+   "check": "() => /Latitude:\\s*39\\.1/i.test(document.body.innerText) && /Longitude:\\s*-94\\.6/i.test(document.body.innerText) && !/Bronson/i.test(document.body.innerText.slice(0, 6000))"
+  },
+  {
+   "q": "choose the station topeka",
+   "kind": "act",
+   "check": "() => /topeka/i.test(((document.querySelector(\"#DDstation\") || { selectedOptions: [{}] }).selectedOptions[0] || {}).text || \"\") || /Name:\\s*Topeka/i.test(document.body.innerText)"
+  },
+  {
+   "q": "show stations on the map",
+   "kind": "act",
+   "check": "() => ((document.querySelector(\"#staCheck\") || {}).checked === true)"
+  },
+  {
+   "q": "open the pf graphical tab",
+   "kind": "act",
+   "check": "() => { const p = document.querySelector(\"#Plots_Section\"); const t = document.querySelector(\"#Table_Section\"); return !!p && p.offsetParent !== null && (!t || t.offsetParent === null || getComputedStyle(t).display === \"none\"); }"
+  },
+  {
+   "q": "pick annual maximum, switch units to metric and open the supplementary information tab",
+   "kind": "chain",
+   "check": "() => String((document.querySelector(\"#series\") || { value: \"\" }).value) === \"ams\" && String((document.querySelector(\"#units\") || { value: \"\" }).value) === \"metric\" && !!document.querySelector(\"#Supp_Section\") && document.querySelector(\"#Supp_Section\").offsetParent !== null"
+  },
+  {
+   "q": "what is the current location name",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/bronson/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what is the 100-year 24-hour precipitation depth",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/9\\\\.91/].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "which map types can be chosen",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/labels/i, /\\\\bmap\\\\b/i, /satellite/i].filter((r) => r.test(t)).length >= 2; }"
+  }
+ ]
+}

@@ -608,7 +608,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const mod = await panelModelModule();
-        const out = await mod.step(msg.model, msg.prompt, { timeoutMs: msg.timeoutMs },
+        const out = await mod.step(msg.model, msg.prompt, { timeoutMs: msg.timeoutMs, schema: msg.schema || null },
           (t) => setStatus(`model loading - ${t}`, "load"));
         clearStatus();
         // Which model actually answered, from the window that answered. A

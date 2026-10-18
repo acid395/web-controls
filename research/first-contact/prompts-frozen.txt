@@ -35,3 +35,42 @@ act      hide the text
 explain  what county is the current location in
 explain  what is the elevation of the current location
 explain  which variables are only available as monthly normals
+
+ROUND 2 - written 2026-10-18 from screenshots only, before the agent ran on these sites.
+Build under test: the one-call planner (1.95.0 candidate), Llama 3.2 3B, Chrome window on screen.
+
+cdc-wonder  https://wonder.cdc.gov/
+act      open the topics tab
+act      open the a-z index tab
+act      close the data & site updates notice
+act      search wonder for mortality
+chain    open the topics tab, then go back to the wonder systems tab
+act      open the underlying cause of death database
+act      open frequently asked questions
+explain  when was this page last reviewed
+explain  what databases are listed under national notifiable conditions
+explain  what does the triangle symbol next to a link mean
+
+iem-download  https://mesonet.agron.iastate.edu/request/download.phtml
+chain    set the data format to tab delimited and include latitude and longitude
+chain    select air temperature in fahrenheit and dew point in fahrenheit as the data
+chain    set the start date to march 5 2024 and the end date to march 10 2024
+act      set the timezone to america/chicago
+chain    turn off specials and turn on madis hfmetar / 5 minute asos
+chain    filter the stations for ames, select it and add it to the selected stations
+act      represent missing data as an empty string
+explain  how many stations are available
+explain  up to what time does this archive contain observations
+explain  what is the aggregate request limit when stations are selected
+
+noaa-pfds  https://hdsc.nws.noaa.gov/pfds/pfds_map_cont.html
+chain    set the data type to precipitation intensity and the units to metric
+act      switch the time series type to annual maximum
+chain    enter latitude 39.1 and longitude -94.6, then submit
+act      choose the station topeka
+act      show stations on the map
+act      open the pf graphical tab
+chain    pick annual maximum, switch units to metric and open the supplementary information tab
+explain  what is the current location name
+explain  what is the 100-year 24-hour precipitation depth
+explain  which map types can be chosen

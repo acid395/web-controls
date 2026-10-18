@@ -585,7 +585,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // answered would change the kind of answer.
         const prompt = msg.mode === "read" && globalThis.WC_BUILD_READ_PROMPT
           ? globalThis.WC_BUILD_READ_PROMPT(msg)
-          : globalThis.WC_BUILD_STEP_PROMPT(msg);
+          : msg.mode === "plan" && globalThis.WC_BUILD_PLAN_PROMPT
+            ? globalThis.WC_BUILD_PLAN_PROMPT(msg)
+            : globalThis.WC_BUILD_STEP_PROMPT(msg);
         chrome.runtime.sendMessage({ type: "llmGenerating" });
         // Shorter than the two minutes the planning paths allow, because a
         // step is one small JSON object and the caller only waits the length
@@ -607,7 +609,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // Room for a phrase of reasoning before the object. Still a
             // ceiling rather than a budget: a short answer costs what it
             // costs, and this only binds on one that rambles.
-            max_tokens: 192,
+            max_tokens: msg.schema ? 320 : 192,
+            ...(msg.schema ? { response_format: { type: "json_object", schema: msg.schema } } : {}),
           }),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),

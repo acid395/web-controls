@@ -2823,7 +2823,8 @@ const NAMED_SOURCE = /^\s*(?:according\s+to|based\s+on|per)\s+[^,?]{1,80},\s*/i;
 // And "which X can I see" asks what the page offers, not what to do: "which
 // regions can I view separate drought maps for" clicked Regions instead of
 // listing them. "What can I do here" stays a request about doing.
-const WHICH_CAN_I = /^\s*(?:please\s+)?which\s+\w+(?:\s+\w+)?\s+(?:can|could)\s+i\b/i;
+// "What sectors can I choose from" is the same question as "which".
+const WHICH_CAN_I = /^\s*(?:please\s+)?(?:which|what)\s+\w+(?:\s+\w+)?\s+(?:can|could)\s+i\b/i;
 const ASKING_TO_READ = {
   test: (s) => {
     const t = String(s || "").replace(NAMED_SOURCE, "");
@@ -6075,7 +6076,9 @@ async function askModelForStep(payload) {
   // operating prompt.
   const prompt = payload.mode === "read"
     ? (globalThis.WC_BUILD_READ_PROMPT ? globalThis.WC_BUILD_READ_PROMPT(payload) : null)
-    : (globalThis.WC_BUILD_STEP_PROMPT ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null);
+    : payload.mode === "plan"
+      ? (globalThis.WC_BUILD_PLAN_PROMPT ? globalThis.WC_BUILD_PLAN_PROMPT(payload) : null)
+      : (globalThis.WC_BUILD_STEP_PROMPT ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null);
   if (prompt && await panelIsOpen()) {
     if (!panelHasModel) {
       // Give the hidden copy back first, or the two of them share a card.
@@ -6093,7 +6096,7 @@ async function askModelForStep(payload) {
       const useId = (chosen && globalThis.WC_MODEL_IDS.includes(chosen))
         ? chosen : WC_DEFAULT_MODEL;
       const said = await chrome.runtime.sendMessage({
-        target: "panel", type: "panelStep", prompt,
+        target: "panel", type: "panelStep", prompt, schema: payload.schema || null,
         model: useId,
         timeoutMs: turnBudgetFor(useId),
       });
@@ -6355,6 +6358,105 @@ function listChoicesFor(goal, pool) {
   return { lines, direct };
 }
 
+/* The controls nearest a request: by its words on their names, their other
+ * names and their options. Twenty lines is a prompt a 3B reads in seconds;
+ * the whole page is a prompt it reads in a minute.
+ */
+function shortlistFor(goal, controls, max = 20) {
+  const words = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+  const scored = controls.map((c, i) => {
+    const label = String(c.label || "").toLowerCase();
+    let n = 0;
+    for (const w of words) { const h = wordMatchesText(w, label); if (h === "exact") n += 2; else if (h) n += 1; }
+    if (!n && alsoCalled(c.label, c).some((a) => words.some((w) => wordMatchesText(w, a)))) n += 1;
+    const opts = c.options || [];
+    if (opts.length && words.some((w) => opts.some((o) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))) n += 3;
+    if (c.hidden) n -= 0.5;
+    return { c, i, n };
+  });
+  const top = scored.filter((x) => x.n > 0).sort((a, b) => b.n - a.n || a.i - b.i).slice(0, max);
+  // Padded in page order where the words catch little, so the page's shape is in view.
+  for (const x of scored) { if (top.length >= max) break; if (!top.includes(x) && !x.c.hidden) top.push(x); }
+  return top.sort((a, b) => a.i - b.i).map((x) => x.c);
+}
+
+/* One model call for the whole request, then the page does and checks each
+ * step. A step's control is found again before it runs - by selector, then
+ * by name - because the steps before it may have redrawn the page. Returns
+ * null where the model planned nothing, so the caller's other paths get
+ * their turn; a plan that ran, even to no visible effect, is the answer.
+ */
+async function planWithModel(routeGlobal, goal) {
+  const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  if (!inv || !inv.ok || !inv.result) return null;
+  const shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }));
+  if (!shortlist.length) return null;
+  const began = Date.now();
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
+  const listsHolding = (value) => shortlist.filter((c) => (c.options || []).some((o) => flat(o.text || o.value) === flat(value)));
+  const history = [];
+  const done = new Set();
+  // Two plans at most: the second only where the first evidently left part
+  // of the request out - fewer steps than the sentence has parts, or a step
+  // that failed - and told what has been done, so it plans the remainder.
+  const evident = splitIntoSteps(goal).length;
+  let calls = 0;
+  let cost = null;
+  for (let round = 0; round < 2; round++) {
+  const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
+  calls++;
+  if (asked && asked.cost) cost = asked.cost;
+  const steps = asked && asked.ok && asked.step && Array.isArray(asked.step.steps) ? asked.step.steps : [];
+  debugLog(`[plan] "${goal}": ${steps.length} step(s) over ${shortlist.length} controls in ${asked && asked.ms ? asked.ms : Date.now() - began}ms${round ? " (second plan)" : ""}${asked && asked.error ? ` - ${asked.error}` : ""}`);
+  if (!steps.length) break;
+  for (const st of steps.slice(0, 12)) {
+    let act = String(st.do || "click").toLowerCase();
+    // The same step twice is once.
+    const key = `${act}|${flat(st.name)}|${flat(st.value)}`;
+    if (done.has(key)) continue;
+    done.add(key);
+    if (act === "search") {
+      const searched = await searchClause(routeGlobal, `search for ${String(st.value || "").trim()}`).catch(() => null);
+      history.push({ did: `search "${String(st.value || "").slice(0, 40)}"`, ok: !!searched, changed: !!searched,
+        outcome: searched ? "searched" : "no search box for that here" });
+      continue;
+    }
+    let planned = shortlist[names.indexOf(flat(st.name))] || shortlist[Number(st.n)] || null;
+    // The page's own repairs: a value that is an option of exactly one list
+    // belongs to that list whatever name came with it, and a check on
+    // something that is not a box is a press.
+    const kind = planned ? String(planned.type || planned.kind || "").toLowerCase() : "";
+    if (act === "select" && !(planned && (planned.options || []).some((o) => flat(o.text || o.value) === flat(st.value)))) {
+      const h = listsHolding(st.value); if (h.length === 1) planned = h[0];
+    }
+    if (act === "check" && planned && !/checkbox|radio|switch/.test(kind)) act = "click";
+    if (!planned) { history.push({ did: `${act} "${String(st.name || "").slice(0, 40)}"`, ok: false, changed: false, outcome: "not one of the controls offered" }); continue; }
+    const now = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    const cs = (now && now.ok && now.result && now.result.controls) || [];
+    const target = cs.find((c) => c.selector === planned.selector) || cs.find((c) => flat(c.label) === flat(planned.label)) || planned;
+    if (target.hidden && target.revealedBy) {
+      await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
+      forgetPageTools();
+    }
+    const call = actionToCall(act, target, st);
+    const value = st.value != null && act !== "click" && act !== "check" ? ` ${String(st.value).slice(0, 30)}` : "";
+    if (!call) { history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: false, changed: false, outcome: "that control cannot do that" }); continue; }
+    const ran = await runVerified(routeGlobal, call);
+    const r = (ran && ran.result) || {};
+    const moved = typeof r.itChanged === "boolean" ? r.itChanged : didItMove(ran);
+    history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: ran && ran.ok !== false, changed: moved,
+      outcome: ran && ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
+        : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}` : moved ? "the page changed" : "nothing visibly changed" });
+    forgetInventory();
+  }
+  const short = history.filter((h) => h.ok && h.changed).length < evident;
+  if (!(short || history.some((h) => !h.ok))) break;
+  }
+  if (!history.length) return null;
+  return { ok: true, history, planned: history.length, calls, shortlisted: shortlist.length, tookMs: Date.now() - began, cost };
+}
+
 async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null, deadlineAt = null, chain = null, onlyModel = false } = {}) {
   if (budgetMs === null) budgetMs = turnBudgetMs();
   const history = [];
@@ -6443,8 +6545,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
   // rather than the page's - left no room to act on the correction, and the
   // run ended "the model did not answer in time" having been given one
   // chance to be right first time.
-  const deadline = deadlineAt
+  let deadline = deadlineAt
     || (Date.now() + Math.max(budgetMs, Math.round(lastTurnMs * 3) || 0));
+  // A step that changed the page earns the next one its time. The budget
+  // is sized for one or two decisions, and "select the survey program, the
+  // crops sector and the field crops group" is three: the first landed in
+  // eighty seconds on NASS (its lists reload after every choice) and the
+  // run stopped there, out of time, with two thirds of the request undone.
+  // Extended only on verified progress, by what a turn costs here, and
+  // never past three budgets - a run still has to end. A part of a chain
+  // keeps the deadline its chain gave it.
+  const endBy = Date.now() + budgetMs * 3;
+  const earnedMore = () => {
+    if (deadlineAt) return;
+    deadline = Math.min(endBy, Math.max(deadline, Date.now() + Math.max(lastTurnMs * 1.5, 15000)));
+  };
   // How long a turn actually took, reported rather than guessed at. "it took
   // two or three minutes" is not something anyone can act on, and where the
   // time goes - reading the page, the model deciding, carrying the action
@@ -6608,9 +6723,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         // Handed exactly that list, a 3B still answered with the page title
         // one run in two. Where one list answers a what-can-be-chosen
         // question, the page answers it, and the model is not asked.
-        if (direct && !conditionalGoal) {
-          history.push({ did: "read the page", outcome: "answered from the list it offers" });
-          return { ok: true, answer: direct, history, steps: history.length,
+        // Several lists answer to the question's words - FIMS has a "Model:"
+        // list per tool - and no one of them is the answer: all of them are.
+        // Asked instead, a 3B pressed one of the lists three times over.
+        if (lines.length && WHAT_CAN.test(goal) && !conditionalGoal) {
+          history.push({ did: "read the page", outcome: direct ? "answered from the list it offers" : "answered from the lists it offers" });
+          return { ok: true, answer: direct || lines.join("\n"), history, steps: history.length,
             tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
         }
       }
@@ -7973,6 +8091,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       ok: ran.ok !== false, changed: moved, satisfied, label: target.label, why,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
+    if (ran.ok !== false && (moved || satisfied)) earnedMore();
     // A condition has one branch, and taking it is the whole request. "if
     // the West is drier than the Midwest open the West, otherwise open the
     // Midwest" pressed West and then, asked what next, pressed Compare Two
@@ -11630,11 +11749,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         const why = [
-          modelSkipped && res.plannedBy !== "model" && res.plannedBy !== "baseline" ? modelSkipped : null,
+          modelSkipped && !/^(?:model|plan)$/.test(res.plannedBy) && res.plannedBy !== "baseline" ? modelSkipped : null,
           // The model was there and got nowhere, so this is the baseline
           // answering. Worth saying outright: the two are meant to be
           // compared, and an unlabelled answer counts for neither.
-          !modelSkipped && modelTried && res.plannedBy !== "model"
+          !modelSkipped && modelTried && !/^(?:model|plan)$/.test(res.plannedBy)
             ? `${modelUsed ? modelName(modelUsed) : "the local model"} planned nothing here,`
               + " so this is the keyword baseline"
               + (modelSaid ? ` - it replied: ${String(modelSaid).slice(0, 120)}` : "")
@@ -11645,7 +11764,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The route alone was the source on every card the model did not
         // plan, so a run that asked a model and threw its answer away looked
         // identical to one where no model existed.
-        if (display && modelTried && modelUsed && res.plannedBy !== "model") {
+        if (display && modelTried && modelUsed && !/^(?:model|plan)$/.test(res.plannedBy)) {
           display.source = `${display.source || route.global} - asked ${modelName(modelUsed)}`;
         }
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
@@ -12517,6 +12636,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (status && status.ready) {
             modelTried = true;
             modelUsed = (status && status.model) || null;
+            // The whole request planned in one call, before any splitting
+            // of the sentence here: one prefill where the per-part loop paid
+            // one per part, and the model sees the request whole rather than
+            // as the pieces a regex made of it. The page carries out and
+            // checks each step. A plan of nothing falls through to the
+            // per-step loop below.
+            if (isCommand(wanted)) {
+              const plan = await planWithModel(route.global, wanted).catch((e) => { debugLog(`[plan] threw: ${String((e && e.message) || e)}`); return null; });
+              if (plan) {
+                const unchecked = plan.history.filter((h) => h.ok && !h.changed).length;
+                const failed = plan.history.filter((h) => !h.ok).length;
+                respond({
+                  ok: plan.history.some((h) => h.ok), plannedBy: "plan", steps: plan.history,
+                  display: {
+                    title: `${plan.history.length} step${plan.history.length === 1 ? "" : "s"}, planned at once by ${modelName(modelUsed)}`,
+                    subtitle: failed ? `${failed} of ${plan.history.length} failed`
+                      : unchecked ? `ran in order - ${unchecked} of ${plan.history.length} changed nothing visible` : "done in order",
+                    stats: [], rows: plan.history.map((h) => ({ name: h.did.slice(0, 44), value: !h.ok ? "failed" : h.changed ? "done" : "no change",
+                      meta: String(h.outcome || "").slice(0, 70), tone: !h.ok ? "alert" : h.changed ? "ok" : "warn" })),
+                    note: `${plan.calls === 1 ? "one plan" : `${plan.calls} plans`} over ${plan.shortlisted} controls, ${Math.round(plan.tookMs / 1000)}s`, source: route.global,
+                  },
+                });
+                return;
+              }
+            }
             // One part at a time, each with its own turn budget, so a
             // two-part instruction is two short runs rather than one long
             // one that may never reach the second half.
