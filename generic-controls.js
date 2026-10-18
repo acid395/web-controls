@@ -101,6 +101,10 @@
         .join(" ");
       if (clean(txt)) return clean(txt);
     }
+    // <input type="submit" value="Plot"> is called Plot. Nothing read the
+    // value, so NCEI's one button on the page was listed with no name.
+    if (/^(?:submit|button|reset)$/i.test(String(el.type || "")) && el.tagName === "INPUT" && clean(el.value)) return clean(el.value);
+    if (/^image$/i.test(String(el.type || "")) && el.tagName === "INPUT" && clean(el.alt)) return clean(el.alt);
     if (el.labels && el.labels[0]) return clean(el.labels[0].textContent);
     if (el.id) {
       // Indexed once per pass. This was a document scan for every control

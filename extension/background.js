@@ -5384,7 +5384,10 @@ function nthOf(control, n) {
 // which of several, the one member meant. Plain matching first: "click
 // first name" is the control called First name, not a control called Name
 // with the ordinal taken off.
-const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to|(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to)\s+(?:me\s+)?/i;
+// The compound form first. With a bare "set" earlier in the alternation,
+// "set the time zone to UTC" lost only "set " and "the time zone to UTC"
+// was taken for a name; "switch" and "change", with no bare form, worked.
+const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to|click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to)\s+(?:me\s+)?/i;
 /* The other names a label gives itself. "Hydrologic Ensemble Forecast
  * System (HEFS)" is called HEFS as surely as it is called the long form -
  * that is what the parentheses are for - and "pull up HEFS" matched
@@ -6566,7 +6569,6 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         // The best-matching list, where the rest are subsets of it or far
         // smaller: "Radar Product" with four products over the animation
         // tab's "Product" with one of them.
-        debugLog(`[read] "${goal}": words ${JSON.stringify(qWords)}; lists ${listed.map((l) => l.line.slice(0, 30)).join(" / ") || "none"}; what-can ${WHAT_CAN.test(goal)}; controls ${controls.length}, with options ${controls.filter((c) => (c.options || []).length).length}`);
         if (listed.length && WHAT_CAN.test(goal) && !conditionalGoal) {
           const ranked = listed.slice().sort((x, y) => y.hits - x.hits || (x.hidden - y.hidden) || y.opts.length - x.opts.length);
           const top = ranked[0];
@@ -10281,7 +10283,6 @@ function usableButtons(inv) {
     .filter((c) => !c.hidden && !c.disabled && c.label
       && (/^(?:button|submit|a|link)$/i.test(String(c.kind || c.tag || "")) || /^submit$/i.test(String(c.type || ""))));
 }
-const beforeStepForConfirm = (before, now) => before || now;
 async function pressConfirmIfRevealed(routeGlobal, clause, before) {
   if (!before) return null;
   const after = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
@@ -10399,12 +10400,28 @@ function setToPlan(routeGlobal, clause, all) {
     }
     return null;
   }
-  const m = String(clause).match(SET_TO);
+  // "Sort the list by largest magnitude first" is the Sort list set to that.
+  const by = String(clause).match(/^\s*(?:please\s+)?(?:sort|order|arrange)\s+(?:the\s+)?(?:list|results?|table|rows|them|it|entries)?\s*by\s+(.+?)\s*$/i);
+  const m = by ? [null, "sort", by[1]] : String(clause).match(SET_TO);
   if (m) {
     const lists = selectsNamed(all, m[1]);
     const found = lists.map((c) => ({ c, o: optionNamed(c, m[2]) })).filter((x) => x.o);
     if (found.length === 1) return { control: found[0].c, option: found[0].o, label: `${found[0].c.label}: ${found[0].o.text || found[0].o.value}` };
     if (found.length > 1) return null;
+    // A list drawn only when opened: a Material or Select2 combobox has no
+    // options until it is pressed. One such list named by the step is
+    // opened, and the value is looked for among what appears.
+    const words = listWords(m[1]);
+    const combos = all.filter((c) => !c.disabled && !(c.options || []).length
+      && /^(?:combobox|listbox)$/i.test(String(c.kind || "")) && words.length
+      && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+    if (combos.length === 1) return { control: combos[0], openThenPick: m[2], label: `${combos[0].label}: ${m[2]}` };
+    // A box to type into: "set the start year to 1990".
+    const boxes = all.filter((c) => !c.disabled && TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()) && words.length
+      && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+    if (boxes.length === 1 && !/\s/.test(m[2].trim()) || (boxes.length === 1 && /^(?:number|text|search|tel|email|url)$/i.test(String(boxes[0].type || "")))) {
+      return { control: boxes[0], fill: m[2].trim(), label: `${boxes[0].label}: ${m[2].trim()}` };
+    }
   }
   // "Choose reflectivity": a value with no list named, in exactly one list
   // on screen. The model path has always done this; the page's own path
@@ -10439,7 +10456,13 @@ async function pickNthOfList(routeGlobal, clause, before) {
   const m = String(clause).match(NTH_LISTED);
   if (!m) return null;
   const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
-  const all = ((inv && inv.ok && inv.result && inv.result.controls) || [])
+  const everything = (inv && inv.ok && inv.result && inv.result.controls) || [];
+  // "First name" is a name. A control wearing the ordinal and the noun
+  // together is what was asked for, not the first of a run of others.
+  const flatP = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const phrase = flatP(`${m[1]} ${m[2]}`);
+  if (everything.some((c) => flatP(c.label).includes(phrase))) return null;
+  const all = everything
     .filter((c) => !c.hidden && !c.disabled && c.label && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
       && !/^(?:select|select-one|combobox)$/i.test(String(c.type || c.kind || "")));
   const was = new Set((((before && before.ok && before.result && before.result.controls) || [])).map((c) => c.selector));
@@ -10458,6 +10481,14 @@ async function pickNthOfList(routeGlobal, clause, before) {
   }
   if (!groups.length) return null;
   const g = groups[0];
+  // The noun has to fit the run. "The first station" over a run of radar
+  // sites is fine; "the first name" over them is not, when Name is a
+  // control of its own elsewhere on the page.
+  const noun = flatP(m[2]).split(" ").filter((w) => w.length > 2);
+  const inRun = noun.some((w) => g.some((c) => wordMatchesText(w, String(c.label).toLowerCase())));
+  const elsewhere = noun.some((w) => everything.some((c) => !g.includes(c) && wordMatchesText(w, String(c.label).toLowerCase())));
+  if (noun.length && !inRun && elsewhere && !looksLike(m[2], g[0].label) ) return null;
+  if (noun.length && !inRun && elsewhere && !/\btime|scan|hour|minute|date|day|year|entry|item|result|row|one/.test(flatP(m[2]))) return null;
   const which = m[1].toLowerCase();
   const pick = /^(?:last|bottom)$/.test(which) ? g[g.length - 1] : g[ORDINAL_WORD[which] || 0];
   if (!pick) return null;
@@ -10491,6 +10522,37 @@ async function awaitNamedListReady(clause, { waitMs = 8000 } = {}) {
   }
 }
 
+async function runSetToPlan(routeGlobal, setTo) {
+        if (setTo.control.hidden && setTo.control.revealedBy) {
+          await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
+          forgetPageTools();
+        }
+        if (setTo.fill != null) {
+          const ran = await runVerified(routeGlobal, { name: "pageFill", args: { selector: setTo.control.selector, text: setTo.fill } });
+          if (!ran || ran.ok === false) return null;
+          return { changed: true };
+        }
+        if (setTo.openThenPick) {
+          const opened = await runVerified(routeGlobal, { name: "pageClick", args: { selector: setTo.control.selector } });
+          if (!opened || opened.ok === false) return null;
+          await new Promise((r) => setTimeout(r, 600));
+          forgetInventory();
+          const now = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+          const shown = ((now && now.ok && now.result && now.result.controls) || []).filter((c) => !c.hidden
+            && /^(?:option|menuitem|menuitemradio|listitem)$/i.test(String(c.kind || "")));
+          const want = String(setTo.openThenPick).toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim().split(" ").filter((w) => w.length > 1);
+          const hit = shown.filter((c) => want.every((w) => wordMatchesText(w, String(c.label).toLowerCase())));
+          if (hit.length !== 1) return null;
+          const picked = await runVerified(routeGlobal, { name: "pageClick", args: { selector: hit[0].selector } });
+          if (!picked || picked.ok === false) return null;
+          return { changed: true };
+        }
+        const ran = await runVerified(routeGlobal, { name: "pageSelectOption",
+          args: { selector: setTo.control.selector, value: setTo.option.value || setTo.option.text } });
+        if (!ran || ran.ok === false) return null;
+        return { changed: didItMove(ran) };
+}
+
 async function certainClausePlan(routeGlobal, clause) {
   const asSearch = String(clause || "").match(SEARCH_CLAUSE);
   if (asSearch && asSearch[1].trim()) {
@@ -10511,22 +10573,9 @@ async function certainClausePlan(routeGlobal, clause) {
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
   const setTo = setToPlan(routeGlobal, clause, all);
-  if (setTo) {
-    return {
-      label: setTo.label,
-      run: async () => {
-        if (setTo.control.hidden && setTo.control.revealedBy) {
-          await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
-          forgetPageTools();
-        }
-        const ran = await runVerified(routeGlobal, { name: "pageSelectOption",
-          args: { selector: setTo.control.selector, value: setTo.option.value || setTo.option.text } });
-        if (!ran || ran.ok === false) return null;
-        return { changed: didItMove(ran) };
-      },
-    };
-  }
+  if (setTo) return { label: setTo.label, run: () => runSetToPlan(routeGlobal, setTo) };
   const span = soleSpanControl(clause, all);
+
   if (span) {
     return {
       label: span.label,
@@ -10562,7 +10611,7 @@ async function certainClausePlan(routeGlobal, clause) {
   const times = timesAsked(clause);
   const core = times > 1 ? String(clause).replace(REPEAT_TAIL, "").trim() : clause;
   const { named, n } = namedByClause(all, core);
-  debugLog(`[chain] "${clause}": named by clause: ${named.map((c) => `${c.label}${c.hidden ? " (hidden)" : ""}`).slice(0, 4).join(" / ") || "nothing"} (of ${all.length}; core "${core}"; same-named: ${all.filter((c) => String(c.label).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === String(core).replace(/^\s*(?:please\s+)?(?:switch|set|change|turn\s+on|turn\s+off|open|click|choose|select|enable|disable)\s+(?:the\s+)?(?:map\s+to\s+)?/i, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).map((c) => `${c.label}|${c.kind}|${c.confidence}|${c.hidden ? "hidden" : "shown"}|${c.disabled ? "off" : "on"}`).join(", ") || "none"})`);
+  debugLog(`[chain] "${clause}": named ${named.map((c) => c.label).slice(0, 3).join(" / ") || "nothing"}`);
   if (named.length !== 1) return null;
   const only = n === null ? named[0] : nthOf(named[0], n);
   if (!only) return null;
@@ -11977,6 +12026,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // itself does not vary like that, so where the descriptors miss, the
         // inventory is asked the same question: is exactly one control named
         // this, and is it a real control rather than a way in to one.
+        // The chain resolvers, for a single step too: "open the first
+        // earthquake in the list" went to the word scorer and toggled "Only
+        // List Earthquakes Shown on Map"; "sort the list by largest magnitude
+        // first" names a list the page draws only when opened.
+        if (!instant && !forceBaseline && !forceModel && !conditional && isCommand(wanted)
+            && splitIntoSteps(wanted).length === 1) {
+          const nth = await pickNthOfList(route.global, wanted, null).catch(() => null);
+          if (nth) {
+            respond({ ok: true, plannedBy: "exact-match", display: {
+              title: String(nth.control.label).slice(0, 60), subtitle: "the one the list shows, in that position",
+              stats: [], rows: [], note: "taken from the run of like entries on the page, without the model", source: "this page" } });
+            return;
+          }
+          const sinv = await readInventory();
+          const st = setToPlan(route.global, wanted, ((sinv.ok && sinv.result && sinv.result.controls) || []));
+          if (st) {
+            const did = await runSetToPlan(route.global, st).catch(() => null);
+            if (did) {
+              respond({ ok: true, plannedBy: "exact-match", display: {
+                title: String(st.label).slice(0, 60), subtitle: did.changed === false ? "set, though nothing visibly changed" : "set",
+                stats: [], rows: [], note: "the list and the value were both named, so this did not wait for the model", source: "this page" } });
+              return;
+            }
+          }
+        }
         if (!instant && !forceBaseline && !forceModel && !conditional && isCommand(wanted)
             && splitIntoSteps(wanted).length === 1) {
           const binv = await readInventory();
@@ -12450,7 +12524,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     const did = await late.run().catch(() => null);
                     if (did) {
                       const beforeNow = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
-                      const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStepForConfirm(beforeStep, beforeNow)).catch(() => null);
+                      const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep || beforeNow).catch(() => null);
                       all.push({ did: confirmed ? `${late.label}, then ${confirmed.label}` : (late.label || part),
                         ok: true, changed: did.changed !== false || !!confirmed,
                         outcome: "named on the page once it had drawn it" });
