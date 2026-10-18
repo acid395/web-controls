@@ -1,0 +1,56 @@
+{
+ "name": "eia-electricity",
+ "url": "https://www.eia.gov/electricity/data/browser/",
+ "prompts": [
+  {
+   "q": "change the data set to retail sales of electricity",
+   "kind": "act",
+   "check": "() => [...document.querySelectorAll(\"#topic_select\")].some((s) => /^retail sales/i.test(s.selectedOptions[0]?.text || \"\")) || /retail sales of electricity/i.test(document.querySelector(\"h1, h2, .chart-title, svg text\")?.textContent || \"\") || /Retail sales of electricity, /i.test(document.body.innerText)"
+  },
+  {
+   "q": "switch the table to annual and show it as a column chart",
+   "kind": "chain",
+   "check": "() => (document.getElementById(\"annual\") || {}).checked === true && (document.getElementById(\"columnchart-radio\") || {}).checked === true"
+  },
+  {
+   "q": "set the chart indexing to index to start as percent",
+   "kind": "act",
+   "check": "() => (document.getElementById(\"index1\") || {}).checked === true"
+  },
+  {
+   "q": "change the data set to average retail price of electricity, then switch to quarterly",
+   "kind": "chain",
+   "check": "() => /average retail price/i.test([...document.querySelectorAll(\"#topic_select\")].map((s) => s.selectedOptions[0]?.text || \"\").join(\" \") + document.body.innerText.slice(0, 4000)) && (document.getElementById(\"quarterly\") || {}).checked === true"
+  },
+  {
+   "q": "choose the report 1.14 net generation from wind by state by sector",
+   "kind": "act",
+   "check": "() => /net generation from wind/i.test(document.title + \" \" + [...document.querySelectorAll(\"#report_select\")].map((s) => s.selectedOptions[0]?.text || \"\").join(\" \") + \" \" + (document.querySelector(\"h1, h2\")?.textContent || \"\")) || /1\\.14|wind/i.test(location.href)"
+  },
+  {
+   "q": "open the map view",
+   "kind": "act",
+   "check": "() => (document.getElementById(\"map-radio\") || {}).checked === true"
+  },
+  {
+   "q": "turn on the relative standard errors checkbox",
+   "kind": "act",
+   "check": "() => (document.getElementById(\"rse_checkbox\") || {}).checked === true"
+  },
+  {
+   "q": "what was net generation from all fuels in july 2026",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/453,?744/].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "which energy sources are shown in the chart",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/coal/i, /natural gas/i, /nuclear/i, /wind/i, /solar/i, /hydro/i].filter((r) => r.test(t)).length >= 3; }"
+  },
+  {
+   "q": "what units is net generation measured in",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/thousand megawatt[- ]?hours|thousand MWh/i].filter((r) => r.test(t)).length >= 1; }"
+  }
+ ]
+}

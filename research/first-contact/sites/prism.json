@@ -1,0 +1,56 @@
+{
+ "name": "prism-explorer",
+ "url": "https://prism.oregonstate.edu/explorer/",
+ "prompts": [
+  {
+   "q": "set latitude to 40 and longitude to -105, then click update location",
+   "kind": "chain",
+   "check": "() => /State:\\s*Colorado/i.test(document.body.innerText)"
+  },
+  {
+   "q": "turn on maximum temp and minimum temp, and turn off mean temp",
+   "kind": "chain",
+   "check": "() => (document.getElementById(\"cvar_tmax\") || {}).checked === true && (document.getElementById(\"cvar_tmin\") || {}).checked === true && !(document.getElementById(\"cvar_tmean\") || {}).checked === true"
+  },
+  {
+   "q": "choose annual values from 2000 to 2020",
+   "kind": "chain",
+   "check": "() => (document.getElementById(\"tper_yearly\") || {}).checked === true && String(((document.getElementById(\"tper_yearly_start_year\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"2000\" && String(((document.getElementById(\"tper_yearly_end_year\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"2020\""
+  },
+  {
+   "q": "switch units to si (metric) and resolution to 800m",
+   "kind": "chain",
+   "check": "() => (document.getElementById(\"units_si\") || {}).checked === true && (document.getElementById(\"res_800m\") || {}).checked === true"
+  },
+  {
+   "q": "select daily values, start on 05 march 2020 and end on 10 march 2020",
+   "kind": "chain",
+   "check": "() => (document.getElementById(\"tper_daily\") || {}).checked === true && String(((document.getElementById(\"tper_daily_start_day\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"05\" && String(((document.getElementById(\"tper_daily_start_month\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"March\" && String(((document.getElementById(\"tper_daily_start_year\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"2020\" && String(((document.getElementById(\"tper_daily_end_day\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"10\" && String(((document.getElementById(\"tper_daily_end_month\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"March\" && String(((document.getElementById(\"tper_daily_end_year\") || {}).selectedOptions || [{}])[0]?.text || \"\").trim() === \"2020\""
+  },
+  {
+   "q": "turn on interpolate grid cell values and retrieve the time series",
+   "kind": "chain",
+   "check": "() => (document.getElementById(\"loc_interp\") || {}).checked === true && document.getElementById(\"download_button\").disabled === false"
+  },
+  {
+   "q": "hide the text",
+   "kind": "act",
+   "check": "() => ![...document.querySelectorAll(\"a\")].some((a) => /hide text/i.test(a.textContent) && a.offsetParent)"
+  },
+  {
+   "q": "what county is the current location in",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/marion/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what is the elevation of the current location",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/157\\s*(?:ft|feet)|48\\s*m/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "which variables are only available as monthly normals",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/cloud transmittance/i, /clear[- ]sky/i].filter((r) => r.test(t)).length >= 1; }"
+  }
+ ]
+}

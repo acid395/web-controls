@@ -105,7 +105,7 @@
     // value, so NCEI's one button on the page was listed with no name.
     if (/^(?:submit|button|reset)$/i.test(String(el.type || "")) && el.tagName === "INPUT" && clean(el.value)) return clean(el.value);
     if (/^image$/i.test(String(el.type || "")) && el.tagName === "INPUT" && clean(el.alt)) return clean(el.alt);
-    if (el.labels && el.labels[0]) return clean(el.labels[0].textContent);
+    if (el.labels && el.labels[0]) return clean(shortText(el.labels[0]));
     if (el.id) {
       // Indexed once per pass. This was a document scan for every control
       // carrying an id, which on a page of several hundred is several
@@ -121,7 +121,7 @@
         }
       }
       const forLabel = labelForIndex.get(el.id);
-      if (forLabel) return clean(forLabel.textContent);
+      if (forLabel) return clean(shortText(forLabel));
     }
     const wrap = el.closest("label");
     if (wrap) return clean(shortText(wrap));
@@ -148,17 +148,10 @@
         || role.toLowerCase().replace("listbox", "list of choices");
     }
     if ((el.tagName || "").toLowerCase() === "select") {
-      // Every select in the row is taken out, not just this one: FIMS puts
-      // three side by side, and the empty one was named by its neighbour's
-      // options.
-      let outside = clean(rowText(el));
-      for (const s of (el.parentElement ? el.parentElement.querySelectorAll("select") : [])) {
-        const t = clean(s.textContent);
-        if (t && outside.includes(t)) outside = clean(outside.split(t).join(" "));
-      }
+      const outside = clean(rowText(el));
       const shorthand = clean(el.name || el.id || "")
         .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
-      return clean(el.placeholder || el.title || outside || shorthand) || "dropdown";
+      return clean(el.placeholder || el.title || outside || headingAbove(el) || shorthand) || "dropdown";
     }
     // Its own words before its tooltip. Wikipedia's Talk tab carries
     // title="Discussion about the content page", and that was its name - so
@@ -166,7 +159,8 @@
     // name for it (see `hint` on the record), not as the name.
     const own = clean(shortText(el));
     if (/[a-z0-9]/i.test(own) && own.length <= 80) return own;
-    return clean(el.placeholder || el.title || (el.alt || "") || rowText(el) || el.name || own || "")
+    return clean(el.placeholder || el.title || (el.alt || "") || rowText(el)
+      || (/^(?:INPUT|TEXTAREA)$/.test(el.tagName) ? headingAbove(el) : "") || el.name || own || "")
       || iconName(el) || controlsName(el) || coversName(el) || besideName(el) || hrefName(el);
   };
   // The words beside a wordless button or link: a filter facet's icon
@@ -273,6 +267,20 @@
     // row's text ran past any sane limit and the checkbox fell back to its
     // name attribute - "fi" - and stayed unreachable while its neighbours
     // worked. The label is right next to it either way.
+    // Bare words right beside it, with no element around them: EIA writes
+    // "Show relative standard errors expressed as percent in parenthesis:
+    // <input type=checkbox>", and the element walk below stepped over the
+    // text to the "Terms and definitions" link. A checkbox's words usually
+    // follow it, anything else's come first; a <br> or another control ends
+    // the look. A long run is cut to its last sentence, the one that leads in.
+    const box = /^(?:checkbox|radio)$/i.test(el.type || "");
+    for (const dir of box ? ["nextSibling", "previousSibling"] : ["previousSibling", "nextSibling"]) {
+      let n = el[dir];
+      while (n && n.nodeType === 3 && !clean(n.nodeValue)) n = n[dir];
+      if (!n || n.nodeType !== 3) continue;
+      const t = clean(n.nodeValue).split(/(?<=[.!?])\s+/).pop().replace(/:$/, "");
+      if (t && t.length <= 80 && /[a-z]/i.test(t)) return t;
+    }
     for (const dir of ["previousElementSibling", "nextElementSibling"]) {
       let sib = el[dir];
       for (let seen = 0; sib && seen < 3; seen++, sib = sib[dir]) {
@@ -282,7 +290,19 @@
       }
     }
     for (let n = el.parentElement, up = 0; n && up < 3; n = n.parentElement, up++) {
-      const t = clean(shortText(n));
+      const t = clean(shortText(n, { skipControls: true }));
+      if (t && t.length <= 60) return t;
+    }
+    return "";
+  };
+
+  // The heading over a form that names nothing else: EIA's data-set list
+  // sits under <h1>Change data set</h1> with no label, and was "topic select".
+  const headingAbove = (el) => {
+    for (let n = el.parentElement, up = 0; n && up < 3; n = n.parentElement, up++) {
+      const before = [...n.querySelectorAll("h1, h2, h3, h4, h5, h6, legend, [role=heading]")]
+        .filter((h) => h.compareDocumentPosition(el) & 4);
+      const t = before.length ? shortText(before[before.length - 1]).replace(/\s+/g, " ").trim() : "";
       if (t && t.length <= 60) return t;
     }
     return "";
@@ -293,7 +313,17 @@
   // document, rebuilt and whitespace-collapsed once per candidate control,
   // which is what turned reading that page into a hang rather than a pause.
   // Nothing downstream keeps more than 80 characters of it anyway.
-  const shortText = (el) => {
+  // A dropdown's options are not words beside anything. PRISM wraps each
+  // year list in a <label> with the word "start", and the label read as
+  // "2025 2024 2023 ... start"; a row holding three lists read as all three.
+  const UNWORDED = /^(?:SELECT|SCRIPT|STYLE|TEMPLATE)$/;
+  // Another control's words are not this one's. A bare <select> in a form
+  // whose only text is a link beside it took the link's name for its own
+  // once option text stopped counting, so "click Puerto Rico/Virgin Islands"
+  // set the state list. A container's text, read for a control inside it,
+  // leaves out what belongs to the other controls in it.
+  const CONTROLISH = /^(?:A|BUTTON|INPUT|SELECT|TEXTAREA)$/;
+  const shortText = (el, { skipControls = false } = {}) => {
     if (!el) return "";
     let out = "";
     // A line break is a space. waterdata.usgs.gov writes its step buttons as
@@ -314,6 +344,7 @@
         // A picture's words are its alt, an icon's its <title>: a link that
         // holds only a logo is named for the logo, as a screen reader names it.
         const tag = String(c.tagName).toUpperCase();
+        if (UNWORDED.test(tag) || (skipControls && CONTROLISH.test(tag))) continue;
         if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
         if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
         walk(c);
@@ -330,7 +361,8 @@
       if (node.nodeType === 8) continue;
       if (node.nodeType === 3) out += node.nodeValue || "";
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
-      else if (node.nodeType === 1) walk(node);
+      else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
+        && !(skipControls && CONTROLISH.test(String(node.tagName).toUpperCase()))) walk(node);
       if (out.length > 200) break;
     }
     return out.slice(0, 200);

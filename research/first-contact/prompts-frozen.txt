@@ -1,0 +1,37 @@
+Written 2026-10-17 from screenshots only, before the agent ran on these sites.
+
+nass-quickstats  https://quickstats.nass.usda.gov/
+chain    select the survey program, the crops sector and the field crops group
+chain    choose corn as the commodity and state as the geographic level, then select 2022 as the year
+act      search for soybeans
+chain    pick the census program, the animals & products sector and cattle as the commodity, then click get data
+chain    select the environmental sector and then clear the selections
+chain    set the geographic level to county and the year to 2017
+act      choose national as the geographic level
+explain  how many records are currently available
+explain  what sectors can I choose from
+explain  what does this page let me do
+
+eia-electricity  https://www.eia.gov/electricity/data/browser/
+act      change the data set to retail sales of electricity
+chain    switch the table to annual and show it as a column chart
+act      set the chart indexing to index to start as percent
+chain    change the data set to average retail price of electricity, then switch to quarterly
+act      choose the report 1.14 net generation from wind by state by sector
+act      open the map view
+act      turn on the relative standard errors checkbox
+explain  what was net generation from all fuels in july 2026
+explain  which energy sources are shown in the chart
+explain  what units is net generation measured in
+
+prism-explorer  https://prism.oregonstate.edu/explorer/
+chain    set latitude to 40 and longitude to -105, then click update location
+chain    turn on maximum temp and minimum temp, and turn off mean temp
+chain    choose annual values from 2000 to 2020
+chain    switch units to si (metric) and resolution to 800m
+chain    select daily values, start on 05 march 2020 and end on 10 march 2020
+chain    turn on interpolate grid cell values and retrieve the time series
+act      hide the text
+explain  what county is the current location in
+explain  what is the elevation of the current location
+explain  which variables are only available as monthly normals

@@ -5072,7 +5072,14 @@ async function answerAfterActing(res, ask) {
   return out;
 }
 
+// A question is not a command for carrying a verb. "What sectors can I
+// choose from" was an instruction because of "choose", and with no model
+// to say otherwise the page layer chose a sector and pressed Search. The
+// first word decides: one that opens a question stays a question. Only
+// the wh-words - "can you click search" is a polite command, not a question.
+const QUESTION_LED = /^\s*(?:what(?:'s)?|which|how|where|when|who|whose|why)\b/i;
 function isCommand(instruction) {
+  if (QUESTION_LED.test(instruction || "")) return false;
   if (CONTROL_VERB.test(instruction || "")) return true;
   // A verb with a typo in it is still a verb. "clcik 30 days" was not
   // recognised as an instruction at all, so every path that acts was skipped
@@ -5301,7 +5308,7 @@ const ACTION_SYNONYMS = new Map(Object.entries({
 // A bare "and" only separates where a verb follows it, because the first half
 // of "click forecasts and outlooks and click key messages" is the name of a
 // control.
-const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load|reset|clear|remove|delete|build|start|stop|pause|discard|export|save|upload|add|rename|submit|cancel|confirm|refresh|reload|generate|compute|calculate|draw|activate|deactivate|rotate|tilt|pan|name|rename";
+const STEP_VERBS = "retrieve|fetch|query|click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load|reset|clear|remove|delete|build|start|stop|pause|discard|export|save|upload|add|rename|submit|cancel|confirm|refresh|reload|generate|compute|calculate|draw|activate|deactivate|rotate|tilt|pan|name|rename";
 // "and press go", "and hit enter", "and get the forecast" finish the step
 // before them - the Go of a jump menu, the submit of a typed box - and as a
 // step of their own they went looking for a Go button on the page the first
@@ -5314,12 +5321,12 @@ const STEP_BOUNDARY = new RegExp(
   // "switch volume units to acre-feet and distance units to miles" is two
   // settings. Without a verb after "and" the second stayed glued to the
   // first and was never set.
-  + `|\\s+and\\s+(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9])`
+  + `|\\s+and\\s+(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9.-])`
   // "set the year to 2024, the month to july": a comma before the next
   // assignment is a step boundary too.
-  + `|\\s*,\\s*(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9])`
+  + `|\\s*,\\s*(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9.-])`
   // "choose cedar rapids as the first scenario and des moines as the second"
-  + `|\\s+and\\s+(?=[a-z][a-z0-9\\s().-]{1,40}?\\s+as\\s+(?:the\\s+)?(?:first|second|third|fourth|last|1st|2nd|3rd|4th)\\b)`, "i");
+  + `|\\s+and\\s+(?=[a-z0-9][a-z0-9\\s().-]{1,40}?\\s+as\\s+(?:the|a|an)\\s+[a-z0-9])`, "i");
 function splitIntoSteps(instruction) {
   return String(instruction || "")
     // plot, graph and chart are asked for as often as click on these sites -
@@ -7189,6 +7196,11 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           // run stopped with "names more than one". The first in page order is
           // the first.
           if (/\b(?:first|top)\b/i.test(goal) && pool.length > 1) { found = pool[0]; break; }
+          // One on screen and the rest tucked away: NASS draws "Get Data" as a
+          // span over a hidden button of the same name, and the model, naming
+          // what it can see, was told the name fitted two.
+          const shown = pool.filter((c) => !c.hidden);
+          if (shown.length === 1) { found = shown[0]; break; }
           // Recorded rather than resolved. Two controls answering to one
           // name is a reference that did not land, and picking between them
           // is the confident wrong action this project exists to avoid.
@@ -10380,11 +10392,12 @@ const NTH_OF = /^\s*(?:please\s+)?(?:pick|select|choose|take)\s+(?:the\s+)?(firs
 // The words of a list's name, verbs and all: "Type" and "Name" are lists
 // here, whatever else those words are elsewhere.
 const LIST_STOP = new Set(["the", "a", "an", "to", "of", "for", "in", "on", "at", "it", "its", "this", "that", "my", "and", "or"]);
+const LIST_TYPE = /^(?:select(?:-one|-multiple)?|combobox|listbox)$/i;
 const listWords = (s) => String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !LIST_STOP.has(w));
 function selectsNamed(all, name) {
   const words = listWords(name);
   if (!words.length) return [];
-  return all.filter((c) => !c.disabled && /^(?:select|combobox|listbox|select-one)$/i.test(String(c.type || c.kind || ""))
+  return all.filter((c) => !c.disabled && LIST_TYPE.test(String(c.type || c.kind || ""))
     && (c.options || []).length && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
 }
 function placeholderOption(o) {
@@ -10490,7 +10503,7 @@ async function pickNthOfList(routeGlobal, clause, before) {
   if (everything.some((c) => flatP(c.label).includes(phrase))) return null;
   const all = everything
     .filter((c) => !c.hidden && !c.disabled && c.label && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
-      && !/^(?:select|select-one|combobox)$/i.test(String(c.type || c.kind || "")));
+      && !LIST_TYPE.test(String(c.type || c.kind || "")));
   const was = new Set((((before && before.ok && before.result && before.result.controls) || [])).map((c) => c.selector));
   const groupsOf = (list) => {
     const g = new Map();
@@ -10536,7 +10549,7 @@ async function awaitNamedListReady(clause, { waitMs = 8000 } = {}) {
   for (;;) {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
     const lists = ((inv && inv.ok && inv.result && inv.result.controls) || [])
-      .filter((c) => !c.hidden && String(c.label || "").length <= 60 && !/--|\|/.test(String(c.label || "")) && /^(?:select|select-one|combobox|listbox)$/i.test(String(c.type || c.kind || ""))
+      .filter((c) => !c.hidden && String(c.label || "").length <= 60 && !/--|\|/.test(String(c.label || "")) && LIST_TYPE.test(String(c.type || c.kind || ""))
         && words.some((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
     const pending = lists.filter((c) => c.disabled || !(c.options || []).some((o) => !placeholderOption(o)));
     if (!lists.length || !pending.length || Date.now() > until) {
@@ -12840,9 +12853,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // destroy the instruction rather than sequence it. So a bare "and"
           // separates steps only where a verb follows it, which is what makes
           // the second half an instruction rather than the rest of a name.
-          const parts = String(msg.instruction)
-            .split(STEP_BOUNDARY)
-            .map((t) => t.trim()).filter(Boolean);
+          const parts = splitIntoSteps(msg.instruction);
           // Eight, not four. A five-part instruction fell out of the sequence
           // and was handled as one command, which on the page tested pressed
           // Reset - a step from the middle of the sentence, chosen alone.

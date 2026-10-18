@@ -1,0 +1,56 @@
+{
+ "name": "nass-quickstats",
+ "url": "https://quickstats.nass.usda.gov/",
+ "prompts": [
+  {
+   "q": "select the survey program, the crops sector and the field crops group",
+   "kind": "chain",
+   "check": "() => { const picked = (id) => [...(document.getElementById(id) || { selectedOptions: [] }).selectedOptions].map((o) => o.text.trim().toUpperCase()); return picked(\"source_desc\").includes(\"SURVEY\") && picked(\"sector_desc\").includes(\"CROPS\") && picked(\"group_desc\").includes(\"FIELD CROPS\"); }"
+  },
+  {
+   "q": "choose corn as the commodity and state as the geographic level, then select 2022 as the year",
+   "kind": "chain",
+   "check": "() => { const picked = (id) => [...(document.getElementById(id) || { selectedOptions: [] }).selectedOptions].map((o) => o.text.trim().toUpperCase()); return picked(\"commodity_desc\").includes(\"CORN\") && picked(\"agg_level_desc\").includes(\"STATE\") && picked(\"year\").includes(\"2022\"); }"
+  },
+  {
+   "q": "search for soybeans",
+   "kind": "act",
+   "check": "() => /soybean/i.test(document.getElementById(\"search_text\").value) && !/57,870,811 records/.test(document.body.innerText)"
+  },
+  {
+   "q": "pick the census program, the animals & products sector and cattle as the commodity, then click get data",
+   "kind": "chain",
+   "check": "() => location.pathname.length > 1 && /CATTLE/i.test(document.body.innerText) && /CENSUS/i.test(document.body.innerText)"
+  },
+  {
+   "q": "select the environmental sector and then clear the selections",
+   "kind": "chain",
+   "check": "(card) => { const picked = (id) => [...(document.getElementById(id) || { selectedOptions: [] }).selectedOptions].map((o) => o.text.trim().toUpperCase()); return picked(\"sector_desc\").length === 0 && /clear/i.test([card.title, card.sub, ...(card.rows || [])].join(\" \")) && /environmental/i.test([card.title, card.sub, ...(card.rows || [])].join(\" \")); }"
+  },
+  {
+   "q": "set the geographic level to county and the year to 2017",
+   "kind": "chain",
+   "check": "() => { const picked = (id) => [...(document.getElementById(id) || { selectedOptions: [] }).selectedOptions].map((o) => o.text.trim().toUpperCase()); return picked(\"agg_level_desc\").includes(\"COUNTY\") && picked(\"year\").includes(\"2017\"); }"
+  },
+  {
+   "q": "choose national as the geographic level",
+   "kind": "act",
+   "check": "() => { const picked = (id) => [...(document.getElementById(id) || { selectedOptions: [] }).selectedOptions].map((o) => o.text.trim().toUpperCase()); return picked(\"agg_level_desc\").includes(\"NATIONAL\"); }"
+  },
+  {
+   "q": "how many records are currently available",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/57,8\\d\\d,\\d\\d\\d|57\\.8\\d* million/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what sectors can I choose from",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/animals/i, /crops/i, /demographics/i, /economics/i, /environmental/i].filter((r) => r.test(t)).length >= 4; }"
+  },
+  {
+   "q": "what does this page let me do",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/agricultur/i, /commodit/i, /location|state|county/i, /year|time/i, /records|data|statistic/i].filter((r) => r.test(t)).length >= 3; }"
+  }
+ ]
+}

@@ -1,0 +1,31 @@
+Question	Website	Kind	Result	What it said
+select the survey program, the crops sector and the field crops group	nass-quickstats	chain	FAIL	Applied 2 controls | nothing on this page matched: group
+choose corn as the commodity and state as the geographic level, then select 2022 as the year	nass-quickstats	chain	FAIL	2 steps | ran in order - 1 of 2 could not be checked
+search for soybeans	nass-quickstats	act	FAIL	searched for "soybeans" | put into ●Search ●Clear and submitted (check: timeout)
+pick the census program, the animals & products sector and cattle as the commodity, then click get data	nass-quickstats	chain	FAIL	navigated
+select the environmental sector and then clear the selections	nass-quickstats	chain	FAIL	1 step | stopped: nothing on this page matched "select the environmental sector"
+set the geographic level to county and the year to 2017	nass-quickstats	chain	PASS	2 steps | done in order
+choose national as the geographic level	nass-quickstats	act	PASS	NATIONAL | Geographic Level: set to NATIONAL
+how many records are currently available	nass-quickstats	explain	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
+what sectors can I choose from	nass-quickstats	explain	FAIL	Applied | nothing on this page matched: i, from
+what does this page let me do	nass-quickstats	explain	FAIL	USDA/NASS QuickStats Ad-hoc Query Tool | no readable data found
+change the data set to retail sales of electricity	eia-electricity	act	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
+switch the table to annual and show it as a column chart	eia-electricity	chain	FAIL	1 step | stopped: nothing on this page matched "switch the table to annual"
+set the chart indexing to index to start as percent	eia-electricity	act	FAIL	hover chart | pageHoverChart ran but nothing on the page changed - it may need a panel opened first, or the control may not apply here
+change the data set to average retail price of electricity, then switch to quarterly	eia-electricity	chain	FAIL	1 step | stopped: nothing on this page matched "change the data set to average retail price of ele
+choose the report 1.14 net generation from wind by state by sector	eia-electricity	act	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
+open the map view	eia-electricity	act	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
+turn on the relative standard errors checkbox	eia-electricity	act	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
+what was net generation from all fuels in july 2026	eia-electricity	explain	FAIL	Couldn't do that | nothing in that matched a place, a measurement, or a control on this page
+which energy sources are shown in the chart	eia-electricity	explain	FAIL	hover chart | pageHoverChart ran but nothing on the page changed - it may need a panel opened first, or the control may not apply here
+what units is net generation measured in	eia-electricity	explain	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
+set latitude to 40 and longitude to -105, then click update location	prism-explorer	chain	FAIL	timeout (check: timeout)
+turn on maximum temp and minimum temp, and turn off mean temp	prism-explorer	chain	PASS	2 steps | done in order
+choose annual values from 2000 to 2020	prism-explorer	chain	FAIL	2000 | 20262025202420232022202120202019201820172016201520142013201220112010200920082007 set to 2000
+switch units to si (metric) and resolution to 800m	prism-explorer	chain	FAIL	2 steps | stopped: nothing on this page matched "resolution to 800m"
+select daily values, start on 05 march 2020 and end on 10 march 2020	prism-explorer	chain	FAIL	2 steps | ran in order - 1 of 2 could not be checked
+turn on interpolate grid cell values and retrieve the time series	prism-explorer	chain	FAIL	toggle interpolate grid cell values see | Interpolate grid cell values (see text): false → true
+hide the text	prism-explorer	act	PASS	Hide text | Hide text done
+what county is the current location in	prism-explorer	explain	FAIL	nothing here answers that | this page was read, and nothing in it answers the question
+what is the elevation of the current location	prism-explorer	explain	FAIL	nothing here answers that | this page was read, and nothing in it answers the question
+which variables are only available as monthly normals	prism-explorer	explain	FAIL	That did not work | No quick match for that, and this browser/machine has no WebGPU, so the local model can't load at all here.
