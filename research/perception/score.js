@@ -38,6 +38,9 @@ function expectedIn(w) {
       || ROLES.test(role) || el.hasAttribute("onclick")
       || (el.hasAttribute("tabindex") && Number(el.getAttribute("tabindex")) >= 0 && tag !== "body" && tag !== "html");
     if (!interactive || hiddenHere(el)) continue;
+    // An image-map area with no words is a hit region, not a control a
+    // person would name.
+    if (tag === "area" && !(el.getAttribute("alt") || "").trim()) continue;
     out.push(el);
   }
   return out;
@@ -86,8 +89,12 @@ function scorePage(file) {
     const el = [...seen.entries()].find(([, v]) => v === c);
     const rep = el && el[0];
     if (!rep || !rep.parentElement) continue;
-    for (const sib of rep.parentElement.children) {
-      if (sib !== rep && sib.tagName === rep.tagName && String(sib.className) === String(rep.className) && !seen.has(sib)) seen.set(sib, c);
+    // The run's members share a tag and a class under one ancestor: siblings
+    // in a list, or a cell's link in every row of a table.
+    let scope = rep.parentElement;
+    for (let d = 0; d < 2 && scope.parentElement && scope.parentElement !== w.document.body; d++) scope = scope.parentElement;
+    for (const sib of scope.querySelectorAll(rep.tagName.toLowerCase())) {
+      if (sib !== rep && String(sib.className) === String(rep.className) && !seen.has(sib)) seen.set(sib, c);
     }
   }
   const expected = expectedIn(w);

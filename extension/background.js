@@ -6297,6 +6297,41 @@ function turnBudgetMs() {
   return turnBudgetFor((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL);
 }
 
+/* The lists a question is about, read out with their options; and, for a
+ * "what can be chosen" question that one list answers, that answer.
+ *
+ * "What radar products can be displayed here" lives in a dropdown the
+ * page's prose never spells out. Handed the list, a 3B still answered with
+ * the page title one run in two; the page answers it itself, with or
+ * without a model. The best-matching list wins where the others are
+ * subsets of it, far smaller, or named by fewer of the question's words.
+ */
+const WHAT_CAN = /^\s*(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:be|i|you|we|one)\b|are\s+(?:available|offered|listed|there|possible|supported|provided)|is\s+available|options?|choices?)/i;
+function listChoicesFor(goal, pool) {
+  const qWords = meaningfulWords(goal).filter((w) => w.length > 3 && !/^(?:what|which|here|this|page|displayed|available|there|does|tell|show|shown|list|listed|options?|choices?)$/.test(w));
+  const stem = (w) => w.replace(/(?:ies|es|s)$/, "");
+  const lines = [];
+  const listed = [];
+  for (const c of pool) {
+    if (!(c.options || []).length || lines.length >= 6) continue;
+    const lab = String(c.label || "").toLowerCase();
+    const hits = qWords.filter((w) => wordMatchesText(w, lab) || lab.includes(stem(w))).length;
+    if (!hits) continue;
+    const opts = c.options.filter((o) => !placeholderOption(o)).map((o) => String(o.text || o.value).trim()).filter(Boolean);
+    if (!opts.length) continue;
+    lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
+    listed.push({ line: lines[lines.length - 1], hits, opts, hidden: !!c.hidden });
+  }
+  let direct = null;
+  if (listed.length && WHAT_CAN.test(goal)) {
+    const ranked = listed.slice().sort((x, y) => y.hits - x.hits || (x.hidden - y.hidden) || y.opts.length - x.opts.length);
+    const top = ranked[0];
+    const lesser = (o) => o.opts.every((v) => top.opts.includes(v)) || o.opts.length * 2 <= top.opts.length;
+    if (ranked.slice(1).every((o) => o.hits < top.hits || lesser(o))) direct = top.line;
+  }
+  return { lines, direct };
+}
+
 async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null, deadlineAt = null, chain = null, onlyModel = false } = {}) {
   if (budgetMs === null) budgetMs = turnBudgetMs();
   const history = [];
@@ -6544,41 +6579,16 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // their options, hidden ones included - a closed step is still an
       // answer to what the page can do.
       if (ASKING_TO_READ.test(goal)) {
-        const qWords = meaningfulWords(goal).filter((w) => w.length > 3 && !/^(?:what|which|here|this|page|displayed|available|there|does|tell|show|shown|list|listed|options?|choices?)$/.test(w));
-        const stem = (w) => w.replace(/(?:ies|es|s)$/, "");
-        const lines = [];
-        const listed = [];
-        // The wide pool, not the hundred and twenty offered for acting: a
-        // radar picker's 160 site buttons filled those before any dropdown.
-        for (const c of (wide.length > controls.length ? wide : controls)) {
-          if (!(c.options || []).length || lines.length >= 6) continue;
-          const lab = String(c.label || "").toLowerCase();
-          const hits = qWords.filter((w) => wordMatchesText(w, lab) || lab.includes(stem(w))).length;
-          if (!hits) continue;
-          const opts = c.options.filter((o) => !placeholderOption(o)).map((o) => String(o.text || o.value).trim()).filter(Boolean);
-          if (!opts.length) continue;
-          lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
-          listed.push({ line: lines[lines.length - 1], hits, opts, hidden: !!c.hidden });
-        }
+        const { lines, direct } = listChoicesFor(goal, wide.length > controls.length ? wide : controls);
         if (lines.length) seen = `${seen && seen !== "nothing readable" ? seen + "\n" : ""}Choices on this page:\n${lines.join("\n")}`;
         // "What radar products can be displayed here" is the list, read out.
         // Handed exactly that list, a 3B still answered with the page title
         // one run in two. Where one list answers a what-can-be-chosen
         // question, the page answers it, and the model is not asked.
-        const WHAT_CAN = /^\s*(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:be|i|you|we|one)\b|are\s+(?:available|offered|listed|there|possible|supported|provided)|is\s+available|options?|choices?)/i;
-        // The best-matching list, where the rest are subsets of it or far
-        // smaller: "Radar Product" with four products over the animation
-        // tab's "Product" with one of them.
-        if (listed.length && WHAT_CAN.test(goal) && !conditionalGoal) {
-          const ranked = listed.slice().sort((x, y) => y.hits - x.hits || (x.hidden - y.hidden) || y.opts.length - x.opts.length);
-          const top = ranked[0];
-          const lesser = (o) => o.opts.every((v) => top.opts.includes(v)) || o.opts.length * 2 <= top.opts.length;
-          // Or named by more of the question's words than any other list.
-          if (ranked.slice(1).every((o) => o.hits < top.hits || lesser(o))) {
-            history.push({ did: "read the page", outcome: "answered from the list it offers" });
-            return { ok: true, answer: top.line, history, steps: history.length,
-              tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
-          }
+        if (direct && !conditionalGoal) {
+          history.push({ did: "read the page", outcome: "answered from the list it offers" });
+          return { ok: true, answer: direct, history, steps: history.length,
+            tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
         }
       }
       // Said outright, so neither the model nor the reader takes the text
@@ -10553,6 +10563,60 @@ async function runSetToPlan(routeGlobal, setTo) {
         return { changed: didItMove(ran) };
 }
 
+/* One step of a request, settled by the page where the page can settle it.
+ *
+ * In order: a search, the thing a search turned up, the first/last of a run
+ * the page shows, a list or box named with its value, a control named
+ * outright; then the button that step made usable, pressed as its
+ * confirmation. Both chain loops - the page-only sequence and the model's
+ * per-step loop - run through here, so a rule learnt from one site is a
+ * rule for every path. Returns null where nothing on the page settles it,
+ * and the caller decides what to ask the model.
+ */
+async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = true, lateLooks = 0 } = {}) {
+  const before = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  const searched = await searchClause(routeGlobal, clause).catch(() => null);
+  if (searched) return { kind: "search", searched };
+  const confirmAfter = async () => pressConfirmIfRevealed(routeGlobal, clause, before).catch(() => null);
+  const done = (kind, label, changed, outcome, unconfirmed, confirmed) => ({
+    kind, changed: changed || !!confirmed, unconfirmed: !!unconfirmed && !confirmed,
+    did: confirmed ? `${label}, then ${confirmed.label}` : label, outcome, confirmed: !!confirmed,
+  });
+  const found = await pickSearchResult(routeGlobal, clause, lastSearch).catch(() => null);
+  if (found) return done("pick", found.control.label, true, "the one the search turned up", false, await confirmAfter());
+  await awaitNamedListReady(clause).catch(() => null);
+  const nth = await pickNthOfList(routeGlobal, clause, before).catch(() => null);
+  if (nth) return done("nth", nth.control.label, true, "the one the list shows", false, await confirmAfter());
+  let sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
+  const named = !!sure;
+  debugLog(`[chain] "${clause}": certain plan ${sure ? "= " + sure.label : "none"}`);
+  if (sure) {
+    const did = await sure.run().catch(() => null);
+    if (did) return done("plan", sure.label || clause, did.changed !== false, "named on the page exactly, so the model was not asked", false, await confirmAfter());
+    debugLog(`[chain] "${clause}": the certain plan did not run`);
+  }
+  if (exact) {
+    const acted = await actOnExactlyNamedClause(routeGlobal, clause).catch(() => null);
+    if (acted) return done("exact", acted.label || clause, acted.verified.changed !== false, "named on the page exactly", acted.unconfirmed, await confirmAfter());
+  }
+  // The control a step names may be arriving - a tab the page draws once
+  // the layer before it has loaded. Only where nothing was named at all: a
+  // plan that ran and came back empty has already pressed, and pressing
+  // again undoes it.
+  if (!named && lateLooks > 0) {
+    for (let look = 0; look < lateLooks && !sure; look++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      forgetInventory();
+      sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
+    }
+    if (sure) {
+      const did = await sure.run().catch(() => null);
+      if (did) return done("late", sure.label || clause, did.changed !== false, "named on the page once it had drawn it", false, await confirmAfter());
+    }
+  }
+  return null;
+}
+
 async function certainClausePlan(routeGlobal, clause) {
   const asSearch = String(clause || "").match(SEARCH_CLAUSE);
   if (asSearch && asSearch[1].trim()) {
@@ -12466,71 +12530,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // spent a minute and a half on it and picked the wrong
                 // station. Checked here, part by part, it is certain when its
                 // turn comes.
-                let sureNamed = false;
                 let beforeStep = null;
                 if (!forceModel) {
-                  beforeStep = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
-                  const searched = await searchClause(route.global, part).catch(() => null);
-                  if (searched) {
-                    lastSearchInChain = searched;
-                    all.push({ did: `search "${String(searched.words).slice(0, 40)}"`, ok: true, changed: true,
-                      outcome: "named on the page exactly, so the model was not asked" });
-                    continue;
-                  }
-                  const found = await pickSearchResult(route.global, part, lastSearchInChain).catch(() => null);
-                  if (found) {
-                    lastSearchInChain = null;
-                    const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
-                    all.push({ did: confirmed ? `${found.control.label}, then ${confirmed.label}` : found.control.label,
-                      ok: true, changed: true, outcome: "the one the search turned up" });
-                    continue;
-                  }
-                  await awaitNamedListReady(part).catch(() => null);
-                  const nthPick = await pickNthOfList(route.global, part, beforeStep).catch(() => null);
-                  if (nthPick) {
-                    const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
-                    all.push({ did: confirmed ? `${nthPick.control.label}, then ${confirmed.label}` : nthPick.control.label,
-                      ok: true, changed: true, outcome: "the one the list shows" });
-                    continue;
-                  }
-                  const sure = await certainClausePlan(route.global, part).catch(() => null);
-                  sureNamed = !!sure;
-                  if (sure) {
-                    const did = await sure.run().catch(() => null);
-                    if (did) {
-                      const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
-                      all.push({ did: confirmed ? `${sure.label}, then ${confirmed.label}` : (sure.label || part),
-                        ok: true, changed: did.changed !== false || !!confirmed,
+                  const step = await resolveStep(route.global, part, { lastSearch: lastSearchInChain, exact: false, lateLooks: 2 });
+                  if (step) {
+                    if (step.kind === "search") {
+                      lastSearchInChain = step.searched;
+                      all.push({ did: `search "${String(step.searched.words).slice(0, 40)}"`, ok: true, changed: true,
                         outcome: "named on the page exactly, so the model was not asked" });
                       continue;
                     }
+                    if (step.kind === "pick") lastSearchInChain = null;
+                    all.push({ did: step.did, ok: true, changed: step.changed, outcome: step.outcome });
+                    continue;
                   }
-                }
-                // The control a step names may be arriving - a tab the page
-                // draws once the layer before it has loaded. Asked a moment
-                // too early, the model chose Switch Layer Order for "open
-                // layer settings". Two short looks before the model is asked.
-                // Only where nothing was named at all. A plan that ran and
-                // came back empty - a toggle whose press reads as "opened" -
-                // has already pressed, and pressing again undoes it.
-                if (!forceModel && !sureNamed) {
-                  let late = null;
-                  for (let look = 0; look < 2 && !late; look++) {
-                    await new Promise((r) => setTimeout(r, 1500));
-                    forgetInventory();
-                    late = await certainClausePlan(route.global, part).catch(() => null);
-                  }
-                  if (late) {
-                    const did = await late.run().catch(() => null);
-                    if (did) {
-                      const beforeNow = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
-                      const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep || beforeNow).catch(() => null);
-                      all.push({ did: confirmed ? `${late.label}, then ${confirmed.label}` : (late.label || part),
-                        ok: true, changed: did.changed !== false || !!confirmed,
-                        outcome: "named on the page once it had drawn it" });
-                      continue;
-                    }
-                  }
+                  beforeStep = step === null ? await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null) : null;
                 }
                 const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
                   .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
@@ -12872,52 +12886,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 const clauseT = Date.now();
                 if (steps.length) debugLog(`[chain] previous clause took ${Date.now() - (lastClauseT || clauseT)}ms`);
                 lastClauseT = clauseT;
+                const step = await resolveStep(route.global, text, { lastSearch, exact: true });
+                if (step) {
+                  if (step.kind === "search") { lastSearch = step.searched; steps.push({ part, ok: true, changed: true, unconfirmed: false }); continue; }
+                  if (step.kind === "pick") lastSearch = null;
+                  steps.push({ part, ok: true, changed: step.changed, unconfirmed: step.unconfirmed, did: step.did });
+                  continue;
+                }
+                // For the fallback below: what was usable before it acts.
                 const beforeStep = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
-                debugLog(`[chain] "${text}": inventory ${Date.now() - clauseT}ms`);
-                const searched = await searchClause(route.global, text).catch(() => null);
-                if (searched) {
-                  lastSearch = searched;
-                  steps.push({ part, ok: true, changed: true, unconfirmed: false });
-                  continue;
-                }
-                const found = await pickSearchResult(route.global, text, lastSearch).catch(() => null);
-                if (found) {
-                  lastSearch = null;
-                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
-                  steps.push({ part, ok: true, changed: true, unconfirmed: false,
-                    did: confirmed ? `${found.control.label}, then ${confirmed.label}` : found.control.label });
-                  continue;
-                }
-                await awaitNamedListReady(text).catch(() => null);
-                const nthPick = await pickNthOfList(route.global, text, beforeStep).catch(() => null);
-                if (nthPick) {
-                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
-                  steps.push({ part, ok: true, changed: true, unconfirmed: false,
-                    did: confirmed ? `${nthPick.control.label}, then ${confirmed.label}` : nthPick.control.label });
-                  continue;
-                }
-                const sure = await certainClausePlan(route.global, text).catch(() => null);
-                debugLog(`[chain] "${text}": certain plan ${sure ? "= " + sure.label : "none"}`);
-                if (sure) {
-                  const runT = Date.now();
-                  const did = await sure.run().catch(() => null);
-                  debugLog(`[chain] "${text}": plan ran in ${Date.now() - runT}ms -> ${did ? "ok" : "nothing"}`);
-                  if (did) {
-                    const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
-                    steps.push({ part, ok: true, changed: did.changed !== false || !!confirmed, unconfirmed: false,
-                      did: confirmed ? `${sure.label}, then ${confirmed.label}` : sure.label });
-                    continue;
-                  }
-                  debugLog(`[chain] "${text}": the certain plan did not run`);
-                }
-                const exact = await actOnExactlyNamedClause(route.global, text).catch(() => null);
-                debugLog(`[chain] "${text}": exact ${exact ? "= acted" : "none"}`);
-                if (exact) {
-                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
-                  steps.push({ part, ok: true, changed: exact.verified.changed !== false || !!confirmed,
-                    unconfirmed: !!exact.unconfirmed && !confirmed });
-                  continue;
-                }
                 const own = await pursueGoal(route.global, text).catch(() => null);
                 const ownActed = ((own && own.steps) || [])
                   .filter((st) => st.did !== "opened" && st.ok);
@@ -14010,6 +13987,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // more use than two things to try at random.
           // Before giving up on a question: the page's own labels.
           if (!commandLike) {
+            // A list the question is about answers it, model or no model.
+            const { direct } = listChoicesFor(wanted, (inv.result && inv.result.controls) || []);
+            if (direct) {
+              respond({ ok: true, plannedBy: "page-data", answer: direct, display: {
+                title: headlineOf(direct), answer: direct, subtitle: "read off the list this page offers, without asking the model",
+                stats: [], rows: [], source: "this page" } });
+              return;
+            }
             const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
             const found = read.ok ? answerFromPageLabels(wanted, read.result) : null;
             if (found) {

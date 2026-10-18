@@ -162,7 +162,51 @@
     const own = clean(shortText(el));
     if (/[a-z0-9]/i.test(own) && own.length <= 80) return own;
     return clean(el.placeholder || el.title || (el.alt || "") || rowText(el) || el.name || own || "")
-      || iconName(el) || hrefName(el);
+      || iconName(el) || controlsName(el) || coversName(el) || besideName(el) || hrefName(el);
+  };
+  // The words beside a wordless button or link: a filter facet's icon
+  // button sits next to the facet's title. The nearest short text among
+  // its siblings, the way a bare input is named by the label beside it.
+  const besideName = (el) => {
+    try {
+      if (!/^(?:A|BUTTON)$/.test(String(el.tagName).toUpperCase())) return "";
+      for (const dir of ["previousElementSibling", "nextElementSibling"]) {
+        let sib = el[dir];
+        for (let seen = 0; sib && seen < 2; seen++, sib = sib[dir]) {
+          if (/^(?:A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(String(sib.tagName).toUpperCase())) break;
+          const t = String(shortText(sib) || "").replace(/\s+/g, " ").trim();
+          if (t && t.length <= 50) return t;
+        }
+      }
+      return "";
+    } catch (e) { return ""; }
+  };
+  // An icon button that opens something is named by what it opens: a
+  // button with aria-controls pointing at a dialog headed "Filters" is the
+  // Filters button, whatever its icon.
+  const controlsName = (el) => {
+    try {
+      const id = el.getAttribute("aria-controls");
+      if (!id) return "";
+      const target = el.getRootNode().getElementById ? el.getRootNode().getElementById(id) : document.getElementById(id);
+      if (!target) return "";
+      const head = target.getAttribute("aria-label") || target.getAttribute("title")
+        || (target.querySelector("h1, h2, h3, h4, [role=heading], legend, summary") || {}).textContent || "";
+      const t = String(head).replace(/\s+/g, " ").trim();
+      return t ? t.slice(0, 60) : "";
+    } catch (e) { return ""; }
+  };
+  // An empty link stretched over a card is the card: GBIF lays a full-size
+  // <a> over each occurrence card, with the species name beside it.
+  const coversName = (el) => {
+    try {
+      if (String(el.tagName).toUpperCase() !== "A") return "";
+      const box = el.parentElement;
+      if (!box) return "";
+      const head = box.querySelector("h1, h2, h3, h4, h5, [role=heading], strong, b");
+      const t = String((head && head.textContent) || shortText(box) || "").replace(/\s+/g, " ").trim();
+      return t ? t.slice(0, 60) : "";
+    } catch (e) { return ""; }
   };
   // A link with no words at all is named by where it goes: "/drought/maps"
   // is "drought maps". Last resort, and never for a bare "#".
