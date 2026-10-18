@@ -1,0 +1,56 @@
+{
+ "name": "cdc-fluview",
+ "url": "https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html",
+ "prompts": [
+  {
+   "q": "accept the disclaimer",
+   "kind": "act",
+   "check": "() => ![...document.querySelectorAll(\".modal, [role=dialog], .ui-dialog\")].some((m) => m.offsetParent !== null && getComputedStyle(m).display !== \"none\" && /Disclaimer/i.test(m.textContent))"
+  },
+  {
+   "q": "close the disclaimer, then change the season to 2025-26",
+   "kind": "chain",
+   "check": "() => ![...document.querySelectorAll(\".modal, [role=dialog], .ui-dialog\")].some((m) => m.offsetParent !== null && getComputedStyle(m).display !== \"none\" && /Disclaimer/i.test(m.textContent)) && /2025-26/.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Season:/.test(b.textContent)) || {}).textContent || \"\") && !/Season:\\s*2026-27/.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Season:/.test(b.textContent)) || {}).textContent || \"\")"
+  },
+  {
+   "q": "close the disclaimer and set the surveillance area to hhs regions",
+   "kind": "chain",
+   "check": "() => ![...document.querySelectorAll(\".modal, [role=dialog], .ui-dialog\")].some((m) => m.offsetParent !== null && getComputedStyle(m).display !== \"none\" && /Disclaimer/i.test(m.textContent)) && /Surveillance Area:\\s*HHS/i.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Surveillance Area:/.test(b.textContent)) || {}).textContent || \"\")"
+  },
+  {
+   "q": "switch viral surveillance to clinical labs",
+   "kind": "act",
+   "check": "() => /Viral Surveillance By:\\s*Clinical/i.test(([...document.querySelectorAll(\"button\")].find((b) => /^\\s*Viral Surveillance By:/.test(b.textContent)) || {}).textContent || \"\")"
+  },
+  {
+   "q": "go back one week",
+   "kind": "act",
+   "check": "() => /week ending Oct 3, 2026/i.test(document.body.innerText) || [...document.querySelectorAll(\"[role=slider], .ui-slider-handle\")].some((h) => String(h.getAttribute(\"aria-valuenow\")) === \"39\")"
+  },
+  {
+   "q": "show the cumulative data on the map",
+   "kind": "act",
+   "check": "() => [...document.querySelectorAll('input[type=radio]')].some((r) => r.name === \"mapPieDataType.label\" && r.id === \"0\" && r.checked)"
+  },
+  {
+   "q": "switch the pie chart to cumulative",
+   "kind": "act",
+   "check": "() => [...document.querySelectorAll('input[type=radio]')].some((r) => r.name === \"pieDataType.label\" && r.id === \"0\" && r.checked)"
+  },
+  {
+   "q": "what season is selected",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/2026-27/].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what week is the data for",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/Oct(?:ober)? 10,? 2026|week 40/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "who reports the influenza positive tests",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/public health lab/i, /NREVSS|collaborating laborator/i].filter((r) => r.test(t)).length >= 1; }"
+  }
+ ]
+}

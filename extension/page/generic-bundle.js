@@ -148,7 +148,13 @@
         || role.toLowerCase().replace("listbox", "list of choices");
     }
     if ((el.tagName || "").toLowerCase() === "select") {
-      const outside = clean(rowText(el));
+      let outside = clean(rowText(el));
+      // Three lists in one row - year, month, day under "Start Date:" - read
+      // as three "Start Date:". What a list holds says which it is.
+      if (outside && el.parentElement && el.parentElement.querySelectorAll("select").length > 1) {
+        const hint = optionShape(el);
+        if (hint) outside = `${outside} ${hint}`;
+      }
       const shorthand = clean(el.name || el.id || "")
         .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
       return clean(el.placeholder || el.title || outside || headingAbove(el) || shorthand) || "dropdown";
@@ -257,6 +263,20 @@
   //
   // Bounded hard. A row is a few words; anything longer is a container, and
   // a container's text is not a label.
+  const optionShape = (sel) => {
+    const texts = [...sel.options].map((o) => String(o.text || "").trim()).filter(Boolean).slice(0, 40);
+    if (texts.length < 3) return "";
+    const nums = texts.filter((t) => /^\d+$/.test(t)).map(Number);
+    if (nums.length === texts.length) {
+      const lo = Math.min(...nums); const hi = Math.max(...nums);
+      if (lo >= 1800 && hi <= 2200) return "year";
+      if (lo >= 1 && hi <= 31 && texts.length >= 12) return "day";
+      if (lo >= 0 && hi <= 23) return "hour";
+      if (lo >= 0 && hi <= 59) return "minute";
+    }
+    if (texts.filter((t) => /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(t)).length >= 6) return "month";
+    return "";
+  };
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
     const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -424,7 +444,7 @@
     return el;
   };
 
-  const setSelect = (elOrSel, valueOrText) => {
+  const setSelect = (elOrSel, valueOrText, add = false) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
@@ -432,6 +452,15 @@
       (o) => o.value === valueOrText || norm(o.text) === norm(valueOrText)
     );
     if (!opt) throw new Error(`setSelect: no option "${valueOrText}" in [${[...el.options].map((o) => o.value)}]`);
+    // A second choice in a multi-select joins the first - the ctrl-click a
+    // person makes - rather than replacing it. Only when asked to add: the
+    // first choice in a request replaces whatever the page had chosen.
+    if (el.multiple && add) {
+      opt.selected = true;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return opt.value;
+    }
     setNativeValue(el, opt.value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -3825,7 +3854,7 @@
     },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
-    selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
+    selectOption: (selector, valueOrText, add) => setSelect(selector, valueOrText, !!add),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
     disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,

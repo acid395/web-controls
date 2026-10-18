@@ -1146,7 +1146,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
     },
     {
-      name: "pageSelectOption", fn: "selectOption", argOrder: ["selector", "value"],
+      name: "pageSelectOption", fn: "selectOption", argOrder: ["selector", "value", "add"],
       description: "Choose an option in a <select> dropdown by CSS selector and the option's value or visible text.",
       parameters: { type: "object", properties: { selector: { type: "string" }, value: { type: "string" } }, required: ["selector", "value"] },
     },
@@ -5078,7 +5078,7 @@ async function answerAfterActing(res, ask) {
 // to say otherwise the page layer chose a sector and pressed Search. The
 // first word decides: one that opens a question stays a question. Only
 // the wh-words - "can you click search" is a polite command, not a question.
-const QUESTION_LED = /^\s*(?:what(?:'s)?|which|how|where|when|who|whose|why)\b/i;
+const QUESTION_LED = /^\s*(?:(?:up\s+to|as\s+of|in|at|on|for|by|from|since|until|during)\s+)?(?:what(?:'s)?|which|how|where|when|who|whose|why)\b/i;
 function isCommand(instruction) {
   if (QUESTION_LED.test(instruction || "")) return false;
   if (CONTROL_VERB.test(instruction || "")) return true;
@@ -6397,6 +6397,7 @@ async function planWithModel(routeGlobal, goal) {
   const listsHolding = (value) => shortlist.filter((c) => (c.options || []).some((o) => flat(o.text || o.value) === flat(value)));
   const history = [];
   const done = new Set();
+  const multiTouched = new Set();
   // Two plans at most: the second only where the first evidently left part
   // of the request out - fewer steps than the sentence has parts, or a step
   // that failed - and told what has been done, so it plans the remainder.
@@ -6440,6 +6441,11 @@ async function planWithModel(routeGlobal, goal) {
       forgetPageTools();
     }
     const call = actionToCall(act, target, st);
+    // The second value chosen in one multi-select within a plan joins the first.
+    if (call && call.name === "pageSelectOption" && /multiple/i.test(String(target.type || ""))) {
+      if (multiTouched.has(target.selector)) call.args.add = true;
+      multiTouched.add(target.selector);
+    }
     const value = st.value != null && act !== "click" && act !== "check" ? ` ${String(st.value).slice(0, 30)}` : "";
     if (!call) { history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: false, changed: false, outcome: "that control cannot do that" }); continue; }
     const ran = await runVerified(routeGlobal, call);
@@ -11999,7 +12005,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // control named outright, then the confirmation it made usable.
         if (!forceBaseline && !forceModel && !conditional && isCommand(wanted) && splitIntoSteps(wanted).length === 1) {
           const step = await resolveStep(route.global, wanted, { narrow: true, exact: false }).catch(() => null);
-          if (step && step.kind !== "search") {
+          // Only where the match covers the sentence. "Set the data format to
+          // tab delimited and include latitude and longitude" matched its
+          // first half and reported done; with a model ready, words the match
+          // left over are its to plan.
+          const covered = new Set(meaningfulWords(String((step && step.did) || "")));
+          const leftOver = step ? meaningfulWords(wanted).filter((w) => !covered.has(w) && !CONTROL_VERB.test(w) && w.length > 2) : [];
+          const modelHere = leftOver.length >= 2 ? await modelStatus().catch(() => null) : null;
+          if (step && step.kind !== "search" && !(modelHere && modelHere.ready)) {
             respond({ ok: true, plannedBy: "exact-match", display: {
               title: String(step.did || wanted).slice(0, 60),
               subtitle: step.unconfirmed ? "pressed, though nothing on the page visibly changed" : (step.outcome || "named on the page"),
@@ -12642,7 +12655,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // as the pieces a regex made of it. The page carries out and
             // checks each step. A plan of nothing falls through to the
             // per-step loop below.
-            if (isCommand(wanted)) {
+            // Anything that is not a question: "represent missing data as an
+            // empty string" has no verb this code knows, and the model is the
+            // one to say whether the page can do it.
+            if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted)) {
               const plan = await planWithModel(route.global, wanted).catch((e) => { debugLog(`[plan] threw: ${String((e && e.message) || e)}`); return null; });
               if (plan) {
                 const unchecked = plan.history.filter((h) => h.ok && !h.changed).length;

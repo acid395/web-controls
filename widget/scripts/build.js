@@ -58,6 +58,22 @@ function body(scriptUrlExpr, loadersExpr) {
     // Taken before feed-capture wraps window.fetch, so the agent's own
     // requests to public APIs are never recorded as the page's data.
     "const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;",
+    // The language's own Map, Set and Promise, not the page's. NOAA's
+    // precipitation server defines a global Map for its map widget, and the
+    // agent died at boot on new Map(). A blank iframe's are untouched by
+    // anything the page did; the page's own are the fallback where an
+    // iframe cannot be made. Bound here, so every section below sees them.
+    "const WC_BUILTINS = (() => {",
+    "  const own = { Map: globalThis.Map, Set: globalThis.Set, WeakMap: globalThis.WeakMap, WeakSet: globalThis.WeakSet, Promise: globalThis.Promise };",
+    "  try {",
+    "    const f = document.createElement(\"iframe\"); f.style.display = \"none\"; f.setAttribute(\"aria-hidden\", \"true\");",
+    "    (document.head || document.documentElement).appendChild(f);",
+    "    const w = f.contentWindow; const out = {};",
+    "    for (const k of Object.keys(own)) out[k] = (w && typeof w[k] === \"function\") ? w[k] : own[k];",
+    "    f.remove(); return out;",
+    "  } catch (e) { return own; }",
+    "})();",
+    "const { Map, Set, WeakMap, WeakSet, Promise } = WC_BUILTINS;",
     isolated("extension/lib/models.js", read(EXT, "lib", "models.js")),
     isolated("extension/lib/step-prompt.js", read(EXT, "lib", "step-prompt.js")),
     isolated("extension/lib/env-vocab.js", read(EXT, "lib", "env-vocab.js")),

@@ -1,0 +1,56 @@
+{
+ "name": "ncei-cdo-search",
+ "url": "https://www.ncei.noaa.gov/cdo-web/search",
+ "prompts": [
+  {
+   "q": "choose the daily summaries dataset and enter boulder as the search term",
+   "kind": "chain",
+   "check": "() => /^daily summaries/i.test(String((((document.querySelector(\"#selectedDataset\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim()) && /boulder/i.test(String((document.querySelector(\"#selectedSearchString\") || { value: \"\" }).value))"
+  },
+  {
+   "q": "set the dataset to global summary of the month",
+   "kind": "act",
+   "check": "() => /global summary of the month/i.test(String((((document.querySelector(\"#selectedDataset\") || {}).selectedOptions || [{}])[0] || {}).text || \"\"))"
+  },
+  {
+   "q": "search for zip codes instead of stations",
+   "kind": "act",
+   "check": "() => /zip/i.test(String((((document.querySelector(\"#selectedResultType\") || {}).selectedOptions || [{}])[0] || {}).text || \"\"))"
+  },
+  {
+   "q": "pick the daily summaries dataset, set search for to cities and enter denver as the search term",
+   "kind": "chain",
+   "check": "() => /^daily summaries/i.test(String((((document.querySelector(\"#selectedDataset\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim()) && /^cities/i.test(String((((document.querySelector(\"#selectedResultType\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim()) && /denver/i.test(String((document.querySelector(\"#selectedSearchString\") || { value: \"\" }).value))"
+  },
+  {
+   "q": "open the mapping tool",
+   "kind": "act",
+   "check": "() => /datatools|mapping/i.test(location.href) || /Mapping Tool/i.test(document.title)"
+  },
+  {
+   "q": "open the datasets page",
+   "kind": "act",
+   "check": "() => /cdo-web\\/datasets/i.test(location.href)"
+  },
+  {
+   "q": "view the cart",
+   "kind": "act",
+   "check": "() => /cdo-web\\/cart/i.test(location.href)"
+  },
+  {
+   "q": "how many items are in the cart",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/\\\\b0 items|\\\\bzero\\\\b|\\\\bno items|\\\\b0\\\\b/i].filter((r) => r.test(t)).length >= 1; }"
+  },
+  {
+   "q": "what identifiers can I use when searching for stations",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/WBAN/i, /GHCND/i, /FAA/i, /ICAO/i, /NWSLI/i, /COOP/i].filter((r) => r.test(t)).length >= 3; }"
+  },
+  {
+   "q": "what does the date range default to",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/latest available year/i].filter((r) => r.test(t)).length >= 1; }"
+  }
+ ]
+}

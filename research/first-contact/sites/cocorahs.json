@@ -1,0 +1,56 @@
+{
+ "name": "cocorahs-daily",
+ "url": "https://www.cocorahs.org/ViewData/ListDailyPrecipReports.aspx",
+ "prompts": [
+  {
+   "q": "switch the units to metric",
+   "kind": "act",
+   "check": "() => /metric/i.test(String((document.querySelector(\"#obsSwitcher_ddlObsUnits\") || { value: \"\" }).value)) || /Metric Units/i.test(String((((document.querySelector(\"#obsSwitcher_ddlObsUnits\") || {}).selectedOptions || [{}])[0] || {}).text || \"\")) || /\\bmm\\b/.test(document.body.innerText.slice(0, 6000))"
+  },
+  {
+   "q": "put denver in the station fields and tick station name",
+   "kind": "chain",
+   "check": "() => /denver/i.test(String((document.querySelector(\"#frmPrecipReportSearch_ucStationTextFieldsFilter_tbTextFieldValue\") || { value: \"\" }).value)) && ((document.querySelector(\"#frmPrecipReportSearch_ucStationTextFieldsFilter_cblTextFieldsToSearch_1\") || {}).checked === true)"
+  },
+  {
+   "q": "set the location to united states",
+   "kind": "act",
+   "check": "() => /united states/i.test(String((((document.querySelector(\"#frmPrecipReportSearch_ucStateCountyFilter_ddlCountry\") || {}).selectedOptions || [{}])[0] || {}).text || \"\"))"
+  },
+  {
+   "q": "set the precip value to gauge catch, the operator to >= and the value to 0.5, then search",
+   "kind": "chain",
+   "check": "() => /gauge catch/i.test(String((((document.querySelector(\"#frmPrecipReportSearch_ddlPrecipField\") || {}).selectedOptions || [{}])[0] || {}).text || \"\")) && String((document.querySelector(\"#frmPrecipReportSearch_ucPrecipValueFilter_ddlOperator\") || { value: \"\" }).value).includes(\">=\") && /^0?\\.5$/.test(String((document.querySelector(\"#frmPrecipReportSearch_ucPrecipValueFilter_tbPrecipValue_tbPrecip\") || { value: \"\" }).value)) && /Searched:.*Gauge Catch/i.test(document.body.innerText)"
+  },
+  {
+   "q": "go to the next page of results",
+   "kind": "act",
+   "check": "() => String((document.querySelector(\"#ucReportList_wcDropDownListPager\") || { value: \"\" }).value) === \"2\" || /Showing 51 - /i.test(document.body.innerText)"
+  },
+  {
+   "q": "open the station precip summary",
+   "kind": "act",
+   "check": "() => /StationPrecipSummary/i.test(location.href)"
+  },
+  {
+   "q": "show the daily comments reports",
+   "kind": "act",
+   "check": "() => /ListDailyCommentsReports/i.test(location.href)"
+  },
+  {
+   "q": "how many records were found",
+   "kind": "explain",
+   "check": "(card) => { const m = document.body.innerText.match(/of\\s+([\\d,]+)\\s+Records/i); if (!m) return false; const n = m[1].replace(/,/g, \"\"); const t = [card.title, card.sub, card.answer].join(\" \").replace(/,/g, \"\"); return t.includes(n); }"
+  },
+  {
+   "q": "what report date is being searched",
+   "kind": "explain",
+   "check": "(card) => { const m = document.body.innerText.match(/Report date on\\s+(\\d{1,2}\\/\\d{1,2}\\/\\d{4})/i); if (!m) return false; const t = [card.title, card.sub, card.answer].join(\" \"); const [mo, d] = m[1].split(\"/\"); const months = [\"january\",\"february\",\"march\",\"april\",\"may\",\"june\",\"july\",\"august\",\"september\",\"october\",\"november\",\"december\"]; return t.includes(m[1]) || new RegExp(months[+mo - 1] + \"\\\\s+\" + (+d) + \"\\\\b\", \"i\").test(t); }"
+  },
+  {
+   "q": "which station reported the highest gauge catch on this page",
+   "kind": "explain",
+   "check": "(card) => { const rows = [...document.querySelectorAll(\"table tr\")].map((tr) => [...tr.children].map((td) => td.textContent.trim())).filter((r) => r.length > 6 && /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(r[0])); if (!rows.length) return false; let best = null; for (const r of rows) { const v = parseFloat(r[4]); if (!isNaN(v) && (!best || v > best.v)) best = { v, num: r[2], name: r[3] }; } if (!best) return false; const t = [card.title, card.sub, card.answer].join(\" \").toLowerCase(); return t.includes(best.num.toLowerCase()) || t.includes(best.name.toLowerCase().split(\" \")[0]); }"
+  }
+ ]
+}

@@ -1,0 +1,31 @@
+Question	Website	Kind	Result	What it said
+open the topics tab	cdc-wonder	act	PASS	Topics | Topics pressed - the page did not visibly change
+open the a-z index tab	cdc-wonder	act	PASS	A-Z Index | A-Z Index pressed - the page did not visibly change
+close the data & site updates notice	cdc-wonder	act	PASS	navigated
+search wonder for mortality	cdc-wonder	act	PASS	navigated
+open the topics tab, then go back to the wonder systems tab	cdc-wonder	chain	FAIL	navigated
+open the underlying cause of death database	cdc-wonder	act	FAIL	navigated
+open frequently asked questions	cdc-wonder	act	FAIL	navigated
+when was this page last reviewed	cdc-wonder	explain	PASS	October 14, 2026 | 1 step (0 on the page), decided by the local model | October 14, 2026
+what databases are listed under national notifiable conditions	cdc-wonder	explain	FAIL	National Notifiable Conditions, Sexually Transmitted Disease Morbidity, Vaccine Adverse... | 1 step (0 on the page), decided by the local model | National Notifiable Conditions, Sexually Transmitted D
+what does the triangle symbol next to a link mean	cdc-wonder	explain	FAIL	See What's New | 3 steps (1 on the page), decided by the local model
+set the data format to tab delimited and include latitude and longitude	iem-download	chain	FAIL	Tab Delimited | Data Format: set to Tab Delimited
+select air temperature in fahrenheit and dew point in fahrenheit as the data	iem-download	chain	FAIL	15 steps, planned at once by Llama 3.2 3B | 1 of 15 failed
+set the start date to march 5 2024 and the end date to march 10 2024	iem-download	chain	FAIL	7 steps, planned at once by Llama 3.2 3B | ran in order - 4 of 7 changed nothing visible
+set the timezone to america/chicago	iem-download	act	PASS	4) Timezone of Observation Times:: America/Chicago (CST/CDT) | named on the page exactly, so the model was not asked
+turn off specials and turn on madis hfmetar / 5 minute asos	iem-download	chain	PASS	2 steps, straight off the page | Specials · MADIS HFMETAR / 5 Minute ASOS
+filter the stations for ames, select it and add it to the selected stations	iem-download	chain	PASS	8 steps, planned at once by Llama 3.2 3B | 1 of 8 failed
+represent missing data as an empty string	iem-download	act	FAIL	Couldn't do that | nothing in that matched a place, a measurement, or a control on this page
+how many stations are available	iem-download	explain	PASS	62 | 1 step (0 on the page), decided by the local model | 62
+up to what time does this archive contain observations	iem-download	explain	FAIL	4) Timezone of Observation Times: | 1 step (1 on the page), decided by the local model
+what is the aggregate request limit when stations are selected	iem-download	explain	FAIL	1000 | 1 step (0 on the page), decided by the local model | 1000
+set the data type to precipitation intensity and the units to metric	noaa-pfds	chain	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+switch the time series type to annual maximum	noaa-pfds	act	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+enter latitude 39.1 and longitude -94.6, then submit	noaa-pfds	chain	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+choose the station topeka	noaa-pfds	act	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+show stations on the map	noaa-pfds	act	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+open the pf graphical tab	noaa-pfds	act	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+pick annual maximum, switch units to metric and open the supplementary information tab	noaa-pfds	chain	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+what is the current location name	noaa-pfds	explain	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+what is the 100-year 24-hour precipitation depth	noaa-pfds	explain	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9
+which map types can be chosen	noaa-pfds	explain	FAIL	TypeError: Map is not a constructor at <anonymous>:6774:28 at bootAgent (<anonymous>:21303:3) at Object.mount (<anonymous>:22558:11) at <anonymous>:3:31 at <anonymous>:15:9

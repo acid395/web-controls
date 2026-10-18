@@ -125,7 +125,10 @@ async function main() {
       const card = asked.value || { title: asked.error || "no card", sub: "" };
       const checked = await run(`(${p.check})(${JSON.stringify(card)})`, 15000);
       const result = checked.value === true ? "PASS" : "FAIL";
-      const said = [card.title, card.sub, card.answer, ...dialogs.map((d) => `alert: ${d}`)].filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 200);
+      // Where the page ended up: a navigation that went to the wrong place
+      // and one that went to the right place read the same on the card.
+      const where = await run("location.pathname + location.search + \" | \" + document.title.slice(0, 50)", 5000);
+      const said = [card.title, card.sub, card.answer, ...dialogs.map((d) => `alert: ${d}`), where.value ? `at ${where.value}` : null].filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 200);
       rows.push({ q: p.q, site: site.name, kind: p.kind, result, said: checked.error ? `${said} (check: ${checked.error})` : said });
       console.log(`${result}  ${site.name}  [${Math.round((Date.now() - began) / 1000)}s]  ${p.q}\n      ${rows[rows.length - 1].said}`);
     }

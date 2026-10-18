@@ -199,6 +199,21 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("the NOAA manifest is loaded once the agent reaches into the page",
       !!(w.NOAA && typeof w.NOAA.mapNote === "function"));
   }
+  {
+    // A page that has taken a built-in's name. NOAA's precipitation server
+    // defines a global Map for its map widget, and the agent died at boot
+    // on new Map(). The widget binds its own.
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on("jsdomError", () => {});
+    const w = new JSDOM(`<!doctype html><html><body><button>Go</button></body></html>`, { url: "https://example.org/", runScripts: "outside-only",
+      pretendToBeVisual: true, virtualConsole }).window;
+    w.Map = function NotAMap() {}; w.Set = 42; w.Promise = null;
+    w.eval(built);
+    let mounted = null; let threw = "";
+    try { mounted = w.WebControls.mount({ _modelHost: { status: () => ({ ready: false, loading: false, hasGpu: false }), async step() { throw new Error("off"); }, load() {}, embed: async () => { throw new Error("off"); }, release: async () => {} } }); } catch (e) { threw = String(e && e.message); }
+    check("a page that redefines Map, Set and Promise still gets a working widget", !!mounted && typeof mounted.ask === "function", threw);
+    if (mounted) { const r = await mounted.ask("click go"); check("and an ask on it comes back as a card", !!(r && r.display), JSON.stringify(r).slice(0, 120)); }
+  }
 
   console.log("routing");
   {
