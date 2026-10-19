@@ -2357,6 +2357,41 @@ else {
   }
 }
 
+// The FIMS card an 8B produced: "select" aimed at a button with the
+// scenario's name as the value, and a Google Maps link pressed because the
+// request said map. The scenario's own box is ticked; the link is left alone.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" id="set"> Flood Map Set (Scenario)</label>
+    <label><input type="checkbox" id="cr"> Cedar Rapids (D)</label>
+    <button id="existing">Select Existing Scenario</button>
+    <a id="gm" href="https://maps.google.com/?q=x" target="_blank">Open this area in Google Maps (opens in a new tab)</a>
+    </body></html>`, { url: "https://hydroinformatics.example.edu/fims/" });
+  if (page) {
+    const bg = loadBackground({ page });
+    let gm = 0;
+    page.document.getElementById("gm").addEventListener("click", (e) => { gm++; e.preventDefault(); });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") {
+        const named = (re) => (m.controls.find((c) => re.test(String(c.label))) || {}).label;
+        return { ok: true, step: { steps: [
+          { name: named(/flood map set/i), do: "check", on: true },
+          { name: named(/select existing/i), do: "select", value: "Cedar Rapids" },
+          { name: named(/google maps/i), do: "click" }] } };
+      }
+      return { ok: true, step: { do: "finish", answer: "x" } };
+    };
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: "turn on flood map set (scenario) and choose cedar rapids" });
+      ensure("a value aimed at a button ticks the box of that name", page.document.getElementById("cr").checked === true, r.display);
+      ensure("and a link out of the page the request never asked for is left alone", gm === 0, `pressed ${gm} times`);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

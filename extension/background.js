@@ -6397,11 +6397,20 @@ async function planWithModel(routeGlobal, goal) {
   // A larger model is shown more: a 3B reads twenty lines in seconds and
   // loses its way past that, an 8B on a workstation reads forty as fast.
   const big = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL)) >= 4000;
-  const shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }), big ? 40 : 20);
+  let shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }), big ? 40 : 20);
   if (!shortlist.length) return null;
   const began = Date.now();
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
+  let names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
+  // A link that leaves the page is pressed only when the request asks to go
+  // somewhere and names where. An 8B planning "turn on the flood map set,
+  // choose cedar rapids" added "Open this area in Google Maps (opens in a
+  // new tab)", because the request said map.
+  const goalWords = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+  const asksToGo = /\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal);
+  const leavesPage = (c) => (!!c.goesTo && !/^(?:#|javascript:)/i.test(String(c.goesTo)))
+    || /\bopens?\s+in\s+(?:a\s+)?new\s+(?:tab|window)\b/i.test(String(c.label || ""));
+  const askedToLeaveFor = (c) => asksToGo && meaningfulWords(String(c.label || "")).some((w) => goalWords.includes(w));
   const listsHolding = (value) => shortlist.filter((c) => (c.options || []).some((o) => flat(o.text || o.value) === flat(value)));
   const history = [];
   const done = new Set();
@@ -6413,6 +6422,15 @@ async function planWithModel(routeGlobal, goal) {
   let calls = 0;
   let cost = null;
   for (let round = 0; round < 2; round++) {
+  if (round) {
+    // What the first plan revealed is on the list now: a scenario list that
+    // appears once its layer is on was not there to be chosen the first time.
+    const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    if (again && again.ok && again.result) {
+      shortlist = shortlistFor(goal, controlsForModel(again.result, { max: WHOLE_PAGE }), big ? 40 : 20);
+      names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
+    }
+  }
   const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, optionsShown: big ? 16 : 8, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
   calls++;
   if (asked && asked.cost) cost = asked.cost;
@@ -6442,11 +6460,18 @@ async function planWithModel(routeGlobal, goal) {
     // The page's own repairs: a value that is an option of exactly one list
     // belongs to that list whatever name came with it, and a check on
     // something that is not a box is a press.
-    const kind = planned ? String(planned.type || planned.kind || "").toLowerCase() : "";
     if (act === "select" && !(planned && (planned.options || []).some((o) => flat(o.text || o.value) === flat(st.value)))) {
       const h = listsHolding(st.value); if (h.length === 1) planned = h[0];
     }
-    if (act === "check" && planned && !/checkbox|radio|switch/.test(kind)) act = "click";
+    // "Select Cedar Rapids" on something that is not a list: the value is a
+    // box or a button of its own, named exactly that.
+    if (act === "select" && st.value && !(planned && (planned.options || []).length) && !listsHolding(st.value).length) {
+      const base = (l) => flat(String(l || "").replace(/\s*\([^)]*\)\s*$/, ""));
+      const own = shortlist.filter((c) => !c.hidden && base(c.label) === flat(st.value)
+        && /checkbox|radio|switch|button|tab|option|^a$|link/.test(String(c.type || c.kind || "").toLowerCase()));
+      if (own.length === 1) { planned = own[0]; act = /checkbox|radio|switch/.test(String(own[0].type || own[0].kind || "").toLowerCase()) ? "check" : "click"; }
+    }
+    if (act === "check" && planned && !/checkbox|radio|switch/.test(String(planned.type || planned.kind || "").toLowerCase())) act = "click";
     if (!planned) { history.push({ did: `${act} "${String(st.name || "").slice(0, 40)}"`, ok: false, changed: false, outcome: "not one of the controls offered" }); continue; }
     const now = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
     const cs = (now && now.ok && now.result && now.result.controls) || [];
@@ -6454,6 +6479,11 @@ async function planWithModel(routeGlobal, goal) {
     if (target.hidden && target.revealedBy) {
       await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
       forgetPageTools();
+    }
+    if (act === "click" && leavesPage(target) && !askedToLeaveFor(target)) {
+      history.push({ did: `click "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+        outcome: "left alone - it leaves this page, and the request did not ask to go there" });
+      continue;
     }
     const call = actionToCall(act, target, st);
     // The second value chosen in one multi-select within a plan joins the first.
