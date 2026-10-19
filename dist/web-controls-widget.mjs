@@ -1,20 +1,31 @@
-/*! web-controls widget 0.4.0 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.16 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.0",
+    version: "0.4.16",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.0";
+globalThis.WC_WIDGET_VERSION = "0.4.16";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
   makeWorker: () => ({ worker: new Worker(new URL("./web-llm-worker.mjs", import.meta.url), { type: "module" }) }),
 };
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
+const WC_BUILTINS = (() => {
+  const own = { Map: globalThis.Map, Set: globalThis.Set, WeakMap: globalThis.WeakMap, WeakSet: globalThis.WeakSet, Promise: globalThis.Promise };
+  try {
+    const f = document.createElement("iframe"); f.style.display = "none"; f.setAttribute("aria-hidden", "true");
+    (document.head || document.documentElement).appendChild(f);
+    const w = f.contentWindow; const out = {};
+    for (const k of Object.keys(own)) out[k] = (w && typeof w[k] === "function") ? w[k] : own[k];
+    f.remove(); return out;
+  } catch (e) { return own; }
+})();
+const { Map, Set, WeakMap, WeakSet, Promise } = WC_BUILTINS;
 
 /* ---- extension/lib/models.js ---- */
 (function () {
@@ -271,7 +282,9 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note,
       : "";
     const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
     const label = collides.has(i) ? String(c.label || "").slice(0, 52) : short[i];
-    return `- ${label}${what}${state}${opts}`;
+    // A run of look-alikes folded behind this one: say the one you mean.
+    const more = c.more ? ` (+${c.more} more like this; name the one you mean)` : "";
+    return `- ${label}${what}${state}${opts}${more}`;
   }).join("\n");
 
   const done = history.length
@@ -356,6 +369,82 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note,
 
 globalThis.WC_BUILD_STEP_PROMPT = buildStepPrompt;
 
+/* The whole request, planned in one call.
+ *
+ * The step prompt asks "what next" once per turn, and on a 3B a turn is
+ * twenty to sixty seconds of prefill before a word comes back - so a four
+ * part request was four prefills, and the budget ran out with half of it
+ * undone. Shown a shortlist of the controls nearest the request, the model
+ * says every step at once; the page then carries them out and checks each.
+ * Named, not numbered: a 3B's numbers ran 1, 2, 3 down the list whatever
+ * line held the control, while its values were right every time. The schema
+ * handed to WebLLM alongside this makes the name one of the list's names
+ * and the action one of five, so a plan cannot name a control that is not
+ * there.
+ */
+// Each control's name as the plan must spell it: cut to a length, and told
+// apart where two cut the same.
+function planNames(controls) {
+  const seen = new Map();
+  return controls.map((c) => {
+    let name = String(c.label || "").replace(/\s+/g, " ").trim().slice(0, 40) || "(unnamed)";
+    const k = name.toLowerCase();
+    const n = (seen.get(k) || 0) + 1;
+    seen.set(k, n);
+    if (n > 1) name = `${name} (${n})`;
+    return name;
+  });
+}
+globalThis.WC_PLAN_NAMES = planNames;
+function buildPlanPrompt({ goal, controls = [], history = [], optionsShown = 8 }) {
+  const gw = new Set(String(goal || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+  const names = planNames(controls);
+  const lines = controls.map((c, i) => {
+    const kind = c.type || c.kind || "";
+    const what = !kind || kind === "link" || kind === "a" ? "" : ` (${kind})`;
+    const state = typeof c.checked === "boolean" ? (c.checked ? " on" : " off") : "";
+    const all = c.options || [];
+    // The options the request names come first, so they are among the few shown.
+    const named = all.filter((o) => String(o.text || o.value || "").toLowerCase().split(/[^a-z0-9]+/).some((w) => gw.has(w)));
+    const shown = [...named, ...all.filter((o) => !named.includes(o))].slice(0, optionsShown).map((o) => String(o.text || o.value).slice(0, 18));
+    const opts = all.length ? ` [${shown.join("|")}${all.length > shown.length ? ` +${all.length - shown.length} more` : ""}]` : "";
+    return `- ${names[i]}${what}${state}${opts}${c.hidden ? " (hidden)" : ""}`;
+  }).join("\n");
+  return [
+    "Plan how to carry out this request on the web page. Reply with one JSON object only.",
+    "",
+    `Request: ${goal}`,
+    "",
+    "Controls:",
+    lines || "(none)",
+    "",
+    history.length ? `Already done:\n${history.map((h, i) => `${i + 1}. ${h.did}${h.outcome ? ` -> ${h.outcome}` : ""}`).join("\n")}\n` : "",
+    history.length ? "Reply with the steps still missing, in order. NAME is a control's name from the list, exactly as written:"
+      : "Reply with every step needed, in order. NAME is a control's name from the list, exactly as written:",
+    '{"steps":[{"name":"NAME","do":"click"},{"name":"NAME","do":"check","on":true},{"name":"NAME","do":"select","value":"OPTION"},{"name":"NAME","do":"type","value":"TEXT"},{"do":"search","value":"WORDS"}]}',
+    "",
+    "Rules:",
+    "- One step for each thing the request asks for, in the order asked.",
+    "- Work out what is meant, then pick the control that does it; the right",
+    "  control often shares no word with the request.",
+    "- For select, value is one of that control's listed options. For type,",
+    "  value is the text the request gives.",
+    "- A link that leaves this page is right only when the request asks to go",
+    "  somewhere; setting, choosing or typing happens on this page.",
+    '- If nothing on the list does it, reply {"steps":[]}.',
+  ].join("\n");
+}
+globalThis.WC_BUILD_PLAN_PROMPT = buildPlanPrompt;
+globalThis.WC_PLAN_SCHEMA = (controls) => JSON.stringify({
+  type: "object",
+  properties: { steps: { type: "array", maxItems: 12, items: { type: "object",
+    properties: { name: { type: "string", enum: planNames(controls) },
+      do: { type: "string", enum: ["click", "check", "select", "type", "search"] },
+      value: { type: "string" }, on: { type: "boolean" } },
+    required: ["do"] } } },
+  required: ["steps"],
+});
+
 /* A question is not an operation, and was being asked as one.
  *
  * "Explain this data" went to the model with a hundred and fifteen control
@@ -374,11 +463,15 @@ globalThis.WC_BUILD_STEP_PROMPT = buildStepPrompt;
  * to answer in. Nothing about controls, because none will be touched.
  */
 function buildReadPrompt({ goal, observation, note }) {
+  // A request to read the page as a whole wants a description, not a
+  // figure: asked to "read this page" with the rules below, a 3B answered
+  // with the page's heading and nothing else.
+  const whole = /^\s*(?:please\s+)?(?:read|describe|summari[sz]e|explain|interpret)\s+(?:me\s+)?(?:this|the)\s+(?:page|site|screen|app|tool|dashboard|map|chart|graph)\b|^\s*what\s+(?:is|does)\s+this\s+(?:page|site|map|chart|graph)\b/i.test(String(goal || ""));
   return [
     "Answer the question using only what this page shows.",
     "Reply with one JSON object only.",
     "",
-    `Question: ${goal}`,
+    whole ? `Question: ${goal} - say what this page is for, what it shows right now, and what can be done on it.` : `Question: ${goal}`,
     "",
     "What the page shows:",
     String(observation || "nothing readable").slice(0, 2200),
@@ -394,12 +487,12 @@ function buildReadPrompt({ goal, observation, note }) {
     // "what is the latest gage height reading and when was it taken" was
     // answered with the time alone; the value was on the line above it.
     "- If the question asks for more than one thing, answer each of them.",
-    "- Two or three sentences. Say what the values mean, not what the page is.",
+    whole ? "- Two or three sentences, in plain words: the purpose of the page, what it shows now, what it lets you do." : "- Two or three sentences. Say what the values mean, not what the page is.",
     // Said as one fixed sentence, because what happens next depends on it:
     // a page that does not hold the answer is where the run goes to look
     // for the page that does, and a reply that hedges in its own words is a
     // reply nothing can act on.
-    '- If the values do not answer the question, answer exactly: "not on this page".',
+    whole ? "- Describe what is there; never answer \"not on this page\" to a request to read the page." : '- If the values do not answer the question, answer exactly: "not on this page".',
   ].filter(Boolean).join("\n");
 }
 
@@ -421,6 +514,8 @@ globalThis.WC_BUILD_READ_PROMPT = buildReadPrompt;
 // fails on any of them. Braces inside string values are respected, since a
 // gauge name or a selector can legitimately contain one.
 function firstJsonObject(text) {
+  // A reasoning model's thinking comes first, and can hold braces of its own.
+  text = String(text || "").replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^[\s\S]*?<\/think>/i, "");
   const start = (text || "").indexOf("{");
   if (start === -1) return null;
   let depth = 0, inString = false, escaped = false;
@@ -750,7 +845,10 @@ function installFeedCapture() {
   // Pictures are not data. NOAA's map requests its marker icons through a
   // URL this pattern matches, and reading every PNG as text was memory spent
   // on nothing.
-  const NOT_DATA = /^(image|font|audio|video)\/|octet-stream|protobuf/i;
+  // Nor is a stream that never ends. Reading a clone of a server-sent
+  // events feed to its end waits forever, holding every event it has sent
+  // so far - on a live dashboard, memory that only grows.
+  const NOT_DATA = /^(image|font|audio|video)\/|octet-stream|protobuf|event-stream|x-mixed-replace/i;
   const feeds = [];
   let held = 0;
   // Absolute, before it is tested. A page's own requests are often relative:
@@ -913,6 +1011,8 @@ return (function () {
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
   let ariaIndex = null;
+  // The page's menu button, found once per pass: undefined until looked for.
+  let drawerToggle;
   let labelForIndex = null, labelForRoot = null;
 
   // Reads the text that identifies a control, original case, whitespace
@@ -936,7 +1036,11 @@ return (function () {
         .join(" ");
       if (clean(txt)) return clean(txt);
     }
-    if (el.labels && el.labels[0]) return clean(el.labels[0].textContent);
+    // <input type="submit" value="Plot"> is called Plot. Nothing read the
+    // value, so NCEI's one button on the page was listed with no name.
+    if (/^(?:submit|button|reset)$/i.test(String(el.type || "")) && el.tagName === "INPUT" && clean(el.value)) return clean(el.value);
+    if (/^image$/i.test(String(el.type || "")) && el.tagName === "INPUT" && clean(el.alt)) return clean(el.alt);
+    if (el.labels && el.labels[0]) return clean(shortText(el.labels[0]));
     if (el.id) {
       // Indexed once per pass. This was a document scan for every control
       // carrying an id, which on a page of several hundred is several
@@ -952,7 +1056,7 @@ return (function () {
         }
       }
       const forLabel = labelForIndex.get(el.id);
-      if (forLabel) return clean(forLabel.textContent);
+      if (forLabel) return clean(shortText(forLabel));
     }
     const wrap = el.closest("label");
     if (wrap) return clean(shortText(wrap));
@@ -979,14 +1083,109 @@ return (function () {
         || role.toLowerCase().replace("listbox", "list of choices");
     }
     if ((el.tagName || "").toLowerCase() === "select") {
-      const own = clean(el.textContent);
-      const around = clean(rowText(el));
-      const outside = own && around.includes(own) ? clean(around.split(own).join(" ")) : around;
+      let outside = clean(rowText(el));
+      // Three lists in one row - year, month, day under "Start Date:" - read
+      // as three "Start Date:". What a list holds says which it is.
+      if (outside && el.parentElement && el.parentElement.querySelectorAll("select").length > 1) {
+        const hint = optionShape(el);
+        if (hint) outside = `${outside} ${hint}`;
+      }
       const shorthand = clean(el.name || el.id || "")
         .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
-      return clean(el.placeholder || el.title || outside || shorthand) || "dropdown";
+      return clean(el.placeholder || el.title || outside || headingAbove(el) || shorthand) || "dropdown";
     }
-    return clean(el.placeholder || el.title || rowText(el) || el.name || shortText(el) || "");
+    // Its own words before its tooltip. Wikipedia's Talk tab carries
+    // title="Discussion about the content page", and that was its name - so
+    // "open the talk page" found no Talk. The tooltip is kept as another
+    // name for it (see `hint` on the record), not as the name.
+    const own = clean(shortText(el));
+    if (/[a-z0-9]/i.test(own) && own.length <= 80) return own;
+    return clean(el.placeholder || el.title || (el.alt || "") || rowText(el)
+      || (/^(?:INPUT|TEXTAREA)$/.test(el.tagName) ? headingAbove(el) : "") || el.name || own || "")
+      || iconName(el) || controlsName(el) || coversName(el) || besideName(el) || hrefName(el);
+  };
+  // The words beside a wordless button or link: a filter facet's icon
+  // button sits next to the facet's title. The nearest short text among
+  // its siblings, the way a bare input is named by the label beside it.
+  const besideName = (el) => {
+    try {
+      if (!/^(?:A|BUTTON)$/.test(String(el.tagName).toUpperCase())) return "";
+      for (const dir of ["previousElementSibling", "nextElementSibling"]) {
+        let sib = el[dir];
+        for (let seen = 0; sib && seen < 2; seen++, sib = sib[dir]) {
+          if (/^(?:A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(String(sib.tagName).toUpperCase())) break;
+          const t = String(shortText(sib) || "").replace(/\s+/g, " ").trim();
+          if (t && t.length <= 50) return t;
+        }
+      }
+      return "";
+    } catch (e) { return ""; }
+  };
+  // An icon button that opens something is named by what it opens: a
+  // button with aria-controls pointing at a dialog headed "Filters" is the
+  // Filters button, whatever its icon.
+  const controlsName = (el) => {
+    try {
+      const id = el.getAttribute("aria-controls");
+      if (!id) return "";
+      const target = el.getRootNode().getElementById ? el.getRootNode().getElementById(id) : document.getElementById(id);
+      if (!target) return "";
+      const head = target.getAttribute("aria-label") || target.getAttribute("title")
+        || (target.querySelector("h1, h2, h3, h4, [role=heading], legend, summary") || {}).textContent || "";
+      const t = String(head).replace(/\s+/g, " ").trim();
+      return t ? t.slice(0, 60) : "";
+    } catch (e) { return ""; }
+  };
+  // An empty link stretched over a card is the card: GBIF lays a full-size
+  // <a> over each occurrence card, with the species name beside it.
+  const coversName = (el) => {
+    try {
+      if (String(el.tagName).toUpperCase() !== "A") return "";
+      const box = el.parentElement;
+      if (!box) return "";
+      const head = box.querySelector("h1, h2, h3, h4, h5, [role=heading], strong, b");
+      const t = String((head && head.textContent) || shortText(box) || "").replace(/\s+/g, " ").trim();
+      return t ? t.slice(0, 60) : "";
+    } catch (e) { return ""; }
+  };
+  // A link with no words at all is named by where it goes: "/drought/maps"
+  // is "drought maps". Last resort, and never for a bare "#".
+  const hrefName = (el) => {
+    try {
+      if (String(el.tagName).toUpperCase() !== "A") return "";
+      const href = el.getAttribute("href") || "";
+      if (!href || /^(?:#|javascript:|mailto:|tel:)/i.test(href)) return "";
+      const path = new URL(href, location.href).pathname.replace(/\/+$/, "");
+      const last = path.split("/").filter(Boolean).pop() || new URL(href, location.href).hostname.replace(/^www\./, "");
+      return last.replace(/\.[a-z0-9]{1,5}$/i, "").replace(/[-_+.]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim().slice(0, 40);
+    } catch (e) { return ""; }
+  };
+
+  /* An icon with nothing else to go by is named by its picture.
+   *
+   * ifis.iowafloodcenter.org's whole menu is a column of images - no text, no
+   * alt, no title - so the model was shown none of it and could not open the
+   * flood maps however it was asked. The files say what they are:
+   * img/icon2/flood.png, community.png, weather2.png. A person reads the
+   * picture; this reads its name, which is the nearest thing to it.
+   */
+  const ICON_NOISE = /^(?:icons?|ic|img|image|images|btn|button|px|sprite|new|active|hover|default|normal|on|off|sm|md|lg|xl|white|black|dark|light|svg|png|fill|outline|outlined|round|rounded)$/;
+  const nameFromFile = (src) => {
+    const base = String(src || "").split(/[?#]/)[0].split("/").pop().replace(/\.[a-z0-9]+$/i, "");
+    return base.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^A-Za-z]+/)
+      .map((w) => w.toLowerCase()).filter((w) => w.length > 1 && !ICON_NOISE.test(w))
+      .join(" ").slice(0, 40);
+  };
+  const iconName = (el) => {
+    try {
+      const tag = String(el.tagName || "").toLowerCase();
+      if (tag === "img" || tag === "input") return nameFromFile(el.getAttribute("src"));
+      const imgs = el.querySelectorAll ? el.querySelectorAll("img") : [];
+      if (imgs.length === 1) return nameFromFile(imgs[0].getAttribute("src"));
+      const bg = getComputedStyle(el).backgroundImage || "";
+      const m = bg.match(/url\(["']?([^"')]+)/);
+      return m && !/^data:/.test(m[1]) ? nameFromFile(m[1]) : "";
+    } catch (e) { return ""; }
   };
 
   // What the row this control sits in is called. water.noaa.gov puts a bare
@@ -999,6 +1198,20 @@ return (function () {
   //
   // Bounded hard. A row is a few words; anything longer is a container, and
   // a container's text is not a label.
+  const optionShape = (sel) => {
+    const texts = [...sel.options].map((o) => String(o.text || "").trim()).filter(Boolean).slice(0, 40);
+    if (texts.length < 3) return "";
+    const nums = texts.filter((t) => /^\d+$/.test(t)).map(Number);
+    if (nums.length === texts.length) {
+      const lo = Math.min(...nums); const hi = Math.max(...nums);
+      if (lo >= 1800 && hi <= 2200) return "year";
+      if (lo >= 1 && hi <= 31 && texts.length >= 12) return "day";
+      if (lo >= 0 && hi <= 23) return "hour";
+      if (lo >= 0 && hi <= 59) return "minute";
+    }
+    if (texts.filter((t) => /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(t)).length >= 6) return "month";
+    return "";
+  };
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
     const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -1009,16 +1222,46 @@ return (function () {
     // row's text ran past any sane limit and the checkbox fell back to its
     // name attribute - "fi" - and stayed unreachable while its neighbours
     // worked. The label is right next to it either way.
+    // Bare words right beside it, with no element around them: EIA writes
+    // "Show relative standard errors expressed as percent in parenthesis:
+    // <input type=checkbox>", and the element walk below stepped over the
+    // text to the "Terms and definitions" link. A checkbox's words usually
+    // follow it, anything else's come first; a <br> or another control ends
+    // the look. A long run is cut to its last sentence, the one that leads in.
+    const box = /^(?:checkbox|radio)$/i.test(el.type || "");
+    for (const dir of box ? ["nextSibling", "previousSibling"] : ["previousSibling", "nextSibling"]) {
+      let n = el[dir];
+      while (n && n.nodeType === 3 && !clean(n.nodeValue)) n = n[dir];
+      if (!n || n.nodeType !== 3) continue;
+      const t = clean(n.nodeValue).split(/(?<=[.!?])\s+/).pop().replace(/:$/, "");
+      if (t && t.length <= 80 && /[a-z]/i.test(t)) return t;
+    }
     for (const dir of ["previousElementSibling", "nextElementSibling"]) {
       let sib = el[dir];
       for (let seen = 0; sib && seen < 3; seen++, sib = sib[dir]) {
-        if (/^(input|select|textarea)$/i.test(sib.tagName || "")) break;  // the next control along
-        const t = clean(shortText(sib));
+        // The next control along ends the row, whatever it is drawn as: NASS's
+        // search box was "Search Clear", the two buttons beside it. A bare
+        // checkbox is the exception - it has no words of its own, and the
+        // button beside it (an accordion's title) is what it is called.
+        if (isControlish(sib) && !box) break;
+        const t = clean(shortText(sib, { skipControls: true }));
         if (t && t.length <= 60) return t;
       }
     }
     for (let n = el.parentElement, up = 0; n && up < 3; n = n.parentElement, up++) {
-      const t = clean(shortText(n));
+      const t = clean(shortText(n, { skipControls: true }));
+      if (t && t.length <= 60) return t;
+    }
+    return "";
+  };
+
+  // The heading over a form that names nothing else: EIA's data-set list
+  // sits under <h1>Change data set</h1> with no label, and was "topic select".
+  const headingAbove = (el) => {
+    for (let n = el.parentElement, up = 0; n && up < 3; n = n.parentElement, up++) {
+      const before = [...n.querySelectorAll("h1, h2, h3, h4, h5, h6, legend, [role=heading]")]
+        .filter((h) => h.compareDocumentPosition(el) & 4);
+      const t = before.length ? shortText(before[before.length - 1]).replace(/\s+/g, " ").trim() : "";
       if (t && t.length <= 60) return t;
     }
     return "";
@@ -1029,7 +1272,20 @@ return (function () {
   // document, rebuilt and whitespace-collapsed once per candidate control,
   // which is what turned reading that page into a hang rather than a pause.
   // Nothing downstream keeps more than 80 characters of it anyway.
-  const shortText = (el) => {
+  // A dropdown's options are not words beside anything. PRISM wraps each
+  // year list in a <label> with the word "start", and the label read as
+  // "2025 2024 2023 ... start"; a row holding three lists read as all three.
+  const UNWORDED = /^(?:SELECT|SCRIPT|STYLE|TEMPLATE)$/;
+  // Another control's words are not this one's. A bare <select> in a form
+  // whose only text is a link beside it took the link's name for its own
+  // once option text stopped counting, so "click Puerto Rico/Virgin Islands"
+  // set the state list. A container's text, read for a control inside it,
+  // leaves out what belongs to the other controls in it.
+  const CONTROLISH = /^(?:A|BUTTON|INPUT|SELECT|TEXTAREA)$/;
+  const CONTROL_ROLE = /^(?:button|link|tab|menuitem|option|checkbox|radio|switch)$/;
+  const isControlish = (n) => CONTROLISH.test(String(n.tagName || "").toUpperCase())
+    || CONTROL_ROLE.test(String((n.getAttribute && n.getAttribute("role")) || ""));
+  const shortText = (el, { skipControls = false } = {}) => {
     if (!el) return "";
     let out = "";
     // A line break is a space. waterdata.usgs.gov writes its step buttons as
@@ -1047,6 +1303,12 @@ return (function () {
         if (c.nodeType === 3) { out += c.nodeValue || ""; continue; }
         if (c.nodeType !== 1) continue;
         if (String(c.tagName).toUpperCase() === "BR") { out += " "; continue; }
+        // A picture's words are its alt, an icon's its <title>: a link that
+        // holds only a logo is named for the logo, as a screen reader names it.
+        const tag = String(c.tagName).toUpperCase();
+        if (UNWORDED.test(tag) || (skipControls && isControlish(c))) continue;
+        if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
+        if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
         walk(c);
       }
     };
@@ -1061,7 +1323,8 @@ return (function () {
       if (node.nodeType === 8) continue;
       if (node.nodeType === 3) out += node.nodeValue || "";
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
-      else if (node.nodeType === 1) walk(node);
+      else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
+        && !(skipControls && isControlish(node))) walk(node);
       if (out.length > 200) break;
     }
     return out.slice(0, 200);
@@ -1089,6 +1352,12 @@ return (function () {
     // scrollIntoView, and without this every click threw there rather than
     // being exercised.
     if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center", inline: "center" });
+    // The pointer arrives before it presses, as a mouse's does. Menus that
+    // open on hover - ifis.iowafloodcenter.org's whole sidebar - never saw a
+    // press without one, and opened for a person and not for this.
+    el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
     el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
@@ -1110,7 +1379,7 @@ return (function () {
     return el;
   };
 
-  const setSelect = (elOrSel, valueOrText) => {
+  const setSelect = (elOrSel, valueOrText, add = false) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
@@ -1118,6 +1387,15 @@ return (function () {
       (o) => o.value === valueOrText || norm(o.text) === norm(valueOrText)
     );
     if (!opt) throw new Error(`setSelect: no option "${valueOrText}" in [${[...el.options].map((o) => o.value)}]`);
+    // A second choice in a multi-select joins the first - the ctrl-click a
+    // person makes - rather than replacing it. Only when asked to add: the
+    // first choice in a request replaces whatever the page had chosen.
+    if (el.multiple && add) {
+      opt.selected = true;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return opt.value;
+    }
     setNativeValue(el, opt.value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1294,13 +1572,18 @@ return (function () {
   // the whole reason to ask again, and a cache that survived a click reported
   // every revealed control as still hidden - which is the opposite of what
   // the disclosure work is for. Speed inside a pass, never across an action.
-  const pageTouched = () => { visCache = null; ariaIndex = null; labelForIndex = null; };
+  const pageTouched = () => { visCache = null; ariaIndex = null; labelForIndex = null; drawerToggle = undefined; };
   const isVisible = (el) => {
     if (!el) return false;
     if (visCache && visCache.has(el)) return visCache.get(el);
     const r = el.getBoundingClientRect();
     let out;
     if (!r.width && !r.height) out = false;
+    // Parked off the page - Dojo keeps a real <input> at left:-10000px
+    // behind every drawn button, and it was a second "Get Data" the model
+    // could not tell from the first. Page coordinates, so something merely
+    // scrolled past still counts as on the page.
+    else if (r.right + window.scrollX < -500 || r.bottom + window.scrollY < -500) out = false;
     else {
       const s = getComputedStyle(el);
       out = s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
@@ -1325,6 +1608,21 @@ return (function () {
     if (el.hasAttribute("onclick")) return true;
     const p = reactProps(el);
     if (p && (p.onClick || p.onChange || p.onInput)) return true;
+    // Assigned in script rather than written in the markup - el.onclick =
+    // ..., or jQuery's .click()/.on(), which most older research and
+    // government apps are built on. Neither leaves an attribute, so an image
+    // that opens a whole menu was not a control at all. A hover-only handler
+    // counts only on something with no words of its own - an icon - since
+    // on text it is far more often a highlight than an action.
+    if (typeof el.onclick === "function" || typeof el.onmousedown === "function") return true;
+    try {
+      const jq = window.jQuery;
+      const ev = jq && typeof jq._data === "function" ? jq._data(el, "events") : null;
+      if (ev && (ev.click || ev.mousedown || ev.mouseup || ev.pointerdown || ev.touchstart)) return true;
+      const hoverOnly = (ev && (ev.mouseover || ev.mouseenter)) || typeof el.onmouseover === "function";
+      if (hoverOnly && !String(el.textContent || "").trim()
+          && (/^(img|svg|i|span|div|a|li)$/i.test(el.tagName) || el.querySelector("img, svg"))) return true;
+    } catch (e) { /* a page's own jQuery, broken or replaced */ }
     try {
       if (typeof getEventListeners === "function") {
         const ev = getEventListeners(el);
@@ -1470,6 +1768,18 @@ return (function () {
       }
       const byAria = ariaIndex.get(id);
       if (byAria && isVisible(byAria)) return byAria;
+      // Tabs that name their panel some other way. Bootstrap and jQuery UI
+      // point at it with href="#id" or data-(bs-)target, and many apps with
+      // data-tab="id" - no aria-controls, so every control on a closed tab
+      // was hidden with no way in and dropped, and "select the Mississippi
+      // basin" on a page that had one said nothing matched.
+      try {
+        const q = (window.CSS && CSS.escape) ? CSS.escape(id) : id.replace(/["\\]/g, (c) => `\\${c}`);
+        const named = document.querySelectorAll(
+          `a[href="#${q}"], [data-target="#${q}"], [data-bs-target="#${q}"], [data-target="${q}"], [data-bs-target="${q}"], [data-tab="${q}"], [data-panel="${q}"], [data-pane="${q}"]`);
+        const opener = [...named].find((t) => isVisible(t) && !hiddenAncestor.contains(t));
+        if (opener) return opener;
+      } catch (e) { /* an id no selector can name */ }
     }
     if (hiddenAncestor.tagName === "DETAILS" || hiddenAncestor.closest) {
       const details = hiddenAncestor.tagName === "DETAILS" ? hiddenAncestor : hiddenAncestor.closest("details");
@@ -1560,6 +1870,35 @@ return (function () {
         if (first && isVisible(first) && !first.contains(el) && first !== el) return first;
       }
     }
+    /* A drawer opened by the page's one menu button, from anywhere.
+     *
+     * A slide-out navigation - <div id="drawer">, <nav class="offcanvas">,
+     * a sidenav - sits nowhere near the "☰ Menu" that opens it, and nothing
+     * in the markup joins the two. Every item in it was hidden with no way
+     * in, so "go to reports" was told the page had no Reports. The drawer
+     * says what it is in its id, class or role; the button says what it is
+     * in its label, its class, or the ☰ it shows.
+     */
+    const DRAWERISH = /(^|[\s_-])(drawer|offcanvas|off-canvas|sidenav|side-nav|sidebar|sidemenu|nav|navigation|menu|mobile-menu)([\s_-]|$)/i;
+    const drawerLike = (n) => n && (n.tagName === "NAV"
+      || /^(navigation|menu)$/i.test((n.getAttribute && n.getAttribute("role")) || "")
+      || DRAWERISH.test(String(n.id || "")) || saysMenu(n)
+      || DRAWERISH.test(String((n.className && n.className.baseVal) || n.className || "")));
+    if (drawerLike(hiddenAncestor) && drawerToggle === undefined) {
+      drawerToggle = null;
+      const TOGGLE = /hamburger|navbar-toggler|menu-toggle|menu-btn|menu-button|nav-toggle|drawer-toggle|sidenav-toggle|offcanvas-toggle/i;
+      for (const t of deepQueryAll('button, a, [role=button], [onclick], [class*=hamburger], [class*=toggle], [aria-label]').slice(0, 400)) {
+        if (hiddenAncestor.contains(t) || t.contains(el) || !isVisible(t)) continue;
+        const said = `${(t.getAttribute && t.getAttribute("aria-label")) || ""} ${t.textContent || ""}`.replace(/\s+/g, " ").trim();
+        if (TOGGLE.test(String((t.className && t.className.baseVal) || t.className || ""))
+            || /^(?:☰|≡)?\s*(?:open\s+|main\s+|site\s+)?(?:menu|navigation|nav)$/i.test(said) || /^(?:☰|≡)$/.test(said)) {
+          drawerToggle = t;
+          break;
+        }
+      }
+    }
+    if (drawerToggle && drawerLike(hiddenAncestor) && !hiddenAncestor.contains(drawerToggle)
+        && !drawerToggle.contains(el) && isVisible(drawerToggle)) return drawerToggle;
     return null;
   }
 
@@ -1585,12 +1924,15 @@ return (function () {
 
   function inventory({ includeHidden = false } = {}) {
     freshPass();
-    ariaIndex = null; labelForIndex = null;
+    ariaIndex = null; labelForIndex = null; drawerToggle = undefined;
     const seen = new Set();
     const all = [];
     for (const el of walk(document.documentElement)) {
       const tag = tagOf(el);
       const role = el.getAttribute("role");
+      // ARIA says presentation strips the element of meaning, and that is
+      // what Dojo wraps each button in; the button proper is inside it.
+      if (role === "presentation" || role === "none") continue;
       const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
       // Real signals (a native interactive tag, an ARIA role, a tab stop, or
       // an actual handler) vs. cursor:pointer alone. Found live on
@@ -1625,7 +1967,14 @@ return (function () {
       if (nestedDuplicate) continue;
       // A control behind a closed panel is still a control. Recorded with
       // what would have to be opened first, so using it can open it.
-      const shown = isVisible(el);
+      // A styled checkbox is drawn by its label, the input itself tucked out
+      // of sight under a checkmark span - fims on hydroinformatics.tulane.edu
+      // builds its whole layer list that way, and every layer was dropped as
+      // hidden with no way in, so "click flood map set" pressed Map Scale.
+      // The label on screen is the control on screen.
+      const labelShown = /^(checkbox|radio)$/.test(String(el.type || "")) && !isVisible(el)
+        && (() => { const l = (el.labels && el.labels[0]) || (el.closest && el.closest("label")); return !!(l && l !== el && isVisible(l)); })();
+      const shown = isVisible(el) || labelShown;
       if (!shown && !includeHidden) continue;
       const opener = shown ? null : disclosureFor(el);
       if (!shown && !opener) continue;   // hidden with no way in is not usable
@@ -1688,10 +2037,24 @@ return (function () {
             return href && !/^#$|^javascript:/i.test(href) ? href : undefined;
           } catch (e) { return undefined; }
         })(),
+        // A link that opens another site or a new tab, which is not somewhere
+        // anybody goes by accident.
+        elsewhere: (() => {
+          try {
+            const a = el.matches("a[href]") ? el : (el.closest && el.closest("a[href]"));
+            if (!a) return undefined;
+            if (/_blank/i.test(a.getAttribute("target") || "")) return true;
+            const u = new URL(a.getAttribute("href"), location.href);
+            return /^https?:$/.test(u.protocol) && u.host !== location.host ? true : undefined;
+          } catch (e) { return undefined; }
+        })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
         expanded,
         revealedBy: opener ? cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
+        // What its tooltip calls it, where that differs: another name a
+        // request may use.
+        hint: (() => { const t = String(el.title || "").replace(/\s+/g, " ").trim(); return t && t !== lab ? t.slice(0, 80) : undefined; })(),
       };
       // Which one is chosen, not only what is on offer. Without it nothing
       // can tell whether a selection took, and a list that had just been set
@@ -2287,7 +2650,11 @@ return (function () {
   function readPairs(limit = 40) {
     const pairs = [];
     // definition lists
+    // On screen only. Google Maps keeps its keyboard-shortcut table in a
+    // closed dialog on every page, and "read this page" on a radar viewer
+    // came back as "←: Move left, →: Move right" and nothing of the page.
     for (const dl of deepQueryAll("dl")) {
+      if (!isVisible(dl)) continue;
       const kids = [...dl.children];
       for (let i = 0; i < kids.length - 1; i++) {
         if (kids[i].tagName === "DT" && kids[i + 1].tagName === "DD") {
@@ -2297,6 +2664,7 @@ return (function () {
     }
     // two-cell rows, the usual shape of a "current conditions" table
     for (const tr of deepQueryAll("tr")) {
+      if (!isVisible(tr)) continue;
       if (tr.cells && tr.cells.length === 2) {
         const label = readableTextOf(tr.cells[0]), value = readableTextOf(tr.cells[1]);
         if (label && value && label.length < 60) pairs.push({ label: label.slice(0, 60), value: value.slice(0, 60) });
@@ -2783,9 +3151,131 @@ return (function () {
   // defaults - a reveal that meant to wait 120ms waited 220, and nothing
   // anywhere said so. Taking either name means no caller can get it wrong,
   // which matters more here than picking a winner.
-  function settle({ quiet, timeout, quietMs, timeoutMs } = {}) {
+  /* Is the page still fetching what the action asked for?
+   *
+   * Quiet was taken for finished. An app that puts up "Loading stations..."
+   * and then waits two seconds on its server changes nothing in between, so
+   * 220ms of quiet arrived long before the data did - the card said "Nothing
+   * changed" on a tab that was loading, and the next step of a chain, or the
+   * explanation after it, read the spinner instead of the table.
+   *
+   * Two signals, both the page's own: a request still out that started
+   * around the action, and a loading indicator on screen. Either keeps the
+   * wait going, up to a cap, so a page that polls forever or shows a spinner
+   * that never leaves costs a bounded wait rather than a hang.
+   */
+  const REQUESTS = (() => {
+    // Shared with any other copy of this bundle in the page, so a second
+    // injection does not wrap fetch a second time.
+    if (window.__wcRequests) return window.__wcRequests;
+    const out = { pending: new Map(), seq: 0 };
+    window.__wcRequests = out;
+    // Pictures are not the page working. A map fetches tiles for as long as
+    // it is panned, and counting them kept every step on a map page waiting
+    // out the whole busy allowance.
+    const PICTURE = /\.(?:png|jpe?g|gif|webp|svg|ico|bmp|woff2?|ttf|otf|pbf|mvt)(?:[?#]|$)|\/(?:tiles?|vt|mapvt|arcgis\/rest\/services\/[^?]*\/tile)\b|\bmaps\.googleapis\.com\/maps\/vt|\bmt[0-3]\.google|tile\.openstreetmap|\bgstatic\.com\/|\bkh\.google/i;
+    const urlOf = (u) => { try { return String(typeof u === "string" ? u : (u && (u.href || u.url)) || ""); } catch (e) { return ""; } };
+    const begin = () => { const id = ++out.seq; out.pending.set(id, Date.now()); return id; };
+    const end = (id) => { out.pending.delete(id); };
+    try {
+      const nativeFetch = window.fetch;
+      if (typeof nativeFetch === "function") {
+        window.fetch = function (...args) {
+          if (PICTURE.test(urlOf(args[0]))) return nativeFetch.apply(this, args);
+          const id = begin();
+          let p;
+          try { p = nativeFetch.apply(this, args); } catch (e) { end(id); throw e; }
+          // Settled when the headers arrive, which is when the page's own
+          // code gets to run. Waiting on the body would wait on a stream.
+          Promise.resolve(p).then(() => end(id), () => end(id));
+          return p;
+        };
+      }
+      const XHR = window.XMLHttpRequest;
+      if (XHR && XHR.prototype && XHR.prototype.send) {
+        const send = XHR.prototype.send;
+        const openX = XHR.prototype.open;
+        XHR.prototype.open = function (method, url, ...rest) { this.__wcPicture = PICTURE.test(urlOf(url)); return openX.call(this, method, url, ...rest); };
+        XHR.prototype.send = function (...args) {
+          if (this.__wcPicture) return send.apply(this, args);
+          const id = begin();
+          this.addEventListener("loadend", () => end(id), { once: true });
+          try { return send.apply(this, args); } catch (e) { end(id); throw e; }
+        };
+      }
+    } catch (e) { /* a page that froze fetch: the indicator check still runs */ }
+    return out;
+  })();
+  // Requests the action could have started: begun no earlier than a moment
+  // before the wait did, and not so long ago they are a stream or a poll.
+  const requestsSince = (t) => {
+    let n = 0;
+    const now = Date.now();
+    for (const at of REQUESTS.pending.values()) if (at >= t && now - at < 15000) n++;
+    return n;
+  };
+
+  // A spinner, a progress bar with no value, or a short "Loading..." line.
+  // Class names are matched as whole words or as spinner/loading/loader, so
+  // a "load-more" button or a determinate progress bar is not taken for one.
+  // Only as loading messages are written: trailing dots, or the bare word.
+  // "Running water quality" is a heading, "Running…" is a status.
+  const LOADING_TEXT = /^\s*(?:(?:loading|fetching|retrieving|processing|running|searching|updating|calculating|computing)\b[^.…]{0,30}(?:\.{2,}|…)|loading|please wait\b.{0,30})\s*$/i;
+  // What on the page says it is still loading, in words, or "" for nothing.
+  function loadingShown() {
+    const describe = (el, why) => `${why}: ${String(el.tagName || "").toLowerCase()}${el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).slice(0, 3).join(".") : ""}`;
+    try {
+      const marked = document.querySelectorAll(
+        "[aria-busy=\"true\"], [role=progressbar]:not([aria-valuenow]), [class*=spinner], [class*=loading], [class*=loader]");
+      for (const el of [...marked].slice(0, 60)) {
+        if (/\bloaded\b/i.test(String(el.className || ""))) continue;
+        // On screen with a size of its own. waterdata.usgs.gov keeps an
+        // empty "loading-indicator-container" on every page, 0px tall, its
+        // spinner display:none until something loads - counted as shown,
+        // every action there waited out the whole twelve seconds.
+        let box = null;
+        try { box = el.getBoundingClientRect(); } catch (e) { /* detached */ }
+        if (!box || box.width < 3 || box.height < 3) continue;
+        // And a holder whose spinner is hidden is not one, whatever its box -
+        // the same container, measured where nothing is laid out, or given
+        // padding. An empty spinner div has no children and still counts.
+        if (el.children && el.children.length && !String(el.textContent || "").trim()
+            && ![...el.children].some((k) => isVisible(k))) continue;
+        if (isVisible(el)) return describe(el, "indicator");
+      }
+      // Text, for pages that say it in words. Bounded: short text nodes only.
+      const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+      let seen = 0;
+      for (let t = walker.nextNode(); t && seen < 4000; t = walker.nextNode(), seen++) {
+        const v = t.nodeValue;
+        if (!v || v.length > 45 || !LOADING_TEXT.test(v)) continue;
+        const holder = t.parentElement;
+        if (!holder || /^(SCRIPT|STYLE|NOSCRIPT)$/.test(holder.tagName)) continue;
+        // A list being filled in says so in its own chosen option: picking a
+        // basin fills "Station" a couple of seconds later, and until then the
+        // station asked for is not in it to pick.
+        if (holder.tagName === "OPTION") {
+          const list = holder.closest && holder.closest("select");
+          if (list && list.selectedOptions && list.selectedOptions[0] === holder && isVisible(list)) return describe(list, `list reads "${v.trim()}"`);
+          continue;
+        }
+        if (isVisible(holder)) return describe(holder, `text "${v.trim()}"`);
+      }
+    } catch (e) { /* unreadable page: treat as not loading */ }
+    return "";
+  }
+  // Why a wait is still going, for whoever has to find out.
+  function busyNow() {
+    const since = Date.now() - 15000;
+    return { requests: requestsSince(since), loading: loadingShown() || null };
+  }
+
+  function settle({ quiet, timeout, quietMs, timeoutMs, busyTimeoutMs } = {}) {
     quiet = quiet != null ? quiet : (quietMs != null ? quietMs : 220);
     timeout = timeout != null ? timeout : (timeoutMs != null ? timeoutMs : 2500);
+    // How long a page that says it is still working is waited on.
+    const busyTimeout = Math.max(timeout, busyTimeoutMs != null ? busyTimeoutMs : 12000);
+    const since = Date.now() - 1500;
     return new Promise((resolve) => {
       let lastChange = Date.now();
       let mutations = 0;
@@ -2797,14 +3287,24 @@ return (function () {
         childList: true, subtree: true, attributes: true, characterData: true,
       });
       const started = Date.now();
+      let busySeen = false;
       const tick = () => {
         const idleFor = Date.now() - lastChange;
-        if (idleFor >= quiet || Date.now() - started >= timeout) {
-          observer.disconnect();
-          resolve({ mutations, waitedMs: Date.now() - started, timedOut: Date.now() - started >= timeout });
-          return;
+        const elapsed = Date.now() - started;
+        if (idleFor >= quiet || elapsed >= timeout) {
+          // Quiet, but only finished if nothing says it is still on its way.
+          const busy = elapsed < busyTimeout && (requestsSince(since) > 0 || !!loadingShown());
+          if (!busy) {
+            observer.disconnect();
+            resolve({ mutations, waitedMs: elapsed, timedOut: elapsed >= busyTimeout || (!busySeen && elapsed >= timeout), waitedForLoading: busySeen });
+            return;
+          }
+          busySeen = true;
+          // Something is still loading: what counts as quiet starts again
+          // from when it finishes, so the content it brings is waited for too.
+          if (idleFor >= quiet) lastChange = Date.now() - quiet + 120;
         }
-        setTimeout(tick, 60);
+        setTimeout(tick, busySeen ? 120 : 60);
       };
       setTimeout(tick, 60);
     });
@@ -2816,9 +3316,16 @@ return (function () {
   function pageSignature({ limit = 400 } = {}) {
     const state = {};
     let n = 0;
-    for (const el of deepQueryAll("input, select, textarea, [role=radio], [role=checkbox], [aria-pressed], [aria-selected], [aria-expanded]")) {
+    for (const el of deepQueryAll("input, select, textarea, [role=radio], [role=checkbox], [aria-pressed], [aria-selected], [aria-expanded], [aria-checked], [role=menuitemradio], [role=menuitemcheckbox], [role=tab]")) {
       if (n >= limit) break;
-      if (!isVisible(el)) continue;
+      // A styled checkbox or radio is drawn by its label; the input itself is
+      // out of sight, and its change went uncounted - "choose the 1% return
+      // period" set it and was reported as unverifiable.
+      if (!isVisible(el)) {
+        const styled = /^(checkbox|radio)$/.test(String(el.type || ""))
+          && (() => { const l = (el.labels && el.labels[0]) || (el.closest && el.closest("label")); return !!(l && l !== el && isVisible(l)); })();
+        if (!styled) continue;
+      }
       const key = cssPath(el);
       if (!key) continue;
       const tag = tagOf(el);
@@ -2827,7 +3334,9 @@ return (function () {
       else if (el.type === "checkbox" || el.type === "radio") value = !!el.checked;
       else if (tag === "input" || tag === "textarea") value = String(el.value || "").slice(0, 80);
       else {
-        value = el.getAttribute("aria-pressed") || el.getAttribute("aria-selected") || el.getAttribute("aria-expanded");
+        // aria-checked too: a Google map's Map/Satellite/Night buttons say
+        // which is on that way, and a switch between them read as no change.
+        value = el.getAttribute("aria-pressed") || el.getAttribute("aria-selected") || el.getAttribute("aria-expanded") || el.getAttribute("aria-checked");
       }
       if (value === undefined || value === null) continue;
       // The label travels with the value. Without it a diff can only report
@@ -2853,8 +3362,40 @@ return (function () {
         const key = cssPath(r);
         if (key && !state[key]) state[key] = { value: !!r.checked, label: rawLabelOf(r).slice(0, 60) || "map layer", tag: "input" };
       }
+      // A Google map says its zoom only in its scale bar - "20 km" becomes
+      // "5 km" - so pressing Zoom In on one was reported as changing nothing.
+      deepQueryAll(".gm-style").slice(0, 2).forEach((m, i) => {
+        const scale = [...m.querySelectorAll('button[aria-label^="Map Scale"], .gm-style-cc')]
+          .map((n) => n.getAttribute("aria-label") || n.textContent).join(" ").replace(/\s+/g, " ").trim();
+        if (scale) state[`gmap-zoom-${i}`] = { value: scale.slice(0, 60), label: "map zoom", tag: "map" };
+      });
     } catch (e) { /* no map here */ }
-    return { url: location.href, title: document.title, controls: state, count: n };
+    // The headings on screen, and any dialog. Opening a tab or a report
+    // changes no control's value, so "open the stations tab" switched the
+    // tab, loaded the table, and the card said nothing changed. A heading
+    // that was not there before is the page showing something new. Ones in
+    // a carousel or a live region are left out: those change on their own.
+    const shownHeadings = [];
+    try {
+      for (const h of deepQueryAll("h1, h2, h3, [role=heading], dialog[open], [role=dialog], [role=alertdialog]")) {
+        if (shownHeadings.length >= 40) break;
+        if (!isVisible(h)) continue;
+        if (h.closest && h.closest('[aria-live], [class*=carousel], [class*=slider], [class*=slick], [class*=swiper], [class*=marquee], [class*=ticker]')) continue;
+        const text = norm(rawLabelOf(h) || h.textContent || "").slice(0, 60);
+        if (text) shownHeadings.push(text);
+      }
+    } catch (e) { /* unreadable: the controls still speak */ }
+    // How many controls are on screen. A step that opens the next part of a
+    // form changes no control's value, so "select the radar" - which puts a
+    // date picker on screen - read as nothing changed.
+    let onScreen = 0;
+    try {
+      for (const el of deepQueryAll("button, a[href], select, input, textarea, [role=button], [role=tab], [role=menuitem]")) {
+        if (isVisible(el)) onScreen++;
+      }
+      state["controls-on-screen"] = { value: onScreen, label: "controls on screen", tag: "page" };
+    } catch (e) { /* unreadable: the values still speak */ }
+    return { url: location.href, title: document.title, controls: state, count: n, headings: shownHeadings };
   }
 
   // What actually changed between two snapshots, in terms a person can read.
@@ -2895,6 +3436,15 @@ return (function () {
     // fired. What matters is only whether the fragment it landed on is
     // empty - "#" carries no view, and a map writing "#@=-83,43,5" does.
     const cosmeticHash = hashOnly && !String(after.url).split("#")[1];
+
+    // Something new on show. Only appearances count: a heading that went
+    // away with nothing in its place is as likely a menu closing as the
+    // action working.
+    const hadBefore = new Set(before.headings || []);
+    const shown = (after.headings || []).filter((h) => !hadBefore.has(h));
+    if (shown.length && before.headings) {
+      changes.push({ selector: "heading", label: shown[0], appeared: true, now: shown.slice(0, 3).join("; ") });
+    }
 
     return {
       changed: changes.length > 0 || (before.url !== after.url && !cosmeticHash),
@@ -3541,7 +4091,7 @@ return (function () {
   // The only way in is to press the thing and look again.
   function disclosures({ limit = 6, match = "" } = {}) {
     freshPass();
-    ariaIndex = null;
+    ariaIndex = null; drawerToggle = undefined;
     const out = [];
     const seen = new Set();
     const NAMES = /\b(layer|layers|menu|filter|filters|options|settings|more|panel|legend|tools|expand|show)\b/i;
@@ -4075,6 +4625,14 @@ return (function () {
       if (n.nodeType === 3) { out += n.nodeValue || ""; return; }
       if (n.nodeType !== 1) return;              // comments and the rest are not text
       if (SKIP.test(n.nodeName)) return;
+      // Hidden text is not what the page shows. Google Maps keeps its
+      // keyboard-shortcut help in a closed dialog on every page it draws,
+      // and this read it out as the page's own words.
+      if (n.hidden || (n.getAttribute && n.getAttribute("aria-hidden") === "true")) return;
+      try {
+        const cs = getComputedStyle(n);
+        if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return;
+      } catch (e) { /* no layout here: read it */ }
       // A space per element boundary, for the same reason readableTextOf
       // puts one there: without it this sample read "Latest value7.45
       // ftProvisional TimeResult 2026-09-25 12:503.09", which is the page's
@@ -4174,7 +4732,7 @@ return (function () {
     restore,
     goBack,
     scrollToElement,
-    settle,
+    settle, busyNow,
     pageSignature,
     signatureDiff,
     hoverSeries,
@@ -4242,7 +4800,7 @@ return (function () {
     },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
-    selectOption: (selector, valueOrText) => setSelect(selector, valueOrText),
+    selectOption: (selector, valueOrText, add) => setSelect(selector, valueOrText, !!add),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
     disclosures, openDisclosure,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
@@ -6315,7 +6873,11 @@ async function autoPublish(tabId, url) {
 // throws at the top level of the service worker, which kills the worker
 // outright - every ask then fails with no error anyone can see, which is the
 // single worst failure this extension has.
-if (chrome.tabs && chrome.tabs.onUpdated) {
+// Only while publishing is on. Otherwise every page load in every tab woke
+// the worker, and on an enabled site injected the page bundle and called
+// mcpRegister - which does nothing in a browser without modelContext - for
+// a feature parked behind PUBLISH_WEBMCP.
+if (PUBLISH_WEBMCP && chrome.tabs && chrome.tabs.onUpdated) {
   chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
     if (info.status === "complete" && tab && tab.url) autoPublish(tabId, tab.url);
   });
@@ -6337,7 +6899,7 @@ async function registerFeedCapture() {
     if (!origins.length) return;
     const drop = await chrome.scripting.getRegisteredContentScripts({ ids: [PUBLISH_TOOLS_ID] }).catch(() => []);
     if (drop.length) await chrome.scripting.unregisterContentScripts({ ids: [PUBLISH_TOOLS_ID] });
-    await chrome.scripting.registerContentScripts([{
+    const scripts = [{
       id: FEED_CAPTURE_ID,
       matches: origins,
       js: [FEED_CAPTURE],
@@ -6357,7 +6919,11 @@ async function registerFeedCapture() {
       runAt: "document_end",
       world: "MAIN",
       allFrames: false,
-    }]);
+    }];
+    // The page bundle is 180 KB, parsed on every page load of every enabled
+    // site, for publish-tools.js to return on its first line while
+    // publishing is parked. The bundle is injected when somebody asks.
+    await chrome.scripting.registerContentScripts(PUBLISH_WEBMCP ? scripts : scripts.slice(0, 1));
   } catch (e) {
     // Registration is an enhancement: without it capture still works for
     // requests made after an ask, just not for the page's startup load.
@@ -7239,7 +7805,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
     },
     {
-      name: "pageSelectOption", fn: "selectOption", argOrder: ["selector", "value"],
+      name: "pageSelectOption", fn: "selectOption", argOrder: ["selector", "value", "add"],
       description: "Choose an option in a <select> dropdown by CSS selector and the option's value or visible text.",
       parameters: { type: "object", properties: { selector: { type: "string" }, value: { type: "string" } }, required: ["selector", "value"] },
     },
@@ -8854,8 +9420,11 @@ const STATE_COMMAND = /\b(enable|disable|select|check|uncheck|tick|turn\s+(on|of
  * right now, the current alerts. Without that, it stays with the controls,
  * where going somewhere is still possible.
  */
+// "Read this page" is a request to read, not a control to find. Taken for
+// a command, a 3B spent 110 seconds choosing a radar site to click on a page
+// it had been asked to describe.
 const ASKING_TO_READ_PLAINLY =
-  /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
+  /^\s*(?:please\s+)?(?:explain|describe|summari[sz]e|interpret|tell\s+me|read\s+(?:me\s+)?(?:this|the|what)\b|what\s+(?:is|are|does|do)\b|how\s+(?:much|many)\b|why\b)/i;
 // Including one that opens on a preposition. "At what gage height does this
 // location reach minor flood stage" was taken for a command, and the model
 // pressed a graph control instead of reading the flood stages off the page.
@@ -8913,7 +9482,8 @@ const NAMED_SOURCE = /^\s*(?:according\s+to|based\s+on|per)\s+[^,?]{1,80},\s*/i;
 // And "which X can I see" asks what the page offers, not what to do: "which
 // regions can I view separate drought maps for" clicked Regions instead of
 // listing them. "What can I do here" stays a request about doing.
-const WHICH_CAN_I = /^\s*(?:please\s+)?which\s+\w+(?:\s+\w+)?\s+(?:can|could)\s+i\b/i;
+// "What sectors can I choose from" is the same question as "which".
+const WHICH_CAN_I = /^\s*(?:please\s+)?(?:which|what)\s+\w+(?:\s+\w+)?\s+(?:can|could)\s+i\b/i;
 const ASKING_TO_READ = {
   test: (s) => {
     const t = String(s || "").replace(NAMED_SOURCE, "");
@@ -9511,7 +10081,15 @@ function findSearchBox(controls, where = null) {
     for (const w of whereWords) if (wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact") r += 5;
     return r;
   };
-  const boxes = controls.filter(textual);
+  // A box nobody can see is a search box only if it says so, or the request
+  // named it. hydroshare.org's home page has no search at all; its only text
+  // field is the Title of a create-resource form, closed - and "search for
+  // watershed" was typed into that and reported as searched.
+  const plausible = (c) => !c.hidden
+    || typeOf(c) === "search"
+    || /\b(?:search|find|query|look\s*up|keyword)/i.test(`${c.label || ""} ${c.revealedByLabel || ""}`)
+    || whereWords.some((w) => wordMatchesText(w, String(c.label || "").toLowerCase()) === "exact");
+  const boxes = controls.filter((c) => textual(c) && plausible(c));
   if (!boxes.length) return null;
   return boxes.slice().sort((a, b) => rank(b) - rank(a))[0];
 }
@@ -9528,6 +10106,12 @@ function figuresAgree(asked, have) {
 function planGenericTool(instruction, inventory) {
   const controls = (inventory && inventory.controls) || [];
   if (!controls.length) return null;
+  // "Go to reports" is "open reports". The verb was kept as a word to match,
+  // so a control called Reports answered only part of the request, and on a
+  // page whose menu items are plain clickable divs - most apps - nothing was
+  // pressed. "go back" and "go forward" are the browser's, not a control's.
+  instruction = String(instruction || "")
+    .replace(/^\s*(?:please\s+)?(?:go|navigate|head|jump)\s+(?!back\b|forward\b)(?:over\s+)?to\s+|^\s*(?:please\s+)?(?:take|bring)\s+me\s+to\s+|^\s*(?:please\s+)?visit\s+/i, "open ");
 
   const allWords = meaningfulWords(instruction);
   if (!allWords.length) return null;
@@ -9634,13 +10218,19 @@ function planGenericTool(instruction, inventory) {
       return !!l && (l === askedFlat || closeName(askedFlat, l));
     };
     const whole = tied.filter((x) => isWholeRequest(x.control));
-    if (whole.length === 1 && tied.length > 1) {
+    // Or one of them is on screen and the rest are tucked away: FIMS has
+    // "Cedar Rapids (D)" in the open layer panel and "Cedar Rapids" in a
+    // closed one, and the one in view is the one meant.
+    const shown = tied.filter((x) => !x.control.hidden);
+    const pick = tied.length > 1 && (whole.length === 1 ? whole[0] : shown.length === 1 ? shown[0] : null);
+    if (pick) {
       // Not a tie after all. Put it at the front and let the normal path act.
-      const pick = whole[0];
       scored.splice(scored.indexOf(pick), 1);
       scored.unshift(pick);
       tied.length = 0;
       tied.push(pick);
+      whole.length = 0;
+      whole.push(pick);
     }
     const bestNow = scored[0];
     const runnerUpNow = scored[1];
@@ -11142,7 +11732,14 @@ async function answerAfterActing(res, ask) {
   return out;
 }
 
+// A question is not a command for carrying a verb. "What sectors can I
+// choose from" was an instruction because of "choose", and with no model
+// to say otherwise the page layer chose a sector and pressed Search. The
+// first word decides: one that opens a question stays a question. Only
+// the wh-words - "can you click search" is a polite command, not a question.
+const QUESTION_LED = /^\s*(?:(?:up\s+to|as\s+of|in|at|on|for|by|from|since|until|during)\s+)?(?:what(?:'s)?|which|how|where|when|who|whose|why)\b/i;
 function isCommand(instruction) {
+  if (QUESTION_LED.test(instruction || "")) return false;
   if (CONTROL_VERB.test(instruction || "")) return true;
   // A verb with a typo in it is still a verb. "clcik 30 days" was not
   // recognised as an instruction at all, so every path that acts was skipped
@@ -11371,7 +11968,7 @@ const ACTION_SYNONYMS = new Map(Object.entries({
 // A bare "and" only separates where a verb follows it, because the first half
 // of "click forecasts and outlooks and click key messages" is the name of a
 // control.
-const STEP_VERBS = "click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull";
+const STEP_VERBS = "retrieve|fetch|query|click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load|reset|clear|remove|delete|build|start|stop|pause|discard|export|save|upload|add|rename|submit|cancel|confirm|refresh|reload|generate|compute|calculate|draw|activate|deactivate|rotate|tilt|pan|name|rename";
 // "and press go", "and hit enter", "and get the forecast" finish the step
 // before them - the Go of a jump menu, the submit of a typed box - and as a
 // step of their own they went looking for a Go button on the page the first
@@ -11380,7 +11977,16 @@ const FINISHES_THE_STEP = "(?:press|click|hit|tap)\\s+(?:go|enter|submit|search)
 const STEP_BOUNDARY = new RegExp(
   `\\s*(?:,\\s*then\\s+|\\s+then\\s+|\\s+and then\\s+)\\s*`
   + `|\\s*,\\s*(?:and\\s+)?(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`
-  + `|\\s+and\\s+(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`, "i");
+  + `|\\s+and\\s+(?!${FINISHES_THE_STEP})(?=(?:${STEP_VERBS})\\b)`
+  // "switch volume units to acre-feet and distance units to miles" is two
+  // settings. Without a verb after "and" the second stayed glued to the
+  // first and was never set.
+  + `|\\s+and\\s+(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9.-])`
+  // "set the year to 2024, the month to july": a comma before the next
+  // assignment is a step boundary too.
+  + `|\\s*,\\s*(?=(?:the\\s+)?[a-z][a-z\\s-]{1,30}?\\s+to\\s+[a-z0-9.-])`
+  // "choose cedar rapids as the first scenario and des moines as the second"
+  + `|\\s+and\\s+(?=[a-z0-9][a-z0-9\\s().-]{1,40}?\\s+as\\s+(?:the|a|an)\\s+[a-z0-9])`, "i");
 function splitIntoSteps(instruction) {
   return String(instruction || "")
     // plot, graph and chart are asked for as often as click on these sites -
@@ -11451,7 +12057,10 @@ function nthOf(control, n) {
 // which of several, the one member meant. Plain matching first: "click
 // first name" is the control called First name, not a control called Name
 // with the ordinal taken off.
-const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to|(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to)\s+(?:me\s+)?/i;
+// The compound form first. With a bare "set" earlier in the alternation,
+// "set the time zone to UTC" lost only "set " and "the time zone to UTC"
+// was taken for a name; "switch" and "change", with no bare form, worked.
+const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to|click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to)\s+(?:me\s+)?/i;
 /* The other names a label gives itself. "Hydrologic Ensemble Forecast
  * System (HEFS)" is called HEFS as surely as it is called the long form -
  * that is what the parentheses are for - and "pull up HEFS" matched
@@ -11467,10 +12076,21 @@ function alsoCalled(label, control = null) {
     const flatOwn = own.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return flatOwn ? [flatOwn] : [];
   }
-  const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
-  if (!m) return [];
   const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  return [flat(m[1]), flat(m[2])].filter((x) => x.length >= 2);
+  const names = [];
+  // Its tooltip, where the page gave one that differs from its text.
+  if (control && control.hint) names.push(flat(control.hint));
+  // A list number is not part of the name: a contents link reading "15
+  // References" is the References link.
+  const unnumbered = flat(t).replace(/^\d+(?:\s\d+)*\s+(?=[a-z])/, "");
+  if (unnumbered && unnumbered !== flat(t)) names.push(unnumbered);
+  const m = t.match(/^(.*?)\s*\(([^()]{2,24})\)\s*$/);
+  if (m) names.push(flat(m[1]), flat(m[2]));
+  // Every trailing tag, one letter included: "Cedar Rapids (D)" and "Des
+  // Moines (M) (D)" are Cedar Rapids and Des Moines.
+  const untagged = flat(t.replace(/(?:\s*\([^()]{1,24}\))+\s*$/, ""));
+  if (untagged && untagged !== flat(t)) names.push(untagged);
+  return names.filter((x) => x.length >= 2);
 }
 
 function namedByClause(all, clause) {
@@ -11534,8 +12154,28 @@ function namedByClause(all, clause) {
         if (!/^(?:on|in|at|within|inside)$/.test(words[i])) continue;
         const core = words.slice(0, i).join(" ").replace(/^the\s+/, "");
         if (!core) continue;
+        // What is cut off has to be somewhere on the page, or a word for a
+        // part of one. "Zoom in on omaha" pressed Zoom In and dropped Omaha
+        // without a word - half the request done and reported as all of it.
+        const tail = words.slice(i + 1).filter((w) => !/^(?:the|a|an|this|that|my)$/.test(w));
+        const onPage = (w) => /^(?:map|maps|graph|chart|plot|page|table|panel|screen|sidebar|menu|toolbar|left|right|top|bottom|location|site|window|view)$/.test(w)
+          || all.some((c) => ` ${flat(c.label)} `.includes(` ${w} `));
+        if (!tail.length || !tail.every(onPage)) continue;
         const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
-          && flat(c.label) === core && !opposite(flat(c.label)));
+          && (flat(c.label) === core || alsoCalled(c.label, c).includes(core)) && !opposite(flat(c.label)));
+        if (hits.length === 1) { named = hits; cutExactly = true; }
+      }
+    }
+    // What kind of thing it is, said after its name. "Open the stations tab"
+    // is the tab called Stations - "tab" is not part of the name, and with it
+    // the clause was a name nothing wore, so it waited on the model. Exactly
+    // one control must wear what is left, as with the place cut above.
+    if (!named.length && !ordinalIn(text)) {
+      const core = bare.replace(/\s+(?:tab|button|link|menu item|menu|option|checkbox|check box|toggle|dropdown|drop down|list|box|page|section|panel|pane|item|icon|uploader|upload|tool|widget|form|dialog|window|viewer|picker|selector|control|setting|settings|layer|view)$/, "")
+        .replace(/^the\s+/, "");
+      if (core && core !== bare) {
+        const hits = all.filter((c) => !c.disabled && c.confidence !== "low"
+          && (flat(c.label) === core || alsoCalled(c.label, c).includes(core)) && !opposite(flat(c.label)));
         if (hits.length === 1) { named = hits; cutExactly = true; }
       }
     }
@@ -11554,7 +12194,11 @@ function namedByClause(all, clause) {
     const ownName = named.filter((c) => { const l = flat(c.label); return l === bare || l === whole || l === plainWhole; });
     const byName = ownName.length ? ownName : named;
     const notDoors = byName.filter((c) => !c.opensPanel);
-    const kept = notDoors.length ? notDoors : byName;
+    // On screen beats behind something. "Choose des moines" with Des Moines
+    // (M) (D) showing in the open panel and a plain "Des Moines" in a closed
+    // one opened the closed one, switching layers under the request.
+    const shown = notDoors.filter((c) => !c.hidden);
+    const kept = shown.length ? shown : (notDoors.length ? notDoors : byName);
     // Whether the name was worn exactly or reached for. The caller needs to
     // know: an exact name is already handled richly elsewhere, and this only
     // has to step in where that would miss.
@@ -11751,7 +12395,13 @@ async function modelStatus({ maxAgeMs = 4000 } = {}) {
 
   const value = await Promise.race([
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmStatus" }).catch(() => null),
-    new Promise((r) => setTimeout(() => r(null), 1500)),
+    // Six seconds, not one and a half. The document was created and awaited
+    // just above, so a reply normally takes milliseconds; the race is for a
+    // document that died. But with the card busy generating, a status reply
+    // can take longer than 1.5s, and losing the race read as "no model" - so
+    // the page's own matching took over from a model that was ready, and
+    // the suite's sequence checks flipped whenever the machine was loaded.
+    new Promise((r) => setTimeout(() => r(null), 6000)),
   ]);
   // What it said about the machine is worth keeping whatever it said about
   // the model: the graphics card does not change between one status call and
@@ -11800,6 +12450,36 @@ async function switchModelTo(id) {
   // without saying so.
   await releaseOffscreenModel();
   return { ok: true, model: id };
+}
+
+/* The model, started by the first request that needs it.
+ *
+ * Nothing loads it ahead of time any more - not the browser starting, not
+ * the panel opening - because holding gigabytes for a request that may never
+ * come is what slowed people's machines down. So the request that does need
+ * it starts it, and waits a short while: weights already in the browser's
+ * cache are ready in about ten seconds, and that request is then answered by
+ * the model rather than told to come back. A first download takes longer than
+ * anyone should sit through, and is reported as what it is.
+ */
+async function startModelIfIdle({ waitMs = 20000 } = {}) {
+  let st = await modelStatus({ maxAgeMs: 0 }).catch(() => null);
+  if (!st || st.ready || st.hasGpu === false || !(await isLocalModelEnabled())) return st;
+  // Only a load this started is waited on. One already under way was
+  // somebody else's, and its request has already been told.
+  if (st.loading || st.started) return st;
+  const chosen = await chrome.storage.local.get("llmModelId").then((g) => g.llmModelId).catch(() => null);
+  const id = (chosen && globalThis.WC_MODEL_IDS && globalThis.WC_MODEL_IDS.includes(chosen)) ? chosen : WC_DEFAULT_MODEL;
+  try {
+    await Promise.resolve(chrome.runtime.sendMessage({ target: "panel", type: "panelWarm", model: id })).catch(() => null);
+  } catch (e) { return st; }
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1000));
+    st = await modelStatus({ maxAgeMs: 0 }).catch(() => null);
+    if (!st || st.ready || st.error || (!st.loading && !st.started)) break;
+  }
+  return st;
 }
 
 async function releaseOffscreenModel() {
@@ -12055,7 +12735,9 @@ async function askModelForStep(payload) {
   // operating prompt.
   const prompt = payload.mode === "read"
     ? (globalThis.WC_BUILD_READ_PROMPT ? globalThis.WC_BUILD_READ_PROMPT(payload) : null)
-    : (globalThis.WC_BUILD_STEP_PROMPT ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null);
+    : payload.mode === "plan"
+      ? (globalThis.WC_BUILD_PLAN_PROMPT ? globalThis.WC_BUILD_PLAN_PROMPT(payload) : null)
+      : (globalThis.WC_BUILD_STEP_PROMPT ? globalThis.WC_BUILD_STEP_PROMPT(payload) : null);
   if (prompt && await panelIsOpen()) {
     if (!panelHasModel) {
       // Give the hidden copy back first, or the two of them share a card.
@@ -12073,7 +12755,7 @@ async function askModelForStep(payload) {
       const useId = (chosen && globalThis.WC_MODEL_IDS.includes(chosen))
         ? chosen : WC_DEFAULT_MODEL;
       const said = await chrome.runtime.sendMessage({
-        target: "panel", type: "panelStep", prompt,
+        target: "panel", type: "panelStep", prompt, schema: payload.schema || null,
         model: useId,
         timeoutMs: turnBudgetFor(useId),
       });
@@ -12290,6 +12972,231 @@ function turnBudgetMs() {
   return turnBudgetFor((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL);
 }
 
+/* The lists a question is about, read out with their options; and, for a
+ * "what can be chosen" question that one list answers, that answer.
+ *
+ * "What radar products can be displayed here" lives in a dropdown the
+ * page's prose never spells out. Handed the list, a 3B still answered with
+ * the page title one run in two; the page answers it itself, with or
+ * without a model. The best-matching list wins where the others are
+ * subsets of it, far smaller, or named by fewer of the question's words.
+ */
+const WHAT_CAN = /^\s*(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:be|i|you|we|one)\b|are\s+(?:available|offered|listed|there|possible|supported|provided)|is\s+available|options?|choices?)/i;
+function listChoicesFor(goal, pool) {
+  const qWords = meaningfulWords(goal).filter((w) => w.length > 3 && !/^(?:what|which|here|this|page|displayed|available|there|does|tell|show|shown|list|listed|options?|choices?)$/.test(w));
+  const stem = (w) => w.replace(/(?:ies|es|s)$/, "");
+  const lines = [];
+  const listed = [];
+  for (const c of pool) {
+    if (!(c.options || []).length || lines.length >= 6) continue;
+    const lab = String(c.label || "").toLowerCase();
+    const hits = qWords.filter((w) => wordMatchesText(w, lab) || lab.includes(stem(w))).length;
+    if (!hits) continue;
+    const opts = c.options.filter((o) => !placeholderOption(o)).map((o) => String(o.text || o.value).trim()).filter(Boolean);
+    if (!opts.length) continue;
+    lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
+    listed.push({ line: lines[lines.length - 1], hits, opts, hidden: !!c.hidden });
+  }
+  // "What can be turned on here" is the switches, which no dropdown lists.
+  if (!listed.length && /\b(?:turn(?:ed)?\s+on|enabled?|toggled?|switch(?:ed)?\s+on|activated?|checked)\b/i.test(goal)) {
+    const names = pool.filter((x) => !x.hidden && /checkbox|switch/i.test(`${x.type || ""} ${x.kind || ""} ${x.role || ""}`))
+      .map((x) => String(x.label || "").trim()).filter((l) => l && l.length <= 60);
+    const uniq = [...new Set(names)];
+    if (uniq.length) {
+      lines.push(`Can be turned on: ${uniq.slice(0, 12).join(", ")}${uniq.length > 12 ? `, and ${uniq.length - 12} more` : ""}`);
+      listed.push({ line: lines[0], hits: 1, opts: uniq, hidden: false });
+    }
+  }
+  let direct = null;
+  if (listed.length && WHAT_CAN.test(goal)) {
+    const ranked = listed.slice().sort((x, y) => y.hits - x.hits || (x.hidden - y.hidden) || y.opts.length - x.opts.length);
+    const top = ranked[0];
+    const lesser = (o) => o.opts.every((v) => top.opts.includes(v)) || o.opts.length * 2 <= top.opts.length;
+    if (ranked.slice(1).every((o) => o.hits < top.hits || lesser(o))) direct = top.line;
+  }
+  return { lines, direct };
+}
+
+/* The controls nearest a request: by its words on their names, their other
+ * names and their options. Twenty lines is a prompt a 3B reads in seconds;
+ * the whole page is a prompt it reads in a minute.
+ */
+function shortlistFor(goal, controls, max = 20) {
+  const words = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+  const scored = controls.map((c, i) => {
+    const label = String(c.label || "").toLowerCase();
+    let n = 0;
+    for (const w of words) { const h = wordMatchesText(w, label); if (h === "exact") n += 2; else if (h) n += 1; }
+    if (!n && alsoCalled(c.label, c).some((a) => words.some((w) => wordMatchesText(w, a)))) n += 1;
+    const opts = c.options || [];
+    if (opts.length && words.some((w) => opts.some((o) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))) n += 3;
+    if (c.hidden) n -= 0.5;
+    return { c, i, n };
+  });
+  const top = scored.filter((x) => x.n > 0).sort((a, b) => b.n - a.n || a.i - b.i).slice(0, max);
+  // Padded where the words catch little - with the page's form, not its
+  // navigation. Page order starts with the menu bar, and a 3B shown "Home"
+  // first pressed it for four different requests about a form below it.
+  // A link that leaves the page is offered only when the request's words
+  // reach it.
+  const leaves = (c) => !!(c.goesTo && !/^#/.test(String(c.goesTo)));
+  for (const x of scored) { if (top.length >= max) break; if (!top.includes(x) && !x.c.hidden && !leaves(x.c)) top.push(x); }
+  return top.sort((a, b) => a.i - b.i).map((x) => x.c);
+}
+
+/* One model call for the whole request, then the page does and checks each
+ * step. A step's control is found again before it runs - by selector, then
+ * by name - because the steps before it may have redrawn the page. Returns
+ * null where the model planned nothing, so the caller's other paths get
+ * their turn; a plan that ran, even to no visible effect, is the answer.
+ */
+/* A link that leaves the page is pressed only when the request asks to go
+ * somewhere and names where. An 8B planning "turn on the flood map set,
+ * choose cedar rapids" pressed "Open this area in Google Maps (opens in a
+ * new tab)", because the request said map.
+ */
+// A link to another site or a new tab is pressed only when the request asks
+// to go there and names it. Links within the site are the model's call: "how
+// much rain has already fallen" is rightly Past Precipitation Estimates, with
+// no word in common.
+function leavesThePage(c) {
+  return !!c.elsewhere || /\bopens?\s+in\s+(?:a\s+)?new\s+(?:tab|window)\b/i.test(String(c.label || ""));
+}
+function askedToLeaveFor(goal, c) {
+  const want = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+  return /\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal)
+    && meaningfulWords(String(c.label || "")).some((w) => want.includes(w));
+}
+
+// A control that undoes things is pressed only when the request asks for
+// that. Asked to "pick the first time listed", a 3B pressed RadarViz's
+// "Reset all filters and selections" and wiped the radar and dates the
+// steps before it had set.
+const UNDOES = /\b(?:reset|clear|delete|remove|erase|discard|cancel|log\s*out|sign\s*out)\b/i;
+function undoesUnasked(goal, c) { return UNDOES.test(String(c.label || "")) && !UNDOES.test(goal); }
+// The placeholders in the plan prompt's examples, copied instead of filled in.
+const PLACEHOLDER = /^\s*(?:OPTION|TEXT|WORDS|NAME|VALUE)\s*$/;
+
+async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
+  const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  if (!inv || !inv.ok || !inv.result) return null;
+  // A larger model is shown more: a 3B reads twenty lines in seconds and
+  // loses its way past that, an 8B on a workstation reads forty as fast.
+  const big = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL)) >= 4000;
+  let shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }), big ? 40 : 20);
+  if (!shortlist.length) return null;
+  const began = Date.now();
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  let names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
+  const listsHolding = (value) => shortlist.filter((c) => (c.options || []).some((o) => flat(o.text || o.value) === flat(value)));
+  const history = [];
+  const done = new Set();
+  const multiTouched = new Set();
+  // Two plans at most: the second only where the first evidently left part
+  // of the request out - fewer steps than the sentence has parts, or a step
+  // that failed - and told what has been done, so it plans the remainder.
+  const evident = splitIntoSteps(goal).length;
+  // The bound holds over both plans together, not each.
+  let budget = maxSteps || Math.min(12, evident * 3 + 1);
+  let calls = 0;
+  let cost = null;
+  for (let round = 0; round < 2; round++) {
+  if (round) {
+    // What the first plan revealed is on the list now: a scenario list that
+    // appears once its layer is on was not there to be chosen the first time.
+    const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    if (again && again.ok && again.result) {
+      shortlist = shortlistFor(goal, controlsForModel(again.result, { max: WHOLE_PAGE }), big ? 40 : 20);
+      names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
+    }
+  }
+  const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, optionsShown: big ? 16 : 8, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
+  calls++;
+  if (asked && asked.cost) cost = asked.cost;
+  const steps = asked && asked.ok && asked.step && Array.isArray(asked.step.steps) ? asked.step.steps : [];
+  debugLog(`[plan] "${goal}": ${steps.length} step(s) over ${shortlist.length} controls in ${asked && asked.ms ? asked.ms : Date.now() - began}ms${round ? " (second plan)" : ""}${asked && asked.error ? ` - ${asked.error}` : ""}`);
+  if (!steps.length) break;
+  // A plan no longer than the request: a 3B answered a two-part request with
+  // fifteen steps. Three a part and one to confirm is room for every real
+  // step and a bound on an invented one.
+  for (const st of steps) {
+    if (budget-- <= 0) break;
+    let act = String(st.do || "click").toLowerCase();
+    if (st.value != null && PLACEHOLDER.test(String(st.value))) {
+      history.push({ did: `${act} "${String(st.name || "").slice(0, 40)}"`, ok: false, changed: false, skipped: true, outcome: "the plan copied a placeholder instead of a value" });
+      continue;
+    }
+    // The same step twice is once.
+    const key = `${act}|${flat(st.name)}|${flat(st.value)}`;
+    if (done.has(key)) continue;
+    done.add(key);
+    if (act === "search") {
+      // Only when the request asks to search. "Set the dataset to global
+      // summary of the month" was typed into the site's search box and the
+      // page left for a results page nobody wanted.
+      if (!/\b(?:search|look\s*up|find|query|lookup)\b/i.test(goal)) { history.push({ did: `search "${String(st.value || "").slice(0, 40)}"`, ok: false, changed: false, outcome: "the request did not ask to search" }); continue; }
+      const searched = await searchClause(routeGlobal, `search for ${String(st.value || "").trim()}`).catch(() => null);
+      history.push({ did: `search "${String(st.value || "").slice(0, 40)}"`, ok: !!searched, changed: !!searched,
+        outcome: searched ? "searched" : "no search box for that here" });
+      continue;
+    }
+    let planned = shortlist[names.indexOf(flat(st.name))] || shortlist[Number(st.n)] || null;
+    // The page's own repairs: a value that is an option of exactly one list
+    // belongs to that list whatever name came with it, and a check on
+    // something that is not a box is a press.
+    if (act === "select" && !(planned && (planned.options || []).some((o) => flat(o.text || o.value) === flat(st.value)))) {
+      const h = listsHolding(st.value); if (h.length === 1) planned = h[0];
+    }
+    // "Select Cedar Rapids" on something that is not a list: the value is a
+    // box or a button of its own, named exactly that.
+    if (act === "select" && st.value && !(planned && (planned.options || []).length) && !listsHolding(st.value).length) {
+      const base = (l) => flat(String(l || "").replace(/\s*\([^)]*\)\s*$/, ""));
+      const own = shortlist.filter((c) => !c.hidden && base(c.label) === flat(st.value)
+        && /checkbox|radio|switch|button|tab|option|^a$|link/.test(String(c.type || c.kind || "").toLowerCase()));
+      if (own.length === 1) { planned = own[0]; act = /checkbox|radio|switch/.test(String(own[0].type || own[0].kind || "").toLowerCase()) ? "check" : "click"; }
+    }
+    if (act === "check" && planned && !/checkbox|radio|switch/.test(String(planned.type || planned.kind || "").toLowerCase())) act = "click";
+    if (!planned) { history.push({ did: `${act} "${String(st.name || "").slice(0, 40)}"`, ok: false, changed: false, outcome: "not one of the controls offered" }); continue; }
+    const now = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    const cs = (now && now.ok && now.result && now.result.controls) || [];
+    const target = cs.find((c) => c.selector === planned.selector) || cs.find((c) => flat(c.label) === flat(planned.label)) || planned;
+    if (target.hidden && target.revealedBy) {
+      await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
+      forgetPageTools();
+    }
+    if (undoesUnasked(goal, target)) {
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, ok: true, changed: false, skipped: true,
+        outcome: "it would undo what was set, and the request did not ask for that" });
+      continue;
+    }
+    if (act === "click" && leavesThePage(target) && !askedToLeaveFor(goal, target)) {
+      history.push({ did: `click "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+        outcome: "left alone - it leaves this page, and the request did not ask to go there" });
+      continue;
+    }
+    const call = actionToCall(act, target, st);
+    // The second value chosen in one multi-select within a plan joins the first.
+    if (call && call.name === "pageSelectOption" && /multiple/i.test(String(target.type || ""))) {
+      if (multiTouched.has(target.selector)) call.args.add = true;
+      multiTouched.add(target.selector);
+    }
+    const value = st.value != null && act !== "click" && act !== "check" ? ` ${String(st.value).slice(0, 30)}` : "";
+    if (!call) { history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: false, changed: false, outcome: "that control cannot do that" }); continue; }
+    const ran = await runVerified(routeGlobal, call);
+    const r = (ran && ran.result) || {};
+    const moved = typeof r.itChanged === "boolean" ? r.itChanged : didItMove(ran);
+    history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: ran && ran.ok !== false, changed: moved,
+      outcome: ran && ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
+        : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}` : moved ? "the page changed" : "nothing visibly changed" });
+    forgetInventory();
+  }
+  const short = history.filter((h) => h.ok && h.changed).length < evident;
+  if (!(short || history.some((h) => !h.ok))) break;
+  }
+  if (!history.length) return null;
+  return { ok: true, history, planned: history.length, calls, shortlisted: shortlist.length, tookMs: Date.now() - began, cost };
+}
+
 async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null, deadlineAt = null, chain = null, onlyModel = false } = {}) {
   if (budgetMs === null) budgetMs = turnBudgetMs();
   const history = [];
@@ -12378,8 +13285,21 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
   // rather than the page's - left no room to act on the correction, and the
   // run ended "the model did not answer in time" having been given one
   // chance to be right first time.
-  const deadline = deadlineAt
+  let deadline = deadlineAt
     || (Date.now() + Math.max(budgetMs, Math.round(lastTurnMs * 3) || 0));
+  // A step that changed the page earns the next one its time. The budget
+  // is sized for one or two decisions, and "select the survey program, the
+  // crops sector and the field crops group" is three: the first landed in
+  // eighty seconds on NASS (its lists reload after every choice) and the
+  // run stopped there, out of time, with two thirds of the request undone.
+  // Extended only on verified progress, by what a turn costs here, and
+  // never past three budgets - a run still has to end. A part of a chain
+  // keeps the deadline its chain gave it.
+  const endBy = Date.now() + budgetMs * 3;
+  const earnedMore = () => {
+    if (deadlineAt) return;
+    deadline = Math.min(endBy, Math.max(deadline, Date.now() + Math.max(lastTurnMs * 1.5, 15000)));
+  };
   // How long a turn actually took, reported rather than guessed at. "it took
   // two or three minutes" is not something anyone can act on, and where the
   // time goes - reading the page, the model deciding, carrying the action
@@ -12485,6 +13405,36 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       }
     }
 
+    // Look-alikes folded. A radar picker lists 160 sites as buttons of one
+    // shape, and every decision carried all of them - 1,800 tokens a turn,
+    // thirty to a hundred seconds of prefill on an ordinary laptop, and a
+    // chain that timed out on its third step. A run of the same shape keeps
+    // the members that share a word with the request and two examples, with
+    // a count; the model can still name any of them, and "find" lists them.
+    if (offered.length > 30) {
+      const gw = new Set(meaningfulWords(goal).filter((w) => w.length > 2));
+      const groups = new Map();
+      offered.forEach((c, i) => { const k = `${c.kind}:${shapeOfLabel(c.label)}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+      const drop = new Set();
+      const moreAt = new Map();
+      for (const idx of groups.values()) {
+        // Only a run with a shape of its own - a code, a time, a figure in
+        // it. Two plain words are the shape of half the controls on any
+        // page, and folding those would hide the one the request meant.
+        const shape = shapeOfLabel(offered[idx[0]].label);
+        if (idx.length < 8 || !/[9\-:,.()/%]/.test(shape)) continue;
+        const named = idx.filter((i) => meaningfulWords(offered[i].label).some((w) => gw.has(w)));
+        const keep = new Set([...named.slice(0, 6), ...idx.slice(0, 2)]);
+        let last = -1; let folded = 0;
+        for (const i of idx) { if (keep.has(i)) last = i; else { drop.add(i); folded++; } }
+        if (folded && last >= 0) moreAt.set(last, folded);
+      }
+      if (drop.size) {
+        offered = offered.map((c, i) => (moreAt.has(i) ? { ...c, more: moreAt.get(i) } : c)).filter((c, i) => !drop.has(i));
+        if (!narrowedFrom) narrowedFrom = wide.length;
+      }
+    }
+
     // A question is read first, not asked about.
     //
     // The prompt tells the model "Question: read, do not press", and a 3B
@@ -12501,7 +13451,66 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
+      // What a list offers answers "what products can be displayed": the
+      // choices live in a dropdown, which the page's prose never spells out.
+      // Lists whose name shares a word with the question are read out with
+      // their options, hidden ones included - a closed step is still an
+      // answer to what the page can do.
+      if (ASKING_TO_READ.test(goal)) {
+        const { lines, direct } = listChoicesFor(goal, wide.length > controls.length ? wide : controls);
+        if (lines.length) seen = `${seen && seen !== "nothing readable" ? seen + "\n" : ""}Choices on this page:\n${lines.join("\n")}`;
+        // "What radar products can be displayed here" is the list, read out.
+        // Handed exactly that list, a 3B still answered with the page title
+        // one run in two. Where one list answers a what-can-be-chosen
+        // question, the page answers it, and the model is not asked.
+        // Several lists answer to the question's words - FIMS has a "Model:"
+        // list per tool - and no one of them is the answer: all of them are.
+        // Asked instead, a 3B pressed one of the lists three times over.
+        if (lines.length && WHAT_CAN.test(goal) && !conditionalGoal) {
+          history.push({ did: "read the page", outcome: direct ? "answered from the list it offers" : "answered from the lists it offers" });
+          return { ok: true, answer: direct || lines.join("\n"), history, steps: history.length,
+            tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
+        }
+      }
+      // Said outright, so neither the model nor the reader takes the text
+      // around a radar image or a map for the whole of what the page shows.
+      // A request to read the page as a whole leads with what the page is:
+      // its title, headings and own words, then its controls by name. The
+      // summary is built for answering a question, so it keeps the tables and
+      // figures and drops the rest - and "read this page" came back as a
+      // handful of label/value pairs with no page around them.
+      if (/^\s*(?:please\s+)?(?:read|describe|summari[sz]e|explain|interpret)\s+(?:me\s+)?(?:this|the)\s+(?:page|site|screen|app|tool|dashboard|map|chart|graph)\b|^\s*what\s+(?:is|does)\s+this\s+(?:page|site|map|chart|graph)\b/i.test(goal) && read.ok && read.result) {
+        const r = read.result;
+        // Look-alikes folded: a page listing 160 radar sites as buttons is
+        // one list, said once with its size and a couple of examples.
+        const shapeOf = (l) => l.replace(/[A-Z]/g, "A").replace(/[a-z]/g, "a").replace(/\d/g, "9").replace(/a{2,}/g, "a").replace(/A{2,}/g, "A").replace(/9+/g, "9");
+        const groups = new Map();
+        for (const c of controls) {
+          if (c.hidden || !c.label || String(c.label).length > 50) continue;
+          const l = String(c.label).trim();
+          const g = groups.get(shapeOf(l)) || [];
+          if (!g.includes(l)) g.push(l);
+          groups.set(shapeOf(l), g);
+        }
+        const names = [];
+        for (const g of groups.values()) {
+          if (g.length >= 6) names.push(`${g.length} like "${g[0]}", "${g[1]}"`);
+          else names.push(...g);
+          if (names.length >= 30) break;
+        }
+        const lead = [
+          r.title ? `Page: ${String(r.title).slice(0, 120)}` : null,
+          (r.headings || []).length ? `Headings: ${r.headings.slice(0, 8).join(" | ")}` : null,
+          r.text ? String(r.text).replace(/\s+/g, " ").slice(0, 700) : null,
+          names.length ? `Controls on the page: ${names.join(", ")}` : null,
+        ].filter(Boolean).join("\n");
+        seen = seen && seen !== "nothing readable" ? `${lead}\n${seen}` : lead;
+      }
       seen = withNamesWhereThin(seen, controls);
+      const canvases = read.ok && read.result && read.result.chart ? (read.result.chart.canvasCount || 0) : 0;
+      if (canvases && seen) {
+        seen += `\nThis page also draws ${canvases === 1 ? "a map or chart" : canvases + " maps or charts"} on a canvas. Its pixels cannot be read; only the text, legends and downloaded data around it can.`;
+      }
       const data = await pageDataLines(goal);
       seen = composeObservation(seen, await passagesFor(goal), data, 2200);
       // Worked out already, from the page's own data. Measured live with a 3B:
@@ -12731,6 +13740,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         goal,
         controls: offered.map((c) => ({
           label: c.label, kind: c.kind, type: c.type, checked: c.checked, options: c.options,
+          // How many look-alikes were folded behind this one, for the prompt.
+          more: c.more,
         })),
         history, observation, note, narrowedFrom,
       }),
@@ -13043,6 +14054,11 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           // run stopped with "names more than one". The first in page order is
           // the first.
           if (/\b(?:first|top)\b/i.test(goal) && pool.length > 1) { found = pool[0]; break; }
+          // One on screen and the rest tucked away: NASS draws "Get Data" as a
+          // span over a hidden button of the same name, and the model, naming
+          // what it can see, was told the name fitted two.
+          const shown = pool.filter((c) => !c.hidden);
+          if (shown.length === 1) { found = shown[0]; break; }
           // Recorded rather than resolved. Two controls answering to one
           // name is a reference that did not land, and picking between them
           // is the confident wrong action this project exists to avoid.
@@ -13451,10 +14467,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // model's job is which control; the value is in the words already.
     if (!optionWanted && (target.options || []).length) {
       const saidFlat = flatLabel(goal);
+      // The label left out only where it is a real name: a list with none
+      // is labelled with its own options run together - "-- select an
+      // option --Cedar Rapids (D)Des Moines" - and every option is "in" it.
+      // A tag in brackets is not part of the name: "Cedar Rapids (D)".
+      const ownText = flatLabel((target.options || []).map((o) => o.text || o.value).join(" "));
+      const realLabel = flatLabel(target.label) === ownText || ownText.startsWith(flatLabel(target.label).slice(0, 20))
+        ? "" : flatLabel(target.label);
       const inWords = (target.options || []).filter((o) => {
-        const t = flatLabel(o.text || o.value);
+        const t = flatLabel(String(o.text || o.value || "").replace(/\([^)]*\)/g, " "));
         return t && t.length >= 3 && String(o.value ?? "").trim()
-          && !flatLabel(target.label).includes(t)
+          && !(realLabel && realLabel.includes(t))
           && new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(saidFlat);
       });
       if (inWords.length === 1) optionWanted = inWords[0].text || inWords[0].value;
@@ -13738,6 +14761,18 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       return giveUp(`"${String(target.label).slice(0, 40)}" is a link, and nothing here can be`
         + " turned on the way the request asks");
     }
+    if (undoesUnasked(goal, target)) {
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, outcome: "it would undo what was set, and the request did not ask for that" });
+      note = `"${String(target.label).slice(0, 40)}" would undo what was already set, which the request did not ask for. Choose another control.`;
+      if (!correct(note)) return giveUp("the model kept choosing a control that would undo the request");
+      continue;
+    }
+    if (act === "click" && leavesThePage(target) && !askedToLeaveFor(goal, target)) {
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, outcome: "it leaves this page, and the request did not ask to go there" });
+      note = `"${String(target.label).slice(0, 40)}" leaves this page, which the request did not ask for. Choose a control on this page.`;
+      if (!correct(note)) return giveUp("the model kept choosing a link off this page");
+      continue;
+    }
     const call = (ariaOption || emptyChooser)
       ? actionToCall("click", target, s)
       : isSwitch && !optionWanted
@@ -13808,6 +14843,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       ok: ran.ok !== false, changed: moved, satisfied, label: target.label, why,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
+    if (ran.ok !== false && (moved || satisfied)) earnedMore();
     // A condition has one branch, and taking it is the whole request. "if
     // the West is drier than the Midwest open the West, otherwise open the
     // Midwest" pressed West and then, asked what next, pressed Compare Two
@@ -14658,8 +15694,17 @@ async function runVerified(routeGlobal, toolCall) {
   // Actions are asynchronous far more often than not - a click starts a
   // fetch or a re-render - so comparing immediately would report a working
   // action as a no-op.
-  const settled = await invokeOnActiveTab("settle", []).catch(() => ({ ok: false }));
+  // Capped. A settle that never comes back - a page whose observer fires
+  // without end - held every step after it; twenty seconds is past the
+  // longest wait settle itself allows.
+  const settleT = Date.now();
+  const settled = await Promise.race([
+    invokeOnActiveTab("settle", []).catch(() => ({ ok: false })),
+    new Promise((r) => setTimeout(() => r({ ok: false, capped: true }), 20000)),
+  ]);
+  const sigT = Date.now();
   const after = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  debugLog(`[verify] ${toolCall && toolCall.name}: settle ${sigT - settleT}ms${settled.capped ? " (capped)" : ""}, signature ${Date.now() - sigT}ms`);
   if (!after.ok) return result;
 
   const diff = await invokeOnActiveTab("signatureDiff", [before.result, after.result]).catch(() => ({ ok: false }));
@@ -15211,8 +16256,12 @@ async function warmModel() {
     chrome.runtime.sendMessage({ target: "offscreen", type: "llmWarm" });
   } catch (e) { /* best effort - a real llmPing later will surface any real error */ }
 }
-chrome.runtime.onStartup.addListener(warmModel);
-chrome.runtime.onInstalled.addListener(warmModel);
+// Not on browser start any more. The default is five gigabytes, and the
+// hidden document holds it for as long as the browser is open - so on an
+// eight gigabyte machine, merely having the extension installed took most of
+// the memory from everything else on the computer, all day, whether or not
+// it was ever asked anything. The panel loads its own copy when it opens,
+// which is when somebody is about to ask.
 
 // The download, on the toolbar, whether or not the panel is open.
 //
@@ -16127,6 +17176,384 @@ async function fillZipAndSend(routeGlobal, box, zip) {
   return sent || { ok: false, error: "could not submit the box" };
 }
 
+/* The button a step made usable, pressed as part of that step.
+ *
+ * Choosing a radar site on a picker highlights it and enables "Select
+ * Radar"; nothing happens until that is pressed, and "set the year" after
+ * it found no year to set. Apply, Go, Run, Submit after a choice is how most
+ * apps are built. A button is pressed here only if the step itself made it
+ * usable - disabled or out of sight before, usable after - and either its
+ * words are all in the step ("Select Radar" in "select the miami radar") or
+ * it is the only one that appeared and is named like a confirmation.
+ */
+const CONFIRMISH = /^\s*(?:select|apply|go|submit|ok|okay|confirm|load|run|next|continue|update|search|proceed|done|get)\b/i;
+function usableButtons(inv) {
+  return ((inv && inv.ok && inv.result && inv.result.controls) || [])
+    .filter((c) => !c.hidden && !c.disabled && c.label
+      && (/^(?:button|submit|a|link)$/i.test(String(c.kind || c.tag || "")) || /^submit$/i.test(String(c.type || ""))));
+}
+async function pressConfirmIfRevealed(routeGlobal, clause, before) {
+  if (!before) return null;
+  const after = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  const was = new Set(usableButtons(before).map((c) => c.selector));
+  const fresh = usableButtons(after).filter((c) => !was.has(c.selector));
+  debugLog(`[chain] after "${clause}": ${fresh.length} button(s) became usable${fresh.length ? " - " + fresh.map((c) => c.label).slice(0, 4).join(" / ") : ""}`);
+  if (!fresh.length) return null;
+  const words = new Set(meaningfulWords(clause));
+  const named = fresh.filter((c) => { const w = meaningfulWords(c.label); return w.length && w.every((x) => words.has(x)); });
+  const pick = named.length === 1 ? named[0]
+    : (fresh.length === 1 && CONFIRMISH.test(String(fresh[0].label)) ? fresh[0] : null);
+  if (!pick) return null;
+  const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: pick.selector } });
+  forgetPageTools();
+  return ran && ran.ok !== false ? pick : null;
+}
+
+/* "Select the radar" straight after "search for new orleans" is the radar
+ * the search turned up. An unnamed step - the verb and a kind word, or
+ * "it" - after a search is resolved against what is on screen now and
+ * carries the search's words: one such control, and that is the one.
+ */
+const UNNAMED_PICK = /^\s*(?:please\s+)?(?:select|click|choose|pick|open|press|tap|take)\s+(?:on\s+)?(?:the|that|this|its|it)?\s*(?:first\s+|top\s+|matching\s+|found\s+|only\s+)?(?:[a-z]+)?\s*$/i;
+async function pickSearchResult(routeGlobal, clause, lastSearch) {
+  if (!lastSearch || !lastSearch.words || !/^\s*(?:please\s+)?(?:select|click|choose|pick|open|press|tap|take)\b/i.test(clause)) return null;
+  const want = meaningfulWords(lastSearch.words).filter((w) => w.length > 1);
+  if (!want.length) return null;
+  const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+  const all = (inv && inv.ok && inv.result && inv.result.controls) || [];
+  const carries = all.filter((c) => !c.hidden && !c.disabled && c.label
+    && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+    && want.every((w) => wordMatchesText(w, String(c.label).toLowerCase())));
+  // Named or not. "Select the miami radar" after searching miami is the
+  // result too: every word of the step that names anything on the page
+  // has to be on the result, and words naming nothing ("radar") are the
+  // kind of thing it is.
+  let hits = carries;
+  if (!UNNAMED_PICK.test(clause)) {
+    const said = meaningfulWords(String(clause).replace(CLAUSE_LEAD, "")).filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
+    // Words no result carries are the kind of thing it is: "radar" in
+    // "select the miami radar" is on the search box, not on KAMX - Miami.
+    const naming = said.filter((w) => carries.some((c) => wordMatchesText(w, String(c.label).toLowerCase())));
+    if (!naming.length) return null;
+    hits = carries.filter((c) => naming.every((w) => wordMatchesText(w, String(c.label).toLowerCase())));
+  }
+  // The same result twice - a row and the button inside it - is one result.
+  // The real control first: a button or link over the wrapper it sits in.
+  const byLabel = new Map();
+  for (const h of hits) {
+    const k = String(h.label).toLowerCase().replace(/\s+/g, " ").trim();
+    const real = /^(?:button|submit|a|link|option|menuitem|tab)$/i.test(String(h.kind || h.tag || ""));
+    if (!byLabel.has(k) || (real && !byLabel.get(k).real)) byLabel.set(k, { h, real });
+  }
+  const distinct = [...byLabel.values()].map((x) => x.h);
+  debugLog(`[chain] "${clause}" after search "${lastSearch.words}": ${distinct.length} on screen carry it${distinct.length ? " - " + distinct.map((h) => h.label).slice(0, 3).join(" / ") : ""}`);
+  if (distinct.length !== 1) return null;
+  const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: distinct[0].selector } });
+  if (!ran || ran.ok === false) return null;
+  return { control: distinct[0], ran };
+}
+
+/* "Set the year to 2023", "switch distance units to miles", "pick the first
+ * day listed": a list named by the words before "to", an option named by
+ * the words after it, with no model in the loop. One list and one option,
+ * or nothing: two lists called Name is the ambiguity the model is for.
+ */
+const SET_TO = /^\s*(?:please\s+)?(?:set|switch|change|put|turn|make|adjust|move)?\s*(?:the\s+)?([a-z][a-z0-9\s()?.-]{1,40}?)\s+to\s+(.+?)\s*$/i;
+const NTH_OF = /^\s*(?:please\s+)?(?:pick|select|choose|take)\s+(?:the\s+)?(first|last|top|bottom)\s+(?:available\s+|listed\s+)?([a-z][a-z0-9\s()?.-]{1,40}?)(?:\s+(?:listed|available|shown|option|in\s+the\s+list))?\s*$/i;
+// The words of a list's name, verbs and all: "Type" and "Name" are lists
+// here, whatever else those words are elsewhere.
+const LIST_STOP = new Set(["the", "a", "an", "to", "of", "for", "in", "on", "at", "it", "its", "this", "that", "my", "and", "or"]);
+const LIST_TYPE = /^(?:select(?:-one|-multiple)?|combobox|listbox)$/i;
+const listWords = (s) => String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !LIST_STOP.has(w));
+function selectsNamed(all, name) {
+  const words = listWords(name);
+  if (!words.length) return [];
+  return all.filter((c) => !c.disabled && LIST_TYPE.test(String(c.type || c.kind || ""))
+    && (c.options || []).length && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+}
+function placeholderOption(o) {
+  return !String(o.value ?? "").trim() || /^\s*(?:-+|select|choose|pick|please|none|--)/i.test(String(o.text || ""));
+}
+function optionNamed(control, value) {
+  const want = String(value || "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+  if (!want) return null;
+  const opts = (control.options || []).filter((o) => !placeholderOption(o));
+  const flat = (o) => String(o.text || o.value || "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+  let hit = opts.filter((o) => flat(o) === want);
+  if (!hit.length) hit = opts.filter((o) => { const f = flat(o); return f.startsWith(want + " ") || f.startsWith(want + " (") || new RegExp(`(?:^| )${want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`).test(f); });
+  if (!hit.length) {
+    const ws = want.split(" ").filter((w) => w.length > 1);
+    if (ws.length) hit = opts.filter((o) => ws.every((w) => wordMatchesText(w, flat(o))));
+  }
+  return hit.length === 1 ? hit[0] : null;
+}
+const AS_NTH = /^\s*(?:please\s+)?(?:(?:choose|select|pick|set|use|put|make)\s+)?(.+?)\s+(?:as|for)\s+(?:the\s+)?(first|second|third|fourth|last|1st|2nd|3rd|4th)(?:\s+(?:one|option|choice|[a-z][a-z0-9\s-]{0,30}))?\s*$/i;
+function setToPlan(routeGlobal, clause, all) {
+  // "Cedar rapids as the first scenario": the lists holding that option, in
+  // page order, and the one the ordinal says.
+  const asNth = String(clause).match(AS_NTH);
+  if (asNth) {
+    debugLog(`[chain] "${clause}": as-nth "${asNth[1]}" #${asNth[2]}; lists holding it: ${all.filter((c) => (c.options || []).length && optionNamed(c, asNth[1])).map((c) => `${c.label}${c.hidden ? " (hidden)" : ""}${c.disabled ? " (disabled)" : ""}`).join(" / ") || "none"}`);
+    const n = { first: 0, "1st": 0, second: 1, "2nd": 1, third: 2, "3rd": 2, fourth: 3, "4th": 3 }[asNth[2].toLowerCase()];
+    const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, asNth[1]));
+    const pick = asNth[2].toLowerCase() === "last" ? holders[holders.length - 1] : holders[n];
+    if (pick) { const o = optionNamed(pick, asNth[1]); return { control: pick, option: o, label: `${pick.label}: ${o.text || o.value}` }; }
+    return null;
+  }
+  const nth = String(clause).match(NTH_OF);
+  if (nth) {
+    const lists = selectsNamed(all, nth[2]);
+    if (lists.length === 1) {
+      const opts = (lists[0].options || []).filter((o) => !placeholderOption(o));
+      const o = /^(?:first|top)$/i.test(nth[1]) ? opts[0] : opts[opts.length - 1];
+      if (o) return { control: lists[0], option: o, label: `${lists[0].label}: ${o.text || o.value}` };
+    }
+    return null;
+  }
+  // "Sort the list by largest magnitude first" is the Sort list set to that.
+  const by = String(clause).match(/^\s*(?:please\s+)?(?:sort|order|arrange)\s+(?:the\s+)?(?:list|results?|table|rows|them|it|entries)?\s*by\s+(.+?)\s*$/i);
+  const m = by ? [null, "sort", by[1]] : String(clause).match(SET_TO);
+  if (m) {
+    const lists = selectsNamed(all, m[1]);
+    const found = lists.map((c) => ({ c, o: optionNamed(c, m[2]) })).filter((x) => x.o);
+    if (found.length === 1) return { control: found[0].c, option: found[0].o, label: `${found[0].c.label}: ${found[0].o.text || found[0].o.value}` };
+    if (found.length > 1) return null;
+    // A list drawn only when opened: a Material or Select2 combobox has no
+    // options until it is pressed. One such list named by the step is
+    // opened, and the value is looked for among what appears.
+    const words = listWords(m[1]);
+    const combos = all.filter((c) => !c.disabled && !(c.options || []).length
+      && /^(?:combobox|listbox)$/i.test(String(c.kind || "")) && words.length
+      && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+    if (combos.length === 1) return { control: combos[0], openThenPick: m[2], label: `${combos[0].label}: ${m[2]}` };
+    // A box to type into: "set the start year to 1990".
+    const boxes = all.filter((c) => !c.disabled && TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()) && words.length
+      && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+    if (boxes.length === 1 && !/\s/.test(m[2].trim()) || (boxes.length === 1 && /^(?:number|text|search|tel|email|url)$/i.test(String(boxes[0].type || "")))) {
+      return { control: boxes[0], fill: m[2].trim(), label: `${boxes[0].label}: ${m[2].trim()}` };
+    }
+  }
+  // "Choose reflectivity": a value with no list named, in exactly one list
+  // on screen. The model path has always done this; the page's own path
+  // did not, so a plain choice waited on the model.
+  const bare = String(clause).replace(CLAUSE_LEAD, "").replace(/^\s*(?:the|a|an)\s+/i, "").trim();
+  if (bare && bare.length >= 2 && !/\s(?:to|as|for|in|on)\s/i.test(bare)) {
+    const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, bare));
+    if (holders.length === 1) { const o = optionNamed(holders[0], bare); return { control: holders[0], option: o, label: `${holders[0].label}: ${o.text || o.value}` }; }
+  }
+  return null;
+}
+
+/* "Pick the first time listed" where the times are a run of plain divs.
+ *
+ * The list a step produced is the list the next step picks from: the
+ * controls that appeared since the step before, grouped by the shape of
+ * their label ("00:01:25 UTC" and "00:06:27 UTC" are one shape). The group
+ * the ordinal's noun fits - a time looks like a time - or the only group;
+ * then its first or last member.
+ */
+const shapeOfLabel = (l) => String(l || "").replace(/[A-Z]/g, "A").replace(/[a-z]/g, "a").replace(/\d/g, "9").replace(/a+/g, "a").replace(/A+/g, "A").replace(/9+/g, "9").slice(0, 40);
+const ORDINAL_WORD = { first: 0, "1st": 0, top: 0, second: 1, "2nd": 1, third: 2, "3rd": 2, fourth: 3, "4th": 3, fifth: 4, "5th": 4 };
+const NTH_LISTED = /^\s*(?:please\s+)?(?:pick|select|choose|take|click|open)\s+(?:the\s+)?(first|second|third|fourth|fifth|last|top|bottom|1st|2nd|3rd|4th|5th)\s+(?:available\s+|listed\s+)?([a-z][a-z0-9\s-]{0,40}?)(?:\s+(?:listed|available|shown|in\s+the\s+list|option|entry|item))?\s*$/i;
+function looksLike(noun, label) {
+  const n = String(noun || "").toLowerCase();
+  if (/\btime|scan|hour|minute/.test(n)) return /\d{1,2}:\d{2}/.test(label);
+  if (/\bdate|day\b/.test(n)) return /\d/.test(label);
+  if (/\byear/.test(n)) return /\b(?:19|20)\d{2}\b/.test(label);
+  return true;
+}
+async function pickNthOfList(routeGlobal, clause, before) {
+  const m = String(clause).match(NTH_LISTED);
+  if (!m) return null;
+  const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+  const everything = (inv && inv.ok && inv.result && inv.result.controls) || [];
+  // "First name" is a name. A control wearing the ordinal and the noun
+  // together is what was asked for, not the first of a run of others.
+  const flatP = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const phrase = flatP(`${m[1]} ${m[2]}`);
+  if (everything.some((c) => flatP(c.label).includes(phrase))) return null;
+  const all = everything
+    .filter((c) => !c.hidden && !c.disabled && c.label && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+      && !LIST_TYPE.test(String(c.type || c.kind || "")));
+  const was = new Set((((before && before.ok && before.result && before.result.controls) || [])).map((c) => c.selector));
+  const groupsOf = (list) => {
+    const g = new Map();
+    for (const c of list) { const k = shapeOfLabel(c.label); if (!g.has(k)) g.set(k, []); g.get(k).push(c); }
+    return [...g.values()].filter((x) => x.length >= 3);
+  };
+  let groups = groupsOf(all.filter((c) => !was.has(c.selector))).filter((g) => looksLike(m[2], g[0].label));
+  if (!groups.length) groups = groupsOf(all).filter((g) => looksLike(m[2], g[0].label));
+  if (groups.length !== 1) {
+    // Several runs on screen: the one whose members say the noun, else the largest fresh one.
+    const saying = groups.filter((g) => g.some((c) => wordMatchesText(String(m[2]).split(/\s+/)[0], String(c.label).toLowerCase())));
+    if (saying.length === 1) groups = saying;
+    else if (groups.length > 1) groups = [groups.sort((x, y) => y.length - x.length)[0]];
+  }
+  if (!groups.length) return null;
+  const g = groups[0];
+  // The noun has to fit the run. "The first station" over a run of radar
+  // sites is fine; "the first name" over them is not, when Name is a
+  // control of its own elsewhere on the page.
+  const noun = flatP(m[2]).split(" ").filter((w) => w.length > 2);
+  const inRun = noun.some((w) => g.some((c) => wordMatchesText(w, String(c.label).toLowerCase())));
+  const elsewhere = noun.some((w) => everything.some((c) => !g.includes(c) && wordMatchesText(w, String(c.label).toLowerCase())));
+  if (noun.length && !inRun && elsewhere && !looksLike(m[2], g[0].label) ) return null;
+  if (noun.length && !inRun && elsewhere && !/\btime|scan|hour|minute|date|day|year|entry|item|result|row|one/.test(flatP(m[2]))) return null;
+  const which = m[1].toLowerCase();
+  const pick = /^(?:last|bottom)$/.test(which) ? g[g.length - 1] : g[ORDINAL_WORD[which] || 0];
+  if (!pick) return null;
+  debugLog(`[chain] "${clause}": ${g.length} look-alikes, taking "${pick.label}"`);
+  const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: pick.selector } });
+  if (!ran || ran.ok === false) return null;
+  return { control: pick, ran };
+}
+
+/* A list the step names that is still filling in. After "set the resolution
+ * to auto" the scan levels arrive from the server a moment later, and the
+ * next step found the list disabled and did something else. A list named by
+ * the step and not yet usable is given a few seconds.
+ */
+async function awaitNamedListReady(clause, { waitMs = 8000 } = {}) {
+  const words = listWords(String(clause).replace(CLAUSE_LEAD, ""));
+  if (!words.length) return;
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    const lists = ((inv && inv.ok && inv.result && inv.result.controls) || [])
+      .filter((c) => !c.hidden && String(c.label || "").length <= 60 && !/--|\|/.test(String(c.label || "")) && LIST_TYPE.test(String(c.type || c.kind || ""))
+        && words.some((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+    const pending = lists.filter((c) => c.disabled || !(c.options || []).some((o) => !placeholderOption(o)));
+    if (!lists.length || !pending.length || Date.now() > until) {
+      if (pending.length && lists.length) debugLog(`[chain] "${clause}": gave up waiting for ${pending.map((c) => c.label).join(" / ")}`);
+      return;
+    }
+    forgetInventory();
+    await new Promise((r) => setTimeout(r, 700));
+  }
+}
+
+async function runSetToPlan(routeGlobal, setTo) {
+        if (setTo.control.hidden && setTo.control.revealedBy) {
+          await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
+          forgetPageTools();
+        }
+        if (setTo.fill != null) {
+          const ran = await runVerified(routeGlobal, { name: "pageFill", args: { selector: setTo.control.selector, text: setTo.fill } });
+          if (!ran || ran.ok === false) return null;
+          return { changed: true };
+        }
+        if (setTo.openThenPick) {
+          const opened = await runVerified(routeGlobal, { name: "pageClick", args: { selector: setTo.control.selector } });
+          if (!opened || opened.ok === false) return null;
+          await new Promise((r) => setTimeout(r, 600));
+          forgetInventory();
+          const now = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+          const shown = ((now && now.ok && now.result && now.result.controls) || []).filter((c) => !c.hidden
+            && /^(?:option|menuitem|menuitemradio|listitem)$/i.test(String(c.kind || "")));
+          const want = String(setTo.openThenPick).toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim().split(" ").filter((w) => w.length > 1);
+          const hit = shown.filter((c) => want.every((w) => wordMatchesText(w, String(c.label).toLowerCase())));
+          if (hit.length !== 1) return null;
+          const picked = await runVerified(routeGlobal, { name: "pageClick", args: { selector: hit[0].selector } });
+          if (!picked || picked.ok === false) return null;
+          return { changed: true };
+        }
+        const ran = await runVerified(routeGlobal, { name: "pageSelectOption",
+          args: { selector: setTo.control.selector, value: setTo.option.value || setTo.option.text } });
+        if (!ran || ran.ok === false) return null;
+        return { changed: didItMove(ran) };
+}
+
+/* One step of a request, settled by the page where the page can settle it.
+ *
+ * In order: a search, the thing a search turned up, the first/last of a run
+ * the page shows, a list or box named with its value, a control named
+ * outright; then the button that step made usable, pressed as its
+ * confirmation. Both chain loops - the page-only sequence and the model's
+ * per-step loop - run through here, so a rule learnt from one site is a
+ * rule for every path. Returns null where nothing on the page settles it,
+ * and the caller decides what to ask the model.
+ */
+async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = true, lateLooks = 0, narrow = false } = {}) {
+  // Narrow: only what nothing else on the single-instruction path does - the
+  // first of a run, a list or box named with its value. The rest of that
+  // path keeps its own judgement (an accordion title is not the checkbox
+  // inside it; a link to "#" is not a press), and no extra reads.
+  const before = narrow ? null : await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+  const searched = narrow ? null : await searchClause(routeGlobal, clause).catch(() => null);
+  if (searched) return { kind: "search", searched };
+  const confirmAfter = async () => (narrow ? null : pressConfirmIfRevealed(routeGlobal, clause, before).catch(() => null));
+  const done = (kind, label, changed, outcome, unconfirmed, confirmed) => ({
+    kind, changed: changed || !!confirmed, unconfirmed: !!unconfirmed && !confirmed,
+    did: confirmed ? `${label}, then ${confirmed.label}` : label, outcome, confirmed: !!confirmed,
+  });
+  const found = narrow ? null : await pickSearchResult(routeGlobal, clause, lastSearch).catch(() => null);
+  if (found) return done("pick", found.control.label, true, "the one the search turned up", false, await confirmAfter());
+  if (!narrow) await awaitNamedListReady(clause).catch(() => null);
+  const nth = await pickNthOfList(routeGlobal, clause, before).catch(() => null);
+  if (nth) return done("nth", nth.control.label, true, "the one the list shows", false, await confirmAfter());
+  let sure = null;
+  if (narrow) {
+    const inv = await readInventory();
+    const st = setToPlan(routeGlobal, clause, ((inv.ok && inv.result && inv.result.controls) || []));
+    if (st) sure = { label: st.label, run: () => runSetToPlan(routeGlobal, st) };
+  } else {
+    sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
+  }
+  const named = !!sure;
+  debugLog(`[chain] "${clause}": certain plan ${sure ? "= " + sure.label : "none"}`);
+  // A panel or toggle already the way the step asks is left alone: pressing
+  // it reverses it. "Open settings" on a page with Settings already open
+  // shut it, and the next step could not find what was inside.
+  if (sure && !narrow) {
+    const wantShown = /\b(?:show|open|expand|reveal|display|unhide)\b/i.test(clause) && !/\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
+    const wantHidden = /\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
+    if (wantShown || wantHidden) {
+      const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const now = await readInventory();
+      const c = ((now.ok && now.result && now.result.controls) || []).find((x) => flatL(x.label) === flatL(sure.label));
+      if (c && typeof c.expanded === "boolean" && c.expanded === wantShown) {
+        return done("already", sure.label || clause, false, wantShown ? "already open, so left as it was" : "already hidden, so left as it was", false, null);
+      }
+    }
+  }
+  if (sure) {
+    const did = await sure.run().catch(() => null);
+    if (did) return done("plan", sure.label || clause, did.changed !== false, "named on the page exactly, so the model was not asked", false, await confirmAfter());
+    debugLog(`[chain] "${clause}": the certain plan did not run`);
+  }
+  if (exact) {
+    const acted = await actOnExactlyNamedClause(routeGlobal, clause).catch(() => null);
+    if (acted) return done("exact", acted.label || clause, acted.verified.changed !== false, "named on the page exactly", acted.unconfirmed, await confirmAfter());
+  }
+  // Named, and pressing it changed nothing: most often it was already as
+  // asked - RadarViz's Settings already open. Handed on, a model pressed it
+  // again and shut the panel the next step needed. The page has settled it.
+  if (named && !narrow) return done("named", sure.label || clause, false, "named on the page; it was already as asked or did not respond", true, null);
+  // The control a step names may be arriving - a tab the page draws once
+  // the layer before it has loaded. Only where nothing was named at all: a
+  // plan that ran and came back empty has already pressed, and pressing
+  // again undoes it.
+  if (!named && lateLooks > 0) {
+    // A list a server fills - RadarViz's scan times - can take ten seconds
+    // after the step before it; the first of it is worth waiting for.
+    const ordinal = NTH_LISTED.test(String(clause));
+    for (let look = 0; look < (ordinal ? Math.max(lateLooks, 8) : lateLooks) && !sure; look++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      forgetInventory();
+      if (ordinal) {
+        const later = await pickNthOfList(routeGlobal, clause, before).catch(() => null);
+        if (later) return done("nth", later.control.label, true, "the one the list shows once it had loaded", false, await confirmAfter());
+      }
+      sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
+    }
+    if (sure) {
+      const did = await sure.run().catch(() => null);
+      if (did) return done("late", sure.label || clause, did.changed !== false, "named on the page once it had drawn it", false, await confirmAfter());
+    }
+  }
+  return null;
+}
+
 async function certainClausePlan(routeGlobal, clause) {
   const asSearch = String(clause || "").match(SEARCH_CLAUSE);
   if (asSearch && asSearch[1].trim()) {
@@ -16146,7 +17573,10 @@ async function certainClausePlan(routeGlobal, clause) {
 
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
+  const setTo = setToPlan(routeGlobal, clause, all);
+  if (setTo) return { label: setTo.label, run: () => runSetToPlan(routeGlobal, setTo) };
   const span = soleSpanControl(clause, all);
+
   if (span) {
     return {
       label: span.label,
@@ -16182,6 +17612,7 @@ async function certainClausePlan(routeGlobal, clause) {
   const times = timesAsked(clause);
   const core = times > 1 ? String(clause).replace(REPEAT_TAIL, "").trim() : clause;
   const { named, n } = namedByClause(all, core);
+  debugLog(`[chain] "${clause}": named ${named.map((c) => c.label).slice(0, 3).join(" / ") || "nothing"}`);
   if (named.length !== 1) return null;
   const only = n === null ? named[0] : nthOf(named[0], n);
   if (!only) return null;
@@ -16237,9 +17668,22 @@ function searchParts(clause) {
 async function searchClause(routeGlobal, clause) {
   const parts = searchParts(clause);
   if (!parts) return null;
-  const words = parts.query;
   const sinv = await readInventory();
-  const box = findSearchBox(((sinv.ok && sinv.result && sinv.result.controls) || []), parts.where);
+  const all = (sinv.ok && sinv.result && sinv.result.controls) || [];
+  let { query: words, where } = parts;
+  // The box named without "the": "search radar sites for new orleans" is the
+  // Search Radar Sites box and the words new orleans - and all of it was
+  // typed in. Where everything before "for" is in a text box's name, it
+  // names the box.
+  if (!where) {
+    const m = words.match(/^([a-z][a-z\s-]{1,40}?)\s+for\s+(.+)$/i);
+    const nameWords = m ? meaningfulWords(m[1]).filter((w) => !/^(?:search|site|page|website|box|field|bar)$/.test(w)) : [];
+    if (nameWords.length && all.some((c) => (TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()))
+        && nameWords.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())))) {
+      where = m[1]; words = m[2].trim();
+    }
+  }
+  const box = findSearchBox(all, where);
   if (!box) return null;
   if (box.hidden && box.revealedBy) {
     await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
@@ -16973,6 +18417,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // them apart afterwards.
       let modelUsed = null;
       let modelSaid = null;
+      // The model was asked and gave no answer at all - timed out, or replied
+      // with nothing usable - before it took a step. Not the same as refusing.
+      let modelNeverAnswered = false;
       // Why the run stopped, in its own words. The loop works out something
       // specific - that a name fits more than one control, that it kept
       // choosing one that is not there - and a generic "did not find a way
@@ -17080,11 +18527,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         const why = [
-          modelSkipped && res.plannedBy !== "model" && res.plannedBy !== "baseline" ? modelSkipped : null,
+          modelSkipped && !/^(?:model|plan)$/.test(res.plannedBy) && res.plannedBy !== "baseline" ? modelSkipped : null,
           // The model was there and got nowhere, so this is the baseline
           // answering. Worth saying outright: the two are meant to be
           // compared, and an unlabelled answer counts for neither.
-          !modelSkipped && modelTried && res.plannedBy !== "model"
+          !modelSkipped && modelTried && !/^(?:model|plan)$/.test(res.plannedBy)
             ? `${modelUsed ? modelName(modelUsed) : "the local model"} planned nothing here,`
               + " so this is the keyword baseline"
               + (modelSaid ? ` - it replied: ${String(modelSaid).slice(0, 120)}` : "")
@@ -17095,7 +18542,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The route alone was the source on every card the model did not
         // plan, so a run that asked a model and threw its answer away looked
         // identical to one where no model existed.
-        if (display && modelTried && modelUsed && res.plannedBy !== "model") {
+        if (display && modelTried && modelUsed && !/^(?:model|plan)$/.test(res.plannedBy)) {
           display.source = `${display.source || route.global} - asked ${modelName(modelUsed)}`;
         }
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
@@ -17321,6 +18768,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 source: "this page",
               },
             });
+            return;
+          }
+        }
+        // One clause, settled by the page where the page can settle it - the
+        // same resolver every chain step runs through: the result a search
+        // turned up, the first of a run, a list or box with its value, a
+        // control named outright, then the confirmation it made usable.
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted) && splitIntoSteps(wanted).length === 1) {
+          const step = await resolveStep(route.global, wanted, { narrow: true, exact: false }).catch(() => null);
+          // Only where the match covers the sentence. "Set the data format to
+          // tab delimited and include latitude and longitude" matched its
+          // first half and reported done; with a model ready, words the match
+          // left over are its to plan.
+          const covered = new Set(meaningfulWords(String((step && step.did) || "")));
+          const leftOver = step ? meaningfulWords(wanted).filter((w) => !covered.has(w) && !CONTROL_VERB.test(w) && w.length > 2) : [];
+          const modelHere = leftOver.length >= 2 ? await modelStatus().catch(() => null) : null;
+          if (step && step.kind !== "search" && !(modelHere && modelHere.ready)) {
+            respond({ ok: true, plannedBy: "exact-match", display: {
+              title: String(step.did || wanted).slice(0, 60),
+              subtitle: step.unconfirmed ? "pressed, though nothing on the page visibly changed" : (step.outcome || "named on the page"),
+              stats: [], rows: [], note: "so this did not wait for the model", source: "this page" } });
             return;
           }
         }
@@ -17899,7 +19367,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         if (!forceBaseline) {
-          const status = await modelStatus();
+          // Started here if nothing has started it: this request needs it.
+          const status = (await startModelIfIdle().catch(() => null)) || await modelStatus();
           if (!status || !status.ready) {
             // Named, and with its progress where there is any. "The local
             // model is still loading" gave no way to tell whether a model
@@ -17952,12 +19421,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (status && status.ready) {
             modelTried = true;
             modelUsed = (status && status.model) || null;
+            // The whole request planned in one call, before any splitting
+            // of the sentence here: one prefill where the per-part loop paid
+            // one per part, and the model sees the request whole rather than
+            // as the pieces a regex made of it. The page carries out and
+            // checks each step. A plan of nothing falls through to the
+            // per-step loop below.
+            // Anything that is not a question: "represent missing data as an
+            // empty string" has no verb this code knows, and the model is the
+            // one to say whether the page can do it.
+            // One step's request only. A chain's later parts depend on what its
+            // earlier parts reveal - RadarViz's search results, FIMS's scenario
+            // list - and planned all at once over the page as it first stood,
+            // the model was asked to pick controls that did not exist yet. A
+            // chain runs part by part below, each part planned over the page
+            // as it is when its turn comes.
+            if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted) && splitIntoSteps(wanted).length <= 1) {
+              const plan = await planWithModel(route.global, wanted).catch((e) => { debugLog(`[plan] threw: ${String((e && e.message) || e)}`); return null; });
+              if (plan) {
+                const unchecked = plan.history.filter((h) => h.ok && !h.changed).length;
+                const failed = plan.history.filter((h) => !h.ok).length;
+                respond({
+                  ok: plan.history.some((h) => h.ok), plannedBy: "plan", steps: plan.history,
+                  display: {
+                    title: `${plan.history.length} step${plan.history.length === 1 ? "" : "s"}, planned at once by ${modelName(modelUsed)}`,
+                    subtitle: failed ? `${failed} of ${plan.history.length} failed`
+                      : unchecked ? `ran in order - ${unchecked} of ${plan.history.length} changed nothing visible` : "done in order",
+                    stats: [], rows: plan.history.map((h) => ({ name: h.did.slice(0, 44), value: !h.ok ? "failed" : h.changed ? "done" : "no change",
+                      meta: String(h.outcome || "").slice(0, 70), tone: !h.ok ? "alert" : h.changed ? "ok" : "warn" })),
+                    note: `${plan.calls === 1 ? "one plan" : `${plan.calls} plans`} over ${plan.shortlisted} controls, ${Math.round(plan.tookMs / 1000)}s`, source: route.global,
+                  },
+                });
+                return;
+              }
+            }
             // One part at a time, each with its own turn budget, so a
             // two-part instruction is two short runs rather than one long
             // one that may never reach the second half.
             const parts = splitIntoSteps(wanted);
             let agent;
-            if (parts.length > 1 && parts.length <= 6) {
+            // Fourteen, as in the page-only path. At six, a ten-step task fell
+            // through to a single run, whose search shortcut typed the whole
+            // sentence into the search box.
+            if (parts.length > 1 && parts.length <= 14) {
               // One clock for the whole instruction rather than one per
               // part - four parts at thirty seconds each is two minutes of a
               // panel saying "still running", which reads exactly like a
@@ -17980,9 +19486,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const answers = [];
               const flags = {};
               let failed = null;
+              let lastSearchInChain = null;
               for (const part of parts) {
-                const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
-                  .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
+                // A part that names one control on the page as it now is -
+                // after the parts before it ran - needs no decision. The
+                // all-at-once check above plans every part before pressing
+                // anything, so a list that fills in only once the one before
+                // it is chosen ("select Mississippi as the basin, then select
+                // Vicksburg") made the whole sentence uncertain, and a 3B
+                // spent a minute and a half on it and picked the wrong
+                // station. Checked here, part by part, it is certain when its
+                // turn comes.
+                let beforeStep = null;
+                if (!forceModel) {
+                  const step = await resolveStep(route.global, part, { lastSearch: lastSearchInChain, exact: false, lateLooks: 2 });
+                  if (step) {
+                    if (step.kind === "search") {
+                      lastSearchInChain = step.searched;
+                      all.push({ did: `search "${String(step.searched.words).slice(0, 40)}"`, ok: true, changed: true,
+                        outcome: "named on the page exactly, so the model was not asked" });
+                      continue;
+                    }
+                    if (step.kind === "pick") lastSearchInChain = null;
+                    all.push({ did: step.did, ok: true, changed: step.changed, outcome: step.outcome });
+                    continue;
+                  }
+                  beforeStep = step === null ? await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null) : null;
+                }
+                // The part planned in one call over the page as it now is; the
+                // step-by-step loop only where the plan did nothing.
+                // One part of a chain is one thing: the control, and at most
+                // the panel that holds it. Twelve guesses at "clear the cached
+                // data" pressed whatever was nearby.
+                const planned = isCommand(part) ? await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null) : null;
+                const one = planned && planned.history.some((h) => h.ok && h.changed)
+                  ? { ok: true, history: planned.history, tookMs: planned.tookMs }
+                  : await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
+                    .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
+                // A button the model's step made usable is its confirmation
+                // as much as a page-matched step's is.
+                if (!forceModel && (one.history || []).some((h) => h.changed || h.ok)) {
+                  const confirmed = await pressConfirmIfRevealed(route.global, part, beforeStep).catch(() => null);
+                  if (confirmed) (one.history || []).push({ did: `${confirmed.label}`, ok: true, changed: true, outcome: "pressed to confirm the step" });
+                }
                 for (const h of one.history || []) all.push(h);
                 // Which part it was still on. "ran out of time" on its own
                 // does not say what was left undone.
@@ -18079,7 +19625,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       // run the model never saw was still being reported as
                       // its work, which is the same dishonesty as a card
                       // claiming an action that did not happen.
-                      + (agent.fromData
+                      + (agent.fromList
+                        ? "read off the list this page offers, without asking the model"
+                        : agent.fromData
                         ? "worked out from the data this page downloaded, without asking the model"
                         : agent.withoutModel
                         ? "matched by meaning, without asking the model"
@@ -18143,6 +19691,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             modelGaveUp = (agent && (agent.gaveUp || agent.error)) || null;
             // A model that was asked and got nowhere does not hand the job
             // to the scorer. See below.
+            //
+            // But one that never answered was not asked anything it could
+            // refuse. A timeout or an empty reply before a single step is the
+            // machine failing, not the model judging the request - and the
+            // page's own matching is what every machine without a model gets.
+            // "Open the stations tab" ran in six seconds with no model and
+            // came back "nothing here clearly does that" with one that timed
+            // out on its first turn.
+            if (agent && !(agent.history && agent.history.length)
+                && (agent.outOfTime || agent.modelUnavailable || /did not answer in time|timed out|usable JSON|no reply|empty reply/i
+                  .test(String(agent.error || agent.gaveUp || "")))) {
+              modelNeverAnswered = true;
+            }
           }
         }
 
@@ -18184,7 +19745,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               || [...labels].some((l) => closeName(bare, l));
           });
         }
-        if (modelTried && isCommand(wanted) && !forceBaseline && !namesSomethingExactly) {
+        if (modelTried && !modelNeverAnswered && isCommand(wanted) && !forceBaseline && !namesSomethingExactly) {
           respond({
             ok: false, plannedBy: "model",
             error: "nothing on this page clearly does that",
@@ -18238,14 +19799,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // destroy the instruction rather than sequence it. So a bare "and"
           // separates steps only where a verb follows it, which is what makes
           // the second half an instruction rather than the rest of a name.
-          const parts = String(msg.instruction)
-            .split(/\s*(?:,\s*then\s+|\s+then\s+|\s+and then\s+)\s*|\s+and\s+(?=(?:click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\s*up|type|enter|toggle|turn|switch|go|zoom|download|read)\b)/i)
-            .map((t) => t.trim()).filter(Boolean);
+          const parts = splitIntoSteps(msg.instruction);
           // Eight, not four. A five-part instruction fell out of the sequence
           // and was handled as one command, which on the page tested pressed
           // Reset - a step from the middle of the sentence, chosen alone.
           // Falling through to "do part of it" is worse than the length.
-          if (parts.length > 1 && parts.length <= 8) {
+          // Fourteen: a real task on a stepped app is ten clauses - site, date,
+          // time, product, resolution, scan, tab, setting, action - and at
+          // eight the whole sentence fell through to a single instruction
+          // that set the year and stopped.
+          if (parts.length > 1 && parts.length <= 14) {
             // "Search fremont, ca, usa and click on it" split correctly and
             // then failed on the second half, because "click on it" is three
             // stop words and names nothing at all. A step with nothing of its
@@ -18257,6 +19820,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const own = meaningfulWords(part)
                 .filter((w) => !verbFamily(w) && !CONTROL_VERB.test(w) && w.length > 2);
               if (own.length) { carried = own.join(" "); return part; }
+              // Except shutting something. "Open the menu, go to reports and
+              // close it" means the report that just opened, whose button
+              // says "Close" - and "close it reports" matched nothing.
+              if (/^\s*(?:close|dismiss|exit|cancel|hide)\b/i.test(part)) return part;
               return carried ? `${part} ${carried}` : part;
             });
             const plans = resolved.map((text, i) => ({
@@ -18275,6 +19842,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // same machinery a single instruction gets, multi-step and all.
             if (plans.length > 1) {
               const steps = [];
+              let lastSearch = null;
+              let lastClauseT = 0;
               for (const { part, text, call } of plans) {
                 let result;
                 // The page's own controls first, as everywhere else. This
@@ -18287,17 +19856,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // Searching first: "search arizona" names no control, so
                 // every path below it looks for one and reports that nothing
                 // matched.
-                const searched = await searchClause(route.global, text).catch(() => null);
-                if (searched) {
-                  steps.push({ part, ok: true, changed: true, unconfirmed: false });
+                const clauseT = Date.now();
+                if (steps.length) debugLog(`[chain] previous clause took ${Date.now() - (lastClauseT || clauseT)}ms`);
+                lastClauseT = clauseT;
+                const step = await resolveStep(route.global, text, { lastSearch, exact: true });
+                if (step) {
+                  if (step.kind === "search") { lastSearch = step.searched; steps.push({ part, ok: true, changed: true, unconfirmed: false }); continue; }
+                  if (step.kind === "pick") lastSearch = null;
+                  steps.push({ part, ok: true, changed: step.changed, unconfirmed: step.unconfirmed, did: step.did });
                   continue;
                 }
-                const exact = await actOnExactlyNamedClause(route.global, text).catch(() => null);
-                if (exact) {
-                  steps.push({ part, ok: true, changed: exact.verified.changed !== false,
-                    unconfirmed: !!exact.unconfirmed });
-                  continue;
-                }
+                // For the fallback below: what was usable before it acts.
+                const beforeStep = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
                 const own = await pursueGoal(route.global, text).catch(() => null);
                 const ownActed = ((own && own.steps) || [])
                   .filter((st) => st.did !== "opened" && st.ok);
@@ -18310,7 +19880,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   result = { ok: true, verified: { changed: true } };
                 } else if (ownActed.length) {
                   result = { ok: true, unconfirmed: true };
-                } else if (call) {
+                }
+                if (ownActed.length) {
+                  const confirmed = await pressConfirmIfRevealed(route.global, text, beforeStep).catch(() => null);
+                  if (confirmed) result = { ok: true, verified: { changed: true }, confirmed: confirmed.label };
+                }
+                if (!result && call) {
                   // A manifest tool call and a planTool result have different
                   // shapes; both end up at the same executor.
                   result = call.name
@@ -19123,7 +20698,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // panel inside the payload, and the card said "ran - could not
           // check whether the page changed". It did not run. An outright
           // failure reported as an unverifiable success is worse than either.
-          if (result.ok === false || !result.verified || result.verified.changed === false) {
+          // A show/hide request that ran is not pressed again. PRISM's "Hide
+          // text" hid the text and renamed itself "Show text"; the page's
+          // signature did not count a paragraph going, so the press looked
+          // like a failure, and the fallback pressed the link again and put
+          // the text back. A second press of a toggle undoes the first.
+          const togglesState = result.ok !== false && /^\s*(?:please\s+)?(?:hide|show|open|close|expand|collapse|reveal|unhide|shut)\b/i.test(wanted)
+            && splitIntoSteps(wanted).length === 1;
+          if (!togglesState && (result.ok === false || !result.verified || result.verified.changed === false)) {
             const second = confidentPick(
               await unifiedTools(route.global, wanted, { acting: true }), wanted);
             if (second && second.tool.name !== manifestCall.name) {
@@ -19143,7 +20725,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // one-list route and the nothing-matched fallback, and a manifest
           // route that failed simply reported its failure.
           let chased = null;
-          if ((result.ok === false || !result.verified || result.verified.changed === false)
+          if (!togglesState && (result.ok === false || !result.verified || result.verified.changed === false)
               && !usedInstead && commandLike && !forceModel) {
             chased = await pursueGoal(route.global, wanted).catch(() => null);
             if (chased && chased.done) {
@@ -19385,6 +20967,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // more use than two things to try at random.
           // Before giving up on a question: the page's own labels.
           if (!commandLike) {
+            // A list the question is about answers it, model or no model.
+            const { direct } = listChoicesFor(wanted, (inv.result && inv.result.controls) || []);
+            if (direct) {
+              respond({ ok: true, plannedBy: "page-data", answer: direct, display: {
+                title: headlineOf(direct), answer: direct, subtitle: "read off the list this page offers, without asking the model",
+                stats: [], rows: [], source: "this page" } });
+              return;
+            }
             const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
             const found = read.ok ? answerFromPageLabels(wanted, read.result) : null;
             if (found) {
@@ -20098,18 +21688,42 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     try { const e = await held; if (e && e.unload) await e.unload(); } catch (e) { /* gone */ }
   }
 
-  async function step(modelId, prompt, { timeoutMs = 45000 } = {}) {
+  async function step(modelId, prompt, { timeoutMs = 45000, schema = null } = {}) {
     const engine = await engineFor(modelId);
     const began = Date.now();
     let timer = null;
     let reply;
+    // Streamed, and gathered here. Not for speed: WebLLM's non-streaming
+    // completion checks its interrupt flag before the step that clears it,
+    // so after one interrupted generation every later request aborted on
+    // the spot with an empty reply - one slow turn, and the model said
+    // nothing for the rest of the page's life. A streamed request clears the
+    // flag as it starts. Measured: an empty "abort" in 3ms before, "4" in
+    // 350ms after, on the same engine straight after an interrupt.
+    // A schema keeps a plan inside its list of controls; a model that
+    // cannot take one is asked again without it.
+    const gather = async (withSchema = schema) => {
+      const chunks = await engine.chat.completions.create({
+        messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+        temperature: 0,
+        max_tokens: withSchema ? 320 : 192,
+        ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
+        stream: true,
+        stream_options: { include_usage: true },
+      }).catch((e) => { if (withSchema) return null; throw e; });
+      if (!chunks) return gather(null);
+      let content = "";
+      let usage = null;
+      for await (const c of chunks) {
+        const ch = c && c.choices && c.choices[0];
+        if (ch && ch.delta && ch.delta.content) content += ch.delta.content;
+        if (c && c.usage) usage = c.usage;
+      }
+      return { choices: [{ message: { content } }], usage };
+    };
     try {
       reply = await Promise.race([
-        engine.chat.completions.create({
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: 192,
-        }),
+        gather(),
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             // Stopped, not just abandoned. A generation nobody is waiting
@@ -20201,7 +21815,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
  * Everything else it touches at load - side panels, offscreen documents,
  * content-script registration - has no meaning here and is a no-op.
  */
-function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall } = {}) {
+function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm } = {}) {
   const messageHandlers = [];
   const updatedListeners = new Set();
   const changeListeners = new Set();
@@ -20272,7 +21886,13 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     active: true,
     url: location.href,
     title: document.title,
-    status: document.readyState === "complete" ? "complete" : "loading",
+    // Loading only while the document is still being parsed. Waiting for
+    // readyState "complete" meant waiting for the load event, which one hung
+    // image or tracker holds off forever - and nothing announced it when it
+    // did come. So on such a page every ask sat out waitForPageLoad's full
+    // ten seconds (twenty when waitForNavigation took "loading" for a
+    // navigation), for a page whose controls had been there all along.
+    status: document.readyState === "loading" ? "loading" : "complete",
   });
 
   // A client-side route change is the only navigation this page lives
@@ -20299,6 +21919,16 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       try { checkUrl(); } catch (e) { /* never break the app's router */ }
       return out;
     };
+  }
+  // Mounted from a module before the document finished parsing: a wait
+  // that began then hears when it has.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      const done = { ...thisTab(), status: "complete" };
+      for (const fn of updatedListeners) {
+        try { fn(done.id, { status: "complete" }, done); } catch (e) { /* theirs */ }
+      }
+    }, { once: true });
   }
   window.addEventListener("popstate", checkUrl);
   window.addEventListener("hashchange", checkUrl);
@@ -20332,7 +21962,7 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       case "panelStatus": return { ok: true, ...modelHost.status() };
       case "panelStep":
         try {
-          const out = await modelHost.step(m.model, m.prompt, { timeoutMs: m.timeoutMs });
+          const out = await modelHost.step(m.model, m.prompt, { timeoutMs: m.timeoutMs, schema: m.schema || null });
           return { ok: true, ...out, model: modelHost.status().model };
         } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
       case "panelBench":
@@ -20344,6 +21974,12 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       case "panelEmbed":
         try { return { ok: true, vectors: await modelHost.embed(m.texts || []) }; }
         catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+      // The first request that needs the model starts it - through the
+      // panel, so the progress bar shows it, where there is one.
+      case "panelWarm":
+        if (onWarm) { try { onWarm(m.model); } catch (e) { modelHost.load(m.model); } }
+        else modelHost.load(m.model);
+        return { ok: true };
       case "panelRelease":
         await modelHost.release();
         return { ok: true };
@@ -20461,85 +22097,142 @@ const WIDGET_CSS = `
 * { box-sizing: border-box; }
 .root {
   --accent: #1a6fd1; --accent-ink: #fff;
-  --bg: #ffffff; --bg-2: #f4f6f9; --ink: #16202c; --ink-2: #566275; --line: #dde3ea;
-  --good: #1d7f4e; --bad: #b42318; --warn: #9a6200;
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --bg: #ffffff; --bg-2: #f5f7fa; --ink: #16202c; --ink-2: #5b6778; --line: #e3e8ee;
+  --good: #1d7f4e; --bad: #b42318; --warn: #a15c00;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 12px 32px rgba(16,24,40,.14);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--ink);
+  -webkit-font-smoothing: antialiased;
 }
 @media (prefers-color-scheme: dark) {
-  .root:not(.light) { --bg: #151a21; --bg-2: #1e252e; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2c3540; }
+  .root:not(.light) { --bg: #161b22; --bg-2: #1f262f; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2d3641;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5); }
 }
-.root.dark { --bg: #151a21; --bg-2: #1e252e; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2c3540; }
+.root.dark { --bg: #161b22; --bg-2: #1f262f; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2d3641;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5); }
+button { font: inherit; }
+
+/* The launcher: the logo as it was, with a little lift. */
 .launcher {
-  position: fixed; z-index: 2147483646; width: 52px; height: 52px; border-radius: 50%;
+  position: fixed; z-index: 2147483646; width: 56px; height: 56px; border-radius: 50%;
   border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0,0,0,.22); display: grid; place-items: center;
+  box-shadow: 0 6px 20px rgba(16,24,40,.24); display: grid; place-items: center;
+  transition: transform .15s ease, box-shadow .15s ease;
 }
+.launcher:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(16,24,40,.28); }
 .launcher:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-.launcher svg { width: 24px; height: 24px; }
+.launcher svg { width: 26px; height: 26px; }
+
+/* The panel. */
 .panel {
-  position: fixed; z-index: 2147483647; width: min(400px, calc(100vw - 24px));
-  height: min(600px, calc(100vh - 100px)); background: var(--bg); color: var(--ink);
-  border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.25);
+  position: fixed; z-index: 2147483647; width: min(392px, calc(100vw - 24px));
+  height: min(620px, calc(100vh - 104px)); background: var(--bg); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow);
   display: flex; flex-direction: column; overflow: hidden;
+  animation: wc-open .18s ease-out;
 }
 .panel[hidden] { display: none; }
-.bottom-right .launcher { right: 20px; bottom: 20px; } .bottom-right .panel { right: 12px; bottom: 84px; }
-.bottom-left .launcher { left: 20px; bottom: 20px; } .bottom-left .panel { left: 12px; bottom: 84px; }
-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-header .title { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.icon-btn { border: 0; background: transparent; color: var(--ink-2); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
+@keyframes wc-open { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.bottom-right .launcher { right: 20px; bottom: 20px; } .bottom-right .panel { right: 16px; bottom: 88px; transform-origin: bottom right; }
+.bottom-left .launcher { left: 20px; bottom: 20px; } .bottom-left .panel { left: 16px; bottom: 88px; transform-origin: bottom left; }
+
+header { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px 16px; }
+.badge { flex: none; width: 32px; height: 32px; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+  display: grid; place-items: center; }
+.badge svg { width: 18px; height: 18px; }
+.titles { flex: 1; min-width: 0; }
+.title { font-weight: 650; font-size: 15px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subtitle { font-size: 12px; color: var(--ink-2); line-height: 1.3; }
+.icon-btn { border: 0; background: transparent; color: var(--ink-2); cursor: pointer; padding: 6px 8px; border-radius: 8px;
+  font-size: 13px; line-height: 1; }
 .icon-btn:hover { background: var(--bg-2); color: var(--ink); }
-.model { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg-2); font-size: 12.5px; color: var(--ink-2); }
-.model-row { display: flex; align-items: center; gap: 8px; }
-.model-row .state { flex: 1; min-width: 0; }
-.model select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; max-width: 150px; }
-.btn { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
-.btn.quiet { background: transparent; color: var(--accent); }
-.btn:disabled { opacity: .5; cursor: default; }
-.bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.icon-btn:focus-visible, .btn:focus-visible, .ex:focus-visible, .choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.icon-btn.close { font-size: 16px; padding: 6px 9px; }
+
+/* The model strip: what is loaded, which model, and the button to load it. */
+.model { margin: 0 14px; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); font-size: 12.5px; color: var(--ink-2); }
+.model[hidden] { display: none; }
+.state { display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; }
+.model-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.model select { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; height: 32px; }
+.model select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn { flex: none; font-size: 13px; font-weight: 600; border: 0; background: var(--accent); color: var(--accent-ink);
+  border-radius: 8px; padding: 0 12px; height: 32px; cursor: pointer; transition: filter .15s ease; }
+.btn:hover { filter: brightness(1.08); }
+.btn[hidden] { display: none; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }
+.bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.bar[hidden] { display: none; }
 .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
-.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--ink-2); }
+.dot { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: #9aa6b4; }
 .dot.ready { background: var(--good); } .dot.loading { background: var(--warn); } .dot.bad { background: var(--bad); }
-.log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.empty { color: var(--ink-2); font-size: 13px; }
-.empty .ex { display: block; text-align: left; width: 100%; margin-top: 6px; font: inherit; color: var(--ink); background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; cursor: pointer; }
-.echo { align-self: flex-end; max-width: 85%; background: var(--accent); color: var(--accent-ink); padding: 6px 10px; border-radius: 12px 12px 2px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; background: var(--bg); }
-.card.running { color: var(--ink-2); }
-.card.failed { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
-.card-title { font-weight: 600; overflow-wrap: anywhere; }
-.card-sub { color: var(--ink-2); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
-.answer { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 6px; margin-top: 8px; }
-.stat { background: var(--bg-2); border-radius: 7px; padding: 5px 7px; }
+
+/* The conversation. */
+.log { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
+.empty { color: var(--ink-2); font-size: 13.5px; }
+.empty .lead { margin-bottom: 10px; }
+.empty .try { font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin: 14px 0 6px; }
+.empty .ex { display: block; text-align: left; width: 100%; margin-top: 6px; font-size: 13.5px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; cursor: pointer;
+  transition: border-color .15s ease, background .15s ease; }
+.empty .ex:hover { border-color: var(--accent); background: var(--accent-soft); }
+.echo { align-self: flex-end; max-width: 85%; background: var(--accent); color: var(--accent-ink); padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 13px; background: var(--bg);
+  box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+.card.running { color: var(--ink-2); background: var(--bg-2); border-color: transparent; box-shadow: none; }
+.card.failed { border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); background: color-mix(in srgb, var(--bad) 4%, var(--bg)); }
+.card-title { font-weight: 600; overflow-wrap: anywhere; line-height: 1.35; }
+.card-sub { color: var(--ink-2); font-size: 13px; margin-top: 3px; overflow-wrap: anywhere; }
+.answer { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 6px; margin-top: 10px; }
+.stat { background: var(--bg-2); border-radius: 8px; padding: 6px 8px; }
 .stat-label { font-size: 11.5px; color: var(--ink-2); } .stat-value { font-weight: 600; }
-.rows { margin-top: 8px; border-top: 1px solid var(--line); }
-.row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.rows { margin-top: 10px; border-top: 1px solid var(--line); }
+.row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .row-name { min-width: 0; overflow-wrap: anywhere; } .row-meta { color: var(--ink-2); margin-left: 6px; font-size: 12px; }
 .row-value { text-align: right; font-weight: 500; }
 .caveat, .checked { margin-top: 8px; font-size: 12.5px; color: var(--ink-2); }
 .checked-item::before { content: "· "; }
-.choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.choice { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); border-radius: 7px; padding: 4px 8px; cursor: pointer; text-align: left; }
+.choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.choice { font-size: 13px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px;
+  padding: 5px 9px; cursor: pointer; text-align: left; }
+.choice:hover { border-color: var(--accent); background: var(--accent-soft); }
 .choice-hint { display: block; color: var(--ink-2); font-size: 11.5px; }
-.card-foot { margin-top: 8px; display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--ink-2); }
-.acts { display: flex; gap: 6px; margin-top: 6px; }
-.acts button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 1px 7px; cursor: pointer; }
-details.past { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
-details.past summary { cursor: pointer; display: flex; gap: 8px; list-style: none; }
+.card-foot { margin-top: 10px; display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--ink-2); }
+.acts { display: flex; gap: 6px; margin-top: 8px; }
+.acts button { font-size: 12px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 7px;
+  padding: 2px 9px; cursor: pointer; }
+.acts button:hover { color: var(--ink); border-color: var(--ink-2); }
+details.past { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; background: var(--bg); }
+details.past summary { cursor: pointer; display: flex; gap: 8px; list-style: none; font-size: 13px; }
 details.past summary::-webkit-details-marker { display: none; }
 .past-q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .past-a { color: var(--ink-2); font-size: 12px; white-space: nowrap; }
 details.past .card { margin-top: 8px; }
-form { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
-textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; height: 40px; max-height: 120px; }
-textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
-.spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin-right: 6px; vertical-align: -1px; }
+
+/* The input. */
+form { padding: 12px 14px 10px; border-top: 1px solid var(--line); }
+.compose { display: flex; align-items: flex-end; gap: 8px; border: 1px solid var(--line); border-radius: 14px;
+  padding: 6px 6px 6px 12px; background: var(--bg); transition: border-color .15s ease, box-shadow .15s ease; }
+.compose:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: transparent; border: 0; outline: none;
+  padding: 6px 0; height: 34px; max-height: 120px; }
+textarea::placeholder { color: var(--ink-2); }
+.send { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; display: grid; place-items: center; }
+.send svg { width: 18px; height: 18px; }
+.foot { margin-top: 7px; text-align: center; font-size: 11px; color: var(--ink-2); }
+.spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .8s linear infinite; margin-right: 8px; vertical-align: -1px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .bar > div { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .spin, .panel { animation: none; } .bar > div, .launcher, .ex, .compose { transition: none; } .log { scroll-behavior: auto; }
+}
 `;
 
+const SEND_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9 10h6M9 13.5h4"/></svg>`;
 
 function createWidgetUI({ send, modelHost, storage, options }) {
@@ -20577,11 +22270,15 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   root.appendChild(panel);
 
   const header = el("header");
-  header.appendChild(el("div", "title", options.title));
+  const badge = el("div", "badge");
+  badge.innerHTML = ICON;
+  const titles = el("div", "titles");
+  titles.append(el("div", "title", options.title), el("div", "subtitle", "Runs privately in your browser"));
+  header.append(badge, titles);
   const clearBtn = el("button", "icon-btn", "Clear");
   clearBtn.type = "button";
   clearBtn.title = "Clear the history";
-  const closeBtn = el("button", "icon-btn", "✕");
+  const closeBtn = el("button", "icon-btn close", "✕");
   closeBtn.type = "button";
   closeBtn.setAttribute("aria-label", "Close");
   header.append(clearBtn, closeBtn);
@@ -20605,12 +22302,12 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   }
   const loadBtn = el("button", "btn", "Load model");
   loadBtn.type = "button";
-  modelRow.append(state, picker, loadBtn);
+  modelRow.append(picker, loadBtn);
   const bar = el("div", "bar");
   const fill = el("div");
   bar.appendChild(fill);
   bar.hidden = true;
-  modelBox.append(modelRow, bar);
+  modelBox.append(state, modelRow, bar);
   // A site that turned the model off should not offer to download one.
   if (options.useModel === false) modelBox.hidden = true;
   panel.appendChild(modelBox);
@@ -20623,9 +22320,14 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   const input = el("textarea");
   input.placeholder = options.placeholder;
   input.setAttribute("aria-label", "Ask about this page");
-  const sendBtn = el("button", "btn", "Ask");
+  const sendBtn = el("button", "btn send");
   sendBtn.type = "submit";
-  form.append(input, sendBtn);
+  sendBtn.setAttribute("aria-label", "Ask");
+  sendBtn.title = "Ask";
+  sendBtn.innerHTML = SEND_ICON;
+  const compose = el("div", "compose");
+  compose.append(input, sendBtn);
+  form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
   panel.appendChild(form);
 
   // --- model state -----------------------------------------------------------
@@ -20808,8 +22510,9 @@ function createWidgetUI({ send, modelHost, storage, options }) {
 
   function drawEmpty() {
     const empty = el("div", "empty");
-    empty.appendChild(el("div", null,
+    empty.appendChild(el("div", "lead",
       "Ask me to do something on this page, or to explain what it shows."));
+    if ((options.suggestions || []).length) empty.appendChild(el("div", "try", "Try"));
     for (const ex of options.suggestions || []) {
       const b = el("button", "ex", ex);
       b.type = "button";
@@ -21054,6 +22757,7 @@ function mount(userOptions = {}) {
     storageKey: options.storageKey,
     onBroadcast: (m) => { if (ui) ui.progress(m); },
     beforeCall: ensureNamed,
+    onWarm: () => { if (ui) ui.loadModel(); },
   });
 
   // The model the site chose, unless the visitor has since picked another
