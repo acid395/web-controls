@@ -292,6 +292,8 @@ globalThis.WC_BUILD_READ_PROMPT = buildReadPrompt;
 // fails on any of them. Braces inside string values are respected, since a
 // gauge name or a selector can legitimately contain one.
 function firstJsonObject(text) {
+  // A reasoning model's thinking comes first, and can hold braces of its own.
+  text = String(text || "").replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^[\s\S]*?<\/think>/i, "");
   const start = (text || "").indexOf("{");
   if (start === -1) return null;
   let depth = 0, inString = false, escaped = false;

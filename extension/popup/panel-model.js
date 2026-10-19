@@ -86,7 +86,7 @@ export async function step(modelId, prompt, { timeoutMs = 45000, schema = null }
   // only name controls on its list. A model that cannot take one is asked
   // again without it.
   const create = (withSchema) => engine.chat.completions.create({
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
     temperature: 0,
     max_tokens: withSchema ? 320 : 192,
     ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),

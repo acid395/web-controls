@@ -182,7 +182,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     // cannot take one is asked again without it.
     const gather = async (withSchema = schema) => {
       const chunks = await engine.chat.completions.create({
-        messages: [{ role: "user", content: prompt }],
+        messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
         temperature: 0,
         max_tokens: withSchema ? 320 : 192,
         ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),

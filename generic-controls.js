@@ -1102,6 +1102,17 @@
             return href && !/^#$|^javascript:/i.test(href) ? href : undefined;
           } catch (e) { return undefined; }
         })(),
+        // A link that opens another site or a new tab, which is not somewhere
+        // anybody goes by accident.
+        elsewhere: (() => {
+          try {
+            const a = el.matches("a[href]") ? el : (el.closest && el.closest("a[href]"));
+            if (!a) return undefined;
+            if (/_blank/i.test(a.getAttribute("target") || "")) return true;
+            const u = new URL(a.getAttribute("href"), location.href);
+            return /^https?:$/.test(u.protocol) && u.host !== location.host ? true : undefined;
+          } catch (e) { return undefined; }
+        })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
         expanded,
         revealedBy: opener ? cssPath(opener) : undefined,

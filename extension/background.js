@@ -6391,7 +6391,34 @@ function shortlistFor(goal, controls, max = 20) {
  * null where the model planned nothing, so the caller's other paths get
  * their turn; a plan that ran, even to no visible effect, is the answer.
  */
-async function planWithModel(routeGlobal, goal) {
+/* A link that leaves the page is pressed only when the request asks to go
+ * somewhere and names where. An 8B planning "turn on the flood map set,
+ * choose cedar rapids" pressed "Open this area in Google Maps (opens in a
+ * new tab)", because the request said map.
+ */
+// A link to another site or a new tab is pressed only when the request asks
+// to go there and names it. Links within the site are the model's call: "how
+// much rain has already fallen" is rightly Past Precipitation Estimates, with
+// no word in common.
+function leavesThePage(c) {
+  return !!c.elsewhere || /\bopens?\s+in\s+(?:a\s+)?new\s+(?:tab|window)\b/i.test(String(c.label || ""));
+}
+function askedToLeaveFor(goal, c) {
+  const want = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+  return /\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal)
+    && meaningfulWords(String(c.label || "")).some((w) => want.includes(w));
+}
+
+// A control that undoes things is pressed only when the request asks for
+// that. Asked to "pick the first time listed", a 3B pressed RadarViz's
+// "Reset all filters and selections" and wiped the radar and dates the
+// steps before it had set.
+const UNDOES = /\b(?:reset|clear|delete|remove|erase|discard|cancel|log\s*out|sign\s*out)\b/i;
+function undoesUnasked(goal, c) { return UNDOES.test(String(c.label || "")) && !UNDOES.test(goal); }
+// The placeholders in the plan prompt's examples, copied instead of filled in.
+const PLACEHOLDER = /^\s*(?:OPTION|TEXT|WORDS|NAME|VALUE)\s*$/;
+
+async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
   if (!inv || !inv.ok || !inv.result) return null;
   // A larger model is shown more: a 3B reads twenty lines in seconds and
@@ -6402,15 +6429,6 @@ async function planWithModel(routeGlobal, goal) {
   const began = Date.now();
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   let names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
-  // A link that leaves the page is pressed only when the request asks to go
-  // somewhere and names where. An 8B planning "turn on the flood map set,
-  // choose cedar rapids" added "Open this area in Google Maps (opens in a
-  // new tab)", because the request said map.
-  const goalWords = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
-  const asksToGo = /\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal);
-  const leavesPage = (c) => (!!c.goesTo && !/^(?:#|javascript:)/i.test(String(c.goesTo)))
-    || /\bopens?\s+in\s+(?:a\s+)?new\s+(?:tab|window)\b/i.test(String(c.label || ""));
-  const askedToLeaveFor = (c) => asksToGo && meaningfulWords(String(c.label || "")).some((w) => goalWords.includes(w));
   const listsHolding = (value) => shortlist.filter((c) => (c.options || []).some((o) => flat(o.text || o.value) === flat(value)));
   const history = [];
   const done = new Set();
@@ -6419,6 +6437,8 @@ async function planWithModel(routeGlobal, goal) {
   // of the request out - fewer steps than the sentence has parts, or a step
   // that failed - and told what has been done, so it plans the remainder.
   const evident = splitIntoSteps(goal).length;
+  // The bound holds over both plans together, not each.
+  let budget = maxSteps || Math.min(12, evident * 3 + 1);
   let calls = 0;
   let cost = null;
   for (let round = 0; round < 2; round++) {
@@ -6440,8 +6460,13 @@ async function planWithModel(routeGlobal, goal) {
   // A plan no longer than the request: a 3B answered a two-part request with
   // fifteen steps. Three a part and one to confirm is room for every real
   // step and a bound on an invented one.
-  for (const st of steps.slice(0, Math.min(12, evident * 3 + 1))) {
+  for (const st of steps) {
+    if (budget-- <= 0) break;
     let act = String(st.do || "click").toLowerCase();
+    if (st.value != null && PLACEHOLDER.test(String(st.value))) {
+      history.push({ did: `${act} "${String(st.name || "").slice(0, 40)}"`, ok: false, changed: false, skipped: true, outcome: "the plan copied a placeholder instead of a value" });
+      continue;
+    }
     // The same step twice is once.
     const key = `${act}|${flat(st.name)}|${flat(st.value)}`;
     if (done.has(key)) continue;
@@ -6480,7 +6505,12 @@ async function planWithModel(routeGlobal, goal) {
       await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
       forgetPageTools();
     }
-    if (act === "click" && leavesPage(target) && !askedToLeaveFor(target)) {
+    if (undoesUnasked(goal, target)) {
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, ok: true, changed: false, skipped: true,
+        outcome: "it would undo what was set, and the request did not ask for that" });
+      continue;
+    }
+    if (act === "click" && leavesThePage(target) && !askedToLeaveFor(goal, target)) {
       history.push({ did: `click "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - it leaves this page, and the request did not ask to go there" });
       continue;
@@ -8071,6 +8101,18 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     if (goesAway && ONLY_A_STATE.test(goal) && !optionWanted) {
       return giveUp(`"${String(target.label).slice(0, 40)}" is a link, and nothing here can be`
         + " turned on the way the request asks");
+    }
+    if (undoesUnasked(goal, target)) {
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, outcome: "it would undo what was set, and the request did not ask for that" });
+      note = `"${String(target.label).slice(0, 40)}" would undo what was already set, which the request did not ask for. Choose another control.`;
+      if (!correct(note)) return giveUp("the model kept choosing a control that would undo the request");
+      continue;
+    }
+    if (act === "click" && leavesThePage(target) && !askedToLeaveFor(goal, target)) {
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, outcome: "it leaves this page, and the request did not ask to go there" });
+      note = `"${String(target.label).slice(0, 40)}" leaves this page, which the request did not ask for. Choose a control on this page.`;
+      if (!correct(note)) return giveUp("the model kept choosing a link off this page");
+      continue;
     }
     const call = (ariaOption || emptyChooser)
       ? actionToCall("click", target, s)
@@ -10800,6 +10842,21 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   }
   const named = !!sure;
   debugLog(`[chain] "${clause}": certain plan ${sure ? "= " + sure.label : "none"}`);
+  // A panel or toggle already the way the step asks is left alone: pressing
+  // it reverses it. "Open settings" on a page with Settings already open
+  // shut it, and the next step could not find what was inside.
+  if (sure && !narrow) {
+    const wantShown = /\b(?:show|open|expand|reveal|display|unhide)\b/i.test(clause) && !/\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
+    const wantHidden = /\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
+    if (wantShown || wantHidden) {
+      const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const now = await readInventory();
+      const c = ((now.ok && now.result && now.result.controls) || []).find((x) => flatL(x.label) === flatL(sure.label));
+      if (c && typeof c.expanded === "boolean" && c.expanded === wantShown) {
+        return done("already", sure.label || clause, false, wantShown ? "already open, so left as it was" : "already hidden, so left as it was", false, null);
+      }
+    }
+  }
   if (sure) {
     const did = await sure.run().catch(() => null);
     if (did) return done("plan", sure.label || clause, did.changed !== false, "named on the page exactly, so the model was not asked", false, await confirmAfter());
@@ -10809,14 +10866,25 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
     const acted = await actOnExactlyNamedClause(routeGlobal, clause).catch(() => null);
     if (acted) return done("exact", acted.label || clause, acted.verified.changed !== false, "named on the page exactly", acted.unconfirmed, await confirmAfter());
   }
+  // Named, and pressing it changed nothing: most often it was already as
+  // asked - RadarViz's Settings already open. Handed on, a model pressed it
+  // again and shut the panel the next step needed. The page has settled it.
+  if (named && !narrow) return done("named", sure.label || clause, false, "named on the page; it was already as asked or did not respond", true, null);
   // The control a step names may be arriving - a tab the page draws once
   // the layer before it has loaded. Only where nothing was named at all: a
   // plan that ran and came back empty has already pressed, and pressing
   // again undoes it.
   if (!named && lateLooks > 0) {
-    for (let look = 0; look < lateLooks && !sure; look++) {
+    // A list a server fills - RadarViz's scan times - can take ten seconds
+    // after the step before it; the first of it is worth waiting for.
+    const ordinal = NTH_LISTED.test(String(clause));
+    for (let look = 0; look < (ordinal ? Math.max(lateLooks, 8) : lateLooks) && !sure; look++) {
       await new Promise((r) => setTimeout(r, 1500));
       forgetInventory();
+      if (ordinal) {
+        const later = await pickNthOfList(routeGlobal, clause, before).catch(() => null);
+        if (later) return done("nth", later.control.label, true, "the one the list shows once it had loaded", false, await confirmAfter());
+      }
       sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
     }
     if (sure) {
@@ -12703,7 +12771,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // Anything that is not a question: "represent missing data as an
             // empty string" has no verb this code knows, and the model is the
             // one to say whether the page can do it.
-            if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted)) {
+            // One step's request only. A chain's later parts depend on what its
+            // earlier parts reveal - RadarViz's search results, FIMS's scenario
+            // list - and planned all at once over the page as it first stood,
+            // the model was asked to pick controls that did not exist yet. A
+            // chain runs part by part below, each part planned over the page
+            // as it is when its turn comes.
+            if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted) && splitIntoSteps(wanted).length <= 1) {
               const plan = await planWithModel(route.global, wanted).catch((e) => { debugLog(`[plan] threw: ${String((e && e.message) || e)}`); return null; });
               if (plan) {
                 const unchecked = plan.history.filter((h) => h.ok && !h.changed).length;
@@ -12780,8 +12854,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   }
                   beforeStep = step === null ? await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null) : null;
                 }
-                const one = await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
-                  .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
+                // The part planned in one call over the page as it now is; the
+                // step-by-step loop only where the plan did nothing.
+                // One part of a chain is one thing: the control, and at most
+                // the panel that holds it. Twelve guesses at "clear the cached
+                // data" pressed whatever was nearby.
+                const planned = isCommand(part) ? await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null) : null;
+                const one = planned && planned.history.some((h) => h.ok && h.changed)
+                  ? { ok: true, history: planned.history, tookMs: planned.tookMs }
+                  : await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
+                    .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
                 // A button the model's step made usable is its confirmation
                 // as much as a page-matched step's is.
                 if (!forceModel && (one.history || []).some((h) => h.changed || h.ok)) {
@@ -13957,7 +14039,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // panel inside the payload, and the card said "ran - could not
           // check whether the page changed". It did not run. An outright
           // failure reported as an unverifiable success is worse than either.
-          if (result.ok === false || !result.verified || result.verified.changed === false) {
+          // A show/hide request that ran is not pressed again. PRISM's "Hide
+          // text" hid the text and renamed itself "Show text"; the page's
+          // signature did not count a paragraph going, so the press looked
+          // like a failure, and the fallback pressed the link again and put
+          // the text back. A second press of a toggle undoes the first.
+          const togglesState = result.ok !== false && /^\s*(?:please\s+)?(?:hide|show|open|close|expand|collapse|reveal|unhide|shut)\b/i.test(wanted)
+            && splitIntoSteps(wanted).length === 1;
+          if (!togglesState && (result.ok === false || !result.verified || result.verified.changed === false)) {
             const second = confidentPick(
               await unifiedTools(route.global, wanted, { acting: true }), wanted);
             if (second && second.tool.name !== manifestCall.name) {
@@ -13977,7 +14066,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // one-list route and the nothing-matched fallback, and a manifest
           // route that failed simply reported its failure.
           let chased = null;
-          if ((result.ok === false || !result.verified || result.verified.changed === false)
+          if (!togglesState && (result.ok === false || !result.verified || result.verified.changed === false)
               && !usedInstead && commandLike && !forceModel) {
             chased = await pursueGoal(route.global, wanted).catch(() => null);
             if (chased && chased.done) {

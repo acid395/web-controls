@@ -534,7 +534,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const started = Date.now();
         const reply = await Promise.race([
           engine.chat.completions.create({
-            messages: [{ role: "user", content: prompt }],
+            messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
             temperature: 0,
             max_tokens: 4,   // a number, and nothing else
           }),
@@ -597,7 +597,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const INFERENCE_TIMEOUT_MS = inferenceTimeoutMs();
         const reply = await whileBusy(() => Promise.race([
           engine.chat.completions.create({
-            messages: [{ role: "user", content: prompt }],
+            messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
             temperature: 0,
             // A decision is `{"n":14,"do":"check","on":true}` - about twenty
             // tokens, and that is what it costs: this is a ceiling, not a
@@ -699,7 +699,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const INFERENCE_TIMEOUT_MS = 120000;
         const reply = await Promise.race([
           engine.chat.completions.create({
-            messages: [{ role: "user", content: prompt }],
+            messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
             temperature: 0,      // picking a tool is not a creative task
             max_tokens: 96,      // a routing decision is one small JSON object
           }),

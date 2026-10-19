@@ -2346,7 +2346,7 @@ else {
     };
     page.document.getElementById("go").addEventListener("click", () => page.document.body.appendChild(page.document.createElement("hr")));
     runAsync(async () => {
-      const r = await bg.__ask({ type: "smartAsk", instruction: "show me the last month of rain with the key visible and run it" });
+      const r = await bg.__ask({ type: "smartAsk", instruction: "show me the last month of rain with the key visible" });
       ensure("the planner answers a request that shares no word with the page", r.plannedBy === "plan", r.plannedBy);
       ensure("one plan call, no per-step turns", plans === 1 && turns === 0, `${plans} plans, ${turns} turns`);
       ensure("every planned step ran against the page", page.document.getElementById("layer").value === "p30"
