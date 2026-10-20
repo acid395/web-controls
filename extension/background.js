@@ -5421,6 +5421,9 @@ function alsoCalled(label, control = null) {
   const names = [];
   // Its tooltip, where the page gave one that differs from its text.
   if (control && control.hint) names.push(flat(control.hint));
+  // A one-word button is also its action on its row: "Clear" under "Cached
+  // data" answers to "clear cached data".
+  if (control && control.context) names.push(flat(`${t} ${control.context}`));
   // A list number is not part of the name: a contents link reading "15
   // References" is the References link.
   const unnumbered = flat(t).replace(/^\d+(?:\s\d+)*\s+(?=[a-z])/, "");
@@ -5479,7 +5482,7 @@ function namedByClause(all, clause) {
       const l = flat(c.label);
       if (!l || opposite(l)) return false;
       return l === bare || l === whole || l === plainWhole || closeName(bare, l)
-        || alsoCalled(c.label, c).some((a) => a === bare || a === whole);
+        || alsoCalled(c.label, c).some((a) => a === bare || a === whole || a === plainWhole);
     });
     // Where it is, said after what it is. "zoom in on the location map" is
     // Zoom in, on the map - and the place made the whole sentence a name
@@ -5551,7 +5554,7 @@ function namedByClause(all, clause) {
     exactly = kept.some((c) => { const l = flat(c.label); return l === bare || l === whole; });
     namedOtherwise = !exactly && (cutExactly || kept.some((c) => {
       const l = flat(c.label);
-      return l === plainWhole || alsoCalled(c.label, c).some((a) => a === bare || a === whole);
+      return l === plainWhole || alsoCalled(c.label, c).some((a) => a === bare || a === whole || a === plainWhole);
     }));
     return kept;
   };
@@ -10850,6 +10853,19 @@ async function runSetToPlan(routeGlobal, setTo) {
  * rule for every path. Returns null where nothing on the page settles it,
  * and the caller decides what to ask the model.
  */
+// A panel or toggle the step names that is already the way the step asks:
+// said, and left alone, because pressing it would reverse it.
+async function alreadyAsAsked(clause, label) {
+  const wantShown = /\b(?:show|open|expand|reveal|display|unhide)\b/i.test(clause) && !/\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
+  const wantHidden = /\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
+  if (!wantShown && !wantHidden) return null;
+  const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const now = await readInventory();
+  const c = ((now.ok && now.result && now.result.controls) || []).find((x) => flatL(x.label) === flatL(label));
+  if (!c || typeof c.expanded !== "boolean" || c.expanded !== wantShown) return null;
+  return wantShown ? "already open, so left as it was" : "already hidden, so left as it was";
+}
+
 async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = true, lateLooks = 0, narrow = false } = {}) {
   // Narrow: only what nothing else on the single-instruction path does - the
   // first of a run, a list or box named with its value. The rest of that
@@ -10882,16 +10898,8 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   // it reverses it. "Open settings" on a page with Settings already open
   // shut it, and the next step could not find what was inside.
   if (sure && !narrow) {
-    const wantShown = /\b(?:show|open|expand|reveal|display|unhide)\b/i.test(clause) && !/\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
-    const wantHidden = /\b(?:hide|close|collapse|shut|dismiss)\b/i.test(clause);
-    if (wantShown || wantHidden) {
-      const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      const now = await readInventory();
-      const c = ((now.ok && now.result && now.result.controls) || []).find((x) => flatL(x.label) === flatL(sure.label));
-      if (c && typeof c.expanded === "boolean" && c.expanded === wantShown) {
-        return done("already", sure.label || clause, false, wantShown ? "already open, so left as it was" : "already hidden, so left as it was", false, null);
-      }
-    }
+    const already = await alreadyAsAsked(clause, sure.label);
+    if (already) return done("already", sure.label || clause, false, already, false, null);
   }
   if (sure) {
     const did = await sure.run().catch(() => null);
@@ -11116,7 +11124,16 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
     const press = await runVerified(routeGlobal,
       { name: "pageClick", args: { selector: only.selector } });
     if (press.ok === false) return null;
-    if (press.result && press.result.opened === true) return null;
+    // A press that only opened a panel is not the thing a request named
+    // inside it - unless opening is what was asked. "Open settings" opened
+    // RadarViz's Settings and was reported failed, and a model then pressed
+    // it again and shut it.
+    if (press.result && press.result.opened === true) {
+      if (/^\s*(?:please\s+)?(?:open|show|expand|reveal|display|unhide)\b/i.test(clause)) {
+        return { ok: true, verified: { changed: true }, label: only.label };
+      }
+      return null;
+    }
     const moved = didItMove(press);
     // Pressed either way. Whether the page visibly moved decides how it is
     // reported, not whether it counts: plenty of these pages answer a click
@@ -11908,7 +11925,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // The model was there and got nowhere, so this is the baseline
           // answering. Worth saying outright: the two are meant to be
           // compared, and an unlabelled answer counts for neither.
-          !modelSkipped && modelTried && !/^(?:model|plan)$/.test(res.plannedBy)
+          !modelSkipped && modelTried && !/^(?:model|plan|page-data)$/.test(res.plannedBy)
             ? `${modelUsed ? modelName(modelUsed) : "the local model"} planned nothing here,`
               + " so this is the keyword baseline"
               + (modelSaid ? ` - it replied: ${String(modelSaid).slice(0, 120)}` : "")
@@ -11919,7 +11936,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The route alone was the source on every card the model did not
         // plan, so a run that asked a model and threw its answer away looked
         // identical to one where no model existed.
-        if (display && modelTried && modelUsed && !/^(?:model|plan)$/.test(res.plannedBy)) {
+        if (display && modelTried && modelUsed && !/^(?:model|plan|page-data)$/.test(res.plannedBy)) {
           display.source = `${display.source || route.global} - asked ${modelName(modelUsed)}`;
         }
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
@@ -12703,13 +12720,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const rows = [];
               let anyFailed = false;
               for (const { clause, plan } of certain) {
+                const already = await alreadyAsAsked(clause, plan.label).catch(() => null);
+                if (already) {
+                  rows.push({ name: plan.label || clause, value: "already so", meta: `${clause} - ${already}`, tone: "ok" });
+                  continue;
+                }
                 const did = await plan.run().catch(() => null);
                 if (!did) anyFailed = true;
+                // A page that could not be read around the press is said so,
+                // not reported as done or as nothing changed.
                 rows.push({
                   name: plan.label || clause,
-                  value: !did ? "failed" : did.changed === false ? "nothing changed" : "done",
-                  meta: clause,
-                  tone: !did ? "alert" : did.changed === false ? "warn" : "ok",
+                  value: !did ? "failed" : did.unconfirmed ? "ran" : did.changed === false ? "nothing changed" : "done",
+                  meta: did && did.unconfirmed ? `${clause} - could not check whether the page changed` : clause,
+                  tone: !did ? "alert" : (did.unconfirmed || did.changed === false) ? "warn" : "ok",
                 });
               }
               if (!anyFailed) {

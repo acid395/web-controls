@@ -2409,6 +2409,52 @@ else {
   check("and is handed back only once", got[2], 0);
 }
 
+// "Open settings" on a page where Settings starts closed: opening the panel
+// is the whole request, and is reported done, not failed.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <button id="tog" type="button" aria-expanded="false" aria-controls="body">Settings</button>
+    <div id="body" hidden><label for="u">Distance units</label><select id="u"><option value="km">Kilometres</option><option value="mi">Miles</option></select></div>
+    </body></html>`, { url: "https://hydroinformatics.example.edu/radarviz/" });
+  if (page) {
+    const tog = page.document.getElementById("tog"); const body = page.document.getElementById("body");
+    tog.addEventListener("click", () => { const open = tog.getAttribute("aria-expanded") !== "true"; tog.setAttribute("aria-expanded", String(open)); body.hidden = !open; });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: "open settings, then switch distance units to miles" });
+      check("open settings: the panel ends open", tog.getAttribute("aria-expanded"), "true");
+      check("and the unit inside it is set", page.document.getElementById("u").value, "mi");
+      ensure("and opening is not reported as a failure", !/failed|did not take/i.test(JSON.stringify((r.display || {}).rows || []) + String((r.display || {}).title || "")), r.display);
+    });
+  }
+}
+
+// A one-word button is also named by its row. RadarViz's cache button says
+// only "Clear", in a row captioned "Cached data", beside a second "Clear"
+// for a drawn region. "Clear the cached data" presses the cache one and no
+// other; the button's own name stays "Clear".
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <div class="settings-row"><label class="settings-row__label">Cached data <span class="settings-help" tabindex="0">?</span></label>
+      <div class="settings-cache"><button id="cache" type="button">Clear</button> <span>12 MB</span></div></div>
+    <div class="qpe"><h4>Region</h4><div class="btns"><button id="rect">Rectangle</button> <button id="region">Clear</button></div></div>
+    </body></html>`, { url: "https://hydroinformatics.example.edu/radarviz/" });
+  if (page) {
+    const recs = page.GENERIC.inventory({ includeHidden: true }).controls;
+    const cache = recs.find((c) => c.id === "cache") || {};
+    check("a one-word button keeps its own name", cache.label, "Clear");
+    check("and also carries its row's caption", cache.context, "Cached data");
+    const pressed = { cache: 0, region: 0 };
+    for (const id of ["cache", "region"]) page.document.getElementById(id).addEventListener("click", () => { pressed[id]++; });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "clear the cached data" });
+      ensure("clear the cached data presses the cache's Clear", pressed.cache === 1, pressed);
+      ensure("and not the region's Clear", pressed.region === 0, pressed);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

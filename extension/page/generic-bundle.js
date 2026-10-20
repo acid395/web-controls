@@ -277,6 +277,22 @@
     if (texts.filter((t) => /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(t)).length >= 6) return "month";
     return "";
   };
+  const GENERIC_ACTION = /^\s*(?:clear|reset|go|apply|submit|ok|save|update|delete|remove|load|run|view|show|hide|refresh|download|export|add|edit|search|start|stop|cancel|done|next|back|more|open|close|select|choose|browse|upload|copy|print|send|confirm)\s*$/i;
+  // The nearest caption before a control, within its row: a sibling before
+  // it, or before the box it sits in, that is words and not another control.
+  const rowCaption = (el) => {
+    try {
+      for (let n = el, up = 0; n && up < 3; n = n.parentElement, up++) {
+        let sib = n.previousElementSibling;
+        for (let seen = 0; sib && seen < 2; seen++, sib = sib.previousElementSibling) {
+          if (isControlish(sib) || (sib.querySelector && sib.querySelector("input, select, textarea, button"))) break;
+          const t = String(shortText(sib, { skipControls: true }) || "").replace(/[?*:]+\s*$/, "").replace(/\s+/g, " ").trim();
+          if (t && t.length <= 40 && /[a-z]/i.test(t)) return t;
+        }
+      }
+    } catch (e) { /* exotic markup: no caption */ }
+    return undefined;
+  };
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
     const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -1120,6 +1136,11 @@
         // What its tooltip calls it, where that differs: another name a
         // request may use.
         hint: (() => { const t = String(el.title || "").replace(/\s+/g, " ").trim(); return t && t !== lab ? t.slice(0, 80) : undefined; })(),
+        // The caption of the row a one-word button sits in. RadarViz's cache
+        // button says only "Clear", under a row labelled "Cached data", and
+        // "clear the cached data" had nothing to find. Its own name stays
+        // "Clear"; this is only another name it answers to.
+        context: GENERIC_ACTION.test(lab) ? rowCaption(el) : undefined,
       };
       // Which one is chosen, not only what is on offer. Without it nothing
       // can tell whether a selection took, and a list that had just been set
@@ -3233,6 +3254,14 @@
   async function openDisclosure(selector) {
     const el = deepQuery(selector);
     if (!el) throw new Error(`no such control: ${selector}`);
+    // Already open is left open. Pressing a toggle that says it is expanded
+    // can only shut it: a step planned while a panel was shut ran after an
+    // earlier step had opened it, and closed it again.
+    const details = el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS" ? el.parentElement : null;
+    if (el.getAttribute("aria-expanded") === "true" || (details && details.open)) {
+      const n = inventory({ includeHidden: true }).controlCount;
+      return { opened: rawLabelOf(el).slice(0, 60) || selector, alreadyOpen: true, controlsBefore: n, controlsAfter: n, appeared: 0 };
+    }
     const before = inventory({ includeHidden: true }).controlCount;
     /* Hovered before it is pressed.
      *
