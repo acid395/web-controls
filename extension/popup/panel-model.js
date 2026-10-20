@@ -85,17 +85,44 @@ export async function step(modelId, prompt, { timeoutMs = 45000, schema = null }
   // A schema, where one is given, keeps the reply inside it - a plan can
   // only name controls on its list. A model that cannot take one is asked
   // again without it.
-  const create = (withSchema) => engine.chat.completions.create({
-    messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
-    temperature: 0,
-    max_tokens: withSchema ? 320 : 192,
-    ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
-  });
-  const reply = await Promise.race([
-    schema ? create(schema).catch(() => create(null)) : create(null),
-    new Promise((_, reject) => setTimeout(
-      () => reject(new Error(`inference timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)),
-  ]);
+  // Streamed and gathered, as the widget's host does. A non-streamed
+  // completion checks its interrupt flag before the step that clears it, so
+  // after one stopped generation every later one aborted on the spot; a
+  // streamed request clears the flag as it starts. That is what lets a
+  // cancelled request stop the model without breaking the next one.
+  const create = async (withSchema) => {
+    const chunks = await engine.chat.completions.create({
+      messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+      temperature: 0,
+      max_tokens: withSchema ? 320 : 192,
+      ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    let content = "";
+    let usage = null;
+    for await (const c of chunks) {
+      const ch = c && c.choices && c.choices[0];
+      if (ch && ch.delta && ch.delta.content) content += ch.delta.content;
+      if (c && c.usage) usage = c.usage;
+    }
+    return { choices: [{ message: { content } }], usage };
+  };
+  let timer = null;
+  let reply;
+  try {
+    reply = await Promise.race([
+      schema ? create(schema).catch(() => create(null)) : create(null),
+      new Promise((_, reject) => { timer = setTimeout(() => {
+        // Stopped, not abandoned: a generation nobody waits for still holds
+        // the engine, and the next decision would queue behind it.
+        try { if (engine.interruptGenerate) engine.interruptGenerate(); } catch (e) { /* done already */ }
+        reject(new Error(`inference timed out after ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
   const u = (reply && reply.usage) || {};
   const x = u.extra || {};
   return {
@@ -109,6 +136,11 @@ export async function step(modelId, prompt, { timeoutMs = 45000, schema = null }
       firstTokenS: x.time_to_first_token_s ?? null,
     },
   };
+}
+
+// A request was cancelled: whatever the model is writing, stop.
+export function interrupt() {
+  try { if (engineReady && enginePromise) enginePromise.then((e) => { try { if (e && e.interruptGenerate) e.interruptGenerate(); } catch (x) { /* done */ } }); } catch (e) { /* nothing loaded */ }
 }
 
 /* The shortlist, in the same window as the planner.

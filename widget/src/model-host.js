@@ -260,11 +260,18 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     };
   }
 
+  // A request was cancelled: stop whatever the model is writing. Streamed
+  // generation (see step) is what makes this safe for the next request.
+  function interrupt() {
+    if (!engineReady || !enginePromise) return;
+    enginePromise.then((e) => { try { if (e && e.interruptGenerate) e.interruptGenerate(); } catch (x) { /* done */ } }).catch(() => {});
+  }
+
   // Start loading without waiting for it. Failures are reported through
   // status(), which the widget polls while a load is running.
   function load(modelId) {
     engineFor(modelId).catch(() => {});
   }
 
-  return { load, step, embed, status, release };
+  return { load, step, embed, status, release, interrupt };
 }

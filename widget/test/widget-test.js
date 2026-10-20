@@ -181,6 +181,41 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("its decision is carried out on the page", box.checked === true, JSON.stringify(res).slice(0, 400));
   }
 
+  console.log("cancelling a request");
+  {
+    const w = page();
+    let interrupted = 0;
+    const decide = { text: JSON.stringify({ why: "the average line", name: "Show 30-year average", do: "check", on: true }), ms: 5, cost: {} };
+    const slowHost = {
+      status() { return { ready: true, loading: false, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+        progress: null, fraction: 1, hasGpu: true, gpu: null, where: "a test" }; },
+      step: async () => { await new Promise((r) => setTimeout(r, 4000)); return decide; },
+      interrupt() { interrupted++; },
+      async embed() { throw new Error("off"); },
+      async release() {},
+      load() {},
+    };
+    const s = w.document.createElement("script");
+    s.dataset.manual = "";
+    s.textContent = built;
+    w.document.body.appendChild(s);
+    const wc = w.WebControls.mount({ _modelHost: slowHost });
+    const pending = wc.ask("overlay the long-term normal on the chart");
+    await new Promise((r) => setTimeout(r, 400));
+    const t0 = Date.now();
+    await wc.cancel();
+    const res = await pending;
+    const took = Date.now() - t0;
+    check("a cancelled request answers at once", took < 1500, `${took}ms`);
+    check("and says it was cancelled", !!(res && res.cancelled), JSON.stringify(res).slice(0, 200));
+    await new Promise((r) => setTimeout(r, 4500));
+    check("nothing is done to the page after it", w.document.getElementById("avg").checked === false);
+    check("the model is told to stop", interrupted >= 1);
+    slowHost.step = async () => decide;
+    const next = await wc.ask("overlay the long-term normal on the chart");
+    check("and the next request runs normally", w.document.getElementById("avg").checked === true, JSON.stringify(next).slice(0, 300));
+  }
+
   console.log("a site the extension has a manifest for");
   {
     // water.noaa.gov, as captured for the extension's benchmarks. The

@@ -2429,6 +2429,44 @@ else {
   }
 }
 
+// Cancelling a request: answered at once, nothing touched after it, the
+// model told to stop, and the next request unaffected.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <label><input type="checkbox" id="leg"> Show legend</label></body></html>`, { url: "https://www.drought.gov/" });
+  if (page) {
+    const bg = loadBackground({ page });
+    let interrupts = 0; let slow = true;
+    const plan = (m) => ({ ok: true, step: { steps: [{ name: (m.controls.find((c) => /legend/i.test(String(c.label))) || {}).label, do: "check", on: true }] } });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "panelInterrupt") { interrupts++; return { ok: true }; }
+      if (m.type === "llmStep" && m.mode === "plan") return slow ? new Promise((r) => setTimeout(() => r(plan(m)), 3000)) : plan(m);
+      if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+      return undefined;
+    };
+    runAsync(async () => {
+      const idle = await bg.__ask({ type: "cancelAsk" });
+      ensure("cancelling with nothing running is harmless", idle && idle.ok && idle.nothingRunning, idle);
+      const pending = bg.__ask({ type: "smartAsk", instruction: "make the key visible" });
+      await new Promise((r) => setTimeout(r, 300));
+      const t0 = Date.now();
+      const ack = await bg.__ask({ type: "cancelAsk" });
+      const res = await pending;
+      ensure("a cancel is acknowledged", ack && ack.ok && !ack.nothingRunning, ack);
+      ensure("the request answers at once, as cancelled", res.cancelled === true && Date.now() - t0 < 1500, { took: Date.now() - t0, res: res.display });
+      check("its card says so", (res.display || {}).title, "Cancelled");
+      await new Promise((r) => setTimeout(r, 3500));
+      check("nothing is done to the page after it", page.document.getElementById("leg").checked, false);
+      slow = false;
+      const next = await bg.__ask({ type: "smartAsk", instruction: "make the key visible" });
+      check("the next request runs normally", page.document.getElementById("leg").checked, true);
+      ensure("and is not reported cancelled", !next.cancelled, next.display);
+    });
+  }
+}
+
 // A one-word button is also named by its row. RadarViz's cache button says
 // only "Clear", in a row captioned "Cached data", beside a second "Clear"
 // for a drawn region. "Clear the cached data" presses the cache one and no

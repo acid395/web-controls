@@ -137,6 +137,7 @@ textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: 
   padding: 6px 0; height: 34px; max-height: 120px; }
 textarea::placeholder { color: var(--ink-2); }
 .send { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; display: grid; place-items: center; }
+.stop { margin-top: 8px; font-size: 12px; padding: 4px 12px; border-radius: 8px; }
 .send svg { width: 18px; height: 18px; }
 .foot { margin-top: 7px; text-align: center; font-size: 11px; color: var(--ink-2); }
 .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent);
@@ -499,8 +500,16 @@ function createWidgetUI({ send, modelHost, storage, options }) {
       await drawing;
       attach(slot);
       busy = true;
-      runningCard = slot.card;
-      slot.card.replaceChildren(statusLine("Working on it…"));
+      const line = statusLine("Working on it…");
+      const stop = el("button", "stop", "Stop");
+      stop.type = "button";
+      stop.addEventListener("click", () => {
+        stop.disabled = true;
+        stop.textContent = "Stopping…";
+        send({ type: "cancelAsk" }).catch(() => {});
+      });
+      slot.card.replaceChildren(line, stop);
+      runningCard = line;
       let res;
       try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
       slot.card.replaceWith(cardFor(res));

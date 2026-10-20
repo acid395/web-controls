@@ -310,7 +310,29 @@ async function invokeOnTab(tabId, fn, args) {
 // some other window's: acting on a different site would be worse than
 // failing.
 let lastPageTabId = null;
+/* Stopping a request.
+ *
+ * The person asked for something and changed their mind. The answer to the
+ * request is sent at once - "Cancelled" - so the panel or widget is free
+ * straight away; what is already running finishes its current press, and
+ * nothing after it touches the page or asks the model. What was already done
+ * on the page stays done: undoing it would be a second request nobody made.
+ */
+let activeAsk = null;
+function askCancelled() { return !!(activeAsk && activeAsk.cancelled); }
+function whenAskCancelled() {
+  const a = activeAsk;
+  if (!a) return new Promise(() => {});
+  if (a.cancelled) return Promise.resolve();
+  return new Promise((r) => a.wakers.push(r));
+}
+const raceCancel = (p) => Promise.race([p, whenAskCancelled().then(() => ({ ok: false, error: "cancelled" }))]);
+// Reads stay open after a cancel - the panel still needs to describe the
+// page - but nothing that acts on it.
+const READS_ONLY = /^(?:inventory|pageSignature|signatureDiff|readPage|readControl|busyNow|disclosures|capturedSeries|findPassages)$/;
+
 async function invokeOnActiveTab(fn, args) {
+  if (askCancelled() && !READS_ONLY.test(String(fn || ""))) return { ok: false, error: "cancelled" };
   let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if ((!tab || !tab.id || !tab.url) && lastPageTabId !== null) {
     tab = await chrome.tabs.get(lastPageTabId).catch(() => null);
@@ -6071,6 +6093,7 @@ async function panelIsOpen() {
 }
 
 async function askModelForStep(payload) {
+  if (askCancelled()) return { ok: false, error: "cancelled" };
   // Built here, so the panel and the offscreen document are given the same
   // words. It used to be built inside the offscreen document, which was
   // fine while that was the only thing that ever saw a model.
@@ -6098,11 +6121,11 @@ async function askModelForStep(payload) {
         .then((g) => g.llmModelId).catch(() => null);
       const useId = (chosen && globalThis.WC_MODEL_IDS.includes(chosen))
         ? chosen : WC_DEFAULT_MODEL;
-      const said = await chrome.runtime.sendMessage({
+      const said = await raceCancel(chrome.runtime.sendMessage({
         target: "panel", type: "panelStep", prompt, schema: payload.schema || null,
         model: useId,
         timeoutMs: turnBudgetFor(useId),
-      });
+      }));
       if (said && said.ok) {
         // Parsed here. The caller reads .step, and handing back raw text
         // would have made every decision the panel served look like the
@@ -6160,7 +6183,7 @@ async function askModelForStep(payload) {
   await ensureOffscreenDocument();
   if (!lastDecisionBy) lastDecisionBy = "the hidden document";
   else lastDecisionBy += " - so the hidden document, which Chrome throttles";
-  const res = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmStep", ...payload });
+  const res = await raceCancel(chrome.runtime.sendMessage({ target: "offscreen", type: "llmStep", ...payload }));
   if (!res) return { ok: false, error: "the model did not answer - it may still be loading" };
   return res;
 }
@@ -9056,6 +9079,7 @@ function pageWaitCredit() {
 }
 
 async function runVerified(routeGlobal, toolCall) {
+  if (askCancelled()) return { ok: false, error: "cancelled" };
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   const result = await executeToolCall(routeGlobal, toolCall);
@@ -9194,6 +9218,7 @@ function findToolDef(route, name) {
 // name, reorder the model's named arguments into the positional array
 // invokeOnActiveTab expects, run it.
 async function executeToolCall(routeGlobal, toolCall) {
+  if (askCancelled()) return { ok: false, error: "cancelled" };
   const def = findToolDef(routeGlobal, toolCall.name);
   // Not in TOOL_DEFS, so it is one of the page's own - derived from its
   // controls and named after them, which is the whole point of offering
@@ -11733,6 +11758,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // then checks it's actually finished loading first rather than kicking
   // off a multi-minute wait a user didn't ask for.
   // that stays an explicit, separate choice (needs a key), not a fallback.
+  if (msg.type === "cancelAsk") {
+    const a = activeAsk;
+    if (!a || a.done || a.cancelled || (msg.askId && msg.askId !== a.id)) {
+      sendResponse({ ok: true, nothingRunning: true });
+      return false;
+    }
+    a.cancelled = true;
+    for (const wake of a.wakers.splice(0)) { try { wake(); } catch (e) { /* gone */ } }
+    // The model stops too, so the next request does not queue behind a
+    // decision nobody is waiting for.
+    try { const p = chrome.runtime.sendMessage({ target: "panel", type: "panelInterrupt" }); if (p && p.catch) p.catch(() => {}); } catch (e) { /* no panel */ }
+    const cancelled = {
+      ok: false, cancelled: true, plannedBy: "cancelled", error: "cancelled",
+      display: { title: "Cancelled", subtitle: "stopped at your request - anything already done on the page stays as it is",
+        stats: [], rows: [], source: "this page" },
+    };
+    try { a.respond(cancelled); }
+    catch (e) {
+      // Stopped before the request had set itself up: answered directly.
+      a.done = true;
+      recordAsk(a.id, a.instruction, { status: "error", plannedBy: "cancelled", display: cancelled.display, error: "cancelled" });
+      try { a.sendResponse(cancelled); } catch (e2) { /* the caller is gone */ }
+      try { chrome.runtime.sendMessage({ type: "agentProgress", done: true }); } catch (e3) { /* nobody listening */ }
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === "smartAsk") {
     (async () => {
       // A popup is torn down the instant it loses focus, and unlike the
@@ -11750,6 +11803,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       doorsOpenedThisAsk = new Set();
       const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       recordAsk(askId, msg.instruction, { status: "running" });
+      const thisAsk = { id: askId, cancelled: false, done: false, wakers: [], instruction: String(msg.instruction || ""), sendResponse,
+        respond: (r) => respond(r) };
+      activeAsk = thisAsk;
       // The whole sentence is what was asked and what the card shows; the
       // paths below see only the action half, and the question is answered
       // once that half has responded.
@@ -11825,6 +11881,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const askBegan = Date.now();
       let answeredAfter = false;
       const respond = (res) => {
+        // Cancelled: the "Cancelled" answer is the answer, and whatever the
+        // work underneath reports later is not shown over it.
+        if (thisAsk.cancelled && !res.cancelled) return;
+        if (res.cancelled) answeredAfter = true;
         if (thenAsk && !answeredAfter) {
           answeredAfter = true;
           answerAfterActing(res, thenAsk.ask)
@@ -11947,6 +12007,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           error: res.error,
           hint: res.hint,
         });
+        thisAsk.done = true;
         sendResponse({ ...res, display });
         // The running line is taken down by whoever put it up. It was left
         // to be overwritten by the next progress message or by a redraw,
@@ -14923,6 +14984,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         respond({ ok: false, error: String((err && err.message) || err) });
       } finally {
         stopKeepAlive();
+        // Its work has wound down: nothing left to stop.
+        if (activeAsk === thisAsk) activeAsk = null;
       }
     })();
     return true;

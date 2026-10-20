@@ -198,6 +198,14 @@ function renderEntry(entry, { collapsed = false } = {}) {
 
   if (entry.status === "running") {
     into(el("div", "running", "still running - this stays here if you close the popup"));
+    const stop = el("button", "cancel-ask", "Cancel");
+    stop.type = "button";
+    stop.addEventListener("click", () => {
+      stop.disabled = true;
+      stop.textContent = "Cancelling...";
+      chrome.runtime.sendMessage({ type: "cancelAsk", askId: entry.id }, () => { void chrome.runtime.lastError; });
+    });
+    into(stop);
   } else if (entry.display) {
     into(buildCard(entry.display, entry));
   } else if (entry.error) {
@@ -603,6 +611,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // seventy-nine times quicker.
     sendResponse({ ok: true, visible: true });
     return undefined;
+  }
+  if (msg.type === "panelInterrupt") {
+    panelModelModule().then((mod) => { if (mod.interrupt) mod.interrupt(); }).catch(() => {});
+    sendResponse({ ok: true });
+    return false;
   }
   if (msg.type === "panelStep") {
     (async () => {

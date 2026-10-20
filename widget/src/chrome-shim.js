@@ -187,6 +187,9 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       case "panelRelease":
         await modelHost.release();
         return { ok: true };
+      case "panelInterrupt":
+        if (modelHost.interrupt) modelHost.interrupt();
+        return { ok: true };
       default:
         return undefined;
     }
