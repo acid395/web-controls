@@ -8960,6 +8960,17 @@ function didItMove(ran) {
   return !!(ran && ran.verified && ran.verified.changed);
 }
 
+// Whether didItMove had anything to go on. runVerified returns no verdict
+// when the page could not be read before or after the action - the bridge
+// gives up after twenty seconds on a busy page - and didItMove reads that
+// as "nothing moved". On RadarViz "switch volume units to acre-feet" set the
+// unit and the card said "ran, but nothing on the page changed": the check
+// had not happened, so the honest answer is that it could not be made.
+function couldCheck(ran) {
+  const r = (ran && ran.result) || {};
+  return typeof r.itChanged === "boolean" || !!(ran && ran.verified);
+}
+
 // A page that is still arriving has nothing to act on yet.
 //
 // Nothing waited for a navigation. "...view the 7 day graph for the first
@@ -10826,7 +10837,7 @@ async function runSetToPlan(routeGlobal, setTo) {
         const ran = await runVerified(routeGlobal, { name: "pageSelectOption",
           args: { selector: setTo.control.selector, value: setTo.option.value || setTo.option.text } });
         if (!ran || ran.ok === false) return null;
-        return { changed: didItMove(ran) };
+        return couldCheck(ran) ? { changed: didItMove(ran) } : { changed: undefined, unconfirmed: true };
 }
 
 /* One step of a request, settled by the page where the page can settle it.
@@ -10884,7 +10895,7 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   }
   if (sure) {
     const did = await sure.run().catch(() => null);
-    if (did) return done("plan", sure.label || clause, did.changed !== false, "named on the page exactly, so the model was not asked", false, await confirmAfter());
+    if (did) return done("plan", sure.label || clause, did.changed !== false, "named on the page exactly, so the model was not asked", !!did.unconfirmed, await confirmAfter());
     debugLog(`[chain] "${clause}": the certain plan did not run`);
   }
   if (exact) {
@@ -10914,7 +10925,7 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
     }
     if (sure) {
       const did = await sure.run().catch(() => null);
-      if (did) return done("late", sure.label || clause, did.changed !== false, "named on the page once it had drawn it", false, await confirmAfter());
+      if (did) return done("late", sure.label || clause, did.changed !== false, "named on the page once it had drawn it", !!did.unconfirmed, await confirmAfter());
     }
   }
   return null;
@@ -10956,7 +10967,7 @@ async function certainClausePlan(routeGlobal, clause) {
           ? { name: "pageCheck", args: { selector: span.selector, on: true } }
           : { name: "pageClick", args: { selector: span.selector } });
         if (!ran || ran.ok === false) return null;
-        return { changed: didItMove(ran) };
+        return couldCheck(ran) ? { changed: didItMove(ran) } : { changed: undefined, unconfirmed: true };
       },
     };
   }
@@ -12876,7 +12887,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       continue;
                     }
                     if (step.kind === "pick") lastSearchInChain = null;
-                    all.push({ did: step.did, ok: true, changed: step.changed, outcome: step.outcome });
+                    // Ran but unread is not "changed", and left alone because
+                    // it was already so is not a warning.
+                    all.push({ did: step.did, ok: true,
+                      changed: step.unconfirmed ? false : step.changed,
+                      unconfirmed: !!step.unconfirmed,
+                      satisfied: step.kind === "already",
+                      outcome: step.unconfirmed ? "ran, but could not check whether the page changed" : step.outcome });
                     continue;
                   }
                   beforeStep = step === null ? await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null) : null;
@@ -13034,7 +13051,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   rows: agent.history.map((h) => ({
                     name: String(h.did).slice(0, 50),
                     value: h.ok === false ? "failed"
-                      : h.changed ? "changed" : h.satisfied ? "already so" : "",
+                      : h.changed ? "changed" : h.satisfied ? "already so" : h.unconfirmed ? "ran" : "",
                     // Its own reason first, where it gave one: "a month is 30
                     // days" says more about whether a choice was thought
                     // through than any outcome line can.
@@ -13231,7 +13248,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 if (step) {
                   if (step.kind === "search") { lastSearch = step.searched; steps.push({ part, ok: true, changed: true, unconfirmed: false }); continue; }
                   if (step.kind === "pick") lastSearch = null;
-                  steps.push({ part, ok: true, changed: step.changed, unconfirmed: step.unconfirmed, did: step.did });
+                  steps.push({ part, ok: true, changed: step.changed, unconfirmed: step.unconfirmed, did: step.did,
+                    already: step.kind === "already", outcome: step.outcome });
                   continue;
                 }
                 // For the fallback below: what was usable before it acts.
@@ -13321,13 +13339,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   // a button not found, a panel not open.
                   rows: steps.map((st) => ({
                     name: st.part.slice(0, 44),
+                    // A step left alone because the page was already as asked
+                    // - "open settings" with Settings open - is said so. It
+                    // read "ran, but nothing on the page changed", which is
+                    // both untrue (nothing was pressed) and alarming.
                     value: !st.ok ? "failed"
+                      : st.already ? "already so"
                       : st.unconfirmed ? "ran"
                       : st.changed === false ? "no change" : "done",
                     meta: !st.ok ? String(st.error || "no reason given").slice(0, 70)
+                      : st.already ? String(st.outcome || "already as asked, so left as it was")
                       : st.unconfirmed ? "could not check whether the page changed"
                       : st.changed === false ? "ran, but nothing on the page changed" : "",
-                    tone: !st.ok ? "alert" : (st.unconfirmed || st.changed === false) ? "warn" : "ok",
+                    tone: !st.ok ? "alert" : st.already ? "ok" : (st.unconfirmed || st.changed === false) ? "warn" : "ok",
                   })),
                   source: route.global,
                 },

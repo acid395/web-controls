@@ -7305,6 +7305,73 @@ for (const b of budgets) {
   }
 }
 
+section("a step left alone, and a step that could not be checked");
+// RadarViz, 2026-10-19: "open settings, clear the cached data, then switch
+// volume units to acre-feet and distance units to miles". Settings was
+// already open, so the first step was rightly left alone - and the card said
+// "ran, but nothing on the page changed". Both unit steps set their lists,
+// and the card said the same of them, because the page could not be read
+// around them and no reading was taken as no change.
+{
+  const radar = `<!doctype html><html><body>
+    <aside id="settingsPanel">
+      <button id="settingsToggle" type="button" aria-expanded="true" aria-controls="settingsBody">Settings</button>
+      <div id="settingsBody">
+        <label for="setDistanceUnit">Distance units</label>
+        <select id="setDistanceUnit"><option value="km">Kilometres (km)</option><option value="mi">Miles (mi)</option></select>
+        <label for="setVolumeUnit">Volume units</label>
+        <select id="setVolumeUnit"><option value="m3">Cubic meters (m3)</option><option value="ac-ft">Acre-feet (ac-ft)</option></select>
+        <label>Cached data</label> <button id="setClearCache" type="button">Clear</button>
+      </div>
+    </aside>
+    <script>document.getElementById("settingsToggle").addEventListener("click", function () {
+      var b = document.getElementById("settingsBody"), open = this.getAttribute("aria-expanded") !== "true";
+      this.setAttribute("aria-expanded", String(open)); b.style.display = open ? "block" : "none"; });</script>
+    </body></html>`;
+  const declining = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type === "llmEmbed") return { ok: false, error: "none in the harness" };
+    if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" }, raw: "{}" };
+    return undefined;
+  };
+  const instruction = "open settings, clear the cached data, then switch volume units to acre-feet and distance units to miles";
+  const rowFor = (r, part) => ((r.display && r.display.rows) || []).find((x) => new RegExp(part, "i").test(x.name)) || {};
+
+  const pg = loadPage(radar, { url: "https://hydroinformatics.tulane.edu/lab/radarviz/" });
+  if (pg) {
+    const bg = loadBackground({ page: pg });
+    bg.__model = declining;
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction });
+      check("radar settings: an open panel is left open", pg.document.getElementById("settingsToggle").getAttribute("aria-expanded"), "true");
+      const open = rowFor(r, "settings");
+      check("radar settings: the open step says it was already so", open.value, "already so");
+      ensure("radar settings: and does not claim it ran and changed nothing", !/nothing on the page changed/.test(String(open.meta)), open.meta);
+      check("radar settings: volume unit set", pg.document.getElementById("setVolumeUnit").value, "ac-ft");
+      check("radar settings: distance unit set", pg.document.getElementById("setDistanceUnit").value, "mi");
+      ensure("radar settings: the volume step is reported as working", ["done", "changed"].includes(rowFor(r, "volume").value), rowFor(r, "volume"));
+    });
+  }
+
+  // The same request on a page that cannot be read around an action: the
+  // lists still change, and the card must say it could not check rather
+  // than that nothing changed.
+  const pg2 = loadPage(radar, { url: "https://hydroinformatics.tulane.edu/lab/radarviz/" });
+  if (pg2) {
+    const bg2 = loadBackground({ page: pg2 });
+    bg2.__model = declining;
+    pg2.GENERIC.pageSignature = () => { throw new Error("timed out waiting for the page bundle to reply"); };
+    runAsync(async () => {
+      const r = await bg2.__ask({ type: "smartAsk", instruction });
+      check("unreadable page: volume unit still set", pg2.document.getElementById("setVolumeUnit").value, "ac-ft");
+      const vol = rowFor(r, "volume");
+      ensure("unreadable page: the volume step is not called a no-op", vol.value !== "no change", vol);
+      ensure("unreadable page: it is not called changed either", vol.value !== "changed", vol);
+      ensure("unreadable page: it says it could not check", /could not check/.test(String(vol.meta)), vol.meta);
+    });
+  }
+}
+
 section("a point on a map with no points to click");
 // USGS draws its national dashboard to a canvas, so there is no marker
 // element for Salmon River - there is no element at all - and "click salmon
