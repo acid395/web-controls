@@ -877,7 +877,10 @@ async function runPromptSet(site, url, prompts, mode) {
     try {
       await resetTo(url);
       res = await new Promise((resolve) => {
-        const timer = setTimeout(() => resolve({ ok: false, error: "no answer in 240s" }), 240000);
+        // Ten minutes: a page that freezes while it works - RadarViz decoding
+        // a radar file - was scored a failure at four while it was still
+        // finishing correctly.
+        const timer = setTimeout(() => resolve({ ok: false, error: "no answer in 600s" }), 600000);
         chrome.runtime.sendMessage({ type: "smartAsk", instruction: p.say }, (r) => {
           void chrome.runtime.lastError; clearTimeout(timer); resolve(r || { ok: false, error: "no response" });
         });

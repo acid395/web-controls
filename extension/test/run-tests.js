@@ -2392,6 +2392,23 @@ else {
   }
 }
 
+// Time a frozen page took is handed back to the model, once, and never
+// more than ten minutes a request - so a slow page cannot make the model run
+// out of time, and cannot make a request run forever either.
+{
+  const bgw = loadBackground({});
+  const got = require("vm").runInContext(`(() => {
+    const credit = pageWaitCredit();
+    pageWaitTotal += 5000; const a = credit();
+    pageWaitTotal += 700000; const b = credit();
+    const c = credit();
+    return [a, b, c];
+  })()`, bgw);
+  check("a frozen page's wait goes back on the model's clock", got[0], 5000);
+  check("up to ten minutes a request", got[1], 595000);
+  check("and is handed back only once", got[2], 0);
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

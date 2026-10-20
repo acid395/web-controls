@@ -6636,11 +6636,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
   // Extended only on verified progress, by what a turn costs here, and
   // never past three budgets - a run still has to end. A part of a chain
   // keeps the deadline its chain gave it.
-  const endBy = Date.now() + budgetMs * 3;
+  let endBy = Date.now() + budgetMs * 3;
   const earnedMore = () => {
     if (deadlineAt) return;
     deadline = Math.min(endBy, Math.max(deadline, Date.now() + Math.max(lastTurnMs * 1.5, 15000)));
   };
+  // The page's waiting is not the model's thinking: what a frozen page took
+  // goes back on the clock, up to ten minutes a request.
+  const pageCredit = pageWaitCredit();
+  const repayPageWait = () => { const add = pageCredit(); if (add) { deadline += add; endBy += add; } };
   // How long a turn actually took, reported rather than guessed at. "it took
   // two or three minutes" is not something anyone can act on, and where the
   // time goes - reading the page, the model deciding, carrying the action
@@ -6654,6 +6658,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
 
   let lastInv = null;
   for (let step = 0; step < maxSteps; step++) {
+    repayPageWait();
     // Reading the page again is worth it when the page moved, and pure cost
     // when it did not. On drought.gov an inventory is about half a second,
     // so three turns spent a second and a half re-reading a page nothing had
@@ -9018,11 +9023,30 @@ async function waitForNavigation(fromUrl, timeoutMs = 4000) {
   return false;
 }
 
+/* Time spent waiting on the page rather than on the model. A page that
+ * freezes while it works - RadarViz decoding a radar file, FIMS computing
+ * damage - held a step for minutes, and that time came out of the model's
+ * budget: the next decision "ran out of time" having done nothing wrong.
+ * Counted here and handed back to the model's clock, never taken from it.
+ */
+let pageWaitTotal = 0;
+const PAGE_WAIT_GRACE_MS = 600000;   // at most ten minutes back per request
+function pageWaitCredit() {
+  let seen = pageWaitTotal; let given = 0;
+  return () => {
+    const owed = pageWaitTotal - seen; seen = pageWaitTotal;
+    const add = Math.max(0, Math.min(owed, PAGE_WAIT_GRACE_MS - given));
+    given += add;
+    return add;
+  };
+}
+
 async function runVerified(routeGlobal, toolCall) {
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   const result = await executeToolCall(routeGlobal, toolCall);
   if (!before.ok || result.ok === false) return result;
+  const waitFrom = Date.now();
 
   // A press that is already taking the page somewhere else is waited for
   // here, before anything reads the page, not only once the reading below
@@ -9045,6 +9069,7 @@ async function runVerified(routeGlobal, toolCall) {
   ]);
   const sigT = Date.now();
   const after = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  pageWaitTotal += Date.now() - waitFrom;
   debugLog(`[verify] ${toolCall && toolCall.name}: settle ${sigT - settleT}ms${settled.capped ? " (capped)" : ""}, signature ${Date.now() - sigT}ms`);
   if (!after.ok) return result;
 
@@ -12822,13 +12847,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               // The overall cap scales too: four minutes was the whole of a
               // four-part instruction when a turn cost ten seconds, and is
               // less than two turns of an 8B.
-              const together = Date.now() + Math.min(perPart * parts.length, Math.max(240000, perPart * 3));
+              let together = Date.now() + Math.min(perPart * parts.length, Math.max(240000, perPart * 3));
+              const chainCredit = pageWaitCredit();
               const all = [];
               const answers = [];
               const flags = {};
               let failed = null;
               let lastSearchInChain = null;
               for (const part of parts) {
+                together += chainCredit();
                 // A part that names one control on the page as it now is -
                 // after the parts before it ran - needs no decision. The
                 // all-at-once check above plans every part before pressing
