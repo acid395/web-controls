@@ -35,7 +35,8 @@ MODEL=0 node gate.js ...                page layer alone
 | 2 | CDC WONDER, IEM ASOS download, NOAA PFDS | 1.95.0 (one-call planner) | Llama 3.2 3B, window on screen | 10/30: WONDER 5/10, IEM 5/10, PFDS 0/10 (the page defines a global `Map`; the widget crashed at boot) |
 | 3 | CoCoRaHS daily reports, CDC FluView, NCEI CDO search | 1.96.0 | Llama 3.2 3B, window on screen | 9/30: CoCoRaHS 3/10, FluView 4/10, CDO 2/10 - explains 5/9, acts 3/15, chains 0/6 |
 | 4 | USACE Water Management locations | 1.99.6 | Llama 3.2 3B, extension bench, user machine | 7/19 pass, 1 maybe (actions 3/8, chains 2/5, do-and-tell 0/2, questions 2/4); 9 of the 11 failures were one gap - forty identical per-row "List View" links folded into one |
-| 4 | Reclamation RISE catalog, National Inventory of Dams | 1.99.6 | extension bench | (not yet run) |
+| 4 | Reclamation RISE catalog | 1.99.7 | Llama 3.2 3B, extension bench, user machine | 7/20 pass, 3 maybe (actions 4/6, chains 2/7, do-and-tell 1/3, questions 0/4) |
+| 4 | National Inventory of Dams | 1.99.7 | extension bench | (not yet run) |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the
