@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.21 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.22 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.21";
+globalThis.WC_WIDGET_VERSION = "0.4.22";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -1341,12 +1341,30 @@ return (function () {
   const labelOf = (el) => norm(rawLabelOf(el));
 
   // React-safe value setter. Bypasses React's own tracking of the value.
+  // The setter found on the element's own prototype chain, so a field from
+  // another frame or a custom element with its own value is set its own way.
   const setNativeValue = (el, value) => {
-    const proto =
-      el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
-      el instanceof HTMLSelectElement ? HTMLSelectElement.prototype :
-      HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+    for (let p = Object.getPrototypeOf(el); p; p = Object.getPrototypeOf(p)) {
+      const d = Object.getOwnPropertyDescriptor(p, "value");
+      if (d && d.set) { d.set.call(el, value); return; }
+    }
+    el.value = value;
+  };
+  // Where typed words go. A model asked to search typed into the Search
+  // button, and the input's value setter called on a button threw "Illegal
+  // invocation". A button's words go into its form's one text box; anything
+  // else that holds no text says so.
+  const TYPED_INTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([type=file]), textarea";
+  const typingTarget = (el) => {
+    if (el.matches && (el.matches(TYPED_INTO) || el.isContentEditable)) return el;
+    const inside = el.querySelectorAll ? [...el.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
+    if (inside.length === 1) return inside[0];
+    const form = el.form || (el.closest && el.closest("form"));
+    const holder = form || (/^(?:button|submit|reset)$/i.test(el.type || "") || el.getAttribute("role") === "button" || el.tagName === "BUTTON"
+      ? el.parentElement && el.parentElement.parentElement : null);
+    const boxes = holder ? [...holder.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
+    if (boxes.length === 1) return boxes[0];
+    throw new Error(`"${rawLabelOf(el).slice(0, 40) || el.tagName.toLowerCase()}" is not a box that takes typing`);
   };
 
   // Full pointer and mouse sequence, then a real click. React fires its own
@@ -1375,10 +1393,12 @@ return (function () {
 
   const fill = (elOrSel, text) => {
     pageTouched();
-    const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
-    if (!el) throw new Error(`fill: not found: ${elOrSel}`);
+    const el0 = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
+    if (!el0) throw new Error(`fill: not found: ${elOrSel}`);
+    const el = typingTarget(el0);
     el.focus();
-    setNativeValue(el, text);
+    if (el.isContentEditable && !el.matches(TYPED_INTO)) el.textContent = text;
+    else setNativeValue(el, text);
     el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: text.slice(-1) || "a" }));
@@ -11819,6 +11839,9 @@ const QUESTION_LED = /^\s*(?:(?:up\s+to|as\s+of|in|at|on|for|by|from|since|until
 function isCommand(instruction) {
   if (QUESTION_LED.test(instruction || "")) return false;
   if (CONTROL_VERB.test(instruction || "")) return true;
+  // "Filter to arizona", "limit results to idaho": asking for a filter is
+  // asking for something done, not a question about Arizona.
+  if (/^\s*(?:please\s+)?(?:filter|limit|narrow|restrict|only\s+show)\b/i.test(instruction || "")) return true;
   // A verb with a typo in it is still a verb. "clcik 30 days" was not
   // recognised as an instruction at all, so every path that acts was skipped
   // and it fell through to the lookups, which reported that nothing matched
@@ -13156,6 +13179,21 @@ function askedToLeaveFor(goal, c) {
 // steps before it had set.
 const UNDOES = /\b(?:reset|clear|delete|remove|erase|discard|cancel|log\s*out|sign\s*out)\b/i;
 function undoesUnasked(goal, c) { return UNDOES.test(String(c.label || "")) && !UNDOES.test(goal); }
+// A link to another page of the same site - a path, or an app's #/route.
+// "#section" and tabs stay on the page.
+function navigatesAway(c) {
+  const to = String(c.goesTo || "");
+  return !!to && !/^javascript:/i.test(to) && !/^#(?![!/])/.test(to);
+}
+// Whether a request names anything of a control, by word or by meaning,
+// through its label or the value a step would give it.
+function namesNothingOf(goal, c, value) {
+  const label = `${String(c.label || "")} ${value == null ? "" : String(value)}`.toLowerCase();
+  const words = meaningfulWords(goal).filter((w) => w.length > 2 && !CONTROL_VERB.test(w) && !verbFamily(w));
+  if (words.some((w) => wordMatchesText(w, label))) return false;
+  const want = conceptsInPhrase(String(goal)); const has = conceptsInPhrase(label);
+  return ![...want].some((g) => has.has(g));
+}
 // The placeholders in the plan prompt's examples, copied instead of filled in.
 const PLACEHOLDER = /^\s*(?:OPTION|TEXT|WORDS|NAME|VALUE)\s*$/;
 
@@ -13256,6 +13294,28 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
         outcome: "left alone - it leaves this page, and the request did not ask to go there" });
       continue;
     }
+    // Padding. A 3B planned "search for hoover dam" as the search and then
+    // DAMS BASICS, HELP DESK and VERIFY - other pages of the same site that
+    // no word of the request names - and "open the legend" as the legend
+    // and three presses more. A link to elsewhere on the site is followed
+    // only when the request names something of it; anything else unnamed
+    // only until the request's parts are done.
+    // Ran, whether or not the page visibly moved: a legend opened in place
+    // can look like nothing changed.
+    const doneSoFar = history.filter((h) => h.ok && !h.skipped).length;
+    if (namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident)) {
+      history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+        outcome: "left alone - the request names nothing of it" });
+      continue;
+    }
+    if (act === "select" && st.value != null && String(st.value).trim() && holdsNoList(target)) {
+      const picked = await pickFromOpened(routeGlobal, target, String(st.value));
+      const ok = !!(picked && picked.ran && picked.ran.ok !== false);
+      history.push({ did: `select "${String(target.label).slice(0, 40)}" ${String(st.value).slice(0, 30)}`, ok, changed: ok && didItMove(picked.ran),
+        outcome: ok ? `picked "${String(picked.label).slice(0, 40)}"` : `failed: no "${String(st.value).slice(0, 30)}" to pick there` });
+      forgetInventory();
+      continue;
+    }
     const call = actionToCall(act, target, st);
     // The second value chosen in one multi-select within a plan joins the first.
     if (call && call.name === "pageSelectOption" && /multiple/i.test(String(target.type || ""))) {
@@ -13275,7 +13335,8 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   const short = history.filter((h) => h.ok && h.changed).length < evident;
   if (!(short || history.some((h) => !h.ok))) break;
   }
-  if (!history.length) return null;
+  // A plan that did nothing but be refused hands the request on.
+  if (!history.length || history.every((h) => h.skipped)) return null;
   return { ok: true, history, planned: history.length, calls, shortlisted: shortlist.length, tookMs: Date.now() - began, cost };
 }
 
@@ -13557,6 +13618,15 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           history.push({ did: "read the page", outcome: direct ? "answered from the list it offers" : "answered from the lists it offers" });
           return { ok: true, answer: direct || lines.join("\n"), history, steps: history.length,
             tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
+        }
+        if (!conditionalGoal && (STANDS_FOR.test(goal) || HOW_MANY.test(goal)) && read.ok && read.result) {
+          const got = await invokeOnActiveTab("findPassages", [goal]).catch(() => ({ ok: false }));
+          const said = answerInPageWords(goal, read.result, (got.ok && got.result && got.result.passages) || []);
+          if (said) {
+            history.push({ did: "read the page", outcome: "answered from its own words" });
+            return { ok: true, answer: said, history, steps: history.length,
+              tookMs: Date.now() - began, said: lastSaid, fromData: true };
+          }
         }
       }
       // Said outright, so neither the model nor the reader takes the text
@@ -14877,7 +14947,10 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       history.push({ did: `${act} ${target.label}`, outcome: "that control cannot do that" });
       continue;
     }
-    const ran = await runVerified(routeGlobal, call);
+    // A value chosen on something that holds no list is picked where it shows.
+    const ran = call.name === "pageSelectOption" && holdsNoList(target)
+      ? await pickFromOpened(routeGlobal, target, String(call.args.value || "")).then((p) => (p && p.ran) || { ok: false, error: `no "${String(call.args.value || "").slice(0, 30)}" to pick there` })
+      : await runVerified(routeGlobal, call);
     const r = (ran && ran.result) || {};
     // Where the control reports its own before and after, that settles it.
     // A page signature moves for all sorts of reasons - a re-render, a
@@ -15062,9 +15135,12 @@ function actionToCall(act, control, s) {
   if (act === "type") return { name: "pageFill", args: { selector: sel, text: String(s.value ?? "") } };
   if (act === "select") {
     const options = control.options || [];
-    const want = String(s.value ?? "").toLowerCase();
-    const hit = options.find((o) => String(o.text || o.value || "").toLowerCase() === want)
-      || options.find((o) => String(o.text || o.value || "").toLowerCase().includes(want));
+    // Punctuation aside: "Last Record Update Newest" is the option written
+    // "Last Record Update (Newest)".
+    const bare = (t) => String(t ?? "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+    const want = bare(s.value);
+    const hit = want ? (options.find((o) => bare(o.text || o.value) === want)
+      || options.find((o) => bare(o.text || o.value).includes(want))) : null;
     return { name: "pageSelectOption",
       args: { selector: sel, value: hit ? (hit.value ?? hit.text) : String(s.value ?? "") } };
   }
@@ -15218,6 +15294,78 @@ function stageDistances(facts, series) {
 // note on turbidity above 1,000 FNU and the number of data types are all in
 // prose the summary never reached: questions no model could answer because
 // none was shown the sentence that answers it.
+/* Two questions a page answers in its own words, settled without a model.
+ *
+ * "What does RISE stand for" on a page headed "Reclamation Information
+ * Sharing Environment (RISE)": a 3B said the page did not answer and
+ * pressed RISE. The name is spelt out where the letters are the initials
+ * of the words beside them.
+ *
+ * "How many records are in the catalog" on a page saying "1107 records
+ * found": a 3B said the page did not answer and pressed Catalog. A count
+ * the page states once, as a number before the question's own noun, is the
+ * answer - where the rest of the question is the page itself ("in the
+ * catalog" on the catalog). A count of something narrower ("how many dams
+ * in Texas have hydropower") is left to the reader.
+ */
+const STANDS_FOR = /^\s*(?:please\s+)?(?:tell\s+me\s+)?what\s+(?:does|do|is)\s+(?:the\s+)?(?:acronym\s+|abbreviation\s+|name\s+)?["'\u201c]?([a-z][a-z0-9&]{1,11})["'\u201d]?\s+(?:stand\s+for|short\s+for|mean|abbreviate)\b/i;
+const HOW_MANY = /^\s*(?:please\s+)?(?:tell\s+me\s+)?how\s+many\s+([a-z][a-z-]{2,30})\b(.*)$/i;
+const SMALL_WORD = /^(?:of|and|the|for|on|in|to|a|an|&|at|by|de|du)$/i;
+function expansionIn(acronym, text) {
+  const A = String(acronym).toUpperCase();
+  if (!/^[A-Z][A-Z0-9&]{1,10}$/.test(A) || A.length < 2) return null;
+  const toks = String(text).split(/\s+/).filter(Boolean);
+  const clean = (t) => t.replace(/^[("'\u201c\u2018\[]+|[)"'\u201d\u2019\],.:;!?]+$/g, "");
+  const found = new Set();
+  const letters = A.replace(/&/g, "").split("");
+  const walk = (start, step) => {
+    let i = step < 0 ? letters.length - 1 : 0, j = start; const used = [];
+    while (i >= 0 && i < letters.length && j >= 0 && j < toks.length && used.length <= letters.length * 2 + 2) {
+      const w = clean(toks[j]);
+      if (/^[A-Z]/.test(w) && w[0] === letters[i]) { used.push(j); i += step; j += step; continue; }
+      if (used.length && SMALL_WORD.test(w)) { j += step; continue; }
+      if (!used.length && step > 0 && /^[-\u2013\u2014:=]$/.test(toks[j])) { j += step; continue; }
+      break;
+    }
+    if (i >= 0 && i < letters.length) return null;
+    const [a, b] = step < 0 ? [used[used.length - 1], used[0]] : [used[0], used[used.length - 1]];
+    const words = toks.slice(a, b + 1).map(clean).join(" ");
+    return words.split(" ").length >= 2 ? words : null;
+  };
+  toks.forEach((t, k) => {
+    if (clean(t) !== A) return;
+    const back = walk(k - 1, -1); if (back) found.add(back);
+    const fwd = walk(k + 1, 1); if (fwd) found.add(fwd);
+  });
+  const distinct = [...new Map([...found].map((x) => [x.toLowerCase(), x])).values()];
+  return distinct.length === 1 ? distinct[0] : null;
+}
+function answerInPageWords(goal, read, passages) {
+  const r = read || {};
+  const text = [...(r.headings || []), String(r.text || ""), ...(passages || [])].join(" \n ").replace(/\s+/g, " ");
+  const sf = String(goal).match(STANDS_FOR);
+  if (sf) {
+    const x = expansionIn(sf[1], text);
+    return x ? `${sf[1].toUpperCase()} stands for ${x}.` : null;
+  }
+  const hm = String(goal).match(HOW_MANY);
+  if (!hm) return null;
+  const noun = hm[1].toLowerCase();
+  const stem = noun.replace(/(?:ies)$/, "y").replace(/(?:sses|shes|ches|xes)$/, (m) => m.slice(0, -2)).replace(/s$/, "");
+  if (stem.length < 3) return null;
+  // The rest of the question has to be the page itself.
+  const here = new Set(["are", "is", "were", "was", "there", "in", "on", "the", "this", "that", "these", "page", "site", "website", "here", "listed", "shown", "found", "match", "matching", "total", "all", "of", "showing", "displayed", "available", "returned", "results", "result", "currently", "now", "right", "does", "do", "have", "has", "it", "list", "table", "show", "contain", "contains", "include", "includes", "we", "i", "see", "can"]);
+  const own = `${r.title || ""} ${(r.headings || []).join(" ")} ${String(r.text || "").slice(0, 400)}`.toLowerCase();
+  const rest = String(hm[2] || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !here.has(w));
+  if (!rest.every((w) => wordMatchesText(w, own))) return null;
+  const esc = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?:^|[^\\d.,])(\\d{1,3}(?:,\\d{3})+|\\d+)\\s+(?:total\\s+|matching\\s+)?(${esc}(?:s|es)?|${noun})\\b((?:\\s+(?:found|listed|shown|total|available|matched|returned))?)`, "gi");
+  const hits = []; let m;
+  while ((m = re.exec(text))) hits.push({ n: m[1].replace(/,/g, ""), said: `${m[1]} ${m[2]}${m[3] || ""}` });
+  const ns = new Set(hits.map((h) => h.n));
+  return ns.size === 1 ? `The page says ${hits[0].said}.` : null;
+}
+
 async function passagesFor(question) {
   const got = await invokeOnActiveTab("findPassages", [question]).catch(() => ({ ok: false }));
   const passages = ((got.ok && got.result && got.result.passages) || []).filter(Boolean);
@@ -17369,7 +17517,29 @@ async function pickSearchResult(routeGlobal, clause, lastSearch) {
   // has to be on the result, and words naming nothing ("radar") are the
   // kind of thing it is.
   let hits = carries;
-  if (!UNNAMED_PICK.test(clause)) {
+  // Nothing carries every word: "open the first result" after a search for
+  // folsom reservoir, whose first result is "Folsom Lake Daily Storage".
+  // The results are what the search added, less the page's own furniture -
+  // paging, sorting, the search controls - and the first of them in page
+  // order is the first result. A 3B handed this pressed "Search" and
+  // "Advanced Search" as the first result.
+  let relaxed = false;
+  if (!carries.length && UNNAMED_PICK.test(clause) && lastSearch.before) {
+    const was = new Set(lastSearch.before);
+    const FURNITURE = /\b(?:search|filters?|sort|order|next|previous|prev|page|clear|reset|results?|show|hide|instructions?|help|sign\s*in|log\s*in|menu|close|skip|back|top)\b|^\s*(?:\d+|first|last|«|»|<|>)\s*$/i;
+    const added = all.filter((c) => !c.hidden && !c.disabled && c.label && !was.has(String(c.label).toLowerCase().trim())
+      && !TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+      && !/^(?:select(?:-one|-multiple)?|checkbox|radio|combobox|listbox)$/i.test(String(c.type || c.kind || ""))
+      && !FURNITURE.test(String(c.label)) && !c.elsewhere && String(c.label).trim().length > 3);
+    const score = (c) => want.filter((w) => wordMatchesText(w, String(c.label).toLowerCase())).length;
+    const best = Math.max(0, ...added.map(score));
+    // Results carry some of the words, or are at least a run of links.
+    const pool = best > 0 ? added.filter((c) => score(c) === best)
+      : added.filter((c) => /^(?:a|link)$/i.test(String(c.kind || c.tag || ""))).length >= 3
+        ? added.filter((c) => /^(?:a|link)$/i.test(String(c.kind || c.tag || ""))) : [];
+    if (pool.length) { hits = [pool[0]]; relaxed = true; }
+  }
+  if (!relaxed && !UNNAMED_PICK.test(clause)) {
     const said = meaningfulWords(String(clause).replace(CLAUSE_LEAD, "")).filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
     // Words no result carries are the kind of thing it is: "radar" in
     // "select the miami radar" is on the search box, not on KAMX - Miami.
@@ -17427,6 +17597,72 @@ function optionNamed(control, value) {
   }
   return hit.length === 1 ? hit[0] : null;
 }
+/* The one switch or list item named outright by a value. "Filter to
+ * arizona" was typed into a Quick Filter box beside an Arizona box to tick,
+ * "select texas in the state list" into the list's own search box: both
+ * narrow what is shown and choose nothing. Names compared whole, less a
+ * trailing count or note in brackets, "Arizona (12)". Several of the same
+ * name are told apart by the words of the list the step names.
+ */
+const NAME_BASE = (l) => String(l || "").toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").replace(/[^a-z0-9]+/g, " ").trim();
+function soleNamed(all, value, listWordsSaid = []) {
+  const want = NAME_BASE(value);
+  if (!want || want.length < 2) return null;
+  const kindOf = (c) => String(c.type || c.kind || "").toLowerCase();
+  let hits = all.filter((c) => !c.disabled && (!c.hidden || c.revealedBy) && NAME_BASE(c.label) === want
+    && !TEXT_INPUT_KINDS.has(kindOf(c)) && !LIST_TYPE.test(kindOf(c)) && !c.elsewhere);
+  if (hits.length > 1 && listWordsSaid.length) {
+    const near = hits.filter((c) => listWordsSaid.every((w) => wordMatchesText(w, `${c.section || ""} ${c.context || ""} ${c.revealedByLabel || ""}`.toLowerCase())));
+    if (near.length) hits = near;
+  }
+  // A list item and the link inside it are one thing: the link.
+  if (hits.length > 1) {
+    const real = hits.filter((c) => /^(?:checkbox|radio|switch|button|a|link|option|menuitem|menuitemradio|tab)$/.test(kindOf(c)));
+    if (real.length) hits = real;
+  }
+  if (hits.length > 1 && hits.every((c) => c.revealedBy && c.revealedBy === hits[0].revealedBy)) hits = [hits[0]];
+  if (hits.length !== 1) return null;
+  const c = hits[0];
+  return { control: c, press: /^(?:checkbox|radio|switch)$/.test(kindOf(c)) ? "check" : "click", label: c.label };
+}
+/* A value chosen on something that is not a list: a basemap picker that is
+ * a button opening a gallery, a state list of links. "Select Named Rivers"
+ * on "Basemap: Basic" went to setSelect and failed, "not a <select>". The
+ * value is picked where it shows; where it does not yet, the control is
+ * opened once - not when already open, which would shut it - and looked at
+ * again.
+ */
+function holdsNoList(c) {
+  return !(c.options || []).length && !LIST_TYPE.test(String(c.type || c.kind || ""));
+}
+async function pickFromOpened(routeGlobal, opener, value) {
+  const look = async () => {
+    forgetInventory();
+    const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+    const all = ((inv && inv.ok && inv.result && inv.result.controls) || []).filter((c) => !c.hidden && c.selector !== opener.selector);
+    const hit = soleNamed(all, value);
+    if (hit) return hit;
+    const ws = listWords(value);
+    const kindOf = (c) => String(c.type || c.kind || "").toLowerCase();
+    const near = ws.length ? all.filter((c) => !c.disabled && !TEXT_INPUT_KINDS.has(kindOf(c)) && !LIST_TYPE.test(kindOf(c)) && !c.elsewhere
+      && ws.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase()))) : [];
+    return near.length === 1 ? { control: near[0], press: /^(?:checkbox|radio|switch)$/.test(kindOf(near[0])) ? "check" : "click", label: near[0].label } : null;
+  };
+  let hit = await look();
+  if (!hit && opener.expanded !== true) {
+    const opened = await runVerified(routeGlobal, { name: "pageClick", args: { selector: opener.selector } });
+    if (!opened || opened.ok === false) return null;
+    await new Promise((r) => setTimeout(r, 600));
+    hit = await look();
+  }
+  if (!hit) return null;
+  const ran = await runVerified(routeGlobal, hit.press === "check"
+    ? { name: "pageCheck", args: { selector: hit.control.selector, on: true } }
+    : { name: "pageClick", args: { selector: hit.control.selector } });
+  return ran ? { ran, label: hit.label } : null;
+}
+const FILTER_TO = /^\s*(?:please\s+)?(?:show\s+only|only\s+show|filter(?:\s+(?:it|them|results|the\s+results|the\s+list))?\s+(?:to|by|for|on)|limit\s+(?:it\s+|them\s+|results\s+|the\s+results\s+)?to|narrow\s+(?:it\s+|them\s+|results\s+)?(?:down\s+)?to|restrict\s+(?:it\s+|results\s+)?to)\s+(.+?)\s*$/i;
+const IN_LIST = /^\s*(?:please\s+)?(?:select|pick|choose|tick|check|click)\s+(?:the\s+)?(.+?)\s+(?:in|from|on|under)\s+(?:the\s+)?(.+?)\s+(?:list|menu|dropdown|drop-down|picker|panel|filters?|options)\s*$/i;
 const AS_NTH = /^\s*(?:please\s+)?(?:(?:choose|select|pick|set|use|put|make)\s+)?(.+?)\s+(?:as|for)\s+(?:the\s+)?(first|second|third|fourth|last|1st|2nd|3rd|4th)(?:\s+(?:one|option|choice|[a-z][a-z0-9\s-]{0,30}))?\s*$/i;
 function setToPlan(routeGlobal, clause, all) {
   // "Cedar rapids as the first scenario": the lists holding that option, in
@@ -17439,6 +17675,26 @@ function setToPlan(routeGlobal, clause, all) {
     const pick = asNth[2].toLowerCase() === "last" ? holders[holders.length - 1] : holders[n];
     if (pick) { const o = optionNamed(pick, asNth[1]); return { control: pick, option: o, label: `${pick.label}: ${o.text || o.value}` }; }
     return null;
+  }
+  const inList = String(clause).match(IN_LIST);
+  if (inList) {
+    const lists = selectsNamed(all, inList[2]).map((c) => ({ c, o: optionNamed(c, inList[1]) })).filter((x) => x.o);
+    if (lists.length === 1) return { control: lists[0].c, option: lists[0].o, label: `${lists[0].c.label}: ${lists[0].o.text || lists[0].o.value}` };
+    const one = soleNamed(all, inList[1], listWords(inList[2]));
+    if (one) return one;
+  }
+  // "Show only datasets in california": the one switch named whole inside
+  // the phrase. Only switches - a link named California is somewhere to go.
+  const only = String(clause).match(FILTER_TO);
+  if (only) {
+    const said = ` ${NAME_BASE(only[1])} `;
+    const kindOf = (c) => String(c.type || c.kind || "").toLowerCase();
+    const named = all.filter((c) => !c.disabled && (!c.hidden || c.revealedBy) && /^(?:checkbox|radio|switch)$/.test(kindOf(c))
+      && NAME_BASE(c.label).length > 2 && said.includes(` ${NAME_BASE(c.label)} `));
+    // The longest name wins where one sits inside another: "Lower Colorado" over "Colorado".
+    const longest = named.filter((c) => !named.some((d) => d !== c && NAME_BASE(d.label).includes(NAME_BASE(c.label)) && NAME_BASE(d.label) !== NAME_BASE(c.label)));
+    const byName = new Map(longest.map((c) => [NAME_BASE(c.label), c]));
+    if (byName.size === 1 && longest.length === 1) return { control: longest[0], press: "check", label: longest[0].label };
   }
   const nth = String(clause).match(NTH_OF);
   if (nth) {
@@ -17466,6 +17722,10 @@ function setToPlan(routeGlobal, clause, all) {
       && /^(?:combobox|listbox)$/i.test(String(c.kind || "")) && words.length
       && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
     if (combos.length === 1) return { control: combos[0], openThenPick: m[2], label: `${combos[0].label}: ${m[2]}` };
+    // "Filter to arizona": a switch named exactly the value is ticked
+    // rather than the value typed into a box that only narrows the list.
+    const tick = soleNamed(all.filter((c) => /^(?:checkbox|radio|switch)$/.test(String(c.type || c.kind || "").toLowerCase())), m[2], words);
+    if (tick) return tick;
     // A box to type into: "set the start year to 1990".
     const boxes = all.filter((c) => !c.disabled && TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()) && words.length
       && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
@@ -17576,6 +17836,13 @@ async function runSetToPlan(routeGlobal, setTo) {
         if (setTo.control.hidden && setTo.control.revealedBy) {
           await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
           forgetPageTools();
+        }
+        if (setTo.press) {
+          const ran = await runVerified(routeGlobal, setTo.press === "check"
+            ? { name: "pageCheck", args: { selector: setTo.control.selector, on: true } }
+            : { name: "pageClick", args: { selector: setTo.control.selector } });
+          if (!ran || ran.ok === false) return null;
+          return couldCheck(ran) ? { changed: didItMove(ran) } : { changed: undefined, unconfirmed: true };
         }
         if (setTo.fill != null) {
           const ran = await runVerified(routeGlobal, { name: "pageFill", args: { selector: setTo.control.selector, text: setTo.fill } });
@@ -17844,7 +18111,8 @@ async function searchClause(routeGlobal, clause) {
   // A search usually goes to a results page; "then open the first result"
   // has to be read from that page, not from the one the search started on.
   await waitForNavigation(fromUrl, 4000);
-  return { ok: true, verified: { changed: true }, words, box, label: box.label };
+  return { ok: true, verified: { changed: true }, words, box, label: box.label,
+    before: all.map((c) => String(c.label || "").toLowerCase().trim()) };
 }
 
 async function actOnExactlyNamedClause(routeGlobal, clause) {
