@@ -357,6 +357,32 @@
   // year list in a <label> with the word "start", and the label read as
   // "2025 2024 2023 ... start"; a row holding three lists read as all three.
   const UNWORDED = /^(?:SELECT|SCRIPT|STYLE|TEMPLATE)$/;
+  // An icon font's ligature is a word only to the font. <span
+  // class="material-icons">expand_less</span> draws a chevron, and read as
+  // text it named Tulane's sidebar "Infrastructureexpand_less".
+  const ICON_FONT = ".material-icons, .material-icons-outlined, .material-icons-round, .material-icons-sharp, .material-icons-two-tone, [class*='material-symbols'], .MuiIcon-root, mat-icon, .mat-icon, .google-symbols";
+  // A class-name test, not el.matches(ICON_FONT): this runs on every element
+  // of every page read, and a selector match there doubled the cost.
+  const ICON_CLASS = /(?:^|\s)(?:material-icons(?:-outlined|-round|-sharp|-two-tone)?|material-symbols[\w-]*|MuiIcon-root|mat-icon|google-symbols)(?:\s|$)/;
+  const isIconGlyph = (el) => {
+    try {
+      const cls = typeof el.className === "string" ? el.className : (el.getAttribute && el.getAttribute("class")) || "";
+      if ((cls && ICON_CLASS.test(cls)) || el.tagName === "MAT-ICON") return true;
+      return el.getAttribute("aria-hidden") === "true" && !el.firstElementChild && /^[a-z]+(?:_[a-z]+)+$/.test(String(el.textContent || "").trim());
+    } catch (e) { return false; }
+  };
+  // The glyphs that mean "this opens": a header carrying one is a door.
+  const EXPAND_GLYPH = /^(?:expand_(?:more|less)|chevron_(?:right|left)|keyboard_arrow_(?:down|up|right)|arrow_drop_(?:down|up)|arrow_right)$/;
+  const EXPAND_SVG = /Expand(?:More|Less)|ChevronRight|KeyboardArrow(?:Down|Up|Right)|ArrowDropDown|ArrowRight/;
+  const hasExpandIcon = (el) => {
+    try {
+      for (const c of el.children || []) {
+        if (isIconGlyph(c) && EXPAND_GLYPH.test(String(c.textContent || "").trim())) return true;
+        if (/^svg$/i.test(c.tagName) && EXPAND_SVG.test(String(c.getAttribute("data-testid") || ""))) return true;
+      }
+    } catch (e) { /* detached */ }
+    return false;
+  };
   // Another control's words are not this one's. A bare <select> in a form
   // whose only text is a link beside it took the link's name for its own
   // once option text stopped counting, so "click Puerto Rico/Virgin Islands"
@@ -369,6 +395,7 @@
   const shortText = (el, { skipControls = false } = {}) => {
     if (!el) return "";
     let out = "";
+    const glyphs = [];
     // A line break is a space. waterdata.usgs.gov writes its step buttons as
     // <span>View</span><br><span>tabular data</span>; concatenating the
     // children read that as "Viewtabular data", a word nobody types. A
@@ -388,6 +415,7 @@
         // holds only a logo is named for the logo, as a screen reader names it.
         const tag = String(c.tagName).toUpperCase();
         if (UNWORDED.test(tag) || (skipControls && isControlish(c))) continue;
+        if (isIconGlyph(c)) { glyphs.push(String(c.textContent || "").trim()); continue; }
         if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
         if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
         walk(c);
@@ -404,10 +432,13 @@
       if (node.nodeType === 8) continue;
       if (node.nodeType === 3) out += node.nodeValue || "";
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
+      else if (node.nodeType === 1 && isIconGlyph(node)) glyphs.push(String(node.textContent || "").trim());
       else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
         && !(skipControls && isControlish(node))) walk(node);
       if (out.length > 200) break;
     }
+    // An icon-only button is still called what its icon says: "close".
+    if (!out.trim() && glyphs.length) out = glyphs.join(" ").replace(/_/g, " ");
     return out.slice(0, 200);
   };
   // Matching form: lowercased and collapsed. Everything in this file that
@@ -1037,6 +1068,9 @@
       // ARIA says presentation strips the element of meaning, and that is
       // what Dojo wraps each button in; the button proper is inside it.
       if (role === "presentation" || role === "none") continue;
+      // An icon inside something with words of its own is part of that thing:
+      // the chevron on "Infrastructure" is not a control called expand_less.
+      if (isIconGlyph(el) && el.parentElement && String(el.parentElement.textContent || "").trim() !== String(el.textContent || "").trim()) continue;
       const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
       // Real signals (a native interactive tag, an ARIA role, a tab stop, or
       // an actual handler) vs. cursor:pointer alone. Found live on
@@ -1104,6 +1138,7 @@
       // the title again is the one thing certain not to help.
       const expandedAttr = el.getAttribute && el.getAttribute("aria-expanded");
       const looksLikeTitle = tag === "summary"
+        || hasExpandIcon(el)
         || /accordion-title/i.test(String(el.className || ""))
         || /^uk-accordion-\d+$/.test(String(el.id || ""));
       let expanded;
@@ -1141,6 +1176,16 @@
             return href && !/^#$|^javascript:/i.test(href) ? href : undefined;
           } catch (e) { return undefined; }
         })(),
+        // A link to the page it is on goes nowhere: a single-page app's
+        // layer list written as <a href="/lab/dt/3Dmap"> on /lab/dt/3Dmap.
+        samePage: (() => {
+          try {
+            const a = el.matches("a[href]") ? el : (el.closest && el.closest("a[href]"));
+            if (!a) return undefined;
+            const u = new URL(a.getAttribute("href"), location.href);
+            return u.origin === location.origin && u.pathname === location.pathname && u.search === location.search ? true : undefined;
+          } catch (e) { return undefined; }
+        })(),
         // A link that opens another site or a new tab, which is not somewhere
         // anybody goes by accident.
         elsewhere: (() => {
@@ -1153,6 +1198,9 @@
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // Inside a dialog or pop-up: "close the intro" means its close button,
+        // not the sidebar's.
+        inDialog: (() => { try { return el.closest("[role=dialog], [role=alertdialog], [aria-modal=true], dialog, .modal, .MuiDialog-root, .MuiModal-root, [class*='popup']") ? true : undefined; } catch (e) { return undefined; } })(),
         expanded,
         revealedBy: opener ? cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
@@ -3275,8 +3323,12 @@
       } catch (e) { return false; }
     };
 
-    for (const el of deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"],'
-      + ' .uk-accordion-title, [class*="accordion-title"], [id^="uk-accordion"], a[href="#"]')) {
+    // A sidebar of sections that say nothing about themselves except by a
+    // chevron: plain divs, no aria-expanded, a Material expand icon.
+    const iconHeads = deepQueryAll(ICON_FONT).filter((i) => EXPAND_GLYPH.test(String(i.textContent || "").trim()))
+      .map((i) => i.parentElement).filter(Boolean);
+    for (const el of [...deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"],'
+      + ' .uk-accordion-title, [class*="accordion-title"], [id^="uk-accordion"], a[href="#"]'), ...iconHeads]) {
       if (seen.has(el) || !isVisible(el)) continue;
       const label = rawLabelOf(el);
       const expanded = el.getAttribute && el.getAttribute("aria-expanded");
@@ -3287,8 +3339,9 @@
       // never behind it. Whatever it hides is on the page now; look there.
       if (expanded === "true") continue;
       const accordion = isAccordion(el);
+      const section = iconHeads.includes(el);
       const says = expanded === "false" || (el.getAttribute && el.getAttribute("aria-haspopup"))
-        || tagOf(el) === "summary" || accordion;
+        || tagOf(el) === "summary" || accordion || section;
       const related = relatedTo(label);
       if (!says && !related && !(label && NAMES.test(label))) continue;
       seen.add(el);
@@ -3305,6 +3358,9 @@
         // where "Shortcuts" or "Forecasts and Outlooks" is worth opening
         // only if the instruction mentions it.
         generic: !!(label && NAMES.test(label)),
+        // One of a run of sections marked only by a chevron: worth trying in
+        // turn when nothing named is found, and shut again if it held nothing.
+        section: section || undefined,
       });
     }
     const rank = (d) => (d.related ? 2 : 0) + (d.stated ? 1 : 0);

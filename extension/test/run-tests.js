@@ -2813,6 +2813,92 @@ for (const [instr, want] of [["filter to arizona", "az"], ["show only datasets i
   }
 }
 
+// A sidebar of sections marked only by an icon-font chevron, whose layers
+// are not on the page until a section opens, and an intro dialog with a ×.
+// The shape of Tulane's City-FIDAP, built here from nothing of its code.
+const sidebarPage = ({ asButtons = false } = {}) => {
+  const page = loadPage(`<!doctype html><html><body>
+    <div class="modal"><div class="modal-content"><span class="close-btn" id="x" style="cursor:pointer">×</span><h2>Flood Platform</h2></div></div>
+    <div id="side"><h6 id="sideclose" style="cursor:pointer"><span class="material-icons-round" aria-hidden="true">close</span></h6>
+      <div class="sec" data-k="infra"><div>Infrastructure</div><span class="material-icons-round" aria-hidden="true">expand_less</span></div><div class="body" id="infra"></div>
+      <div class="sec" data-k="weather"><div>Weather &amp; Environment</div><span class="material-icons-round" aria-hidden="true">expand_less</span></div><div class="body" id="weather"></div>
+    </div></body></html>`, { url: "https://lab.example.edu/twin/map" });
+  if (!page) return null;
+  const doc = page.document; const pressed = [];
+  const items = { infra: ["Buildings", "Bridges"], weather: ["Flood Maps", "Stream Gauges"] };
+  doc.getElementById("x").addEventListener("click", () => { doc.querySelector(".modal").remove(); pressed.push("x"); });
+  doc.getElementById("sideclose").addEventListener("click", () => pressed.push("sideclose"));
+  for (const sec of doc.querySelectorAll(".sec")) {
+    sec.style.cursor = "pointer";
+    // The planner offers what the page reads as controls with confidence; a
+    // bare div with a handler is that in a browser, which this DOM cannot show.
+    if (asButtons) { sec.setAttribute("role", "button"); sec.tabIndex = 0; }
+    sec.addEventListener("click", () => {
+      const body = doc.getElementById(sec.dataset.k);
+      pressed.push("sec:" + sec.dataset.k);
+      if (body.children.length) { body.innerHTML = ""; return; }
+      for (const name of items[sec.dataset.k]) {
+        const a = doc.createElement("a"); a.href = "/twin/map"; a.textContent = name;
+        a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(name); });
+        body.appendChild(a);
+      }
+    });
+  }
+  return { page, doc, pressed };
+};
+{
+  const t = sidebarPage();
+  if (t) {
+    const labels = t.page.GENERIC.inventory({}).controls.map((c) => c.label);
+    ensure("an icon font's ligature is not part of a name", labels.includes("Infrastructure") && !labels.some((l) => /expand_less/.test(l)), labels);
+    ensure("an icon-only control is still named for its icon", labels.includes("close"), labels);
+    const sec = t.page.GENERIC.inventory({}).controls.find((c) => c.label === "Infrastructure" && c.opensPanel);
+    ensure("a header carrying an expand icon is a section that opens", !!sec, t.page.GENERIC.inventory({}).controls.filter((c) => /Infra/.test(c.label)).map((c) => [c.kind, c.opensPanel]));
+  }
+}
+for (const [instr, want, not] of [["close the intro", "x", "sideclose"], ["show stream gauges", "Stream Gauges", null], ["show the buildings layer", "Buildings", null], ["turn on flood maps", "Flood Maps", null]]) {
+  const t = sidebarPage();
+  if (!t) continue;
+  const bg = loadBackground({ page: t.page });
+  runAsync(async () => {
+    const r = await bg.__ask({ type: "smartAsk", instruction: instr });
+    ensure(`${instr}: pressed without the model`, t.pressed.includes(want), { pressed: t.pressed, title: (r.display || {}).title });
+    if (not) ensure(`${instr}: and not the sidebar's own close`, !t.pressed.includes(not), t.pressed);
+    if (instr === "show stream gauges") ensure("a section tried that did not hold it is shut again", t.pressed.filter((p) => p === "sec:infra").length !== 1, t.pressed);
+  });
+}
+// With a model that plans only the way in, the item it revealed is pressed;
+// and opening a section does not count as the asked part, so the right
+// section is not refused as padding after a wrong one.
+{
+  const t = sidebarPage({ asButtons: true });
+  if (t) {
+    const bg = loadBackground({ page: t.page });
+    bg.__plans = true;
+    let plans = 0;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") {
+        plans++;
+        const named = (re) => (m.controls.find((c) => re.test(String(c.label))) || {}).label;
+        return { ok: true, step: { steps: plans === 1 ? [{ name: named(/^Infrastructure/), do: "click" }, { name: named(/^Weather/), do: "click" }] : [] } };
+      }
+      return { ok: true, step: { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "turn on the flood maps layer" });
+      ensure("the right section after a wrong one is still opened", t.pressed.includes("sec:weather"), t.pressed);
+      ensure("and the layer it revealed is pressed", t.pressed.includes("Flood Maps"), t.pressed);
+    });
+  }
+}
+{
+  const bgw = loadBackground({});
+  check("a link to the page it is on does not leave it", require("vm").runInContext(`navigatesAway({ goesTo: "/twin/map", samePage: true })`, bgw), false);
+  check("and a link to another page does", require("vm").runInContext(`navigatesAway({ goesTo: "/twin/help" })`, bgw), true);
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
