@@ -553,3 +553,480 @@ module.exports.fims = {
     { say: "what map layers can be turned on here", kind: "explain", explain: true },
   ],
 };
+
+// Round 4, 2026-10-20: three federal water-infrastructure sites, prompts written
+// from screenshots before the agent ran on them. Not run offline either.
+module.exports.usace = {
+  "url": "https://water.usace.army.mil/overview",
+  "note": "USACE Water Management (CWMS) locations by office: a table of divisions and districts, each with List View, Map View and an office link, behind a DoD warning to agree to first.",
+  "later": true,
+  "prompts": [
+    {
+      "say": "click i agree on the warning",
+      "kind": "action",
+      "steps": [
+        "I Agree"
+      ]
+    },
+    {
+      "say": "open the list view for the new orleans district",
+      "kind": "action",
+      "steps": [
+        "List View"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the map view for the vicksburg district",
+      "kind": "action",
+      "steps": [
+        "Map View"
+      ],
+      "later": true
+    },
+    {
+      "say": "search for mississippi river",
+      "kind": "action",
+      "steps": [
+        "Search"
+      ]
+    },
+    {
+      "say": "open the list view for the st. louis district, then tell me which locations it lists",
+      "kind": "action+explain",
+      "steps": [
+        "List View"
+      ],
+      "explain": true,
+      "later": true
+    },
+    {
+      "say": "go to the interactive map, then open the data page",
+      "kind": "multistep",
+      "steps": [
+        "Map",
+        "Data"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the active flooding events page",
+      "kind": "action",
+      "steps": [
+        "Active Flooding Events"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the help page and go to the data disclaimer",
+      "kind": "multistep",
+      "steps": [
+        "Help",
+        "Data Disclaimer"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the office link for the omaha district",
+      "kind": "action",
+      "steps": [
+        "Office Link"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the list view for the tulsa district and open the first location listed",
+      "kind": "multistep",
+      "steps": [
+        "List View"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the map view for the sacramento district and zoom in",
+      "kind": "multistep",
+      "steps": [
+        "Map View"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the list view for the alaska district",
+      "kind": "action",
+      "steps": [
+        "List View"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the api docs",
+      "kind": "action",
+      "steps": [
+        "API Docs"
+      ],
+      "later": true
+    },
+    {
+      "say": "go to the contact us section",
+      "kind": "action",
+      "steps": [
+        "Contact Us"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the locations page from the footer, then open the list view for the memphis district",
+      "kind": "multistep",
+      "steps": [
+        "Locations by Office",
+        "List View"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the list view for the louisville district and tell me how many locations it has",
+      "kind": "action+explain",
+      "steps": [
+        "List View"
+      ],
+      "explain": true,
+      "later": true
+    },
+    {
+      "say": "which districts are in the mississippi valley division",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "how many divisions are listed on this page",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what does this website provide",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "which division does the galveston district belong to",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
+module.exports.rise = {
+  "url": "https://data.usbr.gov/catalog",
+  "note": "Bureau of Reclamation RISE catalog search: a search box, filter checkboxes by theme, data structure, location type, region and state, an order-by list and paged results.",
+  "later": true,
+  "prompts": [
+    {
+      "say": "search the catalog for lake mead",
+      "kind": "action",
+      "steps": [
+        "Search Datasets"
+      ]
+    },
+    {
+      "say": "search for folsom reservoir and open the first result",
+      "kind": "multistep",
+      "steps": [
+        "Search Datasets"
+      ],
+      "later": true
+    },
+    {
+      "say": "filter to the hydropower theme and time series data",
+      "kind": "multistep",
+      "steps": [
+        "Hydropower",
+        "Time series"
+      ]
+    },
+    {
+      "say": "show only datasets in california, then sort by last record update newest",
+      "kind": "multistep",
+      "steps": [
+        "California",
+        "Order by"
+      ]
+    },
+    {
+      "say": "filter the unified region to columbia-pacific northwest and the location type to dam",
+      "kind": "multistep",
+      "steps": [
+        "Columbia-Pacific Northwest",
+        "Dam"
+      ]
+    },
+    {
+      "say": "search for evaporation, filter to the environmental theme, then sort alphabetically",
+      "kind": "multistep",
+      "steps": [
+        "Search Datasets",
+        "Environmental",
+        "Order by"
+      ]
+    },
+    {
+      "say": "go to the next page of results",
+      "kind": "action",
+      "steps": [
+        "Next"
+      ]
+    },
+    {
+      "say": "jump to the last page of results",
+      "kind": "action",
+      "steps": [
+        "Last"
+      ]
+    },
+    {
+      "say": "show the search instructions",
+      "kind": "action",
+      "steps": [
+        "Show Instructions"
+      ]
+    },
+    {
+      "say": "filter to arizona, then clear all the search filters",
+      "kind": "multistep",
+      "steps": [
+        "Arizona",
+        "Clear Search/Filters"
+      ]
+    },
+    {
+      "say": "open the time series query tool",
+      "kind": "action",
+      "steps": [
+        "Time Series Query"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the map interface",
+      "kind": "action",
+      "steps": [
+        "Map Interface"
+      ],
+      "later": true
+    },
+    {
+      "say": "filter the legacy region to lower colorado and show only geospatial data",
+      "kind": "multistep",
+      "steps": [
+        "Lower Colorado",
+        "Geospatial"
+      ]
+    },
+    {
+      "say": "search for sediment, filter to idaho, and tell me how many records are found",
+      "kind": "action+explain",
+      "steps": [
+        "Search Datasets",
+        "Idaho"
+      ],
+      "explain": true
+    },
+    {
+      "say": "sort the results by last record update oldest and tell me which dataset is first",
+      "kind": "action+explain",
+      "steps": [
+        "Order by"
+      ],
+      "explain": true
+    },
+    {
+      "say": "filter to the biological theme and tell me how many records match",
+      "kind": "action+explain",
+      "steps": [
+        "Biological"
+      ],
+      "explain": true
+    },
+    {
+      "say": "how many records are in the catalog",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what can I search for in the catalog search box",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what data structures can I filter by",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what does RISE stand for",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
+module.exports.nid = {
+  "url": "https://nid.sec.usace.army.mil/nid/#/",
+  "note": "USACE National Inventory of Dams: a search box, national statistics, a state list and map, layer and legend controls and featured dams, behind a disclaimer to accept first.",
+  "later": true,
+  "prompts": [
+    {
+      "say": "accept the disclaimer",
+      "kind": "action",
+      "steps": [
+        "Agree"
+      ]
+    },
+    {
+      "say": "search for hoover dam",
+      "kind": "action",
+      "steps": [
+        "Search"
+      ]
+    },
+    {
+      "say": "search for lake mead and open the first result",
+      "kind": "multistep",
+      "steps": [
+        "Search"
+      ],
+      "later": true
+    },
+    {
+      "say": "select texas in the state list",
+      "kind": "action",
+      "steps": [
+        "Texas"
+      ]
+    },
+    {
+      "say": "select california in the state list, then browse these dams",
+      "kind": "multistep",
+      "steps": [
+        "California",
+        "Browse These Dams"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the layer controls and switch the basemap to named rivers",
+      "kind": "multistep",
+      "steps": [
+        "Layer Controls",
+        "Named Rivers"
+      ]
+    },
+    {
+      "say": "zoom the map to hawaii",
+      "kind": "action",
+      "steps": [
+        "Hawaii"
+      ]
+    },
+    {
+      "say": "type colorado in the list search and pick colorado",
+      "kind": "multistep",
+      "steps": [
+        "Search this list",
+        "Colorado"
+      ]
+    },
+    {
+      "say": "open advanced search",
+      "kind": "action",
+      "steps": [
+        "Advanced Search"
+      ],
+      "later": true
+    },
+    {
+      "say": "show the puerto rico & u.s. virgin islands map",
+      "kind": "action",
+      "steps": [
+        "Puerto Rico & U.S. Virgin Islands"
+      ]
+    },
+    {
+      "say": "open the legend",
+      "kind": "action",
+      "steps": [
+        "Legend"
+      ]
+    },
+    {
+      "say": "learn more about the mahoning creek dam",
+      "kind": "action",
+      "steps": [
+        "Learn More"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the about the nid menu",
+      "kind": "action",
+      "steps": [
+        "About the NID"
+      ]
+    },
+    {
+      "say": "open the low-head dam inventory",
+      "kind": "action",
+      "steps": [
+        "Low-Head Dam Inventory"
+      ],
+      "later": true
+    },
+    {
+      "say": "select ohio, then browse these dams and tell me how many dams are listed",
+      "kind": "action+explain",
+      "steps": [
+        "Ohio",
+        "Browse These Dams"
+      ],
+      "explain": true,
+      "later": true
+    },
+    {
+      "say": "open the geography dropdown and tell me which territory types are available",
+      "kind": "action+explain",
+      "steps": [
+        "States and Counties"
+      ],
+      "explain": true
+    },
+    {
+      "say": "how many dams are in the national inventory",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what percent of dams have hydropower",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "where is the lakeview cemetery flood control dam and how tall is it",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what percent of dams are state regulated",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};

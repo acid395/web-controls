@@ -335,5 +335,83 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"which cities have flood map scenarios","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true},
    {"say":"what map layers can be turned on here","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":true}
   ]
+ },
+ "usace": {
+  "url": "https://water.usace.army.mil/overview",
+  "note": "USACE Water Management (CWMS) locations by office: a table of divisions and districts, each with List View, Map View and an office link, behind a DoD warning to agree to first.",
+  "prompts": [
+   {"say":"click i agree on the warning","kind":"action","steps":["I Agree"],"on":"I Agree","want":{"clicked":"I Agree"},"offline":null},
+   {"say":"open the list view for the new orleans district","kind":"action","steps":["List View"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
+   {"say":"open the map view for the vicksburg district","kind":"action","steps":["Map View"],"later":true,"on":"Map View","want":{"clicked":"Map View"},"offline":null},
+   {"say":"search for mississippi river","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":null},
+   {"say":"open the list view for the st. louis district, then tell me which locations it lists","kind":"action+explain","steps":["List View"],"explain":true,"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
+   {"say":"go to the interactive map, then open the data page","kind":"multistep","steps":["Map","Data"],"later":true,"on":"Map","want":{"clicked":"Map"},"offline":null},
+   {"say":"open the active flooding events page","kind":"action","steps":["Active Flooding Events"],"later":true,"on":"Active Flooding Events","want":{"clicked":"Active Flooding Events"},"offline":null},
+   {"say":"open the help page and go to the data disclaimer","kind":"multistep","steps":["Help","Data Disclaimer"],"later":true,"on":"Help","want":{"clicked":"Help"},"offline":null},
+   {"say":"open the office link for the omaha district","kind":"action","steps":["Office Link"],"later":true,"on":"Office Link","want":{"clicked":"Office Link"},"offline":null},
+   {"say":"open the list view for the tulsa district and open the first location listed","kind":"multistep","steps":["List View"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
+   {"say":"open the map view for the sacramento district and zoom in","kind":"multistep","steps":["Map View"],"later":true,"on":"Map View","want":{"clicked":"Map View"},"offline":null},
+   {"say":"open the list view for the alaska district","kind":"action","steps":["List View"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
+   {"say":"open the api docs","kind":"action","steps":["API Docs"],"later":true,"on":"API Docs","want":{"clicked":"API Docs"},"offline":null},
+   {"say":"go to the contact us section","kind":"action","steps":["Contact Us"],"later":true,"on":"Contact Us","want":{"clicked":"Contact Us"},"offline":null},
+   {"say":"open the locations page from the footer, then open the list view for the memphis district","kind":"multistep","steps":["Locations by Office","List View"],"later":true,"on":"Locations by Office","want":{"clicked":"Locations by Office"},"offline":null},
+   {"say":"open the list view for the louisville district and tell me how many locations it has","kind":"action+explain","steps":["List View"],"explain":true,"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
+   {"say":"which districts are in the mississippi valley division","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how many divisions are listed on this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what does this website provide","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which division does the galveston district belong to","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
+ },
+ "rise": {
+  "url": "https://data.usbr.gov/catalog",
+  "note": "Bureau of Reclamation RISE catalog search: a search box, filter checkboxes by theme, data structure, location type, region and state, an order-by list and paged results.",
+  "prompts": [
+   {"say":"search the catalog for lake mead","kind":"action","steps":["Search Datasets"],"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
+   {"say":"search for folsom reservoir and open the first result","kind":"multistep","steps":["Search Datasets"],"later":true,"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
+   {"say":"filter to the hydropower theme and time series data","kind":"multistep","steps":["Hydropower","Time series"],"on":"Hydropower","want":{"clicked":"Hydropower"},"offline":null},
+   {"say":"show only datasets in california, then sort by last record update newest","kind":"multistep","steps":["California","Order by"],"on":"California","want":{"clicked":"California"},"offline":null},
+   {"say":"filter the unified region to columbia-pacific northwest and the location type to dam","kind":"multistep","steps":["Columbia-Pacific Northwest","Dam"],"on":"Columbia-Pacific Northwest","want":{"clicked":"Columbia-Pacific Northwest"},"offline":null},
+   {"say":"search for evaporation, filter to the environmental theme, then sort alphabetically","kind":"multistep","steps":["Search Datasets","Environmental","Order by"],"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
+   {"say":"go to the next page of results","kind":"action","steps":["Next"],"on":"Next","want":{"clicked":"Next"},"offline":null},
+   {"say":"jump to the last page of results","kind":"action","steps":["Last"],"on":"Last","want":{"clicked":"Last"},"offline":null},
+   {"say":"show the search instructions","kind":"action","steps":["Show Instructions"],"on":"Show Instructions","want":{"clicked":"Show Instructions"},"offline":null},
+   {"say":"filter to arizona, then clear all the search filters","kind":"multistep","steps":["Arizona","Clear Search/Filters"],"on":"Arizona","want":{"clicked":"Arizona"},"offline":null},
+   {"say":"open the time series query tool","kind":"action","steps":["Time Series Query"],"later":true,"on":"Time Series Query","want":{"clicked":"Time Series Query"},"offline":null},
+   {"say":"open the map interface","kind":"action","steps":["Map Interface"],"later":true,"on":"Map Interface","want":{"clicked":"Map Interface"},"offline":null},
+   {"say":"filter the legacy region to lower colorado and show only geospatial data","kind":"multistep","steps":["Lower Colorado","Geospatial"],"on":"Lower Colorado","want":{"clicked":"Lower Colorado"},"offline":null},
+   {"say":"search for sediment, filter to idaho, and tell me how many records are found","kind":"action+explain","steps":["Search Datasets","Idaho"],"explain":true,"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
+   {"say":"sort the results by last record update oldest and tell me which dataset is first","kind":"action+explain","steps":["Order by"],"explain":true,"on":"Order by","want":{"clicked":"Order by"},"offline":null},
+   {"say":"filter to the biological theme and tell me how many records match","kind":"action+explain","steps":["Biological"],"explain":true,"on":"Biological","want":{"clicked":"Biological"},"offline":null},
+   {"say":"how many records are in the catalog","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what can I search for in the catalog search box","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what data structures can I filter by","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what does RISE stand for","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
+ },
+ "nid": {
+  "url": "https://nid.sec.usace.army.mil/nid/#/",
+  "note": "USACE National Inventory of Dams: a search box, national statistics, a state list and map, layer and legend controls and featured dams, behind a disclaimer to accept first.",
+  "prompts": [
+   {"say":"accept the disclaimer","kind":"action","steps":["Agree"],"on":"Agree","want":{"clicked":"Agree"},"offline":null},
+   {"say":"search for hoover dam","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":null},
+   {"say":"search for lake mead and open the first result","kind":"multistep","steps":["Search"],"later":true,"on":"Search","want":{"clicked":"Search"},"offline":null},
+   {"say":"select texas in the state list","kind":"action","steps":["Texas"],"on":"Texas","want":{"clicked":"Texas"},"offline":null},
+   {"say":"select california in the state list, then browse these dams","kind":"multistep","steps":["California","Browse These Dams"],"later":true,"on":"California","want":{"clicked":"California"},"offline":null},
+   {"say":"open the layer controls and switch the basemap to named rivers","kind":"multistep","steps":["Layer Controls","Named Rivers"],"on":"Layer Controls","want":{"clicked":"Layer Controls"},"offline":null},
+   {"say":"zoom the map to hawaii","kind":"action","steps":["Hawaii"],"on":"Hawaii","want":{"clicked":"Hawaii"},"offline":null},
+   {"say":"type colorado in the list search and pick colorado","kind":"multistep","steps":["Search this list","Colorado"],"on":"Search this list","want":{"clicked":"Search this list"},"offline":null},
+   {"say":"open advanced search","kind":"action","steps":["Advanced Search"],"later":true,"on":"Advanced Search","want":{"clicked":"Advanced Search"},"offline":null},
+   {"say":"show the puerto rico & u.s. virgin islands map","kind":"action","steps":["Puerto Rico & U.S. Virgin Islands"],"on":"Puerto Rico & U.S. Virgin Islands","want":{"clicked":"Puerto Rico & U.S. Virgin Islands"},"offline":null},
+   {"say":"open the legend","kind":"action","steps":["Legend"],"on":"Legend","want":{"clicked":"Legend"},"offline":null},
+   {"say":"learn more about the mahoning creek dam","kind":"action","steps":["Learn More"],"later":true,"on":"Learn More","want":{"clicked":"Learn More"},"offline":null},
+   {"say":"open the about the nid menu","kind":"action","steps":["About the NID"],"on":"About the NID","want":{"clicked":"About the NID"},"offline":null},
+   {"say":"open the low-head dam inventory","kind":"action","steps":["Low-Head Dam Inventory"],"later":true,"on":"Low-Head Dam Inventory","want":{"clicked":"Low-Head Dam Inventory"},"offline":null},
+   {"say":"select ohio, then browse these dams and tell me how many dams are listed","kind":"action+explain","steps":["Ohio","Browse These Dams"],"explain":true,"later":true,"on":"Ohio","want":{"clicked":"Ohio"},"offline":null},
+   {"say":"open the geography dropdown and tell me which territory types are available","kind":"action+explain","steps":["States and Counties"],"explain":true,"on":"States and Counties","want":{"clicked":"States and Counties"},"offline":null},
+   {"say":"how many dams are in the national inventory","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what percent of dams have hydropower","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"where is the lakeview cemetery flood control dam and how tall is it","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what percent of dams are state regulated","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };

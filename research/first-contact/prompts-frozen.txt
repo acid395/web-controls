@@ -113,3 +113,72 @@ act      view the cart
 explain  how many items are in the cart
 explain  what identifiers can I use when searching for stations
 explain  what does the date range default to
+
+ROUND 4 - written 2026-10-20 from screenshots only, before the agent ran on these sites.
+Run as the extension's bench (20 prompts a site), on 1.99.5, by the user and Samrat.
+
+usace  https://water.usace.army.mil/overview
+action          click i agree on the warning
+action          open the list view for the new orleans district
+action          open the map view for the vicksburg district
+action          search for mississippi river
+action+explain  open the list view for the st. louis district, then tell me which locations it lists
+multistep       go to the interactive map, then open the data page
+action          open the active flooding events page
+multistep       open the help page and go to the data disclaimer
+action          open the office link for the omaha district
+multistep       open the list view for the tulsa district and open the first location listed
+multistep       open the map view for the sacramento district and zoom in
+action          open the list view for the alaska district
+action          open the api docs
+action          go to the contact us section
+multistep       open the locations page from the footer, then open the list view for the memphis district
+action+explain  open the list view for the louisville district and tell me how many locations it has
+explain         which districts are in the mississippi valley division
+explain         how many divisions are listed on this page
+explain         what does this website provide
+explain         which division does the galveston district belong to
+
+rise  https://data.usbr.gov/catalog
+action          search the catalog for lake mead
+multistep       search for folsom reservoir and open the first result
+multistep       filter to the hydropower theme and time series data
+multistep       show only datasets in california, then sort by last record update newest
+multistep       filter the unified region to columbia-pacific northwest and the location type to dam
+multistep       search for evaporation, filter to the environmental theme, then sort alphabetically
+action          go to the next page of results
+action          jump to the last page of results
+action          show the search instructions
+multistep       filter to arizona, then clear all the search filters
+action          open the time series query tool
+action          open the map interface
+multistep       filter the legacy region to lower colorado and show only geospatial data
+action+explain  search for sediment, filter to idaho, and tell me how many records are found
+action+explain  sort the results by last record update oldest and tell me which dataset is first
+action+explain  filter to the biological theme and tell me how many records match
+explain         how many records are in the catalog
+explain         what can I search for in the catalog search box
+explain         what data structures can I filter by
+explain         what does RISE stand for
+
+nid  https://nid.sec.usace.army.mil/nid/#/
+action          accept the disclaimer
+action          search for hoover dam
+multistep       search for lake mead and open the first result
+action          select texas in the state list
+multistep       select california in the state list, then browse these dams
+multistep       open the layer controls and switch the basemap to named rivers
+action          zoom the map to hawaii
+multistep       type colorado in the list search and pick colorado
+action          open advanced search
+action          show the puerto rico & u.s. virgin islands map
+action          open the legend
+action          learn more about the mahoning creek dam
+action          open the about the nid menu
+action          open the low-head dam inventory
+action+explain  select ohio, then browse these dams and tell me how many dams are listed
+action+explain  open the geography dropdown and tell me which territory types are available
+explain         how many dams are in the national inventory
+explain         what percent of dams have hydropower
+explain         where is the lakeview cemetery flood control dam and how tall is it
+explain         what percent of dams are state regulated
