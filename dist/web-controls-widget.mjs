@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.23 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.24 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.23",
+    version: "0.4.24",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.23";
+globalThis.WC_WIDGET_VERSION = "0.4.24";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -1365,12 +1365,15 @@ return (function () {
   // else that holds no text says so.
   const TYPED_INTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([type=file]), textarea";
   const typingTarget = (el) => {
-    if (el.matches && (el.matches(TYPED_INTO) || el.isContentEditable)) return el;
+    if (el.matches && (el.matches(TYPED_INTO) || el.isContentEditable || el.tagName === "SELECT")) return el;
     const inside = el.querySelectorAll ? [...el.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
     if (inside.length === 1) return inside[0];
+    // Only a button hands its words to a box beside it. A checkbox in the
+    // same form is not asking for the form's search box to be filled.
+    const isButton = el.tagName === "BUTTON" || el.getAttribute("role") === "button"
+      || (el.tagName === "INPUT" && /^(?:button|submit|image)$/i.test(el.type || ""));
     const form = el.form || (el.closest && el.closest("form"));
-    const holder = form || (/^(?:button|submit|reset)$/i.test(el.type || "") || el.getAttribute("role") === "button" || el.tagName === "BUTTON"
-      ? el.parentElement && el.parentElement.parentElement : null);
+    const holder = !isButton ? null : form || (el.parentElement && el.parentElement.parentElement);
     const boxes = holder ? [...holder.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
     if (boxes.length === 1) return boxes[0];
     throw new Error(`"${rawLabelOf(el).slice(0, 40) || el.tagName.toLowerCase()}" is not a box that takes typing`);
@@ -8419,7 +8422,6 @@ async function usgsCurrentConditions({ state, parameter, nameContains }) {
   const isStale = (r) => r.observedAt && (Date.now() - new Date(r.observedAt).getTime()) > STALE_HOURS * 3600e3;
   const staleExcluded = readings.filter(isStale).length;
   readings = readings.filter((r) => !isStale(r));
-  const reportingStatewide = readings.length;
 
   // A name filter that matches nothing falls back to the whole state rather
   // than returning an empty answer - "no gauge is named Cleveland" is not the
@@ -9543,8 +9545,6 @@ const ASKING_TO_READ_PLAINLY =
 // pressed a graph control instead of reading the flood stages off the page.
 const A_QUESTION =
   /^\s*(?:please\s+)?(?:(?:at|in|on|by|from|to|for|of|with|under|after|before|since|until|above|below)\s+(?:what|which|how|when|where|whom)\b|(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b)/i;
-const ABOUT_WHAT_IS_HERE =
-  /\b(?:here|this\s+(?:page|map|chart|graph|plot|table|site)|shown|showing|right\s+now|currently|current|at\s+the\s+moment|as\s+it\s+stands|in\s+effect)\b/i;
 // A request whose action depends on something it must first find out.
 const IS_CONDITIONAL =
   /^\s*(?:only\s+)?(?:if|when(?:ever)?|unless)\b|\b(?:otherwise|or\s+else|unless|depending\s+on|if\s+(?:it|there|the|this|that)\b)/i;
@@ -18086,7 +18086,7 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   if (narrow) {
     const inv = await readInventory();
     const st = setToPlan(routeGlobal, clause, ((inv.ok && inv.result && inv.result.controls) || []));
-    if (st) sure = { label: st.label, run: () => runSetToPlan(routeGlobal, st) };
+    if (st) sure = { label: st.label, run: () => runSetToPlan(routeGlobal, st), soft: !!st.range };
   } else {
     sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
   }
@@ -18111,7 +18111,9 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   // Named, and pressing it changed nothing: most often it was already as
   // asked - RadarViz's Settings already open. Handed on, a model pressed it
   // again and shut the panel the next step needed. The page has settled it.
-  if (named && !narrow) return done("named", sure.label || clause, false, "named on the page; it was already as asked or did not respond", true, null);
+  // A range that found no pair to fill has not settled anything: the model
+  // is asked, as for a step the page could not place.
+  if (named && !narrow && !sure.soft) return done("named", sure.label || clause, false, "named on the page; it was already as asked or did not respond", true, null);
   // The control a step names may be arriving - a tab the page draws once
   // the layer before it has loaded. Only where nothing was named at all: a
   // plan that ran and came back empty has already pressed, and pressing
@@ -18157,7 +18159,7 @@ async function certainClausePlan(routeGlobal, clause) {
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
   const setTo = setToPlan(routeGlobal, clause, all);
-  if (setTo) return { label: setTo.label, run: () => runSetToPlan(routeGlobal, setTo) };
+  if (setTo) return { label: setTo.label, run: () => runSetToPlan(routeGlobal, setTo), soft: !!setTo.range };
   const span = soleSpanControl(clause, all);
 
   if (span) {
