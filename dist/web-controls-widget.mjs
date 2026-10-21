@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.24 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.25 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.24",
+    version: "0.4.25",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.24";
+globalThis.WC_WIDGET_VERSION = "0.4.25";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -1292,6 +1292,32 @@ return (function () {
   // year list in a <label> with the word "start", and the label read as
   // "2025 2024 2023 ... start"; a row holding three lists read as all three.
   const UNWORDED = /^(?:SELECT|SCRIPT|STYLE|TEMPLATE)$/;
+  // An icon font's ligature is a word only to the font. <span
+  // class="material-icons">expand_less</span> draws a chevron, and read as
+  // text it named Tulane's sidebar "Infrastructureexpand_less".
+  const ICON_FONT = ".material-icons, .material-icons-outlined, .material-icons-round, .material-icons-sharp, .material-icons-two-tone, [class*='material-symbols'], .MuiIcon-root, mat-icon, .mat-icon, .google-symbols";
+  // A class-name test, not el.matches(ICON_FONT): this runs on every element
+  // of every page read, and a selector match there doubled the cost.
+  const ICON_CLASS = /(?:^|\s)(?:material-icons(?:-outlined|-round|-sharp|-two-tone)?|material-symbols[\w-]*|MuiIcon-root|mat-icon|google-symbols)(?:\s|$)/;
+  const isIconGlyph = (el) => {
+    try {
+      const cls = typeof el.className === "string" ? el.className : (el.getAttribute && el.getAttribute("class")) || "";
+      if ((cls && ICON_CLASS.test(cls)) || el.tagName === "MAT-ICON") return true;
+      return el.getAttribute("aria-hidden") === "true" && !el.firstElementChild && /^[a-z]+(?:_[a-z]+)+$/.test(String(el.textContent || "").trim());
+    } catch (e) { return false; }
+  };
+  // The glyphs that mean "this opens": a header carrying one is a door.
+  const EXPAND_GLYPH = /^(?:expand_(?:more|less)|chevron_(?:right|left)|keyboard_arrow_(?:down|up|right)|arrow_drop_(?:down|up)|arrow_right)$/;
+  const EXPAND_SVG = /Expand(?:More|Less)|ChevronRight|KeyboardArrow(?:Down|Up|Right)|ArrowDropDown|ArrowRight/;
+  const hasExpandIcon = (el) => {
+    try {
+      for (const c of el.children || []) {
+        if (isIconGlyph(c) && EXPAND_GLYPH.test(String(c.textContent || "").trim())) return true;
+        if (/^svg$/i.test(c.tagName) && EXPAND_SVG.test(String(c.getAttribute("data-testid") || ""))) return true;
+      }
+    } catch (e) { /* detached */ }
+    return false;
+  };
   // Another control's words are not this one's. A bare <select> in a form
   // whose only text is a link beside it took the link's name for its own
   // once option text stopped counting, so "click Puerto Rico/Virgin Islands"
@@ -1304,6 +1330,7 @@ return (function () {
   const shortText = (el, { skipControls = false } = {}) => {
     if (!el) return "";
     let out = "";
+    const glyphs = [];
     // A line break is a space. waterdata.usgs.gov writes its step buttons as
     // <span>View</span><br><span>tabular data</span>; concatenating the
     // children read that as "Viewtabular data", a word nobody types. A
@@ -1323,6 +1350,7 @@ return (function () {
         // holds only a logo is named for the logo, as a screen reader names it.
         const tag = String(c.tagName).toUpperCase();
         if (UNWORDED.test(tag) || (skipControls && isControlish(c))) continue;
+        if (isIconGlyph(c)) { glyphs.push(String(c.textContent || "").trim()); continue; }
         if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
         if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
         walk(c);
@@ -1339,10 +1367,13 @@ return (function () {
       if (node.nodeType === 8) continue;
       if (node.nodeType === 3) out += node.nodeValue || "";
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
+      else if (node.nodeType === 1 && isIconGlyph(node)) glyphs.push(String(node.textContent || "").trim());
       else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
         && !(skipControls && isControlish(node))) walk(node);
       if (out.length > 200) break;
     }
+    // An icon-only button is still called what its icon says: "close".
+    if (!out.trim() && glyphs.length) out = glyphs.join(" ").replace(/_/g, " ");
     return out.slice(0, 200);
   };
   // Matching form: lowercased and collapsed. Everything in this file that
@@ -1972,6 +2003,9 @@ return (function () {
       // ARIA says presentation strips the element of meaning, and that is
       // what Dojo wraps each button in; the button proper is inside it.
       if (role === "presentation" || role === "none") continue;
+      // An icon inside something with words of its own is part of that thing:
+      // the chevron on "Infrastructure" is not a control called expand_less.
+      if (isIconGlyph(el) && el.parentElement && String(el.parentElement.textContent || "").trim() !== String(el.textContent || "").trim()) continue;
       const tabbable = el.getAttribute("tabindex") !== null && el.tabIndex >= 0;
       // Real signals (a native interactive tag, an ARIA role, a tab stop, or
       // an actual handler) vs. cursor:pointer alone. Found live on
@@ -2039,6 +2073,7 @@ return (function () {
       // the title again is the one thing certain not to help.
       const expandedAttr = el.getAttribute && el.getAttribute("aria-expanded");
       const looksLikeTitle = tag === "summary"
+        || hasExpandIcon(el)
         || /accordion-title/i.test(String(el.className || ""))
         || /^uk-accordion-\d+$/.test(String(el.id || ""));
       let expanded;
@@ -2076,6 +2111,16 @@ return (function () {
             return href && !/^#$|^javascript:/i.test(href) ? href : undefined;
           } catch (e) { return undefined; }
         })(),
+        // A link to the page it is on goes nowhere: a single-page app's
+        // layer list written as <a href="/lab/dt/3Dmap"> on /lab/dt/3Dmap.
+        samePage: (() => {
+          try {
+            const a = el.matches("a[href]") ? el : (el.closest && el.closest("a[href]"));
+            if (!a) return undefined;
+            const u = new URL(a.getAttribute("href"), location.href);
+            return u.origin === location.origin && u.pathname === location.pathname && u.search === location.search ? true : undefined;
+          } catch (e) { return undefined; }
+        })(),
         // A link that opens another site or a new tab, which is not somewhere
         // anybody goes by accident.
         elsewhere: (() => {
@@ -2088,6 +2133,9 @@ return (function () {
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // Inside a dialog or pop-up: "close the intro" means its close button,
+        // not the sidebar's.
+        inDialog: (() => { try { return el.closest("[role=dialog], [role=alertdialog], [aria-modal=true], dialog, .modal, .MuiDialog-root, .MuiModal-root, [class*='popup']") ? true : undefined; } catch (e) { return undefined; } })(),
         expanded,
         revealedBy: opener ? cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
@@ -4210,8 +4258,12 @@ return (function () {
       } catch (e) { return false; }
     };
 
-    for (const el of deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"],'
-      + ' .uk-accordion-title, [class*="accordion-title"], [id^="uk-accordion"], a[href="#"]')) {
+    // A sidebar of sections that say nothing about themselves except by a
+    // chevron: plain divs, no aria-expanded, a Material expand icon.
+    const iconHeads = deepQueryAll(ICON_FONT).filter((i) => EXPAND_GLYPH.test(String(i.textContent || "").trim()))
+      .map((i) => i.parentElement).filter(Boolean);
+    for (const el of [...deepQueryAll('[aria-expanded="false"], [aria-haspopup], summary, button, [role="button"],'
+      + ' .uk-accordion-title, [class*="accordion-title"], [id^="uk-accordion"], a[href="#"]'), ...iconHeads]) {
       if (seen.has(el) || !isVisible(el)) continue;
       const label = rawLabelOf(el);
       const expanded = el.getAttribute && el.getAttribute("aria-expanded");
@@ -4222,8 +4274,9 @@ return (function () {
       // never behind it. Whatever it hides is on the page now; look there.
       if (expanded === "true") continue;
       const accordion = isAccordion(el);
+      const section = iconHeads.includes(el);
       const says = expanded === "false" || (el.getAttribute && el.getAttribute("aria-haspopup"))
-        || tagOf(el) === "summary" || accordion;
+        || tagOf(el) === "summary" || accordion || section;
       const related = relatedTo(label);
       if (!says && !related && !(label && NAMES.test(label))) continue;
       seen.add(el);
@@ -4240,6 +4293,9 @@ return (function () {
         // where "Shortcuts" or "Forecasts and Outlooks" is worth opening
         // only if the instruction mentions it.
         generic: !!(label && NAMES.test(label)),
+        // One of a run of sections marked only by a chevron: worth trying in
+        // turn when nothing named is found, and shut again if it held nothing.
+        section: section || undefined,
       });
     }
     const rank = (d) => (d.related ? 2 : 0) + (d.stated ? 1 : 0);
@@ -10382,6 +10438,7 @@ function planGenericTool(instruction, inventory) {
             .slice(0, 5)
             .map((x) => ({
               label: x.control.label, selector: x.control.selector, kind: x.control.kind,
+              opensPanel: x.control.opensPanel || undefined,
               call: toolCallFor(x.control, allWords, instruction),
             }))
             .filter((c) => c.call),
@@ -13199,13 +13256,17 @@ function undoesUnasked(goal, c) { return UNDOES.test(String(c.label || "")) && !
 // A link to another page of the same site - a path, or an app's #/route.
 // "#section" and tabs stay on the page.
 function navigatesAway(c) {
+  if (c.samePage) return false;
   const to = String(c.goesTo || "");
   return !!to && !/^javascript:/i.test(to) && !/^#(?![!/])/.test(to);
 }
 // Whether a request names anything of a control, by word or by meaning,
 // through its label or the value a step would give it.
+// A close button's name in words: "×" is close.
+const CLOSE_GLYPH = /^\s*(?:[\u00d7\u2715\u2716\u2717xX]|close|dismiss)\s*$/i;
+const spokenLabel = (c) => (CLOSE_GLYPH.test(String(c.label || "")) ? "close" : String(c.label || ""));
 function namesNothingOf(goal, c, value) {
-  const label = `${String(c.label || "")} ${value == null ? "" : String(value)}`.toLowerCase();
+  const label = `${spokenLabel(c)} ${value == null ? "" : String(value)}`.toLowerCase();
   const words = meaningfulWords(goal).filter((w) => w.length > 2 && !CONTROL_VERB.test(w) && !verbFamily(w));
   if (words.some((w) => wordMatchesText(w, label))) return false;
   const want = conceptsInPhrase(String(goal)); const has = conceptsInPhrase(label);
@@ -13214,13 +13275,110 @@ function namesNothingOf(goal, c, value) {
 // The placeholders in the plan prompt's examples, copied instead of filled in.
 const PLACEHOLDER = /^\s*(?:OPTION|TEXT|WORDS|NAME|VALUE)\s*$/;
 
+/* The control a request names completely, among some controls: every word
+ * of its name is in the request. "Show the buildings layer" names Buildings.
+ * The most complete name, and one name only - a row and the link inside it
+ * are one thing, the link.
+ */
+// Words that say what kind of thing, not which: "the buildings layer".
+const KIND_WORDS = new Set(["layer", "layers", "section", "sections", "panel", "tab", "page", "item", "option", "list", "overlay", "button", "link", "menu", "data", "map", "view"]);
+function wholeNamedAmong(goal, controls) {
+  const g = String(goal).toLowerCase();
+  // A condition or a puzzle is not a name: "if the legend is hidden then
+  // show it", "the layer with the longest name".
+  if (IS_CONDITIONAL.test(String(goal))) return null;
+  const hits = [];
+  for (const c of controls || []) {
+    const kind = String(c.type || c.kind || "").toLowerCase();
+    if (c.hidden || c.disabled || c.elsewhere || TEXT_INPUT_KINDS.has(kind) || LIST_TYPE.test(kind)) continue;
+    const label = String(c.label || "").trim();
+    if (!label || label.length > 60) continue;
+    const words = meaningfulWords(label).filter((w) => w.length > 1);
+    if (!words.length || words.length > 6 || !words.every((w) => wordMatchesText(w, g))) continue;
+    hits.push({ c, n: words.length });
+  }
+  if (!hits.length) return null;
+  const best = Math.max(...hits.map((h) => h.n));
+  const top = hits.filter((h) => h.n === best).map((h) => h.c);
+  if (new Set(top.map((c) => String(c.label).toLowerCase().trim())).size !== 1) return null;
+  // Nothing asked beyond the name, a verb and what kind of thing it is.
+  const own = meaningfulWords(String(top[0].label));
+  const leftover = meaningfulWords(String(goal)).filter((w) => w.length > 1 && !CONTROL_VERB.test(w) && !verbFamily(w)
+    && !KIND_WORDS.has(w) && !own.some((o) => wordMatchesText(w, o) || wordMatchesText(o, w)));
+  if (leftover.length) return null;
+  return top.find((c) => /^(?:a|link|button|checkbox|radio|switch|menuitem|tab|option)$/.test(String(c.kind || c.type || "").toLowerCase())) || top[0];
+}
+/* What a press revealed, and the one thing in it the request names.
+ *
+ * Tulane's City-FIDAP keeps every layer inside a sidebar section that is not
+ * on the page until it opens. "Show the buildings layer" opened
+ * Infrastructure - right - and stopped there, Buildings now showing and never
+ * pressed: the plan was made before it existed. Only a press that stayed on
+ * the page and revealed a handful of controls, and only a control named
+ * completely; a whole new page is not a revealed section.
+ */
+const controlKey = (c) => `${String(c.kind || "")}|${String(c.label || "").toLowerCase().trim()}`;
+async function pressRevealedNamed(routeGlobal, goal, before, already = new Set()) {
+  const was = new Set((before || []).filter((c) => !c.hidden).map(controlKey));
+  forgetInventory();
+  const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+  const now = ((inv && inv.ok && inv.result && inv.result.controls) || []).filter((c) => !c.hidden);
+  const appeared = now.filter((c) => !was.has(controlKey(c)));
+  if (!appeared.length || appeared.length > 40) return { appeared: appeared.length };
+  const hit = wholeNamedAmong(goal, appeared);
+  if (!hit || already.has(controlKey(hit))) return { appeared: appeared.length };
+  const sw = /^(?:checkbox|radio|switch)$/.test(String(hit.type || hit.kind || "").toLowerCase());
+  const ran = await runVerified(routeGlobal, sw ? { name: "pageCheck", args: { selector: hit.selector, on: true } }
+    : { name: "pageClick", args: { selector: hit.selector } });
+  forgetInventory();
+  return { appeared: appeared.length, pressed: hit, ran };
+}
+
+/* Sections first, where the page has closed ones and the request names
+ * nothing showing. City-FIDAP's layers are all inside chevron sections, and
+ * a 3B planning over the closed sidebar pressed the intro dialog's body and
+ * "selected" section headers - while the page's own look through the
+ * sections, one at a time, reached the layer. Only what that look finishes;
+ * anything else goes on to the model as before.
+ */
+async function sectionsFirst(routeGlobal, wanted) {
+  if (!isCommand(wanted) || IS_CONDITIONAL.test(wanted)) return null;
+  const inv = await readInventory();
+  const showing = ((inv.ok && inv.result && inv.result.controls) || []).filter((c) => !c.hidden);
+  if (wholeNamedAmong(wanted, showing)) return null;
+  const doors = await invokeOnActiveTab("disclosures", [{ match: wanted }]).catch(() => ({ ok: false }));
+  if (!((doors.ok && doors.result && doors.result.disclosures) || []).some((d) => d.section)) return null;
+  const chased = await pursueGoal(routeGlobal, wanted).catch(() => null);
+  if (!chased || !chased.done) return null;
+  const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
+  const last = acted[acted.length - 1] || {};
+  return {
+    ok: true, plannedBy: "pursued", steps: chased.steps,
+    display: {
+      title: String(last.label || "Done").slice(0, 60),
+      subtitle: [
+        chased.opened.length ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it` : null,
+        chased.unconfirmed ? "pressed - the page gave no sign it changed, so this could not be checked" : null,
+      ].filter(Boolean).join(" \u00b7 ") || "done",
+      stats: [{ label: "steps", value: String(chased.steps.length) }],
+      rows: chased.steps.map((st) => ({
+        name: String(st.label || st.did).slice(0, 50),
+        value: st.did === "opened" ? "opened" : st.did === "closed" ? "shut again, it did not hold it" : st.changed ? "changed" : st.alreadySo ? "already so" : "pressed, not confirmed",
+        meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
+      })),
+      note: "the page's sections were looked through one at a time, so the model was not asked",
+      source: routeGlobal,
+    },
+  };
+}
+
 async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
   if (!inv || !inv.ok || !inv.result) return null;
   // A larger model is shown more: a 3B reads twenty lines in seconds and
   // loses its way past that, an 8B on a workstation reads forty as fast.
   const big = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL)) >= 4000;
-  let shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }), big ? 40 : 20);
+  let shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }).filter((c) => String(c.label || "").length <= 100), big ? 40 : 20);
   if (!shortlist.length) return null;
   const began = Date.now();
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -13236,6 +13394,10 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   // The bound holds over both plans together, not each.
   let budget = maxSteps || Math.min(12, evident * 3 + 1);
   let calls = 0;
+  // A press that revealed controls the plan could not have seen, none of
+  // them named: worth a second plan over the page as it now is.
+  let revealedOnly = false;
+  const pressedKeys = new Set();
   let cost = null;
   for (let round = 0; round < 2; round++) {
   if (round) {
@@ -13243,7 +13405,7 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // appears once its layer is on was not there to be chosen the first time.
     const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
     if (again && again.ok && again.result) {
-      shortlist = shortlistFor(goal, controlsForModel(again.result, { max: WHOLE_PAGE }), big ? 40 : 20);
+      shortlist = shortlistFor(goal, controlsForModel(again.result, { max: WHOLE_PAGE }).filter((c) => String(c.label || "").length <= 100), big ? 40 : 20);
       names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
     }
   }
@@ -13319,7 +13481,10 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // only until the request's parts are done.
     // Ran, whether or not the page visibly moved: a legend opened in place
     // can look like nothing changed.
-    const doneSoFar = history.filter((h) => h.ok && !h.skipped).length;
+    // Opening a section is the way in, not the part asked for: "turn on
+    // flood maps" opened the wrong section, and the right one was then
+    // refused as padding.
+    const doneSoFar = history.filter((h) => h.ok && !h.skipped && !h.door).length;
     if (namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident)) {
       history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - the request names nothing of it" });
@@ -13355,10 +13520,26 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: ran && ran.ok !== false, changed: moved,
       outcome: ran && ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}` : moved ? "the page changed" : "nothing visibly changed" });
+    pressedKeys.add(controlKey(target));
     forgetInventory();
+    if (act === "click" && ran && ran.ok !== false && !navigatesAway(target) && !target.elsewhere
+        && wholeNamedAmong(goal, [target]) !== target) {
+      const seen = await pressRevealedNamed(routeGlobal, goal, cs, pressedKeys);
+      if (seen.appeared && seen.appeared <= 40) {
+        history[history.length - 1].door = true;
+        if (seen.pressed) {
+          const okay = !!(seen.ran && seen.ran.ok !== false);
+          pressedKeys.add(controlKey(seen.pressed));
+          history.push({ did: `click "${String(seen.pressed.label).slice(0, 40)}"`, ok: okay, changed: okay && didItMove(seen.ran), named: true,
+            outcome: okay ? "it appeared when the step before opened its section, and the request names it" : `failed: ${String((seen.ran && seen.ran.error) || "").slice(0, 60)}` });
+          budget--;
+        } else revealedOnly = true;
+      }
+    }
   }
-  const short = history.filter((h) => h.ok && h.changed).length < evident;
-  if (!(short || history.some((h) => !h.ok))) break;
+  const short = history.filter((h) => h.ok && h.changed && !h.door).length < evident;
+  if (!(short || history.some((h) => !h.ok) || (revealedOnly && !history.some((h) => h.named)))) break;
+  revealedOnly = false;
   }
   // A plan that did nothing but be refused hands the request on.
   if (!history.length || history.every((h) => h.skipped)) return null;
@@ -14017,6 +14198,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       continue;
     }
     if (act === "finish") {
+      // Not "done" with the thing asked for on screen and never pressed:
+      // "open transportation and show the bus route" ended at Bus Routes.
+      if (!ASKING_TO_READ.test(goal) && !readingOnly) {
+        const named = wholeNamedAmong(goal, controls);
+        const touched = (l) => history.some((h) => String(h.label || "").toLowerCase().trim() === String(l).toLowerCase().trim()
+          || String(h.did || "").toLowerCase().includes(`"${String(l).toLowerCase().trim().slice(0, 40)}`));
+        if (named && history.length && !touched(named.label)) {
+          history.push({ did: `"${String(named.label).slice(0, 40)}" not pressed`, ok: false, changed: false,
+            outcome: "the request names it, it is on the page, and the run ended without it" });
+        }
+      }
       return { ok: true, answer: String(s.answer || "").slice(0, 600), history,
         steps: history.length, tookMs: Date.now() - began, said: lastSaid };
     }
@@ -15039,6 +15231,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       readMs, thoughtMs, actedMs: Date.now() - thoughtAt - thoughtMs,
     });
     if (ran.ok !== false && (moved || satisfied)) earnedMore();
+    if (call.name === "pageClick" && ran.ok !== false && moved && !navigatesAway(target) && !target.elsewhere
+        && wholeNamedAmong(goal, [target]) !== target) {
+      const seen = await pressRevealedNamed(routeGlobal, goal, wide,
+        new Set(history.filter((h) => h.label).map((h) => controlKey({ kind: "", label: h.label })).concat([controlKey(target)])));
+      if (seen.pressed) {
+        const okay = !!(seen.ran && seen.ran.ok !== false);
+        history.push({ key: `click|${String(seen.pressed.label).toLowerCase()}`, did: `click "${String(seen.pressed.label).slice(0, 40)}"`,
+          outcome: okay ? "it appeared when the step before opened its section, and the request names it" : `failed: ${String((seen.ran && seen.ran.error) || "").slice(0, 60)}`,
+          ok: okay, changed: okay && didItMove(seen.ran), label: seen.pressed.label, why: "named by the request, revealed by the step before" });
+      }
+    }
     // A condition has one branch, and taking it is the whole request. "if
     // the West is drier than the Midwest open the West, otherwise open the
     // Midwest" pressed West and then, asked what next, pressed Compare Two
@@ -15699,6 +15902,10 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   // scratch, picks the same best match, and presses it a second time - which
   // on a toggle undoes the first press and on a link means two navigations.
   const actedOn = new Set(avoid.filter(Boolean));
+  // And by name: a press that re-renders the list gives the same control a
+  // new selector, and "turn on flood maps" pressed Flood Maps twice - which
+  // on a layer is on, then off.
+  const actedKeys = new Set();
   const subjectOf = (words) => words.filter((w) =>
     w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
 
@@ -15706,6 +15913,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   let lastCount = -1;
   let deadEnds = 0;
   let emptyPanel = null;
+  let openSection = null;
   const stateCommand = STATE_COMMAND.test(instruction);
 
   for (let step = 0; step < maxSteps; step++) {
@@ -15721,8 +15929,13 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     //
     // Only plain links. A link carrying role="button" is a button as far as
     // the page is concerned, and is recorded as one.
-    const controls = all.filter((c) => !actedOn.has(c.selector)
-      && !(stateCommand && c.tag === "a" && c.kind === "a"));
+    // A link that goes nowhere is a button: City-FIDAP's layers are <a>
+    // with no destination, and "turn on flood maps" could not press one.
+    // Not a container: a "control" whose name is a paragraph is the app's
+    // wrapper - City-FIDAP's #app, pressed for holding the word flood.
+    const controls = all.filter((c) => !actedOn.has(c.selector) && !actedKeys.has(controlKey(c))
+      && String(c.label || "").length <= 100
+      && !(stateCommand && c.tag === "a" && c.kind === "a" && (navigatesAway(c) || c.opensPanel)));
     const countNow = all.length;
 
 
@@ -15740,11 +15953,35 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     let call = plan && plan.calls && plan.calls[0];
     let ambiguousPick = null;
     if (!call && plan && plan.ambiguous && plan.ambiguous.length) {
-      ambiguousPick = plan.ambiguous.find((c) => c.call && !actedOn.has(c.selector)) || null;
+      // Not a section header: "open public transit" pressed Public Services
+      // for sharing "public". Sections are tried below, and shut again.
+      ambiguousPick = plan.ambiguous.find((c) => c.call && !actedOn.has(c.selector)
+        && (!c.opensPanel || wholeNamedAmong(instruction, [{ label: c.label, kind: "button" }]))) || null;
       if (ambiguousPick) call = ambiguousPick.call;
     }
 
+    // The scorer wants every word placed, and "show the buildings layer"
+    // has one - layer - that no control carries. A control the request
+    // names completely, showing now, is the answer whatever the leftovers.
     if (!call) {
+      const doorsHere = new Set(steps.filter((st) => st.did === "opened").map((st) => String(st.label || "").toLowerCase().trim()));
+      const whole = wholeNamedAmong(instruction, controls.filter((c) => !c.hidden && !c.opensPanel
+        && !doorsHere.has(String(c.label || "").toLowerCase().trim())));
+      if (whole) {
+        const sw = /^(?:checkbox|radio|switch)$/.test(String(whole.type || whole.kind || "").toLowerCase());
+        call = sw ? { name: "pageCheck", args: { selector: whole.selector, on: !/\b(?:uncheck|untick|turn\s+off|switch\s+off|disable|hide)\b/i.test(instruction) } }
+          : { name: "pageClick", args: { selector: whole.selector } };
+        ambiguousPick = whole;
+      }
+    }
+    if (!call) {
+      // A section tried and found not to hold it is shut again, as it was.
+      if (openSection) {
+        await runVerified(routeGlobal, { name: "pageClick", args: { selector: openSection.selector } }).catch(() => null);
+        forgetPageTools();
+        steps.push({ did: "closed", label: openSection.label });
+        openSection = null;
+      }
       // Nothing matches as the page stands. Something may open onto it - and
       // the door worth trying is the one named after what was asked for, not
       // whichever comes first.
@@ -15766,10 +16003,16 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       // ones dropped. A generic door is still worth a look, because a panel
       // built with {#if open} does not exist until it is pressed and the
       // control inside it was never in any inventory.
-      const door = ((doors.ok && doors.result && doors.result.disclosures) || [])
-        .find((d) => (d.related || d.generic) && !actedOn.has(d.selector)
-          && !doorsOpenedThisAsk.has(d.selector));
+      const listed = (doors.ok && doors.result && doors.result.disclosures) || [];
+      const fresh = (d) => !actedOn.has(d.selector) && !doorsOpenedThisAsk.has(d.selector);
+      // Then a run of chevron sections, one at a time: City-FIDAP's sidebar
+      // names "Weather & Environment", not the Flood Maps inside it.
+      const door = listed.find((d) => (d.related || d.generic) && fresh(d)) || listed.find((d) => d.section && fresh(d));
       if (!door) break;
+      // A section is shut again if it held nothing, related by a word or not:
+      // "public transit" is not under Public Services. Each one tried earns a
+      // step, so a sidebar of five can be looked through, and no more than eight.
+      if (door.section && !door.generic) { openSection = door; maxSteps = Math.min(maxSteps + 1, 8); }
       actedOn.add(door.selector);
       doorsOpenedThisAsk.add(door.selector);
       const opened = await invokeOnActiveTab("openDisclosure", [door.selector]).catch(() => null);
@@ -15794,7 +16037,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       continue;
     }
 
-    const target = (plan.matched && plan.matched[0]) || ambiguousPick || {};
+    const target = (plan && plan.matched && plan.matched[0]) || ambiguousPick || {};
     // Named after some part of what was asked, or it does not get pressed.
     // The scorer always has a best candidate - it ranks, it does not judge
     // whether the winner is worth pressing - so an instruction for a control
@@ -15818,7 +16061,9 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     const haveNums = String(target.label || "").match(/\b\d+\b/g) || [];
     if (!figuresAgree(wantNums, haveNums)) break;
     if (target.selector) actedOn.add(target.selector);
+    if (target.label) actedKeys.add(controlKey(target));
     const ran = await runVerified(routeGlobal, call);
+    openSection = null;
     forgetPageTools();
     const r = (ran && ran.result) || {};
     const moved = didItMove(ran);
@@ -15862,6 +16107,10 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       changed: moved, proven, alreadySo, was: r.was, now: r.now,
     });
     if (ran.ok === false) break;
+    // The control the request names completely, pressed: that is the request,
+    // seen or not. Going on hunts for proof by pressing other things.
+    const record = all.find((c) => c.selector === target.selector) || target;
+    if (!proven && !r.itChanged && !record.opensPanel && target.label && wholeNamedAmong(instruction, [{ label: target.label, kind: "a" }])) break;
 
     // What the instruction still has not accounted for.
     // What THIS step accounted for, not what the whole plan would have. A
@@ -15878,7 +16127,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     // not work, so by the time HUC-06 was pressed there was nothing left
     // outstanding and the loop declared the job done on the wrong basin.
     const coveredNow = new Set(proven
-      ? (((plan.matched && plan.matched[0] && plan.matched[0].covered)
+      ? (((plan && plan.matched && plan.matched[0] && plan.matched[0].covered)
         || (ambiguousPick ? subjectOf(meaningfulWords(ambiguousPick.label || "")) : [])) || [])
       : []);
     remaining = remaining.filter((w) => !coveredNow.has(w));
@@ -15919,13 +16168,29 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     if (++deadEnds > 1) break;
   }
 
-  const acted = steps.filter((st) => st.did !== "opened");
+  const acted = steps.filter((st) => st.did !== "opened" && st.did !== "closed");
+  if (openSection) {
+    await runVerified(routeGlobal, { name: "pageClick", args: { selector: openSection.selector } }).catch(() => null);
+    forgetPageTools();
+    steps.push({ did: "closed", label: openSection.label });
+  }
+  // Pressed, and named completely by the request, but nothing the page
+  // shows could confirm it: a layer drawn on a map canvas. That is the
+  // request carried out as far as this can tell, said as unconfirmed - not
+  // "that did not work" about a press that happened.
+  const lastActed = acted[acted.length - 1];
+  const behindDoor = steps.some((st) => st.did === "opened" && !steps.some((x) => x.did === "closed" && x.label === st.label));
+  const unconfirmed = !!(behindDoor && lastActed && lastActed.ok && !lastActed.proven && lastActed.did === "pageClick"
+    && !steps.some((st) => st.did === "opened" && String(st.label || "").toLowerCase().trim() === String(lastActed.label || "").toLowerCase().trim())
+    && lastActed.label && wholeNamedAmong(instruction, [{ label: lastActed.label, kind: "a" }]));
   return {
     steps,
-    done: !remaining.length && acted.some((st) => st.proven),
+    unconfirmed,
+    done: (!remaining.length && acted.some((st) => st.proven)) || unconfirmed,
     unaccounted: remaining,
     emptyPanel,
-    opened: steps.filter((st) => st.did === "opened").map((st) => st.label),
+    // What was opened and left open: a section shut again was a look, not a way in.
+    opened: steps.filter((st) => st.did === "opened" && !steps.some((x) => x.did === "closed" && x.label === st.label)).map((st) => st.label),
   };
 }
 
@@ -17828,7 +18093,17 @@ async function runRange(routeGlobal, { rest, from, to }) {
   }
   return { changed: true, label: `${pick.start.c.label} ${from}, ${pick.end.c.label} ${to}` };
 }
+// "Close the intro", "dismiss the popup": the close button of the dialog
+// that is open. One inside a dialog over one elsewhere - the sidebar has a
+// close icon of its own - and one only.
+const CLOSE_DIALOG = /^\s*(?:please\s+)?(?:close|dismiss|exit|hide|get\s+rid\s+of)\s+(?:the\s+|this\s+|that\s+)?(?:intro(?:duction)?|pop-?up|dialog(?:ue)?|modal|welcome(?:\s+(?:screen|message|pop-?up|box))?|banner|splash(?:\s+screen)?|overlay|notice|message|window|box|disclaimer|info(?:rmation)?(?:\s+box)?)\s*$/i;
 function setToPlan(routeGlobal, clause, all) {
+  if (CLOSE_DIALOG.test(String(clause))) {
+    const closers = all.filter((c) => !c.hidden && !c.disabled && CLOSE_GLYPH.test(String(c.label || "")));
+    const inDlg = closers.filter((c) => c.inDialog);
+    const pick = inDlg.length === 1 ? inDlg[0] : closers.length === 1 ? closers[0] : null;
+    if (pick) return { control: pick, press: "click", label: `close (${pick.label})` };
+  }
   const range = String(clause).match(RANGE_IN);
   const rangeable = (c) => /^(?:text|number|date|month|tel|search|select-one)$/i.test(String(c.type || ""));
   if (range && all.some((c) => rangeable(c) && RANGE_START.test(String(c.label || "")))) {
@@ -20091,6 +20366,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // chain runs part by part below, each part planned over the page
             // as it is when its turn comes.
             if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted) && splitIntoSteps(wanted).length <= 1) {
+              const looked = await sectionsFirst(route.global, wanted).catch(() => null);
+              if (looked) { respond(looked); return; }
               const plan = await planWithModel(route.global, wanted).catch((e) => { debugLog(`[plan] threw: ${String((e && e.message) || e)}`); return null; });
               if (plan) {
                 const unchecked = plan.history.filter((h) => h.ok && !h.changed).length;
@@ -20535,7 +20812,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 const beforeStep = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
                 const own = await pursueGoal(route.global, text).catch(() => null);
                 const ownActed = ((own && own.steps) || [])
-                  .filter((st) => st.did !== "opened" && st.ok);
+                  .filter((st) => !/^(?:opened|closed)$/.test(st.did) && st.ok);
                 // Confirmed, or merely done-but-unverifiable: either way the
                 // page's own control has already acted, and letting the
                 // hand-written tool take a second turn is how a filled search
@@ -20581,7 +20858,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 if (!result) {
                   const chased = own;
                   const ran = ((chased && chased.steps) || [])
-                    .filter((st) => st.did !== "opened" && st.ok);
+                    .filter((st) => !/^(?:opened|closed)$/.test(st.did) && st.ok);
                   // Three outcomes, not two. A step that ran and was
                   // confirmed is done; one that ran and could not be
                   // confirmed is not a failure - "click 30 day" pressed the
@@ -20926,7 +21203,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const chased = await pursueGoal(route.global, wanted,
                 { avoid: [rr.at] }).catch(() => null);
               if (chased && chased.done) {
-                const acted = chased.steps.filter((st) => st.did !== "opened");
+                const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
                 const last = acted[acted.length - 1] || {};
                 respond({
                   ok: true, plannedBy: "pursued", steps: chased.steps,
@@ -20941,7 +21218,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}`
+                      value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
                         : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                       meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
@@ -21400,7 +21677,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               && !usedInstead && commandLike && !forceModel) {
             chased = await pursueGoal(route.global, wanted).catch(() => null);
             if (chased && chased.done) {
-              const acted = chased.steps.filter((st) => st.did !== "opened");
+              const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
               const last = acted[acted.length - 1] || {};
               respond({
                 ok: true, plannedBy: "pursued", steps: chased.steps,
@@ -21415,7 +21692,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   stats: [{ label: "steps", value: String(chased.steps.length) }],
                   rows: chased.steps.map((st) => ({
                     name: String(st.label || st.did).slice(0, 50),
-                    value: st.did === "opened" ? `revealed ${st.appeared}`
+                    value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
                         : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                     meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                   })),
@@ -21704,7 +21981,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const chased = await pursueGoal(route.global, wanted,
                 { avoid: guess.matched.map((m) => m.selector) }).catch(() => null);
               if (chased && chased.done) {
-                const acted = chased.steps.filter((st) => st.did !== "opened");
+                const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
                 const last = acted[acted.length - 1] || {};
                 respond({
                   ok: true, plannedBy: "pursued", steps: chased.steps,
@@ -21719,7 +21996,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}`
+                      value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
                         : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                       meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
@@ -21781,10 +22058,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // flood inundation" stopped here - and the loop, called directly
             // on the same page, reached the layer. The success was borrowed
             // from a prebuilt tool failing in the right way.
+            // What the search pressed and did not undo, said on the card that
+            // follows: "open public transit" opened Public Services and then
+            // asked which one was meant, as though nothing had happened.
+            let pressedLooking = [];
             if (commandLike && !forceModel) {
               const chased = await pursueGoal(route.global, wanted).catch(() => null);
+              if (chased && !chased.done) {
+                const shut = new Set(chased.steps.filter((st) => st.did === "closed").map((st) => st.label));
+                pressedLooking = chased.steps.filter((st) => st.did !== "closed" && !shut.has(st.label) && (st.did === "opened" || st.changed)).map((st) => st.label).filter(Boolean);
+              }
               if (chased && chased.done) {
-                const acted = chased.steps.filter((st) => st.did !== "opened");
+                const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
                 const last = acted[acted.length - 1] || {};
                 respond({
                   ok: true, plannedBy: "pursued", steps: chased.steps,
@@ -21794,12 +22079,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       chased.opened.length
                         ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
                         : "more than one control shared that name, so each was tried",
+                      chased.unconfirmed ? "pressed - the page gave no sign it changed, so this could not be checked" : null,
                       typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
                     ].filter(Boolean).join(" \u00b7 "),
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}`
+                      value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
                         : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                       meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
@@ -21839,6 +22125,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 title: "Which one did you mean?",
                 subtitle: `${guess.ambiguous.length} controls match - pick one`,
                 stats: [], rows: [],
+                note: pressedLooking.length ? `while looking it pressed ${pressedLooking.map((l) => `"${String(l).slice(0, 40)}"`).join(", ")}, which is still open` : undefined,
                 // Buttons rather than rows: a selector is unreadable, and a
                 // question with no way to answer it is barely a question.
                 choices: guess.ambiguous.map((c) => ({
@@ -21925,7 +22212,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (commandLike && !forceModel) {
           const chased = await pursueGoal(route.global, wanted).catch(() => null);
           if (chased && chased.done) {
-            const acted = chased.steps.filter((st) => st.did !== "opened");
+            const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
             const last = acted[acted.length - 1] || {};
             respond({
               ok: true, plannedBy: "pursued", steps: chased.steps,
@@ -21937,12 +22224,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     : null,
                   typeof last.was === "boolean" || typeof last.now === "boolean"
                     ? `${last.label}: ${last.was} \u2192 ${last.now}`
+                    : chased.unconfirmed ? "pressed - the page gave no sign it changed, so this could not be checked"
                     : "the page responded",
                 ].filter(Boolean).join(" \u00b7 "),
                 stats: [{ label: "steps", value: String(chased.steps.length) }],
                 rows: chased.steps.map((st) => ({
                   name: String(st.label || st.did).slice(0, 50),
-                  value: st.did === "opened" ? `revealed ${st.appeared}`
+                  value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
                         : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                   meta: st.did,
                   tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
