@@ -38,6 +38,7 @@ MODEL=0 node gate.js ...                page layer alone
 | 4 | Reclamation RISE catalog | 1.99.7 | Llama 3.2 3B, extension bench, user machine | 7/20 pass, 3 maybe (actions 4/6, chains 2/7, do-and-tell 1/3, questions 0/4) |
 | 4 | National Inventory of Dams | 1.99.7 | Llama 3.2 3B, extension bench, user machine | 5/19 pass, 3 maybe (actions 4/9, chains 0/4, do-and-tell 0/2, questions 1/4) |
 | 4 | all three | 1.99.6-1.99.7 | Llama 3.2 3B | 19/58 pass (33%), 7 maybe |
+| 5 | NCEI Climate at a Glance, TWDB Water Data for Texas reservoirs | 1.99.8 | Llama 3.2 3B, extension bench, user machine | pending: 15 prompts a site, frozen 2026-10-21 before any run |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the
@@ -45,7 +46,7 @@ IEM request-limit answer "1000" and the CDO cart answer "0 items" had been
 marked FAIL by broken checks). The TSVs keep the original marks.
 
 Round 1 sites are retired: the naming fixes in 1.94.0 were written with
-their pages open. USACE Water Management is retired after 1.99.7 (repeated per-row controls are named for their row). Round 3 sites are retired after 1.96.0 (the shortlist no longer offers
+their pages open. USACE Water Management is retired after 1.99.7 (repeated per-row controls are named for their row). RISE and NID are retired after 1.99.8 (unasked plan steps left alone, the first result taken from what a search added, named filter boxes ticked, pickers that are buttons opened, typing into a button sent to its form's box, and acronyms and stated counts read off the page). Round 3 sites are retired after 1.96.0 (the shortlist no longer offers
 page-leaving links as padding, a plan may search only when asked to, and a
 plan is no longer than the request). Round 2 sites are retired the same way after 1.95.0:
 the fixes that followed (built-ins taken from a clean source, lists named

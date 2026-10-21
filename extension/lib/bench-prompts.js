@@ -414,5 +414,49 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"where is the lakeview cemetery flood control dam and how tall is it","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"what percent of dams are state regulated","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "cag": {
+  "firstContact": true,
+  "url": "https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/national/time-series",
+  "note": "NOAA NCEI Climate at a Glance, national time series: parameter, time scale, filter and month lists, start and end years, base-period and trend options, a Plot button, a chart, downloads and a table of values with ranks.",
+  "prompts": [
+   {"say":"change the parameter to precipitation","kind":"action","steps":["Parameter"],"on":"Parameter","want":{"clicked":"Parameter"},"offline":null},
+   {"say":"set the time scale to 12-month","kind":"action","steps":["Time Scale"],"on":"Time Scale","want":{"clicked":"Time Scale"},"offline":null},
+   {"say":"pick july as the month","kind":"action","steps":["Month"],"on":"Month","want":{"clicked":"Month"},"offline":null},
+   {"say":"apply the 5-year average filter","kind":"action","steps":["Filter"],"on":"Filter","want":{"clicked":"Filter"},"offline":null},
+   {"say":"set the start year to 1950 and click plot","kind":"multistep","steps":["Start Year","Plot"],"on":"Start Year","want":{"clicked":"Start Year"},"offline":null},
+   {"say":"turn on display trend","kind":"action","steps":["Display Trend"],"on":"Display Trend","want":{"clicked":"Display Trend"},"offline":null},
+   {"say":"switch the parameter to maximum temperature, then plot it","kind":"multistep","steps":["Parameter","Plot"],"on":"Parameter","want":{"clicked":"Parameter"},"offline":null},
+   {"say":"download the data as csv","kind":"action","steps":["CSV"],"on":"CSV","want":{"clicked":"CSV"},"offline":null},
+   {"say":"open the national rankings page","kind":"action","steps":["National Rankings"],"later":true,"on":"National Rankings","want":{"clicked":"National Rankings"},"offline":null},
+   {"say":"define a custom base period from 1991 to 2020","kind":"multistep","steps":["Define Custom Base Period","Start"],"on":"Define Custom Base Period","want":{"clicked":"Define Custom Base Period"},"offline":null},
+   {"say":"select the palmer drought severity index and tell me which time scales it supports","kind":"action+explain","steps":["Parameter"],"explain":true,"on":"Parameter","want":{"clicked":"Parameter"},"offline":null},
+   {"say":"what was the average temperature in september 2026","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what rank did september 2006 get","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what parameters can I choose from","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what does PDSI stand for","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
+ },
+ "twdb": {
+  "firstContact": true,
+  "url": "https://www.waterdatafortexas.org/reservoirs/statewide",
+  "note": "Texas Water Development Board, Water Data for Texas statewide reservoirs: a map, a storage chart with Recent / Historical / Statistics views, download menus, a summary table and a table of every reservoir's recent conditions.",
+  "prompts": [
+   {"say":"show the historical storage chart","kind":"action","steps":["Historical"],"on":"Historical","want":{"clicked":"Historical"},"offline":null},
+   {"say":"switch to the statistics view","kind":"action","steps":["Statistics"],"on":"Statistics","want":{"clicked":"Statistics"},"offline":null},
+   {"say":"open the daily historical data menu","kind":"action","steps":["Daily Historical Data"],"on":"Daily Historical Data","want":{"clicked":"Daily Historical Data"},"offline":null},
+   {"say":"open the by river basin menu","kind":"action","steps":["By River Basin"],"on":"By River Basin","want":{"clicked":"By River Basin"},"offline":null},
+   {"say":"open the austin reservoir page","kind":"action","steps":["Austin"],"later":true,"on":"Austin","want":{"clicked":"Austin"},"offline":null},
+   {"say":"zoom in on the map","kind":"action","steps":["+"],"on":"+","want":{"clicked":"+"},"offline":null},
+   {"say":"go to the drought page","kind":"action","steps":["Drought"],"later":true,"on":"Drought","want":{"clicked":"Drought"},"offline":null},
+   {"say":"switch to the historical view, then back to recent","kind":"multistep","steps":["Historical","Recent"],"on":"Historical","want":{"clicked":"Historical"},"offline":null},
+   {"say":"open the static map","kind":"action","steps":["Static map"],"later":true,"on":"Static map","want":{"clicked":"Static map"},"offline":null},
+   {"say":"open the flooding page","kind":"action","steps":["Flooding"],"later":true,"on":"Flooding","want":{"clicked":"Flooding"},"offline":null},
+   {"say":"switch to statistics and tell me what the chart shows","kind":"action+explain","steps":["Statistics"],"explain":true,"on":"Statistics","want":{"clicked":"Statistics"},"offline":null},
+   {"say":"what percent full are texas reservoirs today","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how full is abilene","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what was the statewide percent full one year ago","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what is the conservation capacity of amistad","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };

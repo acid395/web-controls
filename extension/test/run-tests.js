@@ -2532,6 +2532,171 @@ else {
   }
 }
 
+// Round-four gaps, on made-up pages. Words typed into a search button go
+// into its form's box; a link takes no typing and says so.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <form id="f"><input id="q" type="text" placeholder="Find a dam"><button id="go" type="submit" aria-label="Search">Go</button></form>
+    <a id="away" href="#/help">HELP DESK</a></body></html>`, { url: "https://dams.example.gov/app/#/" });
+  if (page) {
+    page.GENERIC.fill("#go", "hawaii");
+    check("typing into a search button types into its form's box", page.document.getElementById("q").value, "hawaii");
+    let said = ""; try { page.GENERIC.fill("#away", "x"); } catch (e) { said = String(e.message); }
+    ensure("and a link says it takes no typing, not Illegal invocation", /not a box that takes typing/.test(said), said);
+  }
+}
+
+// An option written with brackets is the same option without them.
+{
+  const bgw = loadBackground({});
+  const got = require("vm").runInContext(`actionToCall("select", { selector: "#o", options: [{ text: "Relevance", value: "r" }, { text: "Last Record Update (Newest)", value: "n" }] }, { value: "Last Record Update Newest" })`, bgw);
+  check("an option matches whatever its punctuation", got && got.args && got.args.value, "n");
+}
+
+// A planned step the request names nothing of: a link to another page of
+// the site is left alone, and anything unnamed once the asked part is done.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <a id="help" href="#/help">HELP DESK</a> <a id="basics" href="#/basics">DAMS BASICS</a>
+    <button id="leg" type="button">Legend</button> <button id="browse" type="button">Browse These Dams</button>
+    <div id="key" hidden>Key</div></body></html>`, { url: "https://dams.example.gov/app/#/" });
+  if (page) {
+    const pressed = [];
+    for (const id of ["help", "basics", "leg", "browse"]) page.document.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); pressed.push(id); if (id === "leg") page.document.getElementById("key").hidden = false; });
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") {
+        const named = (re) => (m.controls.find((c) => re.test(String(c.label))) || {}).label;
+        return { ok: true, step: { steps: [{ name: named(/legend/i), do: "click" }, { name: named(/help desk/i), do: "click" },
+          { name: named(/dams basics/i), do: "click" }, { name: named(/browse/i), do: "click" }] } };
+      }
+      return { ok: true, step: { do: "finish", answer: "x" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "show me what the map symbols mean" });
+      ensure("the planned step that answers the request runs", pressed.includes("leg"), pressed);
+      ensure("and the padding after it does not", !pressed.includes("help") && !pressed.includes("basics") && !pressed.includes("browse"), pressed);
+    });
+  }
+}
+
+// "Open the first result" after a search whose results do not carry every
+// searched word: the first thing the search added, not the search button.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <form id="f" role="search"><input id="q" type="search" aria-label="Search the catalog"><button id="go" type="submit">Search</button></form>
+    <a id="adv" href="#adv">Advanced Search</a><div id="out"></div></body></html>`, { url: "https://data.example.gov/catalog" });
+  if (page) {
+    const opened = [];
+    const doc = page.document;
+    const show = (e) => { if (e) e.preventDefault(); if (doc.getElementById("r1")) return;
+      doc.getElementById("out").innerHTML = '<p>2 records found</p><a id="r1" href="#d1">Folsom Lake Daily Storage</a> <a id="r2" href="#d2">Folsom Dam Releases</a> <a id="nx" href="#p2">Next</a>';
+      for (const id of ["r1", "r2", "nx"]) doc.getElementById(id).addEventListener("click", (ev) => { ev.preventDefault(); opened.push(id); });
+    };
+    doc.getElementById("f").addEventListener("submit", show);
+    doc.getElementById("go").addEventListener("click", show);
+    doc.getElementById("adv").addEventListener("click", (e) => { e.preventDefault(); opened.push("adv"); });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "search for folsom reservoir and open the first result" });
+      ensure("the first result is the first thing the search added", opened[0] === "r1" && !opened.includes("adv"), opened);
+    });
+  }
+}
+
+// A filter named by a box to tick is ticked, not typed into a quick filter.
+for (const [instr, want] of [["filter to arizona", "az"], ["show only datasets in california", "ca"], ["filter the region to lower colorado", "lc"]]) {
+  const page = loadPage(`<!doctype html><html><body>
+    <label for="qf">Quick Filter</label><input id="qf" type="text">
+    <fieldset><legend>State</legend><label><input type="checkbox" id="az"> Arizona (41)</label><label><input type="checkbox" id="ca"> California (212)</label></fieldset>
+    <fieldset><legend>Region</legend><label><input type="checkbox" id="lc"> Lower Colorado</label><label><input type="checkbox" id="uc"> Upper Colorado</label></fieldset>
+    </body></html>`, { url: "https://data.example.gov/catalog" });
+  if (!page) continue;
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: instr });
+    ensure(`${instr}: the named box is ticked`, page.document.getElementById(want).checked === true, [...page.document.querySelectorAll("input[type=checkbox]")].filter((b) => b.checked).map((b) => b.id));
+    ensure(`${instr}: and only it`, [...page.document.querySelectorAll("input[type=checkbox]")].filter((b) => b.checked).length === 1, "");
+    check(`${instr}: and nothing is typed into the quick filter`, page.document.getElementById("qf").value, "");
+  });
+}
+
+// "Select texas in the state list": the list's own item, behind the button
+// that shows it, not the list's search box.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <button id="open" type="button" aria-expanded="false" aria-controls="states">States and Counties</button>
+    <div id="states" hidden><input id="ls" type="text" aria-label="Search this list">
+      <ul><li><a id="oh" href="#oh">Ohio</a></li><li><a id="tx" href="#tx">Texas</a></li></ul></div>
+    </body></html>`, { url: "https://dams.example.gov/app/" });
+  if (page) {
+    const doc = page.document; const picked = [];
+    doc.getElementById("open").addEventListener("click", () => { const o = doc.getElementById("open").getAttribute("aria-expanded") !== "true"; doc.getElementById("open").setAttribute("aria-expanded", String(o)); doc.getElementById("states").hidden = !o; });
+    for (const id of ["oh", "tx"]) doc.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); picked.push(id); });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "select texas in the state list" });
+      ensure("the list's own Texas is picked", picked.length === 1 && picked[0] === "tx", picked);
+      check("and nothing is typed into the list's search box", doc.getElementById("ls").value, "");
+    });
+  }
+}
+
+// A value chosen on a picker that is a button: opened, and the value pressed.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <button id="bm" type="button" aria-expanded="false" aria-controls="gal">Basemap: Basic</button>
+    <div id="gal" hidden><button id="b1" type="button">Basic</button><button id="b2" type="button">Named Rivers</button><button id="b3" type="button">Satellite</button></div>
+    </body></html>`, { url: "https://dams.example.gov/app/" });
+  if (page) {
+    const doc = page.document; const picked = [];
+    doc.getElementById("bm").addEventListener("click", () => { const o = doc.getElementById("bm").getAttribute("aria-expanded") !== "true"; doc.getElementById("bm").setAttribute("aria-expanded", String(o)); doc.getElementById("gal").hidden = !o; });
+    for (const id of ["b1", "b2", "b3"]) doc.getElementById(id).addEventListener("click", () => { picked.push(id); doc.getElementById("bm").textContent = "Basemap: " + doc.getElementById(id).textContent; });
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") return { ok: true, step: { steps: [{ name: (m.controls.find((c) => /basemap/i.test(String(c.label))) || {}).label, do: "select", value: "Named Rivers" }] } };
+      return { ok: true, step: { do: "finish", answer: "x" } };
+    };
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: "change the base layer to named rivers" });
+      ensure("a value on a picker that is a button is pressed in its gallery", picked.includes("b2") && !picked.includes("b1") && !picked.includes("b3"), { picked, rows: ((r.display || {}).rows || []).map((x) => x.name + " " + x.value + " " + x.meta) });
+      ensure("and not reported as not a <select>", !/not a <select>/.test(JSON.stringify(r.display || {})), r.display);
+    });
+  }
+}
+
+// What the letters stand for, and a count the page states once, are read
+// off the page - not left to a model that says the page does not answer.
+{
+  const html = `<!doctype html><html><head><title>Search for Data | Catalog</title></head><body>
+    <h1>Water Information Sharing Hub (WISH)</h1><a href="#/home">WISH Home</a> <a href="#/catalog">Catalog</a>
+    <p>Filter by state</p><p>1,107 records found</p><p>Page 1 of 23</p></body></html>`;
+  for (const [q, want] of [["what does WISH stand for", /Water Information Sharing Hub/], ["how many records are in the catalog", /1,107 records/]]) {
+    const page = loadPage(html, { url: "https://data.example.gov/catalog" });
+    if (!page) continue;
+    const pressed = [];
+    for (const a of page.document.querySelectorAll("a")) a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(a.textContent); });
+    const bg = loadBackground({ page });
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      return { ok: true, step: { do: "finish", answer: "This page does not say." } };
+    };
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: q });
+      const said = JSON.stringify([r.answer, (r.display || {}).answer, (r.display || {}).subtitle, (r.display || {}).title]);
+      ensure(`${q}: answered from the page's own words`, want.test(said), said);
+      ensure(`${q}: and nothing pressed to go and look`, pressed.length === 0, pressed);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

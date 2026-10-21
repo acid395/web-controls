@@ -1023,3 +1023,235 @@ module.exports.nid = {
   ],
   "firstContact": true
 };
+
+// Round 5, 2026-10-21: two climate and water-supply sites, prompts written
+// from screenshots before the agent ran on them. Not run offline either.
+module.exports.cag = {
+  "url": "https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/national/time-series",
+  "note": "NOAA NCEI Climate at a Glance, national time series: parameter, time scale, filter and month lists, start and end years, base-period and trend options, a Plot button, a chart, downloads and a table of values with ranks.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "change the parameter to precipitation",
+      "kind": "action",
+      "steps": [
+        "Parameter"
+      ]
+    },
+    {
+      "say": "set the time scale to 12-month",
+      "kind": "action",
+      "steps": [
+        "Time Scale"
+      ]
+    },
+    {
+      "say": "pick july as the month",
+      "kind": "action",
+      "steps": [
+        "Month"
+      ]
+    },
+    {
+      "say": "apply the 5-year average filter",
+      "kind": "action",
+      "steps": [
+        "Filter"
+      ]
+    },
+    {
+      "say": "set the start year to 1950 and click plot",
+      "kind": "multistep",
+      "steps": [
+        "Start Year",
+        "Plot"
+      ]
+    },
+    {
+      "say": "turn on display trend",
+      "kind": "action",
+      "steps": [
+        "Display Trend"
+      ]
+    },
+    {
+      "say": "switch the parameter to maximum temperature, then plot it",
+      "kind": "multistep",
+      "steps": [
+        "Parameter",
+        "Plot"
+      ]
+    },
+    {
+      "say": "download the data as csv",
+      "kind": "action",
+      "steps": [
+        "CSV"
+      ]
+    },
+    {
+      "say": "open the national rankings page",
+      "kind": "action",
+      "steps": [
+        "National Rankings"
+      ],
+      "later": true
+    },
+    {
+      "say": "define a custom base period from 1991 to 2020",
+      "kind": "multistep",
+      "steps": [
+        "Define Custom Base Period",
+        "Start"
+      ]
+    },
+    {
+      "say": "select the palmer drought severity index and tell me which time scales it supports",
+      "kind": "action+explain",
+      "steps": [
+        "Parameter"
+      ],
+      "explain": true
+    },
+    {
+      "say": "what was the average temperature in september 2026",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what rank did september 2006 get",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what parameters can I choose from",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what does PDSI stand for",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
+module.exports.twdb = {
+  "url": "https://www.waterdatafortexas.org/reservoirs/statewide",
+  "note": "Texas Water Development Board, Water Data for Texas statewide reservoirs: a map, a storage chart with Recent / Historical / Statistics views, download menus, a summary table and a table of every reservoir's recent conditions.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "show the historical storage chart",
+      "kind": "action",
+      "steps": [
+        "Historical"
+      ]
+    },
+    {
+      "say": "switch to the statistics view",
+      "kind": "action",
+      "steps": [
+        "Statistics"
+      ]
+    },
+    {
+      "say": "open the daily historical data menu",
+      "kind": "action",
+      "steps": [
+        "Daily Historical Data"
+      ]
+    },
+    {
+      "say": "open the by river basin menu",
+      "kind": "action",
+      "steps": [
+        "By River Basin"
+      ]
+    },
+    {
+      "say": "open the austin reservoir page",
+      "kind": "action",
+      "steps": [
+        "Austin"
+      ],
+      "later": true
+    },
+    {
+      "say": "zoom in on the map",
+      "kind": "action",
+      "steps": [
+        "+"
+      ]
+    },
+    {
+      "say": "go to the drought page",
+      "kind": "action",
+      "steps": [
+        "Drought"
+      ],
+      "later": true
+    },
+    {
+      "say": "switch to the historical view, then back to recent",
+      "kind": "multistep",
+      "steps": [
+        "Historical",
+        "Recent"
+      ]
+    },
+    {
+      "say": "open the static map",
+      "kind": "action",
+      "steps": [
+        "Static map"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the flooding page",
+      "kind": "action",
+      "steps": [
+        "Flooding"
+      ],
+      "later": true
+    },
+    {
+      "say": "switch to statistics and tell me what the chart shows",
+      "kind": "action+explain",
+      "steps": [
+        "Statistics"
+      ],
+      "explain": true
+    },
+    {
+      "say": "what percent full are texas reservoirs today",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "how full is abilene",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what was the statewide percent full one year ago",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what is the conservation capacity of amistad",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};

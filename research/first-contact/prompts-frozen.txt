@@ -185,3 +185,40 @@ explain         what percent of dams are state regulated
 
 ROUND 4 change, 2026-10-20, before any run: "click i agree on the warning" (usace) and
 "accept the disclaimer" (nid) were removed at the user's request, leaving 19, 20 and 19 prompts.
+
+ROUND 5 - written 2026-10-21 from screenshots only, before the agent ran on these sites.
+Run as the extension bench (15 prompts a site) on 1.99.8, by the user. Captured with LOOK only; the agent was not run on them.
+
+cag  https://www.ncei.noaa.gov/access/monitoring/climate-at-a-glance/national/time-series
+action          change the parameter to precipitation
+action          set the time scale to 12-month
+action          pick july as the month
+action          apply the 5-year average filter
+multistep       set the start year to 1950 and click plot
+action          turn on display trend
+multistep       switch the parameter to maximum temperature, then plot it
+action          download the data as csv
+action          open the national rankings page
+multistep       define a custom base period from 1991 to 2020
+action+explain  select the palmer drought severity index and tell me which time scales it supports
+explain         what was the average temperature in september 2026
+explain         what rank did september 2006 get
+explain         what parameters can I choose from
+explain         what does PDSI stand for
+
+twdb  https://www.waterdatafortexas.org/reservoirs/statewide
+action          show the historical storage chart
+action          switch to the statistics view
+action          open the daily historical data menu
+action          open the by river basin menu
+action          open the austin reservoir page
+action          zoom in on the map
+action          go to the drought page
+multistep       switch to the historical view, then back to recent
+action          open the static map
+action          open the flooding page
+action+explain  switch to statistics and tell me what the chart shows
+explain         what percent full are texas reservoirs today
+explain         how full is abilene
+explain         what was the statewide percent full one year ago
+explain         what is the conservation capacity of amistad

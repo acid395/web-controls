@@ -415,12 +415,30 @@
   const labelOf = (el) => norm(rawLabelOf(el));
 
   // React-safe value setter. Bypasses React's own tracking of the value.
+  // The setter found on the element's own prototype chain, so a field from
+  // another frame or a custom element with its own value is set its own way.
   const setNativeValue = (el, value) => {
-    const proto =
-      el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
-      el instanceof HTMLSelectElement ? HTMLSelectElement.prototype :
-      HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+    for (let p = Object.getPrototypeOf(el); p; p = Object.getPrototypeOf(p)) {
+      const d = Object.getOwnPropertyDescriptor(p, "value");
+      if (d && d.set) { d.set.call(el, value); return; }
+    }
+    el.value = value;
+  };
+  // Where typed words go. A model asked to search typed into the Search
+  // button, and the input's value setter called on a button threw "Illegal
+  // invocation". A button's words go into its form's one text box; anything
+  // else that holds no text says so.
+  const TYPED_INTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([type=file]), textarea";
+  const typingTarget = (el) => {
+    if (el.matches && (el.matches(TYPED_INTO) || el.isContentEditable)) return el;
+    const inside = el.querySelectorAll ? [...el.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
+    if (inside.length === 1) return inside[0];
+    const form = el.form || (el.closest && el.closest("form"));
+    const holder = form || (/^(?:button|submit|reset)$/i.test(el.type || "") || el.getAttribute("role") === "button" || el.tagName === "BUTTON"
+      ? el.parentElement && el.parentElement.parentElement : null);
+    const boxes = holder ? [...holder.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
+    if (boxes.length === 1) return boxes[0];
+    throw new Error(`"${rawLabelOf(el).slice(0, 40) || el.tagName.toLowerCase()}" is not a box that takes typing`);
   };
 
   // Full pointer and mouse sequence, then a real click. React fires its own
@@ -449,10 +467,12 @@
 
   const fill = (elOrSel, text) => {
     pageTouched();
-    const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
-    if (!el) throw new Error(`fill: not found: ${elOrSel}`);
+    const el0 = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
+    if (!el0) throw new Error(`fill: not found: ${elOrSel}`);
+    const el = typingTarget(el0);
     el.focus();
-    setNativeValue(el, text);
+    if (el.isContentEditable && !el.matches(TYPED_INTO)) el.textContent = text;
+    else setNativeValue(el, text);
     el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: text.slice(-1) || "a" }));
