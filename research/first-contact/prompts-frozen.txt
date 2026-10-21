@@ -182,3 +182,6 @@ explain         how many dams are in the national inventory
 explain         what percent of dams have hydropower
 explain         where is the lakeview cemetery flood control dam and how tall is it
 explain         what percent of dams are state regulated
+
+ROUND 4 change, 2026-10-20, before any run: "click i agree on the warning" (usace) and
+"accept the disclaimer" (nid) were removed at the user's request, leaving 19, 20 and 19 prompts.

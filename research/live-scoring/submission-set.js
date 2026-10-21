@@ -562,13 +562,6 @@ module.exports.usace = {
   "later": true,
   "prompts": [
     {
-      "say": "click i agree on the warning",
-      "kind": "action",
-      "steps": [
-        "I Agree"
-      ]
-    },
-    {
       "say": "open the list view for the new orleans district",
       "kind": "action",
       "steps": [
@@ -880,13 +873,6 @@ module.exports.nid = {
   "note": "USACE National Inventory of Dams: a search box, national statistics, a state list and map, layer and legend controls and featured dams, behind a disclaimer to accept first.",
   "later": true,
   "prompts": [
-    {
-      "say": "accept the disclaimer",
-      "kind": "action",
-      "steps": [
-        "Agree"
-      ]
-    },
     {
       "say": "search for hoover dam",
       "kind": "action",

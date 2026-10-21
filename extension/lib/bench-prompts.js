@@ -340,7 +340,6 @@ globalThis.WC_BENCH_PROMPTS = {
   "url": "https://water.usace.army.mil/overview",
   "note": "USACE Water Management (CWMS) locations by office: a table of divisions and districts, each with List View, Map View and an office link, behind a DoD warning to agree to first.",
   "prompts": [
-   {"say":"click i agree on the warning","kind":"action","steps":["I Agree"],"on":"I Agree","want":{"clicked":"I Agree"},"offline":null},
    {"say":"open the list view for the new orleans district","kind":"action","steps":["List View"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
    {"say":"open the map view for the vicksburg district","kind":"action","steps":["Map View"],"later":true,"on":"Map View","want":{"clicked":"Map View"},"offline":null},
    {"say":"search for mississippi river","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":null},
@@ -392,7 +391,6 @@ globalThis.WC_BENCH_PROMPTS = {
   "url": "https://nid.sec.usace.army.mil/nid/#/",
   "note": "USACE National Inventory of Dams: a search box, national statistics, a state list and map, layer and legend controls and featured dams, behind a disclaimer to accept first.",
   "prompts": [
-   {"say":"accept the disclaimer","kind":"action","steps":["Agree"],"on":"Agree","want":{"clicked":"Agree"},"offline":null},
    {"say":"search for hoover dam","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":null},
    {"say":"search for lake mead and open the first result","kind":"multistep","steps":["Search"],"later":true,"on":"Search","want":{"clicked":"Search"},"offline":null},
    {"say":"select texas in the state list","kind":"action","steps":["Texas"],"on":"Texas","want":{"clicked":"Texas"},"offline":null},

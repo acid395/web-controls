@@ -34,7 +34,7 @@ MODEL=0 node gate.js ...                page layer alone
 | 1 | same | 1.94.0 | Llama 3.2 3B, window on screen | 7/15 (NASS 4/10, EIA 3/5; stopped to build the planner) |
 | 2 | CDC WONDER, IEM ASOS download, NOAA PFDS | 1.95.0 (one-call planner) | Llama 3.2 3B, window on screen | 10/30: WONDER 5/10, IEM 5/10, PFDS 0/10 (the page defines a global `Map`; the widget crashed at boot) |
 | 3 | CoCoRaHS daily reports, CDC FluView, NCEI CDO search | 1.96.0 | Llama 3.2 3B, window on screen | 9/30: CoCoRaHS 3/10, FluView 4/10, CDO 2/10 - explains 5/9, acts 3/15, chains 0/6 |
-| 4 | USACE Water Management locations, Reclamation RISE catalog, National Inventory of Dams | 1.99.5 | run as the extension bench, 20 prompts a site, by the user and Samrat | (not yet run) |
+| 4 | USACE Water Management locations, Reclamation RISE catalog, National Inventory of Dams | 1.99.6 | run as the extension bench (19, 20 and 19 prompts), by the user and Samrat | (not yet run) |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the
