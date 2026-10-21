@@ -1255,3 +1255,231 @@ module.exports.twdb = {
     }
   ]
 };
+
+// Round 6, 2026-10-21: two water-observation sites, prompts written
+// from screenshots before the agent ran on them. Not run offline either.
+module.exports.ndbc = {
+  "url": "https://www.ndbc.noaa.gov/station_page.php?station=46026",
+  "note": "NOAA National Data Buoy Center, station 46026 (San Francisco): station facts, links, a map type list and zoom, a refresh switch, unit and time-zone lists with Select buttons, current conditions, and tables of previous observations and waves.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "switch the units to metric",
+      "kind": "action",
+      "steps": [
+        "Unit of Measure"
+      ]
+    },
+    {
+      "say": "change the time zone to greenwich mean time",
+      "kind": "action",
+      "steps": [
+        "Time Zone"
+      ]
+    },
+    {
+      "say": "change the map type to satellite",
+      "kind": "action",
+      "steps": [
+        "Map Type"
+      ]
+    },
+    {
+      "say": "turn on refresh every 10 minutes",
+      "kind": "action",
+      "steps": [
+        "Refresh page every 10 minutes"
+      ]
+    },
+    {
+      "say": "open the latest nws marine forecast",
+      "kind": "action",
+      "steps": [
+        "Latest NWS Marine Forecast"
+      ],
+      "later": true
+    },
+    {
+      "say": "zoom in on the map",
+      "kind": "action",
+      "steps": [
+        "Zoom in"
+      ]
+    },
+    {
+      "say": "set the unit of measure to metric and press select",
+      "kind": "multistep",
+      "steps": [
+        "Unit of Measure",
+        "Select"
+      ]
+    },
+    {
+      "say": "open the station list",
+      "kind": "action",
+      "steps": [
+        "Station List"
+      ],
+      "later": true
+    },
+    {
+      "say": "search for station 46042",
+      "kind": "action",
+      "steps": [
+        "Station ID Search"
+      ],
+      "later": true
+    },
+    {
+      "say": "switch to metric and tell me the wave height",
+      "kind": "action+explain",
+      "steps": [
+        "Unit of Measure"
+      ],
+      "explain": true
+    },
+    {
+      "say": "what is the wind speed right now",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "how deep is the water at this buoy",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what kind of buoy is this",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what is the water temperature",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "who owns and maintains this station",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
+module.exports.codwr = {
+  "url": "https://dwr.state.co.us/Tools/Stations",
+  "note": "Colorado DWR / CWCB stations, current conditions: station filters (geographic location, water division, data category, station type, data provider, more options) with Search, map and table switches, a legend, export, and a paged table of stations with discharge values.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "pick the arkansas water division",
+      "kind": "action",
+      "steps": [
+        "Water Division"
+      ]
+    },
+    {
+      "say": "change the data category to ground water",
+      "kind": "action",
+      "steps": [
+        "Data Category"
+      ]
+    },
+    {
+      "say": "set the station type to stream gage",
+      "kind": "action",
+      "steps": [
+        "Station Type"
+      ]
+    },
+    {
+      "say": "set the data provider to u.s. geological survey",
+      "kind": "action",
+      "steps": [
+        "Data Provider"
+      ]
+    },
+    {
+      "say": "choose the south platte division and click search",
+      "kind": "multistep",
+      "steps": [
+        "Water Division",
+        "Search"
+      ]
+    },
+    {
+      "say": "turn the map off",
+      "kind": "action",
+      "steps": [
+        "Map"
+      ]
+    },
+    {
+      "say": "go to the next page of the table",
+      "kind": "action",
+      "steps": [
+        "Next"
+      ]
+    },
+    {
+      "say": "hide the legend",
+      "kind": "action",
+      "steps": [
+        "Hide"
+      ]
+    },
+    {
+      "say": "open the export menu",
+      "kind": "action",
+      "steps": [
+        "Export"
+      ]
+    },
+    {
+      "say": "hide the select stations panel",
+      "kind": "action",
+      "steps": [
+        "Hide"
+      ]
+    },
+    {
+      "say": "set the station type to storage structure, click search, and tell me how many items are found",
+      "kind": "action+explain",
+      "steps": [
+        "Station Type",
+        "Search"
+      ],
+      "explain": true
+    },
+    {
+      "say": "how many items are in the table",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what is the discharge at united #3 pump inlet 1",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "which water source is the croke canal inlet to standley reservoir on",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what station types can I choose from",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};

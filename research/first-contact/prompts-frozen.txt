@@ -222,3 +222,40 @@ explain         what percent full are texas reservoirs today
 explain         how full is abilene
 explain         what was the statewide percent full one year ago
 explain         what is the conservation capacity of amistad
+
+ROUND 6 - written 2026-10-21 from screenshots only, before the agent ran on these sites.
+Run as the extension bench (15 prompts a site) on 1.99.9, by the user. Captured with LOOK only; the agent was not run on them.
+
+ndbc  https://www.ndbc.noaa.gov/station_page.php?station=46026
+action          switch the units to metric
+action          change the time zone to greenwich mean time
+action          change the map type to satellite
+action          turn on refresh every 10 minutes
+action          open the latest nws marine forecast
+action          zoom in on the map
+multistep       set the unit of measure to metric and press select
+action          open the station list
+action          search for station 46042
+action+explain  switch to metric and tell me the wave height
+explain         what is the wind speed right now
+explain         how deep is the water at this buoy
+explain         what kind of buoy is this
+explain         what is the water temperature
+explain         who owns and maintains this station
+
+codwr  https://dwr.state.co.us/Tools/Stations
+action          pick the arkansas water division
+action          change the data category to ground water
+action          set the station type to stream gage
+action          set the data provider to u.s. geological survey
+multistep       choose the south platte division and click search
+action          turn the map off
+action          go to the next page of the table
+action          hide the legend
+action          open the export menu
+action          hide the select stations panel
+action+explain  set the station type to storage structure, click search, and tell me how many items are found
+explain         how many items are in the table
+explain         what is the discharge at united #3 pump inlet 1
+explain         which water source is the croke canal inlet to standley reservoir on
+explain         what station types can I choose from

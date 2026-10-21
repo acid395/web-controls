@@ -5108,6 +5108,8 @@ function isCommand(instruction) {
   // "Filter to arizona", "limit results to idaho": asking for a filter is
   // asking for something done, not a question about Arizona.
   if (/^\s*(?:please\s+)?(?:filter|limit|narrow|restrict|only\s+show)\b/i.test(instruction || "")) return true;
+  // "Define a custom base period from 1991 to 2020" sets two boxes.
+  if (RANGE_IN.test(instruction || "")) return true;
   // A verb with a typo in it is still a verb. "clcik 30 days" was not
   // recognised as an instruction at all, so every path that acts was skipped
   // and it fell through to the lookups, which reported that nothing matched
@@ -6582,6 +6584,14 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
       forgetInventory();
       continue;
     }
+    // A site's search box is typed into only when the request asks to
+    // search. "Define a custom base period from 1991 to 2020" went into
+    // "Search Monitoring Products" and left the page for its results.
+    if (act === "type" && /\bsearch\b/i.test(`${target.label || ""} ${target.type || ""}`) && !/\b(?:search|look\s*up|find|query|lookup)\b/i.test(goal)) {
+      history.push({ did: `type "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+        outcome: "left alone - it is a search box, and the request did not ask to search" });
+      continue;
+    }
     const call = actionToCall(act, target, st);
     // The second value chosen in one multi-select within a plan joins the first.
     if (call && call.name === "pageSelectOption" && /multiple/i.test(String(target.type || ""))) {
@@ -6885,13 +6895,19 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           return { ok: true, answer: direct || lines.join("\n"), history, steps: history.length,
             tookMs: Date.now() - began, said: lastSaid, fromData: true, fromList: true };
         }
+        const cellSaid = !conditionalGoal && read.ok && read.result ? answerFromTableCell(goal, read.result.tables) : null;
+        if (cellSaid) {
+          history.push({ did: "read the page", outcome: "answered from its table" });
+          return { ok: true, answer: cellSaid, history, steps: history.length,
+            tookMs: Date.now() - began, said: lastSaid, fromData: true, fromWords: true };
+        }
         if (!conditionalGoal && (STANDS_FOR.test(goal) || HOW_MANY.test(goal)) && read.ok && read.result) {
           const got = await invokeOnActiveTab("findPassages", [goal]).catch(() => ({ ok: false }));
           const said = answerInPageWords(goal, read.result, (got.ok && got.result && got.result.passages) || []);
           if (said) {
             history.push({ did: "read the page", outcome: "answered from its own words" });
             return { ok: true, answer: said, history, steps: history.length,
-              tookMs: Date.now() - began, said: lastSaid, fromData: true };
+              tookMs: Date.now() - began, said: lastSaid, fromData: true, fromWords: true };
           }
         }
       }
@@ -7087,8 +7103,12 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     }
     if (!history.length && !note && !onlyModel && !IS_CONDITIONAL.test(goal) && !ASKING_TO_READ.test(goal)
         && !SEARCH_CLAUSE.test(goal)) {
-      const bySection = wholeNameIn(goal, controls) ? null : sectionQualifierIn(goal, controls);
-      const whole = wholeNameIn(goal, controls) || (bySection && bySection.c);
+      // The whole page, not the first hundred and twenty: NCEI's CSV link sits
+      // below a site menu and a feedback form, and "download the data as
+      // csv" never saw it.
+      const wholeHere = wholeNameIn(goal, controls) || (wide.length > controls.length ? wholeNameIn(goal, wide) : null);
+      const bySection = wholeHere ? null : sectionQualifierIn(goal, controls);
+      const whole = wholeHere || (bySection && bySection.c);
       if (whole) {
         if (whole.hidden && whole.revealedBy) {
           await invokeOnActiveTab("openDisclosure", [whole.revealedBy]).catch(() => null);
@@ -8630,6 +8650,67 @@ function answerInPageWords(goal, read, passages) {
   while ((m = re.exec(text))) hits.push({ n: m[1].replace(/,/g, ""), said: `${m[1]} ${m[2]}${m[3] || ""}` });
   const ns = new Set(hits.map((h) => h.n));
   return ns.size === 1 ? `The page says ${hits[0].said}.` : null;
+}
+
+/* "What was the average temperature in september 2026", "what rank did
+ * september 2006 get": a table's row named by its own words and a column by
+ * its header. A 3B handed the table answered 81.36°F and 129 - other rows,
+ * other columns. One row and one column, or nothing: ties go to the reader.
+ */
+const CELL_STOP = new Set(["the", "a", "an", "of", "in", "on", "for", "to", "at", "by", "and", "or", "out", "per", "what", "was", "is", "were", "did", "does", "get", "got", "value", "number"]);
+function answerFromTableCell(goal, tables) {
+  const flat = (t) => ` ${String(t || "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim()} `;
+  // "One year ago" is the row written "1 year ago".
+  const NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+  const q = flat(goal).replace(/ (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) /g, (m, w) => ` ${NUM[w]} `).replace(/ (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) /g, (m, w) => ` ${NUM[w]} `);
+  const found = [];
+  for (const table of tables || []) {
+    const cols = (table.columns || []).map((c) => String(c || ""));
+    if (cols.length < 2) continue;
+    const rows = (table.rows || []).filter((r) => Array.isArray(r));
+    // The row: a cell whose whole text is in the question, distinctive enough
+    // to be a name - two words, or a word with a number in it.
+    const named = [];
+    for (const r of rows) {
+      r.forEach((cell, i) => {
+        const f = flat(cell).trim();
+        // A name: two words, or a word with a number in it.
+        if (f.length >= 4 && (/\s/.test(f) || /\d/.test(f) && /[a-z]/.test(f)) && q.includes(` ${f} `)) {
+          named.push({ r, i, len: f.length });
+          return;
+        }
+        // A row's own name in the first column, before whatever the cell adds -
+        // a footnote mark, "as of 2026-10-20": "Amistad 2 as of ..." is
+        // Amistad. One word only where it is a word of its own, "Abilene".
+        if (i !== 0) return;
+        const ws = f.split(" ");
+        for (let k = ws.length - 1; k >= 1; k--) {
+          const lead = ws.slice(0, k).join(" ");
+          if (k === 1 && (!/^[a-z]{4,}$/.test(lead) || CELL_STOP.has(lead))) continue;
+          if (q.includes(` ${lead} `)) { named.push({ r, i, len: lead.length }); return; }
+        }
+        if (ws.length === 1 && /^[a-z]{4,}$/.test(f) && !CELL_STOP.has(f) && q.includes(` ${f} `)) named.push({ r, i, len: f.length });
+      });
+    }
+    if (!named.length) continue;
+    const longest = Math.max(...named.map((n) => n.len));
+    const rowsNamed = [...new Set(named.filter((n) => n.len === longest).map((n) => n.r))];
+    if (rowsNamed.length !== 1) continue;
+    const keyAt = named.find((n) => n.r === rowsNamed[0] && n.len === longest).i;
+    // The column: the header with most of its words in the question.
+    const score = cols.map((c, i) => {
+      if (i === keyAt) return 0;
+      const ws = flat(String(c).replace(/\([^)]*\)/g, " ")).trim().split(" ").filter((w) => w.length > 1 && !CELL_STOP.has(w));
+      return ws.filter((w) => wordMatchesText(w, q)).length;
+    });
+    const best = Math.max(0, ...score);
+    if (!best || score.filter((x) => x === best).length !== 1) continue;
+    const col = score.indexOf(best);
+    const cell = String(rowsNamed[0][col] ?? "").trim();
+    if (!cell) continue;
+    found.push(`${String(rowsNamed[0][keyAt]).trim()}: ${cols[col].replace(/\s+/g, " ").trim()} ${cell}`);
+  }
+  return found.length === 1 ? found[0] : null;
 }
 
 async function passagesFor(question) {
@@ -10601,7 +10682,10 @@ function wholeNameIn(clause, controls) {
   if (!hits.length) return null;
   const best = Math.max(...hits.map((h) => h.n));
   const top = hits.filter((h) => h.n === best);
-  return top.length === 1 ? top[0].c : null;
+  // The one on screen over a namesake behind a door: NCEI has a CSV link
+  // under its chart and another inside a closed API dialog.
+  const shown = top.filter((h) => !h.c.hidden);
+  return top.length === 1 ? top[0].c : shown.length === 1 ? shown[0].c : null;
 }
 
 /* The one of several identical buttons whose section the request names.
@@ -10898,8 +10982,10 @@ function soleNamed(all, value, listWordsSaid = []) {
  * opened once - not when already open, which would shut it - and looked at
  * again.
  */
+// Anything without options of its own, whatever role it claims: NCEI's
+// site menu is a <ul role="combobox">, and setSelect on it failed.
 function holdsNoList(c) {
-  return !(c.options || []).length && !LIST_TYPE.test(String(c.type || c.kind || ""));
+  return !(c.options || []).length && !/^select/i.test(String(c.type || c.tag || ""));
 }
 async function pickFromOpened(routeGlobal, opener, value) {
   const look = async () => {
@@ -10930,7 +11016,76 @@ async function pickFromOpened(routeGlobal, opener, value) {
 const FILTER_TO = /^\s*(?:please\s+)?(?:show\s+only|only\s+show|filter(?:\s+(?:it|them|results|the\s+results|the\s+list))?\s+(?:to|by|for|on)|limit\s+(?:it\s+|them\s+|results\s+|the\s+results\s+)?to|narrow\s+(?:it\s+|them\s+|results\s+)?(?:down\s+)?to|restrict\s+(?:it\s+|results\s+)?to)\s+(.+?)\s*$/i;
 const IN_LIST = /^\s*(?:please\s+)?(?:select|pick|choose|tick|check|click)\s+(?:the\s+)?(.+?)\s+(?:in|from|on|under)\s+(?:the\s+)?(.+?)\s+(?:list|menu|dropdown|drop-down|picker|panel|filters?|options)\s*$/i;
 const AS_NTH = /^\s*(?:please\s+)?(?:(?:choose|select|pick|set|use|put|make)\s+)?(.+?)\s+(?:as|for)\s+(?:the\s+)?(first|second|third|fourth|last|1st|2nd|3rd|4th)(?:\s+(?:one|option|choice|[a-z][a-z0-9\s-]{0,30}))?\s*$/i;
+/* "Define a custom base period from 1991 to 2020": the rest of the step
+ * done first - here a box that unlocks the period's fields - and then the
+ * start and end boxes it belongs with, the pair nearest the control the
+ * step named. With nothing named, the only pair, or the one whose names
+ * share a word with the step. A guess between pairs is not made.
+ */
+const RANGE_IN = /^(.*?)\s*\b(?:from|between)\s+(\d{4}(?:[-/]\d{1,2}){0,2})\s*(?:to|and|through|until|-|\u2013)\s*(\d{4}(?:[-/]\d{1,2}){0,2})\b\s*(.*)$/i;
+const RANGE_START = /^\s*(?:start|from|begin|beginning|first)\b/i;
+const RANGE_END = /^\s*(?:end|to|through|last|until)\b/i;
+async function runRange(routeGlobal, { rest, from, to }) {
+  let anchor = null;
+  const restWords = meaningfulWords(rest).filter((w) => w.length > 2 && !CONTROL_VERB.test(w) && !verbFamily(w));
+  if (restWords.length) {
+    const plan = await certainClausePlan(routeGlobal, rest).catch(() => null);
+    if (plan) {
+      const already = await alreadyAsAsked(rest, plan.label).catch(() => null);
+      if (!already && !(await plan.run().catch(() => null))) return null;
+      anchor = plan.label;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  forgetInventory();
+  const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+  const all = (inv && inv.ok && inv.result && inv.result.controls) || [];
+  const boxes = all.map((c, i) => ({ c, i })).filter(({ c }) => !c.disabled && !c.hidden
+    && /^(?:text|number|date|month|tel|search|select-one)$/i.test(String(c.type || "")));
+  const pairs = [];
+  boxes.forEach((b, k) => {
+    if (!RANGE_START.test(String(b.c.label || ""))) return;
+    const next = boxes.slice(k + 1).find((x) => RANGE_START.test(String(x.c.label || "")) || RANGE_END.test(String(x.c.label || "")));
+    if (next && RANGE_END.test(String(next.c.label || ""))) pairs.push({ start: b, end: next });
+  });
+  if (!pairs.length) return null;
+  let pick = null;
+  const at = anchor ? all.findIndex((c) => String(c.label || "") === String(anchor)) : -1;
+  debugLog(`[range] "${rest}" ${from}-${to}: anchor ${anchor || "none"} at ${at}; pairs ${pairs.map((p) => `${p.start.c.label}/${p.end.c.label}@${p.start.i}`).join(", ")}`);
+  if (at >= 0) {
+    // What unlocks a pair comes before it: the first pair after the control,
+    // or else the last one before it.
+    const after = pairs.filter((p) => p.start.i > at);
+    pick = after.length ? after[0] : pairs.filter((p) => p.end.i < at).pop() || null;
+  } else if (pairs.length === 1 && !restWords.length) pick = pairs[0];
+  else {
+    const said = meaningfulWords(rest).filter((w) => w.length > 2);
+    // Words the step names that are not the pair's own wording do not count:
+    // every pair is a start and an end.
+    const fits = pairs.filter((p) => said.filter((w) => !RANGE_START.test(w) && !RANGE_END.test(w))
+      .some((w) => wordMatchesText(w, `${p.start.c.label} ${p.end.c.label}`.toLowerCase())));
+    if (fits.length === 1) pick = fits[0];
+  }
+  if (!pick) return null;
+  for (const [box, value] of [[pick.start.c, from], [pick.end.c, to]]) {
+    let call = { name: "pageFill", args: { selector: box.selector, text: value } };
+    if ((box.options || []).length) {
+      const o = optionNamed(box, value);
+      if (!o) return null;
+      call = { name: "pageSelectOption", args: { selector: box.selector, value: o.value || o.text } };
+    }
+    const ran = await runVerified(routeGlobal, call);
+    if (!ran || ran.ok === false) return null;
+  }
+  return { changed: true, label: `${pick.start.c.label} ${from}, ${pick.end.c.label} ${to}` };
+}
 function setToPlan(routeGlobal, clause, all) {
+  const range = String(clause).match(RANGE_IN);
+  const rangeable = (c) => /^(?:text|number|date|month|tel|search|select-one)$/i.test(String(c.type || ""));
+  if (range && all.some((c) => rangeable(c) && RANGE_START.test(String(c.label || "")))) {
+    const rest = `${range[1]} ${range[4]}`.trim();
+    return { range: { rest, from: range[2], to: range[3] }, label: `${rest ? rest + ": " : ""}${range[2]} to ${range[3]}` };
+  }
   // "Cedar rapids as the first scenario": the lists holding that option, in
   // page order, and the one the ordinal says.
   const asNth = String(clause).match(AS_NTH);
@@ -11099,6 +11254,7 @@ async function awaitNamedListReady(clause, { waitMs = 8000 } = {}) {
 }
 
 async function runSetToPlan(routeGlobal, setTo) {
+        if (setTo.range) return runRange(routeGlobal, setTo.range);
         if (setTo.control.hidden && setTo.control.revealedBy) {
           await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
           forgetPageTools();
@@ -13382,6 +13538,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       // claiming an action that did not happen.
                       + (agent.fromList
                         ? "read off the list this page offers, without asking the model"
+                        : agent.fromWords
+                        ? "read off the page's own text and tables, without asking the model"
                         : agent.fromData
                         ? "worked out from the data this page downloaded, without asking the model"
                         : agent.withoutModel

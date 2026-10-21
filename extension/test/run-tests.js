@@ -2697,6 +2697,122 @@ for (const [instr, want] of [["filter to arizona", "az"], ["show only datasets i
   }
 }
 
+// A table's cell, named by its row's own words and its column's header,
+// read straight off the page - and a word split by an inline tag read whole.
+{
+  const html = `<!doctype html><html><head><title>Monthly Series</title></head><body><h1>Monthly Series</h1>
+    <table><thead><tr><th>Date</th><th>Average Temperature</th><th>Rank (out of 132)</th></tr></thead><tbody>
+    <tr><td><a href="#a">Sep<span class="long">tember</span> 2026</a></td><td>69.42°F</td><td>132</td></tr>
+    <tr><td><a href="#b">Sep<span class="long">tember</span> 2006</a></td><td>63.28°F</td><td>14</td></tr>
+    </tbody></table></body></html>`;
+  const page0 = loadPage(html, { url: "https://climate.example.gov/series" });
+  if (page0) {
+    const t = page0.GENERIC.readPage().tables[0];
+    check("a word split by an inline tag is read whole", t.rows[0][0], "September 2026");
+  }
+  for (const [q, want] of [["what was the average temperature in september 2026", /69\.42/], ["what rank did september 2006 get", /\b14\b/]]) {
+    const page = loadPage(html, { url: "https://climate.example.gov/series" });
+    if (!page) continue;
+    const bg = loadBackground({ page });
+    bg.__model = (m) => { if (m.type === "llmStatus") return { ready: true, hasGpu: true }; if (m.type !== "llmStep") return undefined; return { ok: true, step: { do: "finish", answer: "81.36°F" } }; };
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: q });
+      const said = JSON.stringify([r.answer, (r.display || {}).title]);
+      ensure(`${q}: read from the row and column named`, want.test(said) && !/81\.36/.test(said), said);
+    });
+  }
+}
+
+// "From 1991 to 2020": the box that unlocks a period is ticked, and the
+// start and end beside it filled - not the page's other start and end.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <label for="sy">Start Year:</label><input id="sy" type="number" value="1895"> <label for="ey">End Year:</label><input id="ey" type="number" value="2026">
+    <fieldset><legend>Base Period</legend><label><input type="checkbox" id="cb"> Define Custom Base Period</label>
+      <label for="bs">Start:</label><input id="bs" type="number" value="1901" disabled> <label for="be">End:</label><input id="be" type="number" value="2000" disabled></fieldset>
+    <fieldset><legend>Trend</legend><label><input type="checkbox" id="tr"> Display Trend</label>
+      <label for="ts">Start:</label><input id="ts" type="number" value="1895" disabled> <label for="te">End:</label><input id="te" type="number" value="2026" disabled></fieldset>
+    </body></html>`, { url: "https://climate.example.gov/series" });
+  if (page) {
+    const doc = page.document;
+    doc.getElementById("cb").addEventListener("change", () => { doc.getElementById("bs").disabled = doc.getElementById("be").disabled = !doc.getElementById("cb").checked; });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "define a custom base period from 1991 to 2020" });
+      ensure("the period's box is ticked", doc.getElementById("cb").checked === true, "");
+      ensure("and its own start and end are set", doc.getElementById("bs").value === "1991" && doc.getElementById("be").value === "2020", [doc.getElementById("bs").value, doc.getElementById("be").value]);
+      ensure("and the page's other years are untouched", doc.getElementById("sy").value === "1895" && doc.getElementById("ey").value === "2026" && doc.getElementById("ts").value === "1895", "");
+    });
+  }
+}
+
+// The link on screen over its namesake inside a closed dialog; a site menu
+// that calls itself a combobox is not a list to select from; and a search
+// box is not typed into unless the request asks to search.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <input id="sq" type="text" aria-label="Search Monitoring Products">
+    <ul id="scopes" role="combobox"><li><a href="#/g" id="g">Globe</a></li><li><a href="#/n" id="n">Nation</a></li></ul>
+    <p>Download: <a id="csv" href="#csv">CSV</a></p>
+    <div id="dlg" role="dialog" aria-hidden="true" style="display:none"><a id="csv2" href="#x">CSV</a></div>
+    </body></html>`, { url: "https://climate.example.gov/series" });
+  if (page) {
+    const doc = page.document; const hit = [];
+    for (const id of ["csv", "csv2", "g", "n"]) doc.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); hit.push(id); });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "download the data as csv" });
+      ensure("the CSV link on screen is pressed", hit.length === 1 && hit[0] === "csv", hit);
+    });
+    const bgw = loadBackground({});
+    check("a list of links calling itself a combobox holds no list", require("vm").runInContext(`holdsNoList({ kind: "combobox", type: "", options: [] })`, bgw), true);
+    check("and a real select does", require("vm").runInContext(`holdsNoList({ kind: "select", type: "select-one", options: [{ text: "A" }] })`, bgw), false);
+  }
+}
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <input id="sq" type="text" aria-label="Search Monitoring Products"> <button id="go">Plot</button></body></html>`, { url: "https://climate.example.gov/series" });
+  if (page) {
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") return { ok: true, step: { steps: [{ name: (m.controls.find((c) => /search/i.test(String(c.label))) || {}).label, do: "type", value: "1991 2020" }] } };
+      return { ok: true, step: { do: "finish", answer: "x" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "use the years 1991 and 2020 for the period" });
+      check("a plan does not type into a search box the request never asked to search", page.document.getElementById("sq").value, "");
+    });
+  }
+}
+
+// A row named before what its cell adds - a footnote mark, a hidden "as of"
+// - and "one year ago" as the row written "1 year ago".
+{
+  const html = `<!doctype html><html><head><title>Reservoirs</title></head><body>
+    <table><thead><tr><th></th><th>Date</th><th>Percent Full</th></tr></thead><tbody>
+    <tr><td>Today</td><td>2026-10-20</td><td>72.2</td></tr><tr><td>1 year ago</td><td>2025-10-20</td><td>74.0</td></tr></tbody></table>
+    <table><thead><tr><th>Reservoir</th><th>Percent Full</th><th>Conservation Storage (acre-ft)</th><th>Conservation Capacity (acre-ft)</th></tr></thead><tbody>
+    <tr><td><a href="#a">Abilene</a><span class="tip" style="display:none">as of 2026-10-20</span></td><td>6.9</td><td>548</td><td>7,900</td></tr>
+    <tr><td><a href="#m">Amistad</a> <sup>2</sup><span class="tip" style="display:none">as of 2026-10-20</span></td><td>46.6</td><td>844,806</td><td>1,813,408</td></tr>
+    </tbody></table></body></html>`;
+  const p0 = loadPage(html, { url: "https://reservoirs.example.gov/statewide" });
+  if (p0) ensure("a hidden note after a name is not run into it", !/Abileneas/.test(JSON.stringify(p0.GENERIC.readPage().tables)), JSON.stringify(p0.GENERIC.readPage().tables).slice(0, 300));
+  for (const [q, want] of [["how full is abilene", /6\.9/], ["what was the percent full one year ago", /74\.0/], ["what is the conservation capacity of amistad", /1,813,408/], ["what percent full are the reservoirs today", /72\.2/]]) {
+    const page = loadPage(html, { url: "https://reservoirs.example.gov/statewide" });
+    if (!page) continue;
+    const bg = loadBackground({ page });
+    bg.__model = (m) => { if (m.type === "llmStatus") return { ready: true, hasGpu: true }; if (m.type !== "llmStep") return undefined; return { ok: true, step: { do: "finish", answer: "4.4" } }; };
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: q });
+      const said = JSON.stringify([r.answer, (r.display || {}).title]);
+      ensure(`${q}: read from its row`, want.test(said), said);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
@@ -3972,7 +4088,8 @@ else {
       // to be the only one running.
       while (asyncRunning > 1 || asyncQueue.length) await new Promise((r) => setTimeout(r, 100));
       await bgJ.runModelAgent("GENERIC", "jump the map to Alaska", { maxSteps: 1 });
-      ensure("a control past the first hundred and twenty is shown to the model", shown, "");
+      // Or pressed without asking at all: its whole name is in the request.
+      ensure("a control past the first hundred and twenty is shown to the model, or pressed outright", shown || pressed.some((c) => /jump-button-alaska/.test(c)), "");
       ensure("and pressing it is not refused", pressed.some((c) => /jump-button-alaska/.test(c)),
         pressed.join(" | ") || "nothing pressed");
     });

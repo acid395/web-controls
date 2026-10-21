@@ -1694,15 +1694,21 @@
         else if (child.nodeType === 1) {
           const tag = (child.tagName || "").toLowerCase();
           if (tag === "script" || tag === "style" || tag === "noscript") continue;
-          parts.push(" ");
+          // An inline tag inside a word is still one word: NCEI writes
+          // "Sep<span>tember</span> 2026", read as "Sep tember 2026".
+          // Only a fragment with no space of its own: a hidden "as of
+          // 2026-10-20" after "Abilene" is still another word.
+          const gap = INLINE_TAG.test(tag) && /^[a-z]+$/.test(String(child.textContent || "")) ? "\u0001" : " ";
+          parts.push(gap);
           walk(child);
-          parts.push(" ");
+          parts.push(gap);
         }
       }
     };
     walk(el);
-    return parts.join("").replace(/\s+/g, " ").trim();
+    return parts.join("").replace(/([A-Za-z])\u0001+(?=[a-z])/g, "$1").replace(/\u0001/g, " ").replace(/\s+/g, " ").trim();
   };
+  const INLINE_TAG = /^(?:span|a|b|i|em|strong|small|abbr|u|s|mark|sub|sup|font|time|data)$/;
 
   /* Readable is not the same question as clickable.
    *

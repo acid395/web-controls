@@ -458,5 +458,49 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"what was the statewide percent full one year ago","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"what is the conservation capacity of amistad","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "ndbc": {
+  "firstContact": true,
+  "url": "https://www.ndbc.noaa.gov/station_page.php?station=46026",
+  "note": "NOAA National Data Buoy Center, station 46026 (San Francisco): station facts, links, a map type list and zoom, a refresh switch, unit and time-zone lists with Select buttons, current conditions, and tables of previous observations and waves.",
+  "prompts": [
+   {"say":"switch the units to metric","kind":"action","steps":["Unit of Measure"],"on":"Unit of Measure","want":{"clicked":"Unit of Measure"},"offline":null},
+   {"say":"change the time zone to greenwich mean time","kind":"action","steps":["Time Zone"],"on":"Time Zone","want":{"clicked":"Time Zone"},"offline":null},
+   {"say":"change the map type to satellite","kind":"action","steps":["Map Type"],"on":"Map Type","want":{"clicked":"Map Type"},"offline":null},
+   {"say":"turn on refresh every 10 minutes","kind":"action","steps":["Refresh page every 10 minutes"],"on":"Refresh page every 10 minutes","want":{"clicked":"Refresh page every 10 minutes"},"offline":null},
+   {"say":"open the latest nws marine forecast","kind":"action","steps":["Latest NWS Marine Forecast"],"later":true,"on":"Latest NWS Marine Forecast","want":{"clicked":"Latest NWS Marine Forecast"},"offline":null},
+   {"say":"zoom in on the map","kind":"action","steps":["Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":null},
+   {"say":"set the unit of measure to metric and press select","kind":"multistep","steps":["Unit of Measure","Select"],"on":"Unit of Measure","want":{"clicked":"Unit of Measure"},"offline":null},
+   {"say":"open the station list","kind":"action","steps":["Station List"],"later":true,"on":"Station List","want":{"clicked":"Station List"},"offline":null},
+   {"say":"search for station 46042","kind":"action","steps":["Station ID Search"],"later":true,"on":"Station ID Search","want":{"clicked":"Station ID Search"},"offline":null},
+   {"say":"switch to metric and tell me the wave height","kind":"action+explain","steps":["Unit of Measure"],"explain":true,"on":"Unit of Measure","want":{"clicked":"Unit of Measure"},"offline":null},
+   {"say":"what is the wind speed right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how deep is the water at this buoy","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what kind of buoy is this","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what is the water temperature","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"who owns and maintains this station","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
+ },
+ "codwr": {
+  "firstContact": true,
+  "url": "https://dwr.state.co.us/Tools/Stations",
+  "note": "Colorado DWR / CWCB stations, current conditions: station filters (geographic location, water division, data category, station type, data provider, more options) with Search, map and table switches, a legend, export, and a paged table of stations with discharge values.",
+  "prompts": [
+   {"say":"pick the arkansas water division","kind":"action","steps":["Water Division"],"on":"Water Division","want":{"clicked":"Water Division"},"offline":null},
+   {"say":"change the data category to ground water","kind":"action","steps":["Data Category"],"on":"Data Category","want":{"clicked":"Data Category"},"offline":null},
+   {"say":"set the station type to stream gage","kind":"action","steps":["Station Type"],"on":"Station Type","want":{"clicked":"Station Type"},"offline":null},
+   {"say":"set the data provider to u.s. geological survey","kind":"action","steps":["Data Provider"],"on":"Data Provider","want":{"clicked":"Data Provider"},"offline":null},
+   {"say":"choose the south platte division and click search","kind":"multistep","steps":["Water Division","Search"],"on":"Water Division","want":{"clicked":"Water Division"},"offline":null},
+   {"say":"turn the map off","kind":"action","steps":["Map"],"on":"Map","want":{"clicked":"Map"},"offline":null},
+   {"say":"go to the next page of the table","kind":"action","steps":["Next"],"on":"Next","want":{"clicked":"Next"},"offline":null},
+   {"say":"hide the legend","kind":"action","steps":["Hide"],"on":"Hide","want":{"clicked":"Hide"},"offline":null},
+   {"say":"open the export menu","kind":"action","steps":["Export"],"on":"Export","want":{"clicked":"Export"},"offline":null},
+   {"say":"hide the select stations panel","kind":"action","steps":["Hide"],"on":"Hide","want":{"clicked":"Hide"},"offline":null},
+   {"say":"set the station type to storage structure, click search, and tell me how many items are found","kind":"action+explain","steps":["Station Type","Search"],"explain":true,"on":"Station Type","want":{"clicked":"Station Type"},"offline":null},
+   {"say":"how many items are in the table","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what is the discharge at united #3 pump inlet 1","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which water source is the croke canal inlet to standley reservoir on","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what station types can I choose from","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };
