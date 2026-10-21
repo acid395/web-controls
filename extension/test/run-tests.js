@@ -2429,6 +2429,45 @@ else {
   }
 }
 
+// The same link on every row of a table is that row's link. A list of
+// districts with "List View" and "Map View" on each row: folded into one,
+// "the list view for the New Orleans district" opened the first row's.
+{
+  const rows = [["LRD", "Buffalo District (LRB)"], ["MVD", "Vicksburg District (MVK)"], ["MVD", "New Orleans District (MVN)"], ["SWD", "Galveston District (SWG)"]];
+  const page = loadPage(`<!doctype html><html><body><table><thead><tr><th>Region</th><th>Name</th><th>Locations</th><th>Map</th></tr></thead><tbody>${
+    rows.map(([r, n], i) => `<tr><td>${r}</td><td>${n}</td><td><a href="#list-${i}" id="list-${i}">List View</a></td><td><a href="#map-${i}" id="map-${i}">Map View</a></td></tr>`).join("")
+  }</tbody></table></body></html>`, { url: "https://water.example.gov/overview" });
+  if (page) {
+    const labels = page.GENERIC.inventory({ includeHidden: true }).controls.map((c) => c.label);
+    ensure("each row's link is named for its row", labels.includes("List View (New Orleans District (MVN))") && labels.includes("Map View (Vicksburg District (MVK))"), labels);
+    ensure("and the rows are no longer folded into one", labels.filter((l) => /^List View/.test(l)).length === rows.length, labels);
+    const pressed = [];
+    for (let i = 0; i < rows.length; i++) page.document.getElementById(`list-${i}`).addEventListener("click", (e) => { e.preventDefault(); pressed.push(i); });
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "open the list view for the new orleans district" });
+      ensure("the list view for the new orleans district is new orleans's", pressed.length === 1 && pressed[0] === 2, pressed);
+    });
+  }
+}
+
+// A request the panel still shows running after it died - the worker
+// restarted under it - is closed by Cancel, and by the next start.
+{
+  const bg = loadBackground({});
+  const vm = require("vm");
+  runAsync(async () => {
+    await vm.runInContext(`chrome.storage.local.set({ askHistory: [{ id: "dead-1", instruction: "open the map view", status: "running" }, { id: "dead-2", instruction: "x", status: "running" }] })`, bg);
+    const res = await bg.__ask({ type: "cancelAsk", askId: "dead-1" });
+    const after = await vm.runInContext("readHistory()", bg);
+    ensure("Cancel on a request that already died is answered", res && res.ok && res.cleared, res);
+    ensure("and its entry stops saying running", (after.find((e) => e.id === "dead-1") || {}).status !== "running", after);
+    await vm.runInContext("closeInterruptedAsks()", bg);
+    const later = await vm.runInContext("readHistory()", bg);
+    ensure("a start closes any other entry left running", later.every((e) => e.status !== "running"), later);
+  });
+}
+
 // Cancelling a request: answered at once, nothing touched after it, the
 // model told to stop, and the next request unaffected.
 {
@@ -2902,7 +2941,10 @@ else {
   const missing = [];
   for (const s2 of sites) {
     for (const p2 of sets[s2].prompts) {
-      if (typeof p2.offline !== "boolean" || !p2.say || !p2.kind) missing.push(`${s2}:${p2.say}`);
+      // A first-contact set is never run offline: that would run the agent
+      // on its pages before the first live run, which is the thing measured.
+      const offlineOk = typeof p2.offline === "boolean" || (sets[s2].firstContact && p2.offline === null);
+      if (!offlineOk || !p2.say || !p2.kind) missing.push(`${s2}:${p2.say}`);
     }
   }
   check("each prompt records its offline outcome to compare against", missing.length, 0);

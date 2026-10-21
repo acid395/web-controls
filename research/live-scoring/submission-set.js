@@ -631,7 +631,8 @@ module.exports.usace = {
       "say": "open the list view for the tulsa district and open the first location listed",
       "kind": "multistep",
       "steps": [
-        "List View"
+        "List View",
+        "first location listed"
       ],
       "later": true
     },
@@ -639,7 +640,8 @@ module.exports.usace = {
       "say": "open the map view for the sacramento district and zoom in",
       "kind": "multistep",
       "steps": [
-        "Map View"
+        "Map View",
+        "Zoom in"
       ],
       "later": true
     },
@@ -709,7 +711,8 @@ module.exports.usace = {
       "steps": [],
       "explain": true
     }
-  ]
+  ],
+  "firstContact": true
 };
 module.exports.rise = {
   "url": "https://data.usbr.gov/catalog",
@@ -727,7 +730,8 @@ module.exports.rise = {
       "say": "search for folsom reservoir and open the first result",
       "kind": "multistep",
       "steps": [
-        "Search Datasets"
+        "Search Datasets",
+        "first result"
       ],
       "later": true
     },
@@ -866,7 +870,8 @@ module.exports.rise = {
       "steps": [],
       "explain": true
     }
-  ]
+  ],
+  "firstContact": true
 };
 module.exports.nid = {
   "url": "https://nid.sec.usace.army.mil/nid/#/",
@@ -884,7 +889,8 @@ module.exports.nid = {
       "say": "search for lake mead and open the first result",
       "kind": "multistep",
       "steps": [
-        "Search"
+        "Search",
+        "first result"
       ],
       "later": true
     },
@@ -1014,5 +1020,6 @@ module.exports.nid = {
       "steps": [],
       "explain": true
     }
-  ]
+  ],
+  "firstContact": true
 };

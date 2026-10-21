@@ -34,7 +34,8 @@ MODEL=0 node gate.js ...                page layer alone
 | 1 | same | 1.94.0 | Llama 3.2 3B, window on screen | 7/15 (NASS 4/10, EIA 3/5; stopped to build the planner) |
 | 2 | CDC WONDER, IEM ASOS download, NOAA PFDS | 1.95.0 (one-call planner) | Llama 3.2 3B, window on screen | 10/30: WONDER 5/10, IEM 5/10, PFDS 0/10 (the page defines a global `Map`; the widget crashed at boot) |
 | 3 | CoCoRaHS daily reports, CDC FluView, NCEI CDO search | 1.96.0 | Llama 3.2 3B, window on screen | 9/30: CoCoRaHS 3/10, FluView 4/10, CDO 2/10 - explains 5/9, acts 3/15, chains 0/6 |
-| 4 | USACE Water Management locations, Reclamation RISE catalog, National Inventory of Dams | 1.99.6 | run as the extension bench (19, 20 and 19 prompts), by the user and Samrat | (not yet run) |
+| 4 | USACE Water Management locations | 1.99.6 | Llama 3.2 3B, extension bench, user machine | 7/19 pass, 1 maybe (actions 3/8, chains 2/5, do-and-tell 0/2, questions 2/4); 9 of the 11 failures were one gap - forty identical per-row "List View" links folded into one |
+| 4 | Reclamation RISE catalog, National Inventory of Dams | 1.99.6 | extension bench | (not yet run) |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the
@@ -42,7 +43,7 @@ IEM request-limit answer "1000" and the CDO cart answer "0 items" had been
 marked FAIL by broken checks). The TSVs keep the original marks.
 
 Round 1 sites are retired: the naming fixes in 1.94.0 were written with
-their pages open. Round 3 sites are retired after 1.96.0 (the shortlist no longer offers
+their pages open. USACE Water Management is retired after 1.99.7 (repeated per-row controls are named for their row). Round 3 sites are retired after 1.96.0 (the shortlist no longer offers
 page-leaving links as padding, a plan may search only when asked to, and a
 plan is no longer than the request). Round 2 sites are retired the same way after 1.95.0:
 the fixes that followed (built-ins taken from a clean source, lists named

@@ -337,6 +337,7 @@ globalThis.WC_BENCH_PROMPTS = {
   ]
  },
  "usace": {
+  "firstContact": true,
   "url": "https://water.usace.army.mil/overview",
   "note": "USACE Water Management (CWMS) locations by office: a table of divisions and districts, each with List View, Map View and an office link, behind a DoD warning to agree to first.",
   "prompts": [
@@ -348,8 +349,8 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"open the active flooding events page","kind":"action","steps":["Active Flooding Events"],"later":true,"on":"Active Flooding Events","want":{"clicked":"Active Flooding Events"},"offline":null},
    {"say":"open the help page and go to the data disclaimer","kind":"multistep","steps":["Help","Data Disclaimer"],"later":true,"on":"Help","want":{"clicked":"Help"},"offline":null},
    {"say":"open the office link for the omaha district","kind":"action","steps":["Office Link"],"later":true,"on":"Office Link","want":{"clicked":"Office Link"},"offline":null},
-   {"say":"open the list view for the tulsa district and open the first location listed","kind":"multistep","steps":["List View"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
-   {"say":"open the map view for the sacramento district and zoom in","kind":"multistep","steps":["Map View"],"later":true,"on":"Map View","want":{"clicked":"Map View"},"offline":null},
+   {"say":"open the list view for the tulsa district and open the first location listed","kind":"multistep","steps":["List View","first location listed"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
+   {"say":"open the map view for the sacramento district and zoom in","kind":"multistep","steps":["Map View","Zoom in"],"later":true,"on":"Map View","want":{"clicked":"Map View"},"offline":null},
    {"say":"open the list view for the alaska district","kind":"action","steps":["List View"],"later":true,"on":"List View","want":{"clicked":"List View"},"offline":null},
    {"say":"open the api docs","kind":"action","steps":["API Docs"],"later":true,"on":"API Docs","want":{"clicked":"API Docs"},"offline":null},
    {"say":"go to the contact us section","kind":"action","steps":["Contact Us"],"later":true,"on":"Contact Us","want":{"clicked":"Contact Us"},"offline":null},
@@ -362,11 +363,12 @@ globalThis.WC_BENCH_PROMPTS = {
   ]
  },
  "rise": {
+  "firstContact": true,
   "url": "https://data.usbr.gov/catalog",
   "note": "Bureau of Reclamation RISE catalog search: a search box, filter checkboxes by theme, data structure, location type, region and state, an order-by list and paged results.",
   "prompts": [
    {"say":"search the catalog for lake mead","kind":"action","steps":["Search Datasets"],"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
-   {"say":"search for folsom reservoir and open the first result","kind":"multistep","steps":["Search Datasets"],"later":true,"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
+   {"say":"search for folsom reservoir and open the first result","kind":"multistep","steps":["Search Datasets","first result"],"later":true,"on":"Search Datasets","want":{"clicked":"Search Datasets"},"offline":null},
    {"say":"filter to the hydropower theme and time series data","kind":"multistep","steps":["Hydropower","Time series"],"on":"Hydropower","want":{"clicked":"Hydropower"},"offline":null},
    {"say":"show only datasets in california, then sort by last record update newest","kind":"multistep","steps":["California","Order by"],"on":"California","want":{"clicked":"California"},"offline":null},
    {"say":"filter the unified region to columbia-pacific northwest and the location type to dam","kind":"multistep","steps":["Columbia-Pacific Northwest","Dam"],"on":"Columbia-Pacific Northwest","want":{"clicked":"Columbia-Pacific Northwest"},"offline":null},
@@ -388,11 +390,12 @@ globalThis.WC_BENCH_PROMPTS = {
   ]
  },
  "nid": {
+  "firstContact": true,
   "url": "https://nid.sec.usace.army.mil/nid/#/",
   "note": "USACE National Inventory of Dams: a search box, national statistics, a state list and map, layer and legend controls and featured dams, behind a disclaimer to accept first.",
   "prompts": [
    {"say":"search for hoover dam","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":null},
-   {"say":"search for lake mead and open the first result","kind":"multistep","steps":["Search"],"later":true,"on":"Search","want":{"clicked":"Search"},"offline":null},
+   {"say":"search for lake mead and open the first result","kind":"multistep","steps":["Search","first result"],"later":true,"on":"Search","want":{"clicked":"Search"},"offline":null},
    {"say":"select texas in the state list","kind":"action","steps":["Texas"],"on":"Texas","want":{"clicked":"Texas"},"offline":null},
    {"say":"select california in the state list, then browse these dams","kind":"multistep","steps":["California","Browse These Dams"],"later":true,"on":"California","want":{"clicked":"California"},"offline":null},
    {"say":"open the layer controls and switch the basemap to named rivers","kind":"multistep","steps":["Layer Controls","Named Rivers"],"on":"Layer Controls","want":{"clicked":"Layer Controls"},"offline":null},

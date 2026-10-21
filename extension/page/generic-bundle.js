@@ -1192,6 +1192,41 @@
       if (!bySig0.has(r._sig)) bySig0.set(r._sig, []);
       bySig0.get(r._sig).push(r);
     }
+    /* The same control on every row of a table is that row's control.
+     *
+     * USACE lists forty districts, each row with its own "List View", "Map
+     * View" and office link. Folded into one pattern the agent saw a single
+     * "List View" - the first row's, Buffalo - and "the list view for the New
+     * Orleans district" opened Buffalo nine times out of nine. Each is named
+     * for its row, by the column whose cells tell the rows apart. Up to
+     * eighty rows: past that a table stays one pattern, so a prompt does not
+     * fill with a thousand rows of the same button.
+     */
+    for (const rows of bySig0.values()) {
+      if (rows.length < 2 || rows.length > 80) continue;
+      if (!String(rows[0].label || "").trim()) continue;
+      const els = rows.map((r) => { try { return deepQuery(r.selector); } catch (e) { return null; } });
+      if (els.some((e) => !e)) continue;
+      const trs = els.map((e) => e.closest && e.closest("tr"));
+      if (trs.some((t) => !t) || new Set(trs).size !== trs.length) continue;
+      const cellsOf = (tr) => [...tr.children].map((td) => (td.querySelector("a, button, input, select, textarea")
+        ? null : String(td.textContent || "").replace(/\s+/g, " ").trim()));
+      const cells = trs.map(cellsOf);
+      const width = Math.max(...cells.map((c) => c.length));
+      let col = -1;
+      for (let c = 0; c < width && col < 0; c++) {
+        const vals = cells.map((row) => row[c]);
+        if (vals.every((v) => v && v.length <= 60 && /[a-z]/i.test(v))
+            && new Set(vals.map((v) => v.toLowerCase())).size === vals.length) col = c;
+      }
+      if (col < 0) continue;
+      rows.forEach((r, i) => {
+        const name = cells[i][col];
+        r.label = `${r.label} (${name})`;
+        r.section = name;
+        r._sig = `${r._sig}|row:${name}`;
+      });
+    }
     // Narrowly. Named controls that act in place only - a link leading
     // somewhere is already told apart by where it goes, and renaming the
     // menu's "National Hydrologic Discussion" after the page banner would
