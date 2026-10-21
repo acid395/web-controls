@@ -244,23 +244,6 @@ async function whenIdle({ waitMs = 5000 } = {}) {
   return inFlight === 0;
 }
 
-// Let go of the planner, so the next request builds whichever one is chosen.
-async function releaseEngine() {
-  if (!enginePromise) return;
-  // Refuses rather than proceeds. This waited and then unloaded anyway, and
-  // waiting five seconds for a decision that takes thirteen is not waiting -
-  // it is a pause before the same disposal. Something still running keeps
-  // its engine; stepping down can happen when it is done.
-  if (!(await whenIdle({ waitMs: 20000 }))) return;
-  const held = enginePromise;
-  enginePromise = null;
-  engineReady = false;
-  try {
-    const engine = await held;
-    if (engine && typeof engine.unload === "function") await engine.unload();
-  } catch (e) { /* already gone */ }
-}
-
 // A shorter context, where the weights are already large.
 //
 // The 8B is 5001MB of weights and, separately, a key-value cache sized by
@@ -448,7 +431,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       // The engine promise is replaced, not awaited.
       //
-      // releaseEngine awaits whatever it is holding, and what it was holding
+      // Releasing awaited whatever the engine was holding, and what it held
       // was a four-gigabyte load in progress - so switching queued behind
       // the model being switched away from, which on the machine that
       // reported this takes minutes. "use 3b" answered "stored", and the 8B

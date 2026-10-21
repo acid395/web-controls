@@ -1670,7 +1670,6 @@ async function usgsCurrentConditions({ state, parameter, nameContains }) {
   const isStale = (r) => r.observedAt && (Date.now() - new Date(r.observedAt).getTime()) > STALE_HOURS * 3600e3;
   const staleExcluded = readings.filter(isStale).length;
   readings = readings.filter((r) => !isStale(r));
-  const reportingStatewide = readings.length;
 
   // A name filter that matches nothing falls back to the whole state rather
   // than returning an empty answer - "no gauge is named Cleveland" is not the
@@ -2794,8 +2793,6 @@ const ASKING_TO_READ_PLAINLY =
 // pressed a graph control instead of reading the flood stages off the page.
 const A_QUESTION =
   /^\s*(?:please\s+)?(?:(?:at|in|on|by|from|to|for|of|with|under|after|before|since|until|above|below)\s+(?:what|which|how|when|where|whom)\b|(?:is|are|was|were|does|do|did|has|have|which|what|how|where|when|who|why|can\s+you\s+tell)\b)/i;
-const ABOUT_WHAT_IS_HERE =
-  /\b(?:here|this\s+(?:page|map|chart|graph|plot|table|site)|shown|showing|right\s+now|currently|current|at\s+the\s+moment|as\s+it\s+stands|in\s+effect)\b/i;
 // A request whose action depends on something it must first find out.
 const IS_CONDITIONAL =
   /^\s*(?:only\s+)?(?:if|when(?:ever)?|unless)\b|\b(?:otherwise|or\s+else|unless|depending\s+on|if\s+(?:it|there|the|this|that)\b)/i;
@@ -11337,7 +11334,7 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   if (narrow) {
     const inv = await readInventory();
     const st = setToPlan(routeGlobal, clause, ((inv.ok && inv.result && inv.result.controls) || []));
-    if (st) sure = { label: st.label, run: () => runSetToPlan(routeGlobal, st) };
+    if (st) sure = { label: st.label, run: () => runSetToPlan(routeGlobal, st), soft: !!st.range };
   } else {
     sure = await certainClausePlan(routeGlobal, clause).catch(() => null);
   }
@@ -11362,7 +11359,9 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   // Named, and pressing it changed nothing: most often it was already as
   // asked - RadarViz's Settings already open. Handed on, a model pressed it
   // again and shut the panel the next step needed. The page has settled it.
-  if (named && !narrow) return done("named", sure.label || clause, false, "named on the page; it was already as asked or did not respond", true, null);
+  // A range that found no pair to fill has not settled anything: the model
+  // is asked, as for a step the page could not place.
+  if (named && !narrow && !sure.soft) return done("named", sure.label || clause, false, "named on the page; it was already as asked or did not respond", true, null);
   // The control a step names may be arriving - a tab the page draws once
   // the layer before it has loaded. Only where nothing was named at all: a
   // plan that ran and came back empty has already pressed, and pressing
@@ -11408,7 +11407,7 @@ async function certainClausePlan(routeGlobal, clause) {
   const inv = await readInventory();
   const all = ((inv.ok && inv.result && inv.result.controls) || []);
   const setTo = setToPlan(routeGlobal, clause, all);
-  if (setTo) return { label: setTo.label, run: () => runSetToPlan(routeGlobal, setTo) };
+  if (setTo) return { label: setTo.label, run: () => runSetToPlan(routeGlobal, setTo), soft: !!setTo.range };
   const span = soleSpanControl(clause, all);
 
   if (span) {

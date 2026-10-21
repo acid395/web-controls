@@ -430,12 +430,15 @@
   // else that holds no text says so.
   const TYPED_INTO = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([type=file]), textarea";
   const typingTarget = (el) => {
-    if (el.matches && (el.matches(TYPED_INTO) || el.isContentEditable)) return el;
+    if (el.matches && (el.matches(TYPED_INTO) || el.isContentEditable || el.tagName === "SELECT")) return el;
     const inside = el.querySelectorAll ? [...el.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
     if (inside.length === 1) return inside[0];
+    // Only a button hands its words to a box beside it. A checkbox in the
+    // same form is not asking for the form's search box to be filled.
+    const isButton = el.tagName === "BUTTON" || el.getAttribute("role") === "button"
+      || (el.tagName === "INPUT" && /^(?:button|submit|image)$/i.test(el.type || ""));
     const form = el.form || (el.closest && el.closest("form"));
-    const holder = form || (/^(?:button|submit|reset)$/i.test(el.type || "") || el.getAttribute("role") === "button" || el.tagName === "BUTTON"
-      ? el.parentElement && el.parentElement.parentElement : null);
+    const holder = !isButton ? null : form || (el.parentElement && el.parentElement.parentElement);
     const boxes = holder ? [...holder.querySelectorAll(TYPED_INTO)].filter(isVisible) : [];
     if (boxes.length === 1) return boxes[0];
     throw new Error(`"${rawLabelOf(el).slice(0, 40) || el.tagName.toLowerCase()}" is not a box that takes typing`);
