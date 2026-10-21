@@ -6,10 +6,11 @@ working their dropdowns, following their links — **without any change to the
 sites themselves**. A small language model runs locally in your browser,
 reads whatever controls the page actually has, and decides what to press.
 
-The claim worth testing is narrow, so it is worth stating plainly: *a ~1GB
-model running on your own machine can operate a site nobody wrote any code
-for.* Six of the eight sites it is measured on have no site-specific code
-anywhere in the repo.
+The claim worth testing is narrow, so it is worth stating plainly: *a
+language model running on your own machine can operate a site nobody wrote
+any code for.* Most of the sites it is tested on - the Tulane FIMS and
+RadarViz apps, and the nine sites in `research/first-contact` - have no
+site-specific code anywhere in the repo.
 
 ## Setting it up
 
@@ -43,8 +44,8 @@ and where it does not fit, it names the largest one that does.
 
 Sites it has been measured on: `waterdata.usgs.gov`, `water.noaa.gov`,
 `drought.gov`, `earthquake.usgs.gov`, `airnow.gov`, `weather.gov`,
-`ncei.noaa.gov`. Anything else is genuinely untested, and those are the most
-interesting reports.
+`ncei.noaa.gov`, and the Tulane FIMS and RadarViz apps. Anything else is
+genuinely untested, and those are the most interesting reports.
 
 ## Three ways to ask, and why you want all three
 
@@ -97,8 +98,11 @@ chooses best and has crashed Chrome on smaller GPUs.
 
 - **It is slow.** One decision is 15–35s on modest hardware. The model is
   essentially all of it; the page work is milliseconds.
-- **Compound instructions are the weak spot.** Single named controls are
-  reliable; "do X then Y then summarise" often is not.
+- **Multi-step requests run part by part.** Most parts are done straight off
+  the page; the model is asked only about a part no control names, and that is
+  where a small model is weakest - a wrong pick or a thin answer.
+- **A request can be stopped** - Cancel in the panel, Stop in the widget.
+  Anything already done on the page stays done.
 - **Maps drawn on canvas** cannot be clicked. The extension says so instead
   of pretending.
 - Sometimes a card reads *"the local model planned nothing here, so this is
