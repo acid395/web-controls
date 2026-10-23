@@ -1790,6 +1790,18 @@
    * numbers. Read by the roles the page itself declares, which is the page
    * saying outright that this is tabular.
    */
+  // A grid that draws its header as a table of its own above the body -
+  // Kendo, and others that freeze the header row: the nearest table before
+  // it, within a few levels, holding a last row of the same width.
+  function headerTableAbove(el, width) {
+    for (let anc = el.parentElement, d = 0; anc && d < 4; anc = anc.parentElement, d++) {
+      const before = [...anc.querySelectorAll("table")].filter((t) => t !== el && !t.contains(el) && !el.contains(t)
+        && (t.compareDocumentPosition(el) & 4));
+      const h = before.reverse().find((t) => t.rows.length >= 1 && t.rows.length <= 2 && t.rows[t.rows.length - 1].cells.length === width);
+      if (h) return [...h.rows[h.rows.length - 1].cells].map((c) => readableTextOf(c).slice(0, 60));
+    }
+    return null;
+  }
   function readAriaTables(limit = 4) {
     const out = [];
     const grids = deepQueryAll('[role="table"], [role="grid"], [role="treegrid"]');
@@ -1803,9 +1815,20 @@
       const headed = [...rowEls[0].querySelectorAll('[role="columnheader"]')].length > 0;
       const rows = rowEls.map(cellsOf).filter((r) => r.length);
       if (!rows.length) continue;
+      // A grid whose header cells are plain <th> with no role - Kendo draws
+      // them in a table of their own above the body. A row of them as wide
+      // as the data rows names the columns.
+      let columns = headed && first.length ? first : null;
+      if (!columns) {
+        const width = rows[0].length;
+        const headRow = [...grid.querySelectorAll("tr")].find((tr) => tr.cells.length === width && tr.cells.length > 1
+          && [...tr.cells].every((c) => c.tagName === "TH"));
+        if (headRow) columns = [...headRow.cells].map((c) => readableTextOf(c).slice(0, 60));
+        else if (width > 1) columns = headerTableAbove(grid, width);
+      }
       out.push({
         caption: null,
-        columns: headed && first.length ? first : null,
+        columns,
         rows: headed ? rows.slice(1) : rows,
         totalRows: rowEls.length,
       });
@@ -1833,12 +1856,21 @@
       const bodyRows = rows.slice(1);
       const bodyHasNumbers = bodyRows.some((r) => cells(r).slice(1).some(isNumeric));
       const firstRowIsWords = firstRow.length > 1 && firstRow.slice(1).filter(Boolean).every((t) => !isNumeric(t));
-      const header = firstRow.length && (taggedHeader || (firstRowIsWords && bodyHasNumbers))
+      let header = firstRow.length && (taggedHeader || (firstRowIsWords && bodyHasNumbers))
         ? firstRow : null;
+      // A grid that draws its header as a table of its own above the body -
+      // Kendo, and others that freeze the header row. The body alone has no
+      // column names, so no cell could be found by its column. The nearest
+      // table before it holding one row of the same width is its header.
+      let splitHeader = false;
+      if (!header && rows[0].cells.length > 1) {
+        header = headerTableAbove(table, rows[0].cells.length);
+        splitHeader = !!header;
+      }
       out.push({
         caption: table.caption ? textOf(table.caption).slice(0, 80) : null,
         columns: header,
-        rows: (header ? rows.slice(1) : rows).map(cells),
+        rows: (header && !splitHeader ? rows.slice(1) : rows).map(cells),
         totalRows: table.rows.length,
       });
     }

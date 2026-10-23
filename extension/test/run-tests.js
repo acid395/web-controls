@@ -2899,6 +2899,140 @@ for (const [instr, want, not] of [["close the intro", "x", "sideclose"], ["show 
   check("and a link to another page does", require("vm").runInContext(`navigatesAway({ goesTo: "/twin/help" })`, bgw), true);
 }
 
+// Round six, on made-up pages: what each fix must do, and what it must not.
+{
+  const bgw = loadBackground({});
+  const vm = require("vm");
+  const run = (expr) => vm.runInContext(expr, bgw);
+  check("the state said last is read first", run(`plainlyPut("turn the map off")`), "turn off the map");
+  check("but a value after to is left where it is", run(`plainlyPut("switch the map to off")`), "switch the map to off");
+  check("a search press after a list choice is its own step", run(`JSON.stringify(splitIntoSteps("choose the south platte division and click search"))`), JSON.stringify(["choose the south platte division", "click search"]));
+  check("but stays with what was typed", run(`splitIntoSteps("type lake mead and click search").length`), 1);
+  check("and a jump menu's go stays with its choice", run(`splitIntoSteps("select alaska and press go").length`), 1);
+  check("a pager's total is the count, not the page size",
+    run(`answerInPageWords("how many items are in the table", { title: "Stations", headings: [], text: "1 - 100 of 1701 items. 100 items per page" }, [])`), "The page says 1701 items in all.");
+  check("a plain stated count still reads", run(`answerInPageWords("how many records are in the catalog", { title: "Catalog", headings: [], text: "1107 records found" }, [])`), "The page says 1107 records found.");
+}
+// An option named by part of the request, in the list named by the rest -
+// not the other list whose option happens to be the rest.
+for (const [instr, wantDiv, wantGeo] of [["pick the arkansas water division", "2", "geo"], ["pick water division", "0", "div"]]) {
+  const page = loadPage(`<!doctype html><html><body>
+    <label for="g">Geographic Location</label><select id="g"><option value="geo">Water Division</option><option value="cty">County</option></select>
+    <label for="d">Selected Water Division Id</label><select id="d"><option value="0">All Divisions</option><option value="1">1 - South Platte</option><option value="2">2 - Arkansas</option></select>
+    </body></html>`, { url: "https://water.example.gov/stations" });
+  if (!page) continue;
+  page.document.getElementById("g").value = "cty";
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: instr });
+    check(`${instr}: the division list`, page.document.getElementById("d").value, wantDiv);
+    check(`${instr}: the location list`, page.document.getElementById("g").value, wantGeo === "geo" ? "cty" : "geo");
+  });
+}
+// "Turn the map off" turns a map switch that is on, off.
+{
+  const page = loadPage(`<!doctype html><html><body><label><input type="checkbox" id="m" checked> Map</label><label><input type="checkbox" id="t" checked> Table</label></body></html>`, { url: "https://water.example.gov/stations" });
+  if (page) {
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "turn the map off" });
+      check("turn the map off: the map switch is off", page.document.getElementById("m").checked, false);
+      check("and the table switch is left on", page.document.getElementById("t").checked, true);
+    });
+  }
+}
+// A plan that includes the control named completely presses nothing else;
+// the card names a control as it was when pressed.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <a id="skip" href="#main">Skip Navigation</a> <a id="news" href="/news">News</a>
+    <a id="list" href="#list">Station List</a>
+    <a id="more" href="#p11">More pages</a> <a id="next" href="#p2" aria-label="Go to the next page"><span>&gt;</span></a>
+    <a id="hide" href="#h">Hide legend</a></body></html>`, { url: "https://buoys.example.gov/station" });
+  if (page) {
+    const doc = page.document; const pressed = [];
+    for (const a of doc.querySelectorAll("a")) a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(a.id); if (a.id === "hide") a.textContent = "Show legend"; });
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") return { ok: true, step: { steps: m.controls.slice(0, 3).map((c) => ({ name: c.label, do: "click" })) } };
+      return { ok: true, step: { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "open the station list" });
+      ensure("open the station list presses only Station List", pressed.length === 1 && pressed[0] === "list", pressed);
+      pressed.length = 0;
+      const r = await bg.__ask({ type: "smartAsk", instruction: "hide the legend" });
+      ensure("the card names the control as it was pressed", pressed.includes("hide") && /Hide legend/.test(String((r.display || {}).title)), { pressed, title: (r.display || {}).title });
+    });
+  }
+}
+// An identifier searched for without the search box's own word; anything
+// else is searched as said.
+for (const [instr, want] of [["search for station 46042", "46042"], ["search for station park", "station park"]]) {
+  const page = loadPage(`<!doctype html><html><body><form id="f"><label for="s">Station ID Search</label><input id="s" type="search"><input type="submit" value="Go"></form></body></html>`, { url: "https://buoys.example.gov/station" });
+  if (!page) continue;
+  page.document.getElementById("f").addEventListener("submit", (e) => e.preventDefault());
+  const bg = loadBackground({ page });
+  runAsync(async () => {
+    await bg.__ask({ type: "smartAsk", instruction: instr });
+    check(`${instr}: typed`, page.document.getElementById("s").value, want);
+  });
+}
+// A grid whose header is a table of its own above the body.
+{
+  const html = `<!doctype html><html><head><title>Stations</title></head><body><div class="grid">
+    <div class="head"><table><tr><th>Abbrev</th><th>Station Name</th><th>Value</th><th>Water Source</th></tr></table></div>
+    <div class="body"><table>
+      <tr><td>0201700A</td><td>CROKE CANAL INLET TO STANDLEY RESERVOIR</td><td>0 cfs</td><td>CLEAR CREEK</td></tr>
+      <tr><td>0200616A</td><td>UNITED #3 PUMP INLET 1</td><td>14.7 cfs</td><td>SOUTH PLATTE RIVER</td></tr></table></div></div></body></html>`;
+  const p0 = loadPage(html, { url: "https://water.example.gov/stations" });
+  if (p0) check("a header drawn as its own table names the body's columns", JSON.stringify((p0.GENERIC.readPage().tables.find((t) => (t.rows || []).length === 2) || {}).columns), JSON.stringify(["Abbrev", "Station Name", "Value", "Water Source"]));
+  const page = loadPage(html, { url: "https://water.example.gov/stations" });
+  if (page) {
+    const bg = loadBackground({ page });
+    bg.__model = (m) => { if (m.type === "llmStatus") return { ready: true, hasGpu: true }; if (m.type !== "llmStep") return undefined; return { ok: true, step: { do: "finish", answer: "-0.28 ft" } }; };
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: "which water source is the croke canal inlet to standley reservoir on" });
+      ensure("and its cell is read by row and column", /CLEAR CREEK/.test(JSON.stringify([r.answer, (r.display || {}).title])), r.answer);
+    });
+  }
+}
+
+// A pager's own control, by the page it goes to; a bare Next only where it
+// is the only one; and nothing pressed where no pager is named.
+for (const [instr, html, want] of [
+  ["go to the next page of the table", `<a id="more" href="#p11">More pages</a> <a id="x" href="#p2" aria-label="Go to the next page">&gt;</a>`, "x"],
+  ["go to the previous page", `<a id="x" href="#p1">Previous Page</a> <a id="y" href="#p3">Next Page</a>`, "x"],
+  ["next page", `<button id="x">Next</button> <button id="y">Back</button>`, "x"],
+  ["go to the next page", `<button id="a">Next</button> <button id="b">Next step</button> <a id="c" href="#m">More</a>`, "a"],
+  ["go to the last page", `<button id="a">Next</button> <a id="c" href="#m">More</a>`, null],
+]) {
+  const page = loadPage(`<!doctype html><html><body>${html}</body></html>`, { url: "https://data.example.gov/table" });
+  if (!page) continue;
+  const pressed = [];
+  for (const el of page.document.querySelectorAll("a, button")) el.addEventListener("click", (e) => { e.preventDefault(); pressed.push(el.id); });
+  const bgw = loadBackground({});
+  const plan = require("vm").runInContext(`(c) => pagerControl(${JSON.stringify(instr)}, c)`, bgw)(page.GENERIC.inventory({}).controls);
+  check(`${instr}: the pager control`, plan ? (page.document.querySelector(plan.control.selector) || {}).id : null, want);
+}
+
+// The same split header inside a grid read by its roles, where the header
+// cells are plain <th> and only the body rows carry role="row" - and where
+// the role is on the body table alone, with the header table beside it.
+for (const shape of ["div", "table"]) {
+  const page = loadPage(shape === "div" ? `<!doctype html><html><body><div role="grid">
+    <table><tr><th>Station Name</th><th>Value</th><th>Water Source</th></tr></table>
+    <table><tr role="row"><td role="gridcell">CROKE CANAL INLET</td><td role="gridcell">0 cfs</td><td role="gridcell">CLEAR CREEK</td></tr>
+      <tr role="row"><td role="gridcell">FULTON AUG STATION</td><td role="gridcell">1.38 cfs</td><td role="gridcell">SOUTH PLATTE RIVER</td></tr></table></div></body></html>`
+    : `<!doctype html><html><body><div class="g"><div class="h"><table><tr><th>Station Name</th><th>Value</th><th>Water Source</th></tr></table></div>
+    <div class="c"><table role="grid"><tr role="row"><td role="gridcell">CROKE CANAL INLET</td><td role="gridcell">0 cfs</td><td role="gridcell">CLEAR CREEK</td></tr>
+      <tr role="row"><td role="gridcell">FULTON AUG STATION</td><td role="gridcell">1.38 cfs</td><td role="gridcell">SOUTH PLATTE RIVER</td></tr></table></div></div></body></html>`, { url: "https://water.example.gov/stations" });
+  if (page) check(`a role grid's plain header row names its columns (${shape})`, JSON.stringify((page.GENERIC.readPage().tables.find((t) => (t.rows || []).length === 2 && t.columns) || {}).columns), JSON.stringify(["Station Name", "Value", "Water Source"]));
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

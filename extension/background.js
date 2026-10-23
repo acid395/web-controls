@@ -2713,6 +2713,9 @@ function plainlyPut(instruction) {
     t = t.replace(COURTESY_LEAD, "").replace(COURTESY_TAIL, "").trim();
     if (t === before || !t) break;
   }
+  // "Turn the map off" is "turn off the map": the state said last, where no
+  // rule reading on and off looked. It answered "Map was already true".
+  t = t.replace(/^(\s*(?:please\s+)?(?:turn|switch))\s+((?:(?!\bto\b)[^,])+?)\s+(on|off)\s*$/i, "$1 $3 $2");
   // Nothing left means it was all manners. The original is better than the
   // empty string - it at least reaches a path that can say so.
   return t || String(instruction || "").trim();
@@ -5368,7 +5371,17 @@ function splitIntoSteps(instruction) {
     // cleaned before it gets here, which handles courtesy at the ends -
     // but "click 30 days and then could you show the legend" carries it in
     // the middle, where only the clause it belongs to can see it.
-    .map((t) => plainlyPut(t.trim())).filter(Boolean);
+    .map((t) => plainlyPut(t.trim())).filter(Boolean)
+    .flatMap(searchPressOfItsOwn);
+}
+/* "And click search" finishes a typed box, and stays with it. After a list
+ * choice it is a step of its own: "choose the south platte division and
+ * click search" chose the division and never pressed Search.
+ */
+function searchPressOfItsOwn(part) {
+  const m = String(part).match(/^(.*\S)\s*(?:,\s*(?:and\s+)?|\s+and\s+)((?:press|click|hit|tap)\s+(?:the\s+)?search(?:\s+button)?)\s*(?:,\s*(?:and\s+)?(.+))?$/i);
+  if (!m || /^\s*(?:please\s+)?(?:type|enter|fill|put|write|search|find|look\s*up|lookup|query)\b/i.test(m[1])) return [part];
+  return [m[1].trim(), m[2].trim(), ...(m[3] ? [m[3].trim()] : [])];
 }
 
 // "The second location", "the last one": an ordinal says which row of a
@@ -6610,6 +6623,10 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   // A plan no longer than the request: a 3B answered a two-part request with
   // fifteen steps. Three a part and one to confirm is room for every real
   // step and a bound on an invented one.
+  // Where the plan includes the control the request names completely, it
+  // needs nothing the request does not name: "open the station list" was
+  // planned as Skip Navigation, a placeholder, Go and Station List.
+  const namesWhole = steps.some((st) => { const c = shortlist[names.indexOf(flat(st.name))]; return c && wholeNamedAmong(goal, [c]) === c; });
   for (const st of steps) {
     if (budget-- <= 0) break;
     let act = String(st.do || "click").toLowerCase();
@@ -6677,7 +6694,7 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // flood maps" opened the wrong section, and the right one was then
     // refused as padding.
     const doneSoFar = history.filter((h) => h.ok && !h.skipped && !h.door).length;
-    if (namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident)) {
+    if (namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident || namesWhole)) {
       history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - the request names nothing of it" });
       continue;
@@ -6698,7 +6715,11 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
         outcome: "left alone - it is a search box, and the request did not ask to search" });
       continue;
     }
-    const call = actionToCall(act, target, st);
+    // On or off is the request's to say, not the model's: the same rule the
+    // per-step loop already keeps.
+    const call = act === "check"
+      ? actionToCall("check", target, { ...st, on: !/\b(?:uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i.test(goal) })
+      : actionToCall(act, target, st);
     // The second value chosen in one multi-select within a plan joins the first.
     if (call && call.name === "pageSelectOption" && /multiple/i.test(String(target.type || ""))) {
       if (multiTouched.has(target.selector)) call.args.add = true;
@@ -8790,8 +8811,16 @@ function answerInPageWords(goal, read, passages) {
   if (!rest.every((w) => wordMatchesText(w, own))) return null;
   const esc = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(?:^|[^\\d.,])(\\d{1,3}(?:,\\d{3})+|\\d+)\\s+(?:total\\s+|matching\\s+)?(${esc}(?:s|es)?|${noun})\\b((?:\\s+(?:found|listed|shown|total|available|matched|returned))?)`, "gi");
+  // A pager's total: "1 - 100 of 1701 items" is 1701, and "100 items per
+  // page" is how many show at a time.
+  const ofRe = new RegExp(`\\bof\\s+(\\d{1,3}(?:,\\d{3})+|\\d+)\\s+(?:total\\s+)?(${esc}(?:s|es)?|${noun})\\b`, "gi");
+  const totals = [...text.matchAll(ofRe)];
+  if (totals.length && new Set(totals.map((t) => t[1].replace(/,/g, ""))).size === 1) return `The page says ${totals[0][1]} ${totals[0][2]} in all.`;
   const hits = []; let m;
-  while ((m = re.exec(text))) hits.push({ n: m[1].replace(/,/g, ""), said: `${m[1]} ${m[2]}${m[3] || ""}` });
+  while ((m = re.exec(text))) {
+    if (/^\s+per\s+(?:page|view)\b/i.test(text.slice(m.index + m[0].length))) continue;
+    hits.push({ n: m[1].replace(/,/g, ""), said: `${m[1]} ${m[2]}${m[3] || ""}` });
+  }
   const ns = new Set(hits.map((h) => h.n));
   return ns.size === 1 ? `The page says ${hits[0].said}.` : null;
 }
@@ -11289,7 +11318,28 @@ async function runRange(routeGlobal, { rest, from, to }) {
 // that is open. One inside a dialog over one elsewhere - the sidebar has a
 // close icon of its own - and one only.
 const CLOSE_DIALOG = /^\s*(?:please\s+)?(?:close|dismiss|exit|hide|get\s+rid\s+of)\s+(?:the\s+|this\s+|that\s+)?(?:intro(?:duction)?|pop-?up|dialog(?:ue)?|modal|welcome(?:\s+(?:screen|message|pop-?up|box))?|banner|splash(?:\s+screen)?|overlay|notice|message|window|box|disclaimer|info(?:rmation)?(?:\s+box)?)\s*$/i;
+// "Go to the next page of the table": a pager's own control, named for the
+// page it goes to - "Next page", "Go to the next page" - or, where it is the
+// only one, a bare "Next". Asked of a 3B, Colorado's grid got "More pages",
+// the ellipsis that jumps ten ahead.
+const PAGER_ASK = /^\s*(?:please\s+)?(?:(?:go|jump|skip|move|turn)\s+to\s+|show\s+|open\s+|click\s+|press\s+)?(?:the\s+)?(next|previous|prev|first|last)\s+page\b(?:\s+(?:of|in)\s+(?:the\s+)?(?:table|results|list|data|records|items|grid|rows|stations))?\s*$/i;
+function pagerControl(clause, all) {
+  const m = String(clause).match(PAGER_ASK);
+  if (!m) return null;
+  const word = m[1].toLowerCase() === "prev" ? "previous" : m[1].toLowerCase();
+  const alt = word === "previous" ? "(?:previous|prev)" : word;
+  const shown = all.filter((c) => !c.hidden && !c.disabled && !c.elsewhere);
+  const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const paged = shown.filter((c) => new RegExp(`^(?:go to )?(?:the )?${alt} page$`).test(flat(c.label)));
+  const bare = shown.filter((c) => new RegExp(`^${alt}$`).test(flat(c.label)));
+  const pick = paged.length ? paged : bare.length === 1 ? bare : [];
+  // Top and bottom pagers are one pager.
+  if (!pick.length || new Set(pick.map((c) => flat(c.label))).size !== 1) return null;
+  return { control: pick[0], press: "click", label: pick[0].label };
+}
 function setToPlan(routeGlobal, clause, all) {
+  const pager = pagerControl(clause, all);
+  if (pager) return pager;
   if (CLOSE_DIALOG.test(String(clause))) {
     const closers = all.filter((c) => !c.hidden && !c.disabled && CLOSE_GLYPH.test(String(c.label || "")));
     const inDlg = closers.filter((c) => c.inDialog);
@@ -11377,6 +11427,22 @@ function setToPlan(routeGlobal, clause, all) {
   if (bare && bare.length >= 2 && !/\s(?:to|as|for|in|on)\s/i.test(bare)) {
     const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, bare));
     if (holders.length === 1) { const o = optionNamed(holders[0], bare); return { control: holders[0], option: o, label: `${holders[0].label}: ${o.text || o.value}` }; }
+    // "The arkansas water division": the option named by part of it ("2 -
+    // Arkansas") in the list named by the rest (Water Division). One only.
+    const bw = listWords(bare);
+    const byParts = [];
+    for (const c of all) {
+      if (c.disabled || c.hidden || !(c.options || []).length) continue;
+      const lw = listWords(c.label);
+      for (const o of c.options) {
+        if (placeholderOption(o)) continue;
+        const ow = listWords(o.text || o.value).filter((w) => /[a-z]/.test(w));
+        if (!ow.length || !ow.every((w) => bw.includes(w))) continue;
+        const rest = bw.filter((w) => !ow.includes(w));
+        if (rest.length && rest.every((w) => lw.some((l) => wordMatchesText(w, l) || wordMatchesText(l, w)))) byParts.push({ c, o });
+      }
+    }
+    if (byParts.length === 1) return { control: byParts[0].c, option: byParts[0].o, label: `${byParts[0].c.label}: ${byParts[0].o.text || byParts[0].o.value}` };
   }
   return null;
 }
@@ -11737,6 +11803,17 @@ async function searchClause(routeGlobal, clause) {
   }
   const box = findSearchBox(all, where);
   if (!box) return null;
+  // "Search for station 46042" in a box called Station ID Search: the box's
+  // own word is not part of the identifier. Only where what is left is one
+  // or two words with a figure in them.
+  {
+    const own = meaningfulWords(String(box.label || ""));
+    const qw = String(words).trim().split(/\s+/);
+    let k = 0;
+    while (k < qw.length - 1 && own.includes(qw[k].toLowerCase())) k++;
+    const rest = qw.slice(k);
+    if (k && rest.length <= 2 && /\d/.test(rest.join(" "))) words = rest.join(" ");
+  }
   if (box.hidden && box.revealedBy) {
     await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
     forgetPageTools();
@@ -12964,11 +13041,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             : null;
           if (did) {
             respond({ ok: true, plannedBy: "exact-match",
+              // Named as it was when pressed: "Hide (Legend)" reads "Show
+              // Legend" afterwards, and the card said the opposite happened.
               display: {
-                title: String(did.label || wanted).slice(0, 60),
+                title: String((onlyOne && onlyOne.label) || did.label || wanted).slice(0, 60),
                 subtitle: did.unconfirmed
-                  ? `${did.label} pressed - the page did not visibly change`
-                  : `${did.label} done`,
+                  ? `${(onlyOne && onlyOne.label) || did.label} pressed - the page did not visibly change`
+                  : `${(onlyOne && onlyOne.label) || did.label} done`,
                 stats: [], rows: [],
                 note: "the request names this control word for word, so this did not wait for the model",
                 source: "this page",
@@ -13036,6 +13115,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // name is plainly the thing meant.
             const wholeThing = distinct[0] === bareO || distinct[0] === said;
             if (holders.length === 1 && (wholeThing || !namedExactly)) instantOption = hits[0];
+            // Not when the rest of the request names an option elsewhere:
+            // "pick the arkansas water division" set Geographic Location to
+            // Water Division, with "2 - Arkansas" in the division list.
+            if (instantOption) {
+              const used = new Set([...flatO(instantOption.option).split(" "), ...flatO(instantOption.control.label).split(" ")]);
+              const left = saidWords.filter((w) => w.length > 2 && !used.has(w) && !CONTROL_VERB.test(w) && !/^(?:the|and|for|with|from|this|that|list|menu|option)$/.test(w));
+              const elsewhere = ((oinv.ok && oinv.result && oinv.result.controls) || []).some((c) => c !== instantOption.control
+                && (c.options || []).some((o) => left.some((w) => ` ${flatO(o.text || o.value)} `.includes(` ${w} `))));
+              if (elsewhere) instantOption = null;
+            }
           }
         }
         if (instantOption) {
