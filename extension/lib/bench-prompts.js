@@ -502,5 +502,49 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"which water source is the croke canal inlet to standley reservoir on","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"what station types can I choose from","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "hmw": {
+  "firstContact": true,
+  "url": "https://mywaterway.epa.gov/community/Boulder,%20CO/overview",
+  "note": "EPA How's My Waterway, community view for Boulder, CO: Community / State & Tribal / National tabs, a location box with Go, topic tabs (Overview, Swimming, Eating Fish, Aquatic Life, Drinking Water...), a Show Text switch, waterbody / monitoring / discharger tabs, a waterbody list with Expand All, and downloads.",
+  "prompts": [
+   {"say":"open the swimming tab","kind":"action","steps":["Swimming"],"on":"Swimming","want":{"clicked":"Swimming"},"offline":null},
+   {"say":"show the drinking water tab","kind":"action","steps":["Drinking Water"],"on":"Drinking Water","want":{"clicked":"Drinking Water"},"offline":null},
+   {"say":"switch to the water monitoring locations tab","kind":"action","steps":["Water Monitoring Locations"],"on":"Water Monitoring Locations","want":{"clicked":"Water Monitoring Locations"},"offline":null},
+   {"say":"show the permitted dischargers","kind":"action","steps":["Permitted Dischargers"],"on":"Permitted Dischargers","want":{"clicked":"Permitted Dischargers"},"offline":null},
+   {"say":"turn off show text","kind":"action","steps":["Show Text"],"on":"Show Text","want":{"clicked":"Show Text"},"offline":null},
+   {"say":"expand all the waterbodies","kind":"action","steps":["Expand All"],"on":"Expand All","want":{"clicked":"Expand All"},"offline":null},
+   {"say":"go to the state & tribal page","kind":"action","steps":["State & Tribal"],"later":true,"on":"State & Tribal","want":{"clicked":"State & Tribal"},"offline":null},
+   {"say":"type denver, co in the location box and press go","kind":"multistep","steps":["Go"],"later":true,"on":"Go","want":{"clicked":"Go"},"offline":null},
+   {"say":"open the glossary","kind":"action","steps":["Glossary"],"on":"Glossary","want":{"clicked":"Glossary"},"offline":null},
+   {"say":"download all the waterbody data as a csv","kind":"action","steps":["CSV"],"on":"CSV","want":{"clicked":"CSV"},"offline":null},
+   {"say":"open the eating fish tab and tell me what it says","kind":"action+explain","steps":["Eating Fish"],"explain":true,"on":"Eating Fish","want":{"clicked":"Eating Fish"},"offline":null},
+   {"say":"how many waterbodies are in this watershed","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what watershed is boulder in","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how big is the watershed","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which waterbodies are impaired","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
+ },
+ "wqp": {
+  "firstContact": true,
+  "url": "https://www.waterqualitydata.us/",
+  "note": "Water Quality Portal: an intro box with Close intro and a don't-show-again box, Basic / Advanced tabs, a three-step download form (country, state, county, point location by miles, lat and long, site type) with Clear search and Next, and menus for exploring sites and help.",
+  "prompts": [
+   {"say":"close the intro","kind":"action","steps":["Close intro"],"on":"Close intro","want":{"clicked":"Close intro"},"offline":null},
+   {"say":"switch to the advanced form","kind":"action","steps":["Advanced"],"on":"Advanced","want":{"clicked":"Advanced"},"offline":null},
+   {"say":"set the state to colorado","kind":"action","steps":["State"],"on":"State","want":{"clicked":"State"},"offline":null},
+   {"say":"set the site type to stream","kind":"action","steps":["Site Type"],"on":"Site Type","want":{"clicked":"Site Type"},"offline":null},
+   {"say":"set the country to united states and the state to texas","kind":"multistep","steps":["Country","State"],"on":"Country","want":{"clicked":"Country"},"offline":null},
+   {"say":"go to the next step","kind":"action","steps":["Next"],"on":"Next","want":{"clicked":"Next"},"offline":null},
+   {"say":"clear the search","kind":"action","steps":["Clear search"],"on":"Clear search","want":{"clicked":"Clear search"},"offline":null},
+   {"say":"tick don't show again on this computer","kind":"action","steps":["Don't show again on this computer"],"on":"Don't show again on this computer","want":{"clicked":"Don't show again on this computer"},"offline":null},
+   {"say":"search within 10 miles of latitude 40 and longitude -105","kind":"multistep","steps":["Miles of","Lat","Long"],"on":"Miles of","want":{"clicked":"Miles of"},"offline":null},
+   {"say":"open the explore wqp sites menu","kind":"action","steps":["Explore WQP Sites"],"on":"Explore WQP Sites","want":{"clicked":"Explore WQP Sites"},"offline":null},
+   {"say":"open the advanced download page","kind":"action","steps":["Advanced Download"],"later":true,"on":"Advanced Download","want":{"clicked":"Advanced Download"},"offline":null},
+   {"say":"open help & about and tell me what it lists","kind":"action+explain","steps":["Help & About"],"explain":true,"on":"Help & About","want":{"clicked":"Help & About"},"offline":null},
+   {"say":"what is the water quality portal","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which agencies contribute data to the portal","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"when did the nwis content last change","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };

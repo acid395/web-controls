@@ -44,6 +44,7 @@ MODEL=0 node gate.js ...                page layer alone
 | 6 | NOAA NDBC station 46026 | 1.99.11 | Llama 3.2 3B, extension bench, user machine | 10/15 pass, 4 maybe (actions 6/9, chains 1/1, do-and-tell 1/1, questions 4/5) |
 | 6 | Colorado DWR stations | 1.99.11 | Llama 3.2 3B, extension bench, user machine | 8/15 pass, 1 maybe (actions 6/9, chains 0/1, do-and-tell 0/1, questions 2/4); two cards named a control by its label after the press, rescored as passes after checking the page |
 | 6 | both | 1.99.11 | Llama 3.2 3B | 18/30 pass (60%), 5 maybe |
+| 7 | EPA How's My Waterway (Boulder, CO), Water Quality Portal | 1.99.12 | Llama 3.2 3B, extension bench, user machine | pending: 15 prompts a site, frozen 2026-10-23 before any run |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the

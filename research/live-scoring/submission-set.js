@@ -1483,3 +1483,233 @@ module.exports.codwr = {
     }
   ]
 };
+
+// Round 7, 2026-10-23: two water-quality sites, prompts written
+// from screenshots before the agent ran on them. Not run offline either.
+module.exports.hmw = {
+  "url": "https://mywaterway.epa.gov/community/Boulder,%20CO/overview",
+  "note": "EPA How's My Waterway, community view for Boulder, CO: Community / State & Tribal / National tabs, a location box with Go, topic tabs (Overview, Swimming, Eating Fish, Aquatic Life, Drinking Water...), a Show Text switch, waterbody / monitoring / discharger tabs, a waterbody list with Expand All, and downloads.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "open the swimming tab",
+      "kind": "action",
+      "steps": [
+        "Swimming"
+      ]
+    },
+    {
+      "say": "show the drinking water tab",
+      "kind": "action",
+      "steps": [
+        "Drinking Water"
+      ]
+    },
+    {
+      "say": "switch to the water monitoring locations tab",
+      "kind": "action",
+      "steps": [
+        "Water Monitoring Locations"
+      ]
+    },
+    {
+      "say": "show the permitted dischargers",
+      "kind": "action",
+      "steps": [
+        "Permitted Dischargers"
+      ]
+    },
+    {
+      "say": "turn off show text",
+      "kind": "action",
+      "steps": [
+        "Show Text"
+      ]
+    },
+    {
+      "say": "expand all the waterbodies",
+      "kind": "action",
+      "steps": [
+        "Expand All"
+      ]
+    },
+    {
+      "say": "go to the state & tribal page",
+      "kind": "action",
+      "steps": [
+        "State & Tribal"
+      ],
+      "later": true
+    },
+    {
+      "say": "type denver, co in the location box and press go",
+      "kind": "multistep",
+      "steps": [
+        "Go"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the glossary",
+      "kind": "action",
+      "steps": [
+        "Glossary"
+      ]
+    },
+    {
+      "say": "download all the waterbody data as a csv",
+      "kind": "action",
+      "steps": [
+        "CSV"
+      ]
+    },
+    {
+      "say": "open the eating fish tab and tell me what it says",
+      "kind": "action+explain",
+      "steps": [
+        "Eating Fish"
+      ],
+      "explain": true
+    },
+    {
+      "say": "how many waterbodies are in this watershed",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what watershed is boulder in",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "how big is the watershed",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "which waterbodies are impaired",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
+module.exports.wqp = {
+  "url": "https://www.waterqualitydata.us/",
+  "note": "Water Quality Portal: an intro box with Close intro and a don't-show-again box, Basic / Advanced tabs, a three-step download form (country, state, county, point location by miles, lat and long, site type) with Clear search and Next, and menus for exploring sites and help.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "close the intro",
+      "kind": "action",
+      "steps": [
+        "Close intro"
+      ]
+    },
+    {
+      "say": "switch to the advanced form",
+      "kind": "action",
+      "steps": [
+        "Advanced"
+      ]
+    },
+    {
+      "say": "set the state to colorado",
+      "kind": "action",
+      "steps": [
+        "State"
+      ]
+    },
+    {
+      "say": "set the site type to stream",
+      "kind": "action",
+      "steps": [
+        "Site Type"
+      ]
+    },
+    {
+      "say": "set the country to united states and the state to texas",
+      "kind": "multistep",
+      "steps": [
+        "Country",
+        "State"
+      ]
+    },
+    {
+      "say": "go to the next step",
+      "kind": "action",
+      "steps": [
+        "Next"
+      ]
+    },
+    {
+      "say": "clear the search",
+      "kind": "action",
+      "steps": [
+        "Clear search"
+      ]
+    },
+    {
+      "say": "tick don't show again on this computer",
+      "kind": "action",
+      "steps": [
+        "Don't show again on this computer"
+      ]
+    },
+    {
+      "say": "search within 10 miles of latitude 40 and longitude -105",
+      "kind": "multistep",
+      "steps": [
+        "Miles of",
+        "Lat",
+        "Long"
+      ]
+    },
+    {
+      "say": "open the explore wqp sites menu",
+      "kind": "action",
+      "steps": [
+        "Explore WQP Sites"
+      ]
+    },
+    {
+      "say": "open the advanced download page",
+      "kind": "action",
+      "steps": [
+        "Advanced Download"
+      ],
+      "later": true
+    },
+    {
+      "say": "open help & about and tell me what it lists",
+      "kind": "action+explain",
+      "steps": [
+        "Help & About"
+      ],
+      "explain": true
+    },
+    {
+      "say": "what is the water quality portal",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "which agencies contribute data to the portal",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "when did the nwis content last change",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};

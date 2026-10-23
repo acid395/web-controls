@@ -259,3 +259,40 @@ explain         how many items are in the table
 explain         what is the discharge at united #3 pump inlet 1
 explain         which water source is the croke canal inlet to standley reservoir on
 explain         what station types can I choose from
+
+ROUND 7 - written 2026-10-23 from screenshots only, before the agent ran on these sites.
+Run as the extension bench (15 prompts a site) on 1.99.12, by the user. Captured with LOOK only; the agent was not run on them.
+
+hmw  https://mywaterway.epa.gov/community/Boulder,%20CO/overview
+action          open the swimming tab
+action          show the drinking water tab
+action          switch to the water monitoring locations tab
+action          show the permitted dischargers
+action          turn off show text
+action          expand all the waterbodies
+action          go to the state & tribal page
+multistep       type denver, co in the location box and press go
+action          open the glossary
+action          download all the waterbody data as a csv
+action+explain  open the eating fish tab and tell me what it says
+explain         how many waterbodies are in this watershed
+explain         what watershed is boulder in
+explain         how big is the watershed
+explain         which waterbodies are impaired
+
+wqp  https://www.waterqualitydata.us/
+action          close the intro
+action          switch to the advanced form
+action          set the state to colorado
+action          set the site type to stream
+multistep       set the country to united states and the state to texas
+action          go to the next step
+action          clear the search
+action          tick don't show again on this computer
+multistep       search within 10 miles of latitude 40 and longitude -105
+action          open the explore wqp sites menu
+action          open the advanced download page
+action+explain  open help & about and tell me what it lists
+explain         what is the water quality portal
+explain         which agencies contribute data to the portal
+explain         when did the nwis content last change
