@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.28 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.29 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.28";
+globalThis.WC_WIDGET_VERSION = "0.4.29";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -13476,13 +13476,18 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
   let cost = null;
   const pct = (p) => (p == null ? "?" : `${Math.round(p * 100)}%`);
   const wantsOff = /\b(?:uncheck|untick|turn\s+off|switch\s+off|disable|deselect|hide)\b/i.test(goal);
+  // After a way in opened, the next choice is among what it revealed, not the
+  // whole page again: asked once more over everything, a 3B that had opened
+  // Data Access went on to open Documentation and External Resources.
+  let revealedKeys = null;
   for (let round = 0; round < rounds; round++) {
     const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
     if (!inv || !inv.ok || !inv.result) break;
     const pressedLabels = new Set(history.filter((h) => h.label).map((h) => String(h.label).toLowerCase().trim()));
     const offered = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE })
       .filter((c) => !c.disabled && String(c.label || "").trim() && String(c.label).length <= 100 && (!c.hidden || c.revealedBy)
-        && !pressedLabels.has(String(c.label).toLowerCase().trim())), CHOICE_LETTERS.length);
+        && !pressedLabels.has(String(c.label).toLowerCase().trim())
+        && (!revealedKeys || revealedKeys.has(controlKey(c)))), CHOICE_LETTERS.length);
     if (!offered.length) break;
     const done = history.filter((h) => h.ok && !h.skipped).map((h) => h.did).join("; ");
     const asked = await askChoice(goal, offered.map(choiceLine),
@@ -13557,11 +13562,13 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
     forgetInventory();
     const after = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
     const was = new Set(before);
-    const appeared = ((after && after.ok && after.result && after.result.controls) || []).filter((c) => !c.hidden && !was.has(controlKey(c))).length;
+    const newly = ((after && after.ok && after.result && after.result.controls) || []).filter((c) => !c.hidden && !was.has(controlKey(c)));
+    const appeared = newly.length;
     // Only a way in asks again - a section or menu that opened onto what was
     // asked. A tab, a button, a switch is the request carried out, and asked
     // again a 3B went on pressing whatever the press had revealed.
     if (!appeared || call.name !== "pageClick" || !target.opensPanel) break;
+    revealedKeys = new Set(newly.map(controlKey));
   }
   if (!history.length) return null;
   return { history, calls, tookMs: Date.now() - began, cost };
