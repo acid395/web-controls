@@ -566,7 +566,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The same two prompts the panel is given. A question asked here
         // would otherwise still get the operating prompt, so which window
         // answered would change the kind of answer.
-        const prompt = msg.mode === "read" && globalThis.WC_BUILD_READ_PROMPT
+        // A choice is built by the caller, so every host is given its words.
+        const prompt = msg.mode === "choice" && msg.prompt ? msg.prompt
+          : msg.mode === "read" && globalThis.WC_BUILD_READ_PROMPT
           ? globalThis.WC_BUILD_READ_PROMPT(msg)
           : msg.mode === "plan" && globalThis.WC_BUILD_PLAN_PROMPT
             ? globalThis.WC_BUILD_PLAN_PROMPT(msg)
@@ -581,7 +583,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const reply = await whileBusy(() => Promise.race([
           engine.chat.completions.create({
             messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
-            temperature: 0,
+            temperature: msg.logprobs ? 1 : 0,
             // A decision is `{"n":14,"do":"check","on":true}` - about twenty
             // tokens, and that is what it costs: this is a ceiling, not a
             // budget, so an action turn decodes twenty tokens whatever the
@@ -592,8 +594,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // Room for a phrase of reasoning before the object. Still a
             // ceiling rather than a budget: a short answer costs what it
             // costs, and this only binds on one that rambles.
-            max_tokens: msg.schema ? 320 : 192,
+            max_tokens: msg.maxTokens || (msg.schema ? 320 : 192),
             ...(msg.schema ? { response_format: { type: "json_object", schema: msg.schema } } : {}),
+            ...(msg.logprobs ? { logprobs: true, top_logprobs: 5 } : {}),
           }),
           new Promise((_, reject) => setTimeout(
             () => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`)),
@@ -627,7 +630,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             error: `model did not return usable JSON: ${text.slice(0, 200)}` });
           return;
         }
-        sendResponse({ ok: true, step: parsed, cost, raw: text.slice(0, 300) });
+        const lp = msg.logprobs && reply.choices[0].logprobs && reply.choices[0].logprobs.content;
+        sendResponse({ ok: true, step: parsed, cost, raw: text.slice(0, 300),
+          ...(lp ? { logprobs: lp.map((t) => ({ token: t.token, logprob: t.logprob,
+            top: (t.top_logprobs || []).map((x) => ({ token: x.token, logprob: x.logprob })) })) } : {}) });
       } catch (err) {
         const why = String((err && err.message) || err);
         // Reported as it is. This used to switch models here, and switching

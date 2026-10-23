@@ -79,7 +79,7 @@ export function status() {
 
 // One decision. The same shape the offscreen document answers with, so the
 // caller cannot tell which one served it apart from the speed.
-export async function step(modelId, prompt, { timeoutMs = 45000, schema = null } = {}, onProgress) {
+export async function step(modelId, prompt, { timeoutMs = 45000, schema = null, logprobs = false, maxTokens = null } = {}, onProgress) {
   const engine = await engineFor(modelId, onProgress);
   const began = Date.now();
   // A schema, where one is given, keeps the reply inside it - a plan can
@@ -93,20 +93,28 @@ export async function step(modelId, prompt, { timeoutMs = 45000, schema = null }
   const create = async (withSchema) => {
     const chunks = await engine.chat.completions.create({
       messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
-      temperature: 0,
-      max_tokens: withSchema ? 320 : 192,
+      // At temperature 0 every distribution is one certain token, so a
+      // choice read for its probabilities is read at 1, and its most likely
+      // option taken from those probabilities rather than from the sample.
+      temperature: logprobs ? 1 : 0,
+      max_tokens: maxTokens || (withSchema ? 320 : 192),
       ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
+      // Each token's probability, and the next most likely ones: a choice
+      // read as a distribution over its options, not just the one written.
+      ...(logprobs ? { logprobs: true, top_logprobs: 5 } : {}),
       stream: true,
       stream_options: { include_usage: true },
     });
     let content = "";
     let usage = null;
+    const lps = [];
     for await (const c of chunks) {
       const ch = c && c.choices && c.choices[0];
       if (ch && ch.delta && ch.delta.content) content += ch.delta.content;
+      if (ch && ch.logprobs && Array.isArray(ch.logprobs.content)) lps.push(...ch.logprobs.content);
       if (c && c.usage) usage = c.usage;
     }
-    return { choices: [{ message: { content } }], usage };
+    return { choices: [{ message: { content } }], usage, lps };
   };
   let timer = null;
   let reply;
@@ -127,6 +135,8 @@ export async function step(modelId, prompt, { timeoutMs = 45000, schema = null }
   const x = u.extra || {};
   return {
     text: (reply.choices[0].message.content || "").trim(),
+    ...(logprobs ? { logprobs: (reply.lps || []).map((t) => ({ token: t.token, logprob: t.logprob,
+      top: (t.top_logprobs || []).map((x) => ({ token: x.token, logprob: x.logprob })) })) } : {}),
     ms: Date.now() - began,
     cost: {
       promptTokens: u.prompt_tokens ?? null,

@@ -1546,6 +1546,7 @@ module.exports.hmw = {
       "say": "type denver, co in the location box and press go",
       "kind": "multistep",
       "steps": [
+        "Search",
         "Go"
       ],
       "later": true

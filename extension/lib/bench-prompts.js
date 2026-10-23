@@ -515,7 +515,7 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"turn off show text","kind":"action","steps":["Show Text"],"on":"Show Text","want":{"clicked":"Show Text"},"offline":null},
    {"say":"expand all the waterbodies","kind":"action","steps":["Expand All"],"on":"Expand All","want":{"clicked":"Expand All"},"offline":null},
    {"say":"go to the state & tribal page","kind":"action","steps":["State & Tribal"],"later":true,"on":"State & Tribal","want":{"clicked":"State & Tribal"},"offline":null},
-   {"say":"type denver, co in the location box and press go","kind":"multistep","steps":["Go"],"later":true,"on":"Go","want":{"clicked":"Go"},"offline":null},
+   {"say":"type denver, co in the location box and press go","kind":"multistep","steps":["Search","Go"],"later":true,"on":"Search","want":{"clicked":"Search"},"offline":null},
    {"say":"open the glossary","kind":"action","steps":["Glossary"],"on":"Glossary","want":{"clicked":"Glossary"},"offline":null},
    {"say":"download all the waterbody data as a csv","kind":"action","steps":["CSV"],"on":"CSV","want":{"clicked":"CSV"},"offline":null},
    {"say":"open the eating fish tab and tell me what it says","kind":"action+explain","steps":["Eating Fish"],"explain":true,"on":"Eating Fish","want":{"clicked":"Eating Fish"},"offline":null},

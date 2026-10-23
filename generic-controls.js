@@ -719,6 +719,10 @@
     // could not tell from the first. Page coordinates, so something merely
     // scrolled past still counts as on the page.
     else if (r.right + window.scrollX < -500 || r.bottom + window.scrollY < -500) out = false;
+    // Off the right edge of a page that does not scroll sideways: a drawer
+    // parked out of view - EPA's glossary, 140 terms fixed just past the
+    // window - which nobody can see or reach until it is opened.
+    else if (r.left >= window.innerWidth && document.documentElement.scrollWidth <= window.innerWidth + 1) out = false;
     else {
       const s = getComputedStyle(el);
       out = s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
@@ -808,7 +812,13 @@
     } catch (e) { return true; }   // not valid on its own (crosses a shadow root); keep it
   };
   const cssPath = (el) => {
-    if (el.id) return `#${CSS.escape(el.id)}`;
+    // An id only where the page uses it once. EPA's tab sets each number
+    // their tabs tabs--tab--0, --1...; "#tabs--tab--1" found a hidden URL tab
+    // in a share panel, and the Swimming tab it was meant for never moved.
+    if (el.id) {
+      const byId = `#${CSS.escape(el.id)}`;
+      if (namesOne(byId, el)) return byId;
+    }
     const parts = [];
     let cur = el;
     while (cur && cur.nodeType === 1 && parts.length < 24) {
@@ -1198,6 +1208,9 @@
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // A box that only shows something - the Water Quality Portal's
+        // "Current URL based on input search parameters" - is not one to type in.
+        readOnly: (el.readOnly || el.getAttribute("aria-readonly") === "true") ? true : undefined,
         // Inside a dialog or pop-up: "close the intro" means its close button,
         // not the sidebar's.
         inDialog: (() => { try { return el.closest("[role=dialog], [role=alertdialog], [aria-modal=true], dialog, .modal, .MuiDialog-root, .MuiModal-root, [class*='popup']") ? true : undefined; } catch (e) { return undefined; } })(),

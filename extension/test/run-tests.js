@@ -3033,6 +3033,209 @@ for (const shape of ["div", "table"]) {
   if (page) check(`a role grid's plain header row names its columns (${shape})`, JSON.stringify((page.GENERIC.readPage().tables.find((t) => (t.rows || []).length === 2 && t.columns) || {}).columns), JSON.stringify(["Station Name", "Value", "Water Source"]));
 }
 
+// Round seven, on made-up pages. A drawer parked past the right edge of a
+// page that does not scroll sideways is not on screen; one in view is.
+{
+  const page = loadPage(`<!doctype html><html><body><button id="tab">Swimming</button>
+    <div id="drawer" style="position:fixed"><button id="g">Swimming and Boating</button></div></body></html>`, { url: "https://water.example.gov/community" });
+  if (page) {
+    const w = page.window.innerWidth || 1024;
+    page.document.getElementById("g").getBoundingClientRect = () => ({ left: w + 6, right: w + 330, top: 10, bottom: 40, width: 324, height: 30 });
+    page.document.getElementById("tab").getBoundingClientRect = () => ({ left: 10, right: 120, top: 10, bottom: 40, width: 110, height: 30 });
+    const recs = page.GENERIC.inventory({ includeHidden: true }).controls;
+    const parked = recs.find((c) => c.label === "Swimming and Boating");
+    ensure("a control in a drawer parked off the right edge is not shown", !parked || parked.hidden === true, recs.map((c) => [c.label, c.hidden]));
+    ensure("and the one on screen is", !(recs.find((c) => c.label === "Swimming") || {}).hidden, "");
+  }
+}
+// A plan's step that names part of a name the request gives whole takes the
+// whole; nothing is acted on twice; the opposite of the request is skipped.
+for (const [instr, plan, wantPressed, notPressed] of [
+  ["show the permitted dischargers", [["Dischargers", "click"]], "tab", "layer"],
+  ["expand all the waterbodies", [["All", "click"]], "exp", "all"],
+  ["turn off show text", [["Show Text", "check"], ["Show Text", "click"]], "st", null],
+  ["open the glossary", [["Glossary", "click"], ["Close glossary", "click"]], "gl", "cg"],
+  ["show the dischargers", [["Dischargers", "click"]], "layer", "tab"],
+]) {
+  const page = loadPage(`<!doctype html><html><body>
+    <button id="layer">Dischargers</button> <button id="tab" role="tab">Permitted Dischargers</button>
+    <button id="all">All</button> <button id="exp">Expand All</button>
+    <label><input type="checkbox" id="st" checked> Show Text</label>
+    <button id="gl">Glossary</button> <button id="cg">Close glossary</button></body></html>`, { url: "https://water.example.gov/community" });
+  if (!page) continue;
+  const pressed = [];
+  for (const el of page.document.querySelectorAll("button, input")) el.addEventListener("click", () => pressed.push(el.id));
+  const bg = loadBackground({ page });
+  bg.__plans = true;
+  bg.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type !== "llmStep") return undefined;
+    if (m.mode === "plan") return { ok: true, step: { steps: plan.map(([name, d]) => ({ name: (m.controls.find((c) => c.label === name) || {}).label || name, do: d })) } };
+    return { ok: true, step: { do: "finish", answer: "" } };
+  };
+  runAsync(async () => {
+    await require("vm").runInContext(`planWithModel("GENERIC", ${JSON.stringify(instr)})`, bg);
+    ensure(`${instr}: pressed the one asked for`, pressed.includes(wantPressed), pressed);
+    if (notPressed) ensure(`${instr}: and not the other`, !pressed.includes(notPressed), pressed);
+    if (instr === "turn off show text") {
+      check("turn off show text: pressed once", pressed.filter((p) => p === "st").length, 1);
+      check("and it ends off", page.document.getElementById("st").checked, false);
+    }
+  });
+}
+{
+  const bgw = loadBackground({});
+  check("a count said beside the rest of the question is the answer",
+    require("vm").runInContext(`answerInPageWords("how many waterbodies are in this watershed", { title: "Waters", headings: [], text: "x ".repeat(300) + "Overall condition of 4 waterbodies in the Boulder Creek watershed." }, [])`, bgw), "The page says 4 waterbodies in all.");
+  check("but not one about something else", require("vm").runInContext(`answerInPageWords("how many dams are in texas", { title: "Dams", headings: [], text: "x ".repeat(300) + "92,695 dams nationwide" }, [])`, bgw), null);
+}
+
+// A box that only shows something is not searched into; a plan that holds
+// the control named completely presses nothing else; "what is X" answered
+// from the page's own definition, and only from a definition.
+{
+  const page = loadPage(`<!doctype html><html><body><form id="f">
+    <label for="u">Current URL based on input search parameters</label><input id="u" type="text" readonly value="https://example.gov/q">
+    <label for="s">Search</label><input id="s" type="search"><button type="submit">Go</button></form></body></html>`, { url: "https://water.example.gov/portal" });
+  if (page) {
+    page.document.getElementById("f").addEventListener("submit", (e) => e.preventDefault());
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "search for lake tahoe" });
+      check("a read-only box is left as it was", page.document.getElementById("u").value, "https://example.gov/q");
+      check("and the real search box gets the words", page.document.getElementById("s").value, "lake tahoe");
+    });
+  }
+}
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <button id="m" aria-expanded="false">Explore WQP Sites</button>
+    <a id="a" href="/what">What is the WQP?</a> <a id="b" href="/apps">Applications using the WQP</a></body></html>`, { url: "https://water.example.gov/portal" });
+  if (page) {
+    const pressed = [];
+    for (const el of page.document.querySelectorAll("a, button")) el.addEventListener("click", (e) => { e.preventDefault(); pressed.push(el.id); });
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") return { ok: true, step: { steps: ["Explore WQP Sites", "What is the WQP?", "Applications using the WQP"].map((name) => ({ name, do: "click" })) } };
+      return { ok: true, step: { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await require("vm").runInContext(`planWithModel("GENERIC", "open the explore wqp sites menu")`, bg);
+      ensure("the menu named completely is opened, and nothing inside it followed", pressed.length === 1 && pressed[0] === "m", pressed);
+    });
+  }
+}
+{
+  const bgw = loadBackground({});
+  const vm = require("vm");
+  const t = "The Water Quality Portal will transition to a new cloud environment in September. The Water Quality Portal (WQP) is the premiere source of discrete water-quality data in the United States.";
+  check("what is X: the page's own definition", vm.runInContext(`answerInPageWords("what is the water quality portal", { title: "WQP", headings: [], text: ${JSON.stringify(t)} }, [])`, bgw),
+    "The Water Quality Portal (WQP) is the premiere source of discrete water-quality data in the United States.");
+  check("but a sentence about a measurement is not its value", vm.runInContext(`answerInPageWords("what is the water temperature", { title: "x", headings: [], text: "Water temperature is measured hourly at the buoy." }, [])`, bgw), null);
+}
+
+// Two elements sharing one id: the control is addressed by where it is, not
+// by an id that finds the other one first.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <div style="display:none"><button role="tab" id="tabs--tab--1">URL</button></div>
+    <div role="tablist"><button role="tab" id="tabs--tab--0" aria-selected="true">Overview</button><button role="tab" id="tabs--tab--1" aria-selected="false">Swimming</button></div>
+    </body></html>`, { url: "https://water.example.gov/community" });
+  if (page) {
+    const tabs = page.document.querySelectorAll('[role="tablist"] [role="tab"]');
+    for (const t of tabs) t.addEventListener("click", () => { for (const u of tabs) u.setAttribute("aria-selected", String(u === t)); });
+    const rec = page.GENERIC.inventory({}).controls.find((c) => c.label === "Swimming");
+    ensure("a duplicated id is not used as the address", rec && page.document.querySelector(rec.selector) === tabs[1], rec && rec.selector);
+    const bg = loadBackground({ page });
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "open the swimming tab" });
+      check("open the swimming tab selects Swimming", tabs[1].getAttribute("aria-selected"), "true");
+    });
+  }
+}
+
+section("the model chooses from the page's controls");
+// "decide choice": each step a lettered list of the page's controls, the
+// answer held to one letter and read with its probability. A sure choice
+// is acted on; an unsure one, or "none of these", goes back to the rest of
+// the agent; and in the default mode no choice is ever asked.
+{
+  const choosingModel = (pick, p = 0.9, calls = []) => (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" };
+    if (m.type !== "llmStep") return undefined;
+    if (m.mode !== "choice") { calls.push(m.mode || "step"); return { ok: true, step: { do: "finish", answer: "" } }; }
+    calls.push("choice");
+    const line = String(m.prompt).split("\n").find((l) => /^[A-Z]\) /.test(l) && pick.test(l.slice(3)));
+    const letter = line ? line[0] : "Z";
+    return { ok: true, step: { choice: letter }, logprobs: [{ token: '{"', logprob: 0 }, { token: letter, logprob: Math.log(p), top: [{ token: letter, logprob: Math.log(p) }] }] };
+  };
+  const page = (html) => loadPage(`<!doctype html><html><body>${html}</body></html>`, { url: "https://water.example.gov/community" });
+  const tabs = `<div role="tablist"><button role="tab" id="t1" aria-selected="true">Waterbodies</button><button role="tab" id="t2" aria-selected="false">Permitted Dischargers</button></div><button id="d">Dischargers</button>`;
+  // A sure choice is pressed.
+  {
+    const p = page(tabs);
+    if (p) {
+      const pressed = []; for (const el of p.document.querySelectorAll("button")) el.addEventListener("click", () => pressed.push(el.id));
+      const bg = loadBackground({ page: p }); const calls = [];
+      bg.__model = choosingModel(/^Permitted Dischargers/, 0.9, calls);
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+        const r = await bg.__ask({ type: "smartAsk", instruction: "show the permitted dischargers" });
+        check("choice mode: the chosen control is pressed", pressed.join(","), "t2");
+        check("and the card says the model chose it", r.plannedBy, "choice");
+        ensure("with how sure it was", /90% sure/.test(JSON.stringify((r.display || {}).rows || [])), (r.display || {}).rows);
+      });
+    }
+  }
+  // A list: the control, then its option.
+  {
+    const p = page(`<label for="s">State</label><select id="s"><option value="">Choose</option><option value="CO">Colorado</option><option value="TX">Texas</option></select>`);
+    if (p) {
+      const bg = loadBackground({ page: p });
+      bg.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type !== "llmStep" || m.mode !== "choice") return m.type === "llmStep" ? { ok: true, step: { do: "finish", answer: "" } } : undefined;
+        const want = /In the list/.test(m.prompt) ? /^Texas/ : /^State/;
+        const line = String(m.prompt).split("\n").find((l) => /^[A-Z]\) /.test(l) && want.test(l.slice(3)));
+        return { ok: true, step: { choice: line ? line[0] : "Z" }, logprobs: [{ token: line ? line[0] : "Z", logprob: Math.log(0.8) }] };
+      };
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+        await bg.__ask({ type: "smartAsk", instruction: "set the state to texas" });
+        check("choice mode: a list's option is chosen the same way", p.document.getElementById("s").value, "TX");
+      });
+    }
+  }
+  // Unsure, or none of these: handed back, and the rest of the agent acts.
+  for (const [what, model] of [["an unsure choice", choosingModel(/^Dischargers/, 0.2)], ["none of these", choosingModel(/^nothing matches this/, 0.9)]]) {
+    const p = page(tabs);
+    if (!p) continue;
+    const pressed = []; for (const el of p.document.querySelectorAll("button")) el.addEventListener("click", () => pressed.push(el.id));
+    const bg = loadBackground({ page: p });
+    bg.__model = model;
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+      const r = await bg.__ask({ type: "smartAsk", instruction: "show the permitted dischargers" });
+      ensure(`${what}: not acted on by the choice`, r.plannedBy !== "choice" && !pressed.includes("d"), { by: r.plannedBy, pressed });
+    });
+  }
+  // The default mode asks no choice at all.
+  {
+    const p = page(tabs);
+    if (p) {
+      const bg = loadBackground({ page: p }); const calls = [];
+      bg.__model = choosingModel(/^Permitted Dischargers/, 0.9, calls);
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "show the permitted dischargers" });
+        ensure("the default mode never asks for a choice", !calls.includes("choice"), calls);
+      });
+    }
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
