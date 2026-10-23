@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.27 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.28 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.27",
+    version: "0.4.28",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.27";
+globalThis.WC_WIDGET_VERSION = "0.4.28";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -1353,7 +1353,7 @@ return (function () {
         if (isIconGlyph(c)) { glyphs.push(String(c.textContent || "").trim()); continue; }
         if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
         if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
-        walk(c);
+        out += "\u0001"; walk(c); out += "\u0001";
       }
     };
     for (const node of el.childNodes) {
@@ -1369,9 +1369,14 @@ return (function () {
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
       else if (node.nodeType === 1 && isIconGlyph(node)) glyphs.push(String(node.textContent || "").trim());
       else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
-        && !(skipControls && isControlish(node))) walk(node);
+        && !(skipControls && isControlish(node))) { out += "\u0001"; walk(node); out += "\u0001"; }
       if (out.length > 200) break;
     }
+    // A count in its own element beside a name is not part of the name:
+    // "<span>69</span>Permitted Dischargers" read as "69Permitted Dischargers".
+    // Only a figure against a letter is parted; a word an element splits,
+    // "Sep<span>tember</span>", stays whole.
+    out = out.replace(/(\d)\u0001+(?=[A-Za-z])/g, "$1 ").replace(/([A-Za-z])\u0001+(?=\d)/g, "$1 ").replace(/\u0001/g, "");
     // An icon-only button is still called what its icon says: "close".
     if (!out.trim() && glyphs.length) out = glyphs.join(" ").replace(/_/g, " ");
     return out.slice(0, 200);
@@ -13409,6 +13414,24 @@ async function pressRevealedNamed(routeGlobal, goal, before, already = new Set()
  * Switched on with "decide choice", off with "decide plan".
  */
 const CHOICE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXY".split("");
+/* A step that carries a value to type or set - "set the state to colorado",
+ * "type denver", "search for folsom", "from 1991 to 2020" - is the rest of
+ * the agent's: a value is not one of a list of letters. Choice takes the
+ * steps that are only a matter of which control.
+ */
+function carriesAValue(part) {
+  const t = String(part || "");
+  if (/^\s*(?:please\s+)?(?:type|enter|fill(?:\s+in)?|put|write|input)\b/i.test(t)) return true;
+  if (SEARCH_CLAUSE.test(t) || RANGE_IN.test(t)) return true;
+  const m = t.match(SET_TO);
+  return !!(m && listWords(m[1]).filter((w) => !CONTROL_VERB.test(w) && !verbFamily(w)).length && listWords(m[2]).length);
+}
+// A control that takes typing, whatever it calls itself: a box, or a
+// searchable dropdown that is typed into to filter its list.
+function takesTyping(c) {
+  const kind = String(c.type || c.kind || "").toLowerCase();
+  return TEXT_INPUT_KINDS.has(kind) || ((/^(?:combobox|listbox|input)$/.test(kind) || /\binput box\b/i.test(String(c.label || ""))) && !(c.options || []).length);
+}
 const CHOICE_SURE = 0.4;
 async function decisionMode() {
   return chrome.storage.local.get("decisionMode").then((g) => g.decisionMode || "plan").catch(() => "plan");
@@ -13519,7 +13542,7 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
       call = { name: "pageSelectOption", args: { selector: target.selector, value: picked.option.value || picked.option.text } };
     } else if (/checkbox|radio|switch/.test(kind)) {
       call = { name: "pageCheck", args: { selector: target.selector, on: !wantsOff } };
-    } else if (TEXT_INPUT_KINDS.has(kind)) {
+    } else if (takesTyping(target)) {
       // What to type is not a choice among options; the rest of the agent has that.
       if (round === 0) return null;
       break;
@@ -19905,15 +19928,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const parts = splitIntoSteps(wanted);
             const all = { history: [], calls: 0, tookMs: 0, cost: null };
             let handled = true;
-            for (const part of parts) {
+            // One step carrying a value: the normal path entire, as without choice.
+            if (parts.length === 1 && carriesAValue(parts[0])) handled = false;
+            for (const part of handled ? parts : []) {
               if (ASKING_TO_READ.test(part) || QUESTION_LED.test(part)) {
                 const read = await runModelAgent(route.global, part, { maxSteps: 2 }).catch(() => null);
                 all.history.push({ did: "then read the page", ok: !!(read && read.ok), changed: false, outcome: read && read.answer ? String(read.answer).slice(0, 300) : "no answer" });
                 if (read && read.answer) all.answer = read.answer;
                 continue;
               }
-              const one = await chooseAndAct(route.global, part).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
-              if (!one) { if (parts.length === 1) { handled = false; break; } all.history.push({ did: part, ok: false, changed: false, outcome: "the model was not sure enough to choose" }); break; }
+              // In a sequence, a step with a value - or one the choice handed back -
+              // goes the way any sequence step goes: the page, then the plan,
+              // then the step-by-step model.
+              const normally = async () => {
+                const step = await resolveStep(route.global, part, { exact: false, lateLooks: 2 }).catch(() => null);
+                if (step) {
+                  return step.kind === "search"
+                    ? { did: `searched for "${String(step.searched.words || "").slice(0, 40)}"`, ok: true, changed: true, outcome: "the page's own search" }
+                    : { did: String(step.did || part), ok: true, changed: step.changed !== false, outcome: step.outcome || "done by the page" };
+                }
+                const planned = await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null);
+                if (planned && planned.history.some((h) => h.ok && !h.skipped)) {
+                  return { did: part, ok: true, changed: planned.history.some((h) => h.changed), outcome: planned.history.map((h) => h.did).join("; ").slice(0, 90) };
+                }
+                return null;
+              };
+              const one = carriesAValue(part) ? null
+                : await chooseAndAct(route.global, part).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
+              if (!one) {
+                if (parts.length === 1) { handled = false; break; }
+                const done = await normally();
+                if (done) { all.history.push({ ...done, outcome: `${done.outcome} (normal path)` }); continue; }
+                all.history.push({ did: part, ok: false, changed: false, outcome: "neither the choice nor the normal path could do this step" });
+                break;
+              }
               all.history.push(...one.history); all.calls += one.calls; all.tookMs += one.tookMs; all.cost = one.cost || all.cost;
             }
             if (handled && all.history.length) {
