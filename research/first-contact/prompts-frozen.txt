@@ -296,3 +296,42 @@ action+explain  open help & about and tell me what it lists
 explain         what is the water quality portal
 explain         which agencies contribute data to the portal
 explain         when did the nwis content last change
+
+ROUND 8 - written 2026-10-23 from screenshots only, before the agent ran on these sites.
+Run as the extension bench (15 prompts a site) on 1.99.16 by the user, once with decide plan and once with decide choice. Captured with LOOK only; the agent was not run on them.
+
+stormev  https://www.ncei.noaa.gov/access/storm-events-database/
+action          open the data access menu
+action          open the documentation menu
+action          open the external resources menu
+action          start a search
+action          open the hurricane helene featured event
+action          show the events history on october 23
+action          open the quick start guide
+action          learn more about bulk data access
+action          go to the about page
+action          go to the monthly storm data publication page
+action          return to the top of the page
+multistep       open the data access menu, then open the documentation menu
+explain         what time period does the database cover
+explain         how can i get a certified report
+explain         what is the storm events database
+
+echo  https://echo.epa.gov/facilities/facility-search
+action          collapse all the sections
+action          expand all the sections
+action          show more search options
+action          open related tools
+action          switch the results view to data table
+action          set the epa region to region 9
+action          set active/operating to any
+action          type sacramento in the city box
+multistep       set the state to california and click search
+action          open the analyze trends menu
+action          open the data services menu
+action          set the frs tribal land code to yes
+multistep       switch to the data table view and click search
+action          open the help page
+explain         what does echo stand for
+
+ROUND 8 change, 2026-10-23, before any run: "view more search options" (echo) became "show more search options" - the bench's own rule forbids a prompt that is only a control's label.

@@ -546,5 +546,49 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"which agencies contribute data to the portal","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"when did the nwis content last change","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "stormev": {
+  "firstContact": true,
+  "url": "https://www.ncei.noaa.gov/access/storm-events-database/",
+  "note": "NCEI Storm Events Database home: Home / About / Data Access / Documentation / External Resources menus, Start Search and bulk-data links, featured events, resources and a return-to-top link.",
+  "prompts": [
+   {"say":"open the data access menu","kind":"action","steps":["Data Access"],"on":"Data Access","want":{"clicked":"Data Access"},"offline":null},
+   {"say":"open the documentation menu","kind":"action","steps":["Documentation"],"on":"Documentation","want":{"clicked":"Documentation"},"offline":null},
+   {"say":"open the external resources menu","kind":"action","steps":["External Resources"],"on":"External Resources","want":{"clicked":"External Resources"},"offline":null},
+   {"say":"start a search","kind":"action","steps":["Start Search"],"later":true,"on":"Start Search","want":{"clicked":"Start Search"},"offline":null},
+   {"say":"open the hurricane helene featured event","kind":"action","steps":["Hurricane Helene"],"later":true,"on":"Hurricane Helene","want":{"clicked":"Hurricane Helene"},"offline":null},
+   {"say":"show the events history on october 23","kind":"action","steps":["Events History on October 23"],"later":true,"on":"Events History on October 23","want":{"clicked":"Events History on October 23"},"offline":null},
+   {"say":"open the quick start guide","kind":"action","steps":["View Quick Start Guide"],"later":true,"on":"View Quick Start Guide","want":{"clicked":"View Quick Start Guide"},"offline":null},
+   {"say":"learn more about bulk data access","kind":"action","steps":["Learn More"],"later":true,"on":"Learn More","want":{"clicked":"Learn More"},"offline":null},
+   {"say":"go to the about page","kind":"action","steps":["About"],"later":true,"on":"About","want":{"clicked":"About"},"offline":null},
+   {"say":"go to the monthly storm data publication page","kind":"action","steps":["Go to Publication Page"],"later":true,"on":"Go to Publication Page","want":{"clicked":"Go to Publication Page"},"offline":null},
+   {"say":"return to the top of the page","kind":"action","steps":["Return to top"],"on":"Return to top","want":{"clicked":"Return to top"},"offline":null},
+   {"say":"open the data access menu, then open the documentation menu","kind":"multistep","steps":["Data Access","Documentation"],"on":"Data Access","want":{"clicked":"Data Access"},"offline":null},
+   {"say":"what time period does the database cover","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how can i get a certified report","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what is the storm events database","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
+ },
+ "echo": {
+  "firstContact": true,
+  "url": "https://echo.epa.gov/facilities/facility-search",
+  "note": "EPA ECHO facility search: collapsible sections (media program, geography, community, facility characteristics, enforcement), Collapse All / Expand All, dropdowns, radio groups, text boxes, a results view switch (map or data table) and Search.",
+  "prompts": [
+   {"say":"collapse all the sections","kind":"action","steps":["Collapse All"],"on":"Collapse All","want":{"clicked":"Collapse All"},"offline":null},
+   {"say":"expand all the sections","kind":"action","steps":["Expand All"],"on":"Expand All","want":{"clicked":"Expand All"},"offline":null},
+   {"say":"show more search options","kind":"action","steps":["View More Search Options"],"on":"View More Search Options","want":{"clicked":"View More Search Options"},"offline":null},
+   {"say":"open related tools","kind":"action","steps":["Related Tools"],"on":"Related Tools","want":{"clicked":"Related Tools"},"offline":null},
+   {"say":"switch the results view to data table","kind":"action","steps":["Data Table"],"on":"Data Table","want":{"clicked":"Data Table"},"offline":null},
+   {"say":"set the epa region to region 9","kind":"action","steps":["EPA Region"],"on":"EPA Region","want":{"clicked":"EPA Region"},"offline":null},
+   {"say":"set active/operating to any","kind":"action","steps":["Any"],"on":"Any","want":{"clicked":"Any"},"offline":null},
+   {"say":"type sacramento in the city box","kind":"action","steps":["City"],"on":"City","want":{"clicked":"City"},"offline":null},
+   {"say":"set the state to california and click search","kind":"multistep","steps":["State/Territory","Search"],"on":"State/Territory","want":{"clicked":"State/Territory"},"offline":null},
+   {"say":"open the analyze trends menu","kind":"action","steps":["Analyze Trends"],"on":"Analyze Trends","want":{"clicked":"Analyze Trends"},"offline":null},
+   {"say":"open the data services menu","kind":"action","steps":["Data Services"],"on":"Data Services","want":{"clicked":"Data Services"},"offline":null},
+   {"say":"set the frs tribal land code to yes","kind":"action","steps":["Yes"],"on":"Yes","want":{"clicked":"Yes"},"offline":null},
+   {"say":"switch to the data table view and click search","kind":"multistep","steps":["Data Table","Search"],"on":"Data Table","want":{"clicked":"Data Table"},"offline":null},
+   {"say":"open the help page","kind":"action","steps":["Help"],"later":true,"on":"Help","want":{"clicked":"Help"},"offline":null},
+   {"say":"what does echo stand for","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };

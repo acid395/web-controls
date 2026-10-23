@@ -1714,3 +1714,239 @@ module.exports.wqp = {
     }
   ]
 };
+
+// Round 8, 2026-10-23: two sites for the decision-mode comparison, prompts written
+// from screenshots before the agent ran on them. Not run offline either.
+module.exports.stormev = {
+  "url": "https://www.ncei.noaa.gov/access/storm-events-database/",
+  "note": "NCEI Storm Events Database home: Home / About / Data Access / Documentation / External Resources menus, Start Search and bulk-data links, featured events, resources and a return-to-top link.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "open the data access menu",
+      "kind": "action",
+      "steps": [
+        "Data Access"
+      ]
+    },
+    {
+      "say": "open the documentation menu",
+      "kind": "action",
+      "steps": [
+        "Documentation"
+      ]
+    },
+    {
+      "say": "open the external resources menu",
+      "kind": "action",
+      "steps": [
+        "External Resources"
+      ]
+    },
+    {
+      "say": "start a search",
+      "kind": "action",
+      "steps": [
+        "Start Search"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the hurricane helene featured event",
+      "kind": "action",
+      "steps": [
+        "Hurricane Helene"
+      ],
+      "later": true
+    },
+    {
+      "say": "show the events history on october 23",
+      "kind": "action",
+      "steps": [
+        "Events History on October 23"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the quick start guide",
+      "kind": "action",
+      "steps": [
+        "View Quick Start Guide"
+      ],
+      "later": true
+    },
+    {
+      "say": "learn more about bulk data access",
+      "kind": "action",
+      "steps": [
+        "Learn More"
+      ],
+      "later": true
+    },
+    {
+      "say": "go to the about page",
+      "kind": "action",
+      "steps": [
+        "About"
+      ],
+      "later": true
+    },
+    {
+      "say": "go to the monthly storm data publication page",
+      "kind": "action",
+      "steps": [
+        "Go to Publication Page"
+      ],
+      "later": true
+    },
+    {
+      "say": "return to the top of the page",
+      "kind": "action",
+      "steps": [
+        "Return to top"
+      ]
+    },
+    {
+      "say": "open the data access menu, then open the documentation menu",
+      "kind": "multistep",
+      "steps": [
+        "Data Access",
+        "Documentation"
+      ]
+    },
+    {
+      "say": "what time period does the database cover",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "how can i get a certified report",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what is the storm events database",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
+module.exports.echo = {
+  "url": "https://echo.epa.gov/facilities/facility-search",
+  "note": "EPA ECHO facility search: collapsible sections (media program, geography, community, facility characteristics, enforcement), Collapse All / Expand All, dropdowns, radio groups, text boxes, a results view switch (map or data table) and Search.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "collapse all the sections",
+      "kind": "action",
+      "steps": [
+        "Collapse All"
+      ]
+    },
+    {
+      "say": "expand all the sections",
+      "kind": "action",
+      "steps": [
+        "Expand All"
+      ]
+    },
+    {
+      "say": "show more search options",
+      "kind": "action",
+      "steps": [
+        "View More Search Options"
+      ]
+    },
+    {
+      "say": "open related tools",
+      "kind": "action",
+      "steps": [
+        "Related Tools"
+      ]
+    },
+    {
+      "say": "switch the results view to data table",
+      "kind": "action",
+      "steps": [
+        "Data Table"
+      ]
+    },
+    {
+      "say": "set the epa region to region 9",
+      "kind": "action",
+      "steps": [
+        "EPA Region"
+      ]
+    },
+    {
+      "say": "set active/operating to any",
+      "kind": "action",
+      "steps": [
+        "Any"
+      ]
+    },
+    {
+      "say": "type sacramento in the city box",
+      "kind": "action",
+      "steps": [
+        "City"
+      ]
+    },
+    {
+      "say": "set the state to california and click search",
+      "kind": "multistep",
+      "steps": [
+        "State/Territory",
+        "Search"
+      ]
+    },
+    {
+      "say": "open the analyze trends menu",
+      "kind": "action",
+      "steps": [
+        "Analyze Trends"
+      ]
+    },
+    {
+      "say": "open the data services menu",
+      "kind": "action",
+      "steps": [
+        "Data Services"
+      ]
+    },
+    {
+      "say": "set the frs tribal land code to yes",
+      "kind": "action",
+      "steps": [
+        "Yes"
+      ]
+    },
+    {
+      "say": "switch to the data table view and click search",
+      "kind": "multistep",
+      "steps": [
+        "Data Table",
+        "Search"
+      ]
+    },
+    {
+      "say": "open the help page",
+      "kind": "action",
+      "steps": [
+        "Help"
+      ],
+      "later": true
+    },
+    {
+      "say": "what does echo stand for",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};
