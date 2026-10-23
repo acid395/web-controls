@@ -47,7 +47,9 @@ MODEL=0 node gate.js ...                page layer alone
 | 7 | EPA How's My Waterway (Boulder, CO) | 1.99.13 | Llama 3.2 3B, extension bench, user machine | 4/15 pass, 2 maybe |
 | 7 | Water Quality Portal | 1.99.13 | Llama 3.2 3B, extension bench, user machine | 5/15 pass, 6 maybe |
 | 7 | both | 1.99.13 | Llama 3.2 3B | 9/30 pass (30%), 8 maybe |
-| 8 | NCEI Storm Events Database, EPA ECHO facility search | 1.99.16 | Llama 3.2 3B, extension bench, user machine, once per decision mode | pending: 15 prompts a site, frozen 2026-10-23 before any run |
+| 8 | NCEI Storm Events Database, decide plan | 1.99.16 | Llama 3.2 3B, extension bench, user machine | 7/15 pass, 5 maybe |
+| 8 | NCEI Storm Events Database, decide choice | 1.99.16 | Llama 3.2 3B, extension bench, user machine | 5/15 pass, 2 maybe; after a menu opened, choice offered the whole page again and opened sibling menus |
+| 8 | EPA ECHO facility search, both modes | 1.99.17 | Llama 3.2 3B, extension bench, user machine | pending |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the

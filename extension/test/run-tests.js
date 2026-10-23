@@ -3298,6 +3298,38 @@ section("the model chooses from the page's controls");
   }
 }
 
+// After a menu opens, the next choice is among what it revealed: the model
+// is not offered the sibling menus again.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <button id="da" aria-expanded="false" aria-controls="m1">Data Access</button><div id="m1" hidden></div>
+    <button id="doc" aria-expanded="false">Documentation</button></body></html>`, { url: "https://storms.example.gov/" });
+  if (page) {
+    const doc = page.document; const pressed = []; const offeredLater = [];
+    doc.getElementById("da").addEventListener("click", () => { pressed.push("da"); doc.getElementById("da").setAttribute("aria-expanded", "true"); const m = doc.getElementById("m1"); m.hidden = false; m.innerHTML = '<a id="bulk" href="#bulk">Bulk Data Download</a>'; doc.getElementById("bulk").addEventListener("click", (e) => { e.preventDefault(); pressed.push("bulk"); }); });
+    doc.getElementById("doc").addEventListener("click", () => pressed.push("doc"));
+    const bg = loadBackground({ page });
+    let round = 0;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode !== "choice") return { ok: true, step: { do: "finish", answer: "" } };
+      round++;
+      const lines = String(m.prompt).split("\n").filter((l) => /^[A-Y]\) /.test(l));
+      if (round > 1) offeredLater.push(...lines);
+      const want = round === 1 ? /^Data Access/ : /^Documentation/;
+      const line = lines.find((l) => want.test(l.slice(3))) || "Z";
+      return { ok: true, step: { choice: line[0] }, logprobs: [{ token: line[0], logprob: Math.log(0.9) }] };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+      await bg.__ask({ type: "smartAsk", instruction: "open the data access menu" });
+      ensure("the menu asked for is opened", pressed[0] === "da", pressed);
+      ensure("and its sibling menus are not offered after it opens", !offeredLater.some((l) => /Documentation/.test(l)) && !pressed.includes("doc"), { pressed, offeredLater });
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
