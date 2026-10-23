@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.26 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.27 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.26";
+globalThis.WC_WIDGET_VERSION = "0.4.27";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -1645,6 +1645,10 @@ return (function () {
     // could not tell from the first. Page coordinates, so something merely
     // scrolled past still counts as on the page.
     else if (r.right + window.scrollX < -500 || r.bottom + window.scrollY < -500) out = false;
+    // Off the right edge of a page that does not scroll sideways: a drawer
+    // parked out of view - EPA's glossary, 140 terms fixed just past the
+    // window - which nobody can see or reach until it is opened.
+    else if (r.left >= window.innerWidth && document.documentElement.scrollWidth <= window.innerWidth + 1) out = false;
     else {
       const s = getComputedStyle(el);
       out = s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
@@ -1734,7 +1738,13 @@ return (function () {
     } catch (e) { return true; }   // not valid on its own (crosses a shadow root); keep it
   };
   const cssPath = (el) => {
-    if (el.id) return `#${CSS.escape(el.id)}`;
+    // An id only where the page uses it once. EPA's tab sets each number
+    // their tabs tabs--tab--0, --1...; "#tabs--tab--1" found a hidden URL tab
+    // in a share panel, and the Swimming tab it was meant for never moved.
+    if (el.id) {
+      const byId = `#${CSS.escape(el.id)}`;
+      if (namesOne(byId, el)) return byId;
+    }
     const parts = [];
     let cur = el;
     while (cur && cur.nodeType === 1 && parts.length < 24) {
@@ -2124,6 +2134,9 @@ return (function () {
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // A box that only shows something - the Water Quality Portal's
+        // "Current URL based on input search parameters" - is not one to type in.
+        readOnly: (el.readOnly || el.getAttribute("aria-readonly") === "true") ? true : undefined,
         // Inside a dialog or pop-up: "close the intro" means its close button,
         // not the sidebar's.
         inDialog: (() => { try { return el.closest("[role=dialog], [role=alertdialog], [aria-modal=true], dialog, .modal, .MuiDialog-root, .MuiModal-root, [class*='popup']") ? true : undefined; } catch (e) { return undefined; } })(),
@@ -10238,6 +10251,8 @@ function carriesText(instruction) {
 // is never the box, however it is labelled: a real text field first, and one
 // that also says "search" ahead of one that does not.
 function findSearchBox(controls, where = null) {
+  // A box that only displays something is not a search box, whatever its label.
+  controls = (controls || []).filter((c) => !c.readOnly);
   // The box the request named, where it named one: "the neighborhood drought
   // search" is the box asking "How is drought affecting your neighborhood?",
   // not the site search in the header that ranked first without it.
@@ -12948,7 +12963,8 @@ async function askModelForStep(payload) {
   // A question gets the reading prompt: the page's values and one shape to
   // answer in, with nothing about controls. Everything else gets the
   // operating prompt.
-  const prompt = payload.mode === "read"
+  const prompt = payload.mode === "choice" ? payload.prompt
+    : payload.mode === "read"
     ? (globalThis.WC_BUILD_READ_PROMPT ? globalThis.WC_BUILD_READ_PROMPT(payload) : null)
     : payload.mode === "plan"
       ? (globalThis.WC_BUILD_PLAN_PROMPT ? globalThis.WC_BUILD_PLAN_PROMPT(payload) : null)
@@ -12971,6 +12987,7 @@ async function askModelForStep(payload) {
         ? chosen : WC_DEFAULT_MODEL;
       const said = await raceCancel(chrome.runtime.sendMessage({
         target: "panel", type: "panelStep", prompt, schema: payload.schema || null,
+        logprobs: !!payload.logprobs, maxTokens: payload.maxTokens || null,
         model: useId,
         timeoutMs: turnBudgetFor(useId),
       }));
@@ -12996,7 +13013,7 @@ async function askModelForStep(payload) {
         }
         lastDecisionBy = "the panel";
         return { ok: true, step: parsed, cost: said.cost, ms: said.ms,
-          raw: String(said.text || "").slice(0, 300) };
+          raw: String(said.text || "").slice(0, 300), logprobs: said.logprobs || null };
       }
       if (said && said.error) {
         lastDecisionBy = `the panel, which failed: ${String(said.error).slice(0, 60)}`;
@@ -13370,6 +13387,177 @@ async function pressRevealedNamed(routeGlobal, goal, before, already = new Set()
   return { appeared: appeared.length, pressed: hit, ran };
 }
 
+/* The model decides, from the page's controls, by choosing one.
+ *
+ * The design this project began with: read the page's controls, hand them
+ * to a model, and let it pick. Asked to write a plan, a 3B copied
+ * placeholders, invented steps and spent seconds a decision writing JSON.
+ * Asked to choose - a lettered list, an answer held to one letter - it
+ * cannot name a control that is not there, and the probability it gives
+ * its letter says how sure it is. A choice it is unsure of is handed back
+ * to the rest of the agent rather than acted on.
+ *
+ * Switched on with "decide choice", off with "decide plan".
+ */
+const CHOICE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXY".split("");
+const CHOICE_SURE = 0.4;
+async function decisionMode() {
+  return chrome.storage.local.get("decisionMode").then((g) => g.decisionMode || "plan").catch(() => "plan");
+}
+function choiceLine(c) {
+  const kind = String(c.type || c.kind || "").toLowerCase();
+  const what = /checkbox|switch/.test(kind) ? `switch, ${c.checked ? "on" : "off"}`
+    : /radio/.test(kind) ? `option, ${c.checked ? "chosen" : "not chosen"}`
+    : LIST_TYPE.test(kind) || (c.options || []).length ? "list"
+    : TEXT_INPUT_KINDS.has(kind) ? "text box"
+    : kind === "tab" ? "tab"
+    : kind === "a" || kind === "link" ? (c.goesTo && navigatesAway(c) ? "link to another page" : "link")
+    : "button";
+  const where = c.section ? `, in ${String(c.section).slice(0, 30)}` : c.hidden && c.revealedByLabel ? `, behind ${String(c.revealedByLabel).slice(0, 30)}` : "";
+  return `${String(c.label).replace(/\s+/g, " ").slice(0, 70)} (${what}${where})`;
+}
+async function askChoice(goal, lines, question, zMeans) {
+  const letters = CHOICE_LETTERS.slice(0, lines.length);
+  const allowed = [...letters, "Z"];
+  const prompt = [
+    "You operate a web page for a person.",
+    `Their request: "${goal}"`,
+    question,
+    ...lines.map((l, i) => `${letters[i]}) ${l}`),
+    `Z) ${zMeans}`,
+    'Answer with JSON: {"choice": "<one letter>"}',
+  ].join("\n");
+  const schema = JSON.stringify({ type: "object", properties: { choice: { type: "string", enum: allowed } }, required: ["choice"] });
+  const asked = await askModelForStep({ mode: "choice", prompt, schema, logprobs: true, maxTokens: 16 });
+  if (!asked || !asked.ok || !asked.step) return { error: (asked && asked.error) || "no answer", cost: asked && asked.cost };
+  const written = String(asked.step.choice || "").trim().toUpperCase();
+  // The distribution at the step that wrote the letter, read at temperature
+  // 1: the most likely allowed letter is the choice, whatever was sampled.
+  const asLetter = (t) => { const m = String(t || "").match(/^[\s"']*([A-Z])[\s"']*$/); return m ? m[1] : null; };
+  const at = (asked.logprobs || []).find((t) => asLetter(t.token));
+  const dist = at ? [{ letter: asLetter(at.token), p: Math.exp(at.logprob) }, ...(at.top || []).map((x) => ({ letter: asLetter(x.token), p: Math.exp(x.logprob) }))]
+    .filter((x) => x.letter && allowed.includes(x.letter)) : [];
+  const byLetter = new Map();
+  for (const d of dist) if (!byLetter.has(d.letter) || byLetter.get(d.letter) < d.p) byLetter.set(d.letter, d.p);
+  const ranked = [...byLetter.entries()].map(([letter, p]) => ({ letter, p })).sort((a, b) => b.p - a.p);
+  const letter = ranked.length ? ranked[0].letter : written;
+  if (!allowed.includes(letter)) return { error: `answered "${letter}"`, cost: asked.cost };
+  const p = ranked.length ? ranked[0].p : null;
+  const runnersUp = ranked.slice(1, 3);
+  return { letter, index: letters.indexOf(letter), p, runnersUp, cost: asked.cost, ms: asked.ms };
+}
+async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
+  const began = Date.now();
+  const history = [];
+  let calls = 0;
+  let cost = null;
+  const pct = (p) => (p == null ? "?" : `${Math.round(p * 100)}%`);
+  const wantsOff = /\b(?:uncheck|untick|turn\s+off|switch\s+off|disable|deselect|hide)\b/i.test(goal);
+  for (let round = 0; round < rounds; round++) {
+    const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+    if (!inv || !inv.ok || !inv.result) break;
+    const pressedLabels = new Set(history.filter((h) => h.label).map((h) => String(h.label).toLowerCase().trim()));
+    const offered = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE })
+      .filter((c) => !c.disabled && String(c.label || "").trim() && String(c.label).length <= 100 && (!c.hidden || c.revealedBy)
+        && !pressedLabels.has(String(c.label).toLowerCase().trim())), CHOICE_LETTERS.length);
+    if (!offered.length) break;
+    const done = history.filter((h) => h.ok && !h.skipped).map((h) => h.did).join("; ");
+    const asked = await askChoice(goal, offered.map(choiceLine),
+      round === 0 ? "Which one control on the page carries out the request?"
+        : `Done so far: ${done}. Which control comes next, if the request is not finished yet?`,
+      round === 0 ? "none of these" : "nothing more - the request is done");
+    calls++;
+    if (asked.cost) cost = asked.cost;
+    if (asked.error) { history.push({ did: "asked the model to choose", ok: false, changed: false, outcome: `no usable choice: ${String(asked.error).slice(0, 60)}` }); break; }
+    if (asked.letter === "Z") {
+      if (round === 0) return null;
+      history.push({ did: "the model chose to stop", ok: true, changed: false, skipped: true, outcome: `the request is done (${pct(asked.p)} sure)` });
+      break;
+    }
+    const target = offered[asked.index];
+    const sureEnough = asked.p == null || asked.p >= CHOICE_SURE;
+    if (!sureEnough) {
+      if (round === 0) return null;
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, ok: true, changed: false, skipped: true, outcome: `the model was only ${pct(asked.p)} sure` });
+      break;
+    }
+    // The two guards kept: no leaving the page, no undoing, unless asked.
+    if ((leavesThePage(target) && !askedToLeaveFor(goal, target)) || undoesUnasked(goal, target)) {
+      if (round === 0) return null;
+      history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, ok: true, changed: false, skipped: true, outcome: "it would leave the page or undo what was set, which the request did not ask for" });
+      break;
+    }
+    if (target.hidden && target.revealedBy) {
+      await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
+      forgetPageTools();
+    }
+    const kind = String(target.type || target.kind || "").toLowerCase();
+    let call;
+    let picked = null;
+    if ((target.options || []).length) {
+      const opts = (target.options || []).filter((o) => !placeholderOption(o));
+      const words = meaningfulWords(goal);
+      const named = opts.filter((o) => words.some((w) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase())));
+      const shown = (named.length ? [...named, ...opts.filter((o) => !named.includes(o))] : opts).slice(0, CHOICE_LETTERS.length);
+      const which = await askChoice(goal, shown.map((o) => String(o.text || o.value).slice(0, 70)),
+        `In the list "${String(target.label).slice(0, 50)}", which option does the request want?`, "none of these");
+      calls++;
+      if (which.error || which.letter === "Z" || (which.p != null && which.p < CHOICE_SURE)) {
+        if (round === 0) return null;
+        break;
+      }
+      picked = { option: shown[which.index], p: which.p };
+      call = { name: "pageSelectOption", args: { selector: target.selector, value: picked.option.value || picked.option.text } };
+    } else if (/checkbox|radio|switch/.test(kind)) {
+      call = { name: "pageCheck", args: { selector: target.selector, on: !wantsOff } };
+    } else if (TEXT_INPUT_KINDS.has(kind)) {
+      // What to type is not a choice among options; the rest of the agent has that.
+      if (round === 0) return null;
+      break;
+    } else {
+      call = { name: "pageClick", args: { selector: target.selector } };
+    }
+    const before = (inv.result.controls || []).filter((c) => !c.hidden).map(controlKey);
+    const ran = await runVerified(routeGlobal, call);
+    const r = (ran && ran.result) || {};
+    const moved = typeof r.itChanged === "boolean" ? r.itChanged : didItMove(ran);
+    const label = String(target.label).slice(0, 40);
+    history.push({
+      did: picked ? `select "${label}" ${String(picked.option.text || picked.option.value).slice(0, 30)}` : `${call.name === "pageCheck" ? "check" : "click"} "${label}"`,
+      ok: !!ran && ran.ok !== false, changed: moved, label: target.label,
+      outcome: ran && ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
+        : `chosen by the model, ${pct(asked.p)} sure${picked ? `; option ${pct(picked.p)} sure` : ""}${asked.runnersUp.length ? ` (next: ${asked.runnersUp.map((x) => `${String((offered[CHOICE_LETTERS.indexOf(x.letter)] || {}).label || x.letter).slice(0, 24)} ${pct(x.p)}`).join(", ")})` : ""}`,
+    });
+    if (!ran || ran.ok === false) break;
+    // Another choice only where the press put new controls on the page -
+    // a section opened, a list drawn. Otherwise the request was one press.
+    forgetInventory();
+    const after = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+    const was = new Set(before);
+    const appeared = ((after && after.ok && after.result && after.result.controls) || []).filter((c) => !c.hidden && !was.has(controlKey(c))).length;
+    // Only a way in asks again - a section or menu that opened onto what was
+    // asked. A tab, a button, a switch is the request carried out, and asked
+    // again a 3B went on pressing whatever the press had revealed.
+    if (!appeared || call.name !== "pageClick" || !target.opensPanel) break;
+  }
+  if (!history.length) return null;
+  return { history, calls, tookMs: Date.now() - began, cost };
+}
+function choiceCard(routeGlobal, goal, out, model) {
+  const acted = out.history.filter((h) => !h.skipped);
+  const failed = out.history.filter((h) => !h.ok).length;
+  return {
+    ok: out.history.some((h) => h.ok && !h.skipped), plannedBy: "choice", steps: out.history,
+    display: {
+      title: acted.length ? String(acted[acted.length - 1].did).slice(0, 60) : "nothing chosen",
+      subtitle: failed ? `${failed} of ${out.history.length} failed` : `${acted.length} step${acted.length === 1 ? "" : "s"}, each chosen by ${model}`,
+      stats: [], rows: out.history.map((h) => ({ name: String(h.did).slice(0, 44), value: !h.ok ? "failed" : h.skipped ? "left alone" : h.changed ? "done" : "no change",
+        meta: String(h.outcome || "").slice(0, 90), tone: !h.ok ? "alert" : h.changed ? "ok" : "warn" })),
+      note: `${out.calls} choice${out.calls === 1 ? "" : "s"} by the model, ${Math.round(out.tookMs / 1000)}s`, source: routeGlobal,
+    },
+  };
+}
+
 /* Sections first, where the page has closed ones and the request names
  * nothing showing. City-FIDAP's layers are all inside chevron sections, and
  * a 3B planning over the closed sidebar pressed the intro dialog's body and
@@ -13458,6 +13646,13 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   // needs nothing the request does not name: "open the station list" was
   // planned as Skip Navigation, a placeholder, Go and Station List.
   const namesWhole = steps.some((st) => { const c = shortlist[names.indexOf(flat(st.name))]; return c && wholeNamedAmong(goal, [c]) === c; });
+  // Acted on once in a plan is enough, unless the request asks again: "turn
+  // off show text" switched it off, then pressed it again.
+  const actedThisPlan = new Set();
+  const repeatAsked = /\b(?:twice|again|two\s+times|\d+\s+times)\b/i.test(goal);
+  const goalWordsP = meaningfulWords(goal);
+  const wantsOpenP = /^(?:please\s+)?(?:show|open|expand|display|turn\s+on|enable|reveal|view)\b/i.test(goal);
+  const wantsShutP = /^(?:please\s+)?(?:hide|close|collapse|turn\s+off|disable|dismiss)\b/i.test(goal);
   for (const st of steps) {
     if (budget-- <= 0) break;
     let act = String(st.do || "click").toLowerCase();
@@ -13480,6 +13675,15 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
       continue;
     }
     let planned = shortlist[names.indexOf(flat(st.name))] || shortlist[Number(st.n)] || null;
+    // The fuller name the request says in full: "show the permitted
+    // dischargers" was planned as Dischargers, "expand all the waterbodies"
+    // as All - each the part of a name the request gave whole.
+    if (planned && act === "click") {
+      const ownW = meaningfulWords(String(planned.label || ""));
+      const fuller = shortlist.filter((c) => c !== planned && !c.hidden && !c.disabled && !c.elsewhere && String(c.label || "").length <= 60)
+        .filter((c) => { const w = meaningfulWords(String(c.label || "")); return w.length > ownW.length && ownW.every((x) => w.includes(x)) && w.every((x) => goalWordsP.some((g) => wordMatchesText(x, g) || wordMatchesText(g, x))); });
+      if (ownW.length && fuller.length && new Set(fuller.map((c) => flat(c.label))).size === 1) planned = fuller[0];
+    }
     // The page's own repairs: a value that is an option of exactly one list
     // belongs to that list whatever name came with it, and a check on
     // something that is not a box is a press.
@@ -13508,6 +13712,29 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
         outcome: "it would undo what was set, and the request did not ask for that" });
       continue;
     }
+    // The opposite of the request: "open the glossary" was planned as
+    // Glossary and then Close glossary.
+    {
+      const l = String(target.label || "").toLowerCase().trim();
+      const rest = meaningfulWords(l.replace(/^(?:close|hide|collapse|dismiss|show|open|expand|reveal)\s+/, ""));
+      // A name, not a verb, where the request says it whole: "turn off show
+      // text" is about the switch called Show Text.
+      const namedWhole = ` ${flat(goal)} `.includes(` ${flat(l)} `);
+      const opposite = !namedWhole && ((wantsOpenP && /^(?:close|hide|collapse|dismiss)\b/.test(l)) || (wantsShutP && /^(?:show|open|expand|reveal)\b/.test(l)))
+        && rest.length && rest.every((x) => goalWordsP.includes(x));
+      if (opposite) {
+        history.push({ did: `click "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+          outcome: "left alone - it does the opposite of what was asked" });
+        continue;
+      }
+    }
+    const actedKey = String(target.selector || flat(target.label));
+    if (actedThisPlan.has(actedKey) && !repeatAsked) {
+      history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+        outcome: "left alone - this plan had already acted on it" });
+      continue;
+    }
+    actedThisPlan.add(actedKey);
     if (act === "click" && leavesThePage(target) && !askedToLeaveFor(goal, target)) {
       history.push({ did: `click "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - it leaves this page, and the request did not ask to go there" });
@@ -13525,7 +13752,11 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // flood maps" opened the wrong section, and the right one was then
     // refused as padding.
     const doneSoFar = history.filter((h) => h.ok && !h.skipped && !h.door).length;
-    if (namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident || namesWhole)) {
+    // Where the plan holds the control named completely, a step on anything
+    // not named completely is extra: "open the explore wqp sites menu" opened
+    // it and then followed two links inside it, each sharing "wqp".
+    if ((namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident))
+        || (namesWhole && wholeNamedAmong(goal, [target]) !== target)) {
       history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - the request names nothing of it" });
       continue;
@@ -13875,7 +14106,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
           return { ok: true, answer: cellSaid, history, steps: history.length,
             tookMs: Date.now() - began, said: lastSaid, fromData: true, fromWords: true };
         }
-        if (!conditionalGoal && (STANDS_FOR.test(goal) || HOW_MANY.test(goal)) && read.ok && read.result) {
+        if (!conditionalGoal && (STANDS_FOR.test(goal) || HOW_MANY.test(goal) || WHAT_IS_DEF.test(goal)) && read.ok && read.result) {
           const got = await invokeOnActiveTab("findPassages", [goal]).catch(() => ({ ok: false }));
           const said = answerInPageWords(goal, read.result, (got.ok && got.result && got.result.passages) || []);
           if (said) {
@@ -15591,6 +15822,20 @@ function stageDistances(facts, series) {
  * in Texas have hydropower") is left to the reader.
  */
 const STANDS_FOR = /^\s*(?:please\s+)?(?:tell\s+me\s+)?what\s+(?:does|do|is)\s+(?:the\s+)?(?:acronym\s+|abbreviation\s+|name\s+)?["'\u201c]?([a-z][a-z0-9&]{1,11})["'\u201d]?\s+(?:stand\s+for|short\s+for|mean|abbreviate)\b/i;
+// "What is the water quality portal": the page's own definition, where it
+// writes one - "The Water Quality Portal (WQP) is the premiere source..." -
+// over a banner that merely mentions it. Only a sentence that opens with the
+// thing asked about and says what it is.
+const WHAT_IS_DEF = /^\s*(?:please\s+)?(?:tell\s+me\s+)?what\s+(?:is|are)\s+(?:the\s+|a\s+|an\s+)?([a-z][a-z0-9&' -]{2,60}?)\s*\??\s*$/i;
+function definitionIn(subject, text) {
+  const words = String(subject).toLowerCase().split(/[^a-z0-9&']+/).filter(Boolean);
+  if (!words.length || words.length > 8) return null;
+  const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^(?:the\\s+)?${words.map(esc).join("\\s+")}(?:\\s*\\([^)]{1,20}\\))?\\s+(?:is|are)\\s+(?:a|an|the|one\\s+of)\\s+\\S`, "i");
+  const sentences = String(text).split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter((x) => x.length >= 20 && x.length <= 400);
+  const hits = [...new Set(sentences.filter((x) => re.test(x)))];
+  return hits.length ? hits[0] : null;
+}
 const HOW_MANY = /^\s*(?:please\s+)?(?:tell\s+me\s+)?how\s+many\s+([a-z][a-z-]{2,30})\b(.*)$/i;
 const SMALL_WORD = /^(?:of|and|the|for|on|in|to|a|an|&|at|by|de|du)$/i;
 function expansionIn(acronym, text) {
@@ -15630,6 +15875,11 @@ function answerInPageWords(goal, read, passages) {
     const x = expansionIn(sf[1], text);
     return x ? `${sf[1].toUpperCase()} stands for ${x}.` : null;
   }
+  const wd = String(goal).match(WHAT_IS_DEF);
+  if (wd && !HOW_MANY.test(goal)) {
+    const said = definitionIn(wd[1], text);
+    if (said) return said;
+  }
   const hm = String(goal).match(HOW_MANY);
   if (!hm) return null;
   const noun = hm[1].toLowerCase();
@@ -15639,17 +15889,22 @@ function answerInPageWords(goal, read, passages) {
   const here = new Set(["are", "is", "were", "was", "there", "in", "on", "the", "this", "that", "these", "page", "site", "website", "here", "listed", "shown", "found", "match", "matching", "total", "all", "of", "showing", "displayed", "available", "returned", "results", "result", "currently", "now", "right", "does", "do", "have", "has", "it", "list", "table", "show", "contain", "contains", "include", "includes", "we", "i", "see", "can"]);
   const own = `${r.title || ""} ${(r.headings || []).join(" ")} ${String(r.text || "").slice(0, 400)}`.toLowerCase();
   const rest = String(hm[2] || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !here.has(w));
-  if (!rest.every((w) => wordMatchesText(w, own))) return null;
+  // The rest of the question is the page itself, or is said beside the
+  // count: "Overall condition of 4 waterbodies in the ... watershed".
+  const pageWide = rest.every((w) => wordMatchesText(w, own));
+  const besideIt = (at) => rest.every((w) => wordMatchesText(w, text.slice(Math.max(0, at - 120), at + 160).toLowerCase()));
   const esc = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(?:^|[^\\d.,])(\\d{1,3}(?:,\\d{3})+|\\d+)\\s+(?:total\\s+|matching\\s+)?(${esc}(?:s|es)?|${noun})\\b((?:\\s+(?:found|listed|shown|total|available|matched|returned))?)`, "gi");
   // A pager's total: "1 - 100 of 1701 items" is 1701, and "100 items per
   // page" is how many show at a time.
   const ofRe = new RegExp(`\\bof\\s+(\\d{1,3}(?:,\\d{3})+|\\d+)\\s+(?:total\\s+)?(${esc}(?:s|es)?|${noun})\\b`, "gi");
-  const totals = [...text.matchAll(ofRe)];
+  const totals = [...text.matchAll(ofRe)].filter((t) => pageWide || besideIt(t.index));
   if (totals.length && new Set(totals.map((t) => t[1].replace(/,/g, ""))).size === 1) return `The page says ${totals[0][1]} ${totals[0][2]} in all.`;
+  if (!pageWide && !rest.length) return null;
   const hits = []; let m;
   while ((m = re.exec(text))) {
     if (/^\s+per\s+(?:page|view)\b/i.test(text.slice(m.index + m[0].length))) continue;
+    if (!pageWide && !besideIt(m.index)) continue;
     hits.push({ n: m[1].replace(/,/g, ""), said: `${m[1]} ${m[2]}${m[3] || ""}` });
   }
   const ns = new Set(hits.map((h) => h.n));
@@ -19622,6 +19877,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // need to know what to fetch.
         const wantedOnly = String(wanted).replace(RULED_OUT, " ").replace(/\s+/g, " ").trim() || wanted;
 
+        // "decide choice" / "decide plan": which way the model is asked.
+        const modeSet = String(wanted).match(/^\s*decide\s+(?:by\s+)?(choice|plan)\s*$/i);
+        if (modeSet) {
+          await chrome.storage.local.set({ decisionMode: modeSet[1].toLowerCase() }).catch(() => {});
+          respond({ ok: true, plannedBy: "settings", display: { title: `decisions: ${modeSet[1].toLowerCase()}`, stats: [], rows: [], source: "settings",
+            subtitle: modeSet[1].toLowerCase() === "choice" ? "the model chooses each step from the page's controls" : "the model plans, with the page's own rules first" } });
+          return;
+        }
+        // Choice mode: the page's controls to the model, and the model picks,
+        // before any of the page's own shortcuts. Questions read as before.
+        if (!forceBaseline && !conditional && !ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted)
+            && await decisionMode() === "choice") {
+          const status = (await startModelIfIdle().catch(() => null)) || await modelStatus();
+          if (status && status.ready) {
+            modelTried = true;
+            modelUsed = status.model || null;
+            const parts = splitIntoSteps(wanted);
+            const all = { history: [], calls: 0, tookMs: 0, cost: null };
+            let handled = true;
+            for (const part of parts) {
+              if (ASKING_TO_READ.test(part) || QUESTION_LED.test(part)) {
+                const read = await runModelAgent(route.global, part, { maxSteps: 2 }).catch(() => null);
+                all.history.push({ did: "then read the page", ok: !!(read && read.ok), changed: false, outcome: read && read.answer ? String(read.answer).slice(0, 300) : "no answer" });
+                if (read && read.answer) all.answer = read.answer;
+                continue;
+              }
+              const one = await chooseAndAct(route.global, part).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
+              if (!one) { if (parts.length === 1) { handled = false; break; } all.history.push({ did: part, ok: false, changed: false, outcome: "the model was not sure enough to choose" }); break; }
+              all.history.push(...one.history); all.calls += one.calls; all.tookMs += one.tookMs; all.cost = one.cost || all.cost;
+            }
+            if (handled && all.history.length) {
+              const card = choiceCard(route.global, wanted, all, modelName(modelUsed));
+              if (all.answer) { card.answer = all.answer; card.display.answer = all.answer; }
+              respond(card);
+              return;
+            }
+          }
+        }
+
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
         // available or could not finish, and under "baseline:" on request.
@@ -22762,7 +23056,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     try { const e = await held; if (e && e.unload) await e.unload(); } catch (e) { /* gone */ }
   }
 
-  async function step(modelId, prompt, { timeoutMs = 45000, schema = null } = {}) {
+  async function step(modelId, prompt, { timeoutMs = 45000, schema = null, logprobs = false, maxTokens = null } = {}) {
     const engine = await engineFor(modelId);
     const began = Date.now();
     let timer = null;
@@ -22779,21 +23073,26 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     const gather = async (withSchema = schema) => {
       const chunks = await engine.chat.completions.create({
         messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
-        temperature: 0,
-        max_tokens: withSchema ? 320 : 192,
+        // Read at 1 for a choice: at 0 every distribution is one certain token.
+        temperature: logprobs ? 1 : 0,
+        max_tokens: maxTokens || (withSchema ? 320 : 192),
         ...(withSchema ? { response_format: { type: "json_object", schema: withSchema } } : {}),
+        // Each token's probability, and the next most likely ones.
+        ...(logprobs ? { logprobs: true, top_logprobs: 5 } : {}),
         stream: true,
         stream_options: { include_usage: true },
       }).catch((e) => { if (withSchema) return null; throw e; });
       if (!chunks) return gather(null);
       let content = "";
       let usage = null;
+      const lps = [];
       for await (const c of chunks) {
         const ch = c && c.choices && c.choices[0];
         if (ch && ch.delta && ch.delta.content) content += ch.delta.content;
+        if (ch && ch.logprobs && Array.isArray(ch.logprobs.content)) lps.push(...ch.logprobs.content);
         if (c && c.usage) usage = c.usage;
       }
-      return { choices: [{ message: { content } }], usage };
+      return { choices: [{ message: { content } }], usage, lps };
     };
     try {
       reply = await Promise.race([
@@ -22815,6 +23114,8 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     const x = u.extra || {};
     return {
       text: (reply.choices[0].message.content || "").trim(),
+      ...(logprobs ? { logprobs: (reply.lps || []).map((t) => ({ token: t.token, logprob: t.logprob,
+        top: (t.top_logprobs || []).map((x) => ({ token: x.token, logprob: x.logprob })) })) } : {}),
       ms: Date.now() - began,
       cost: {
         promptTokens: u.prompt_tokens ?? null,
@@ -23043,7 +23344,8 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
       case "panelStatus": return { ok: true, ...modelHost.status() };
       case "panelStep":
         try {
-          const out = await modelHost.step(m.model, m.prompt, { timeoutMs: m.timeoutMs, schema: m.schema || null });
+          const out = await modelHost.step(m.model, m.prompt, { timeoutMs: m.timeoutMs, schema: m.schema || null,
+            logprobs: !!m.logprobs, maxTokens: m.maxTokens || null });
           return { ok: true, ...out, model: modelHost.status().model };
         } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
       case "panelBench":
