@@ -3204,7 +3204,7 @@ section("the model chooses from the page's controls");
       };
       runAsync(async () => {
         await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
-        await bg.__ask({ type: "smartAsk", instruction: "set the state to texas" });
+        await bg.__ask({ type: "smartAsk", instruction: "choose texas" });
         check("choice mode: a list's option is chosen the same way", p.document.getElementById("s").value, "TX");
       });
     }
@@ -3233,6 +3233,68 @@ section("the model chooses from the page's controls");
         ensure("the default mode never asks for a choice", !calls.includes("choice"), calls);
       });
     }
+  }
+}
+
+// Mixed: a step that carries a value takes the normal path, the rest the
+// choice; a control that takes typing is handed back; and a count in its own
+// element is parted from the name beside it.
+{
+  const mk = () => loadPage(`<!doctype html><html><body>
+    <div role="tablist"><button role="tab" id="t1" aria-selected="true">Waterbodies</button><button role="tab" id="t2" aria-selected="false">Permitted Dischargers</button></div>
+    <label for="s">State</label><select id="s"><option value="">Choose</option><option value="CO">Colorado</option><option value="TX">Texas</option></select>
+    <input id="cb" role="combobox" aria-label="Input box for county parameter"></body></html>`, { url: "https://water.example.gov/community" });
+  const model = (calls, pick) => (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+    if (m.type !== "llmStep") return undefined;
+    calls.push(m.mode || "step");
+    if (m.mode !== "choice") return { ok: true, step: { do: "finish", answer: "" } };
+    const line = String(m.prompt).split("\n").find((l) => /^[A-Z]\) /.test(l) && pick.test(l.slice(3)));
+    return { ok: true, step: { choice: line ? line[0] : "Z" }, logprobs: [{ token: line ? line[0] : "Z", logprob: Math.log(0.9) }] };
+  };
+  {
+    const p = mk();
+    if (p) {
+      const calls = []; const bg = loadBackground({ page: p }); bg.__model = model(calls, /^Permitted/);
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+        calls.length = 0;
+        await bg.__ask({ type: "smartAsk", instruction: "set the state to texas" });
+        check("a step that carries a value goes the normal way", p.document.getElementById("s").value, "TX");
+        ensure("and asks for no choice", !calls.includes("choice"), calls);
+      });
+    }
+  }
+  {
+    const p = mk();
+    if (p) {
+      const calls = []; const bg = loadBackground({ page: p }); bg.__model = model(calls, /^Permitted/);
+      const t2 = p.document.getElementById("t2"); t2.addEventListener("click", () => t2.setAttribute("aria-selected", "true"));
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+        const r = await bg.__ask({ type: "smartAsk", instruction: "open the permitted dischargers tab, then set the state to colorado" });
+        check("mixed: the tab is chosen", t2.getAttribute("aria-selected"), "true");
+        check("and the value set the normal way", p.document.getElementById("s").value, "CO");
+        check("in one sequence card", r.plannedBy, "choice");
+      });
+    }
+  }
+  {
+    const p = mk();
+    if (p) {
+      const calls = []; const bg = loadBackground({ page: p }); bg.__model = model(calls, /^Input box for county/);
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "decide choice" });
+        const r = await bg.__ask({ type: "smartAsk", instruction: "open the county box" });
+        ensure("a typing box the model chose is handed back", r.plannedBy !== "choice", r.plannedBy);
+      });
+    }
+  }
+  const lp = loadPage(`<!doctype html><html><body><button id="a"><span>69</span>Permitted Dischargers</button><button id="b">Sep<span>tember</span> 2026</button></body></html>`, { url: "https://water.example.gov/community" });
+  if (lp) {
+    const labels = lp.GENERIC.inventory({}).controls.map((c) => c.label);
+    ensure("a count in its own element is parted from the name", labels.includes("69 Permitted Dischargers"), labels);
+    ensure("and a word an element splits stays whole", labels.includes("September 2026"), labels);
   }
 }
 

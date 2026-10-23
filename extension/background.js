@@ -6556,6 +6556,24 @@ async function pressRevealedNamed(routeGlobal, goal, before, already = new Set()
  * Switched on with "decide choice", off with "decide plan".
  */
 const CHOICE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXY".split("");
+/* A step that carries a value to type or set - "set the state to colorado",
+ * "type denver", "search for folsom", "from 1991 to 2020" - is the rest of
+ * the agent's: a value is not one of a list of letters. Choice takes the
+ * steps that are only a matter of which control.
+ */
+function carriesAValue(part) {
+  const t = String(part || "");
+  if (/^\s*(?:please\s+)?(?:type|enter|fill(?:\s+in)?|put|write|input)\b/i.test(t)) return true;
+  if (SEARCH_CLAUSE.test(t) || RANGE_IN.test(t)) return true;
+  const m = t.match(SET_TO);
+  return !!(m && listWords(m[1]).filter((w) => !CONTROL_VERB.test(w) && !verbFamily(w)).length && listWords(m[2]).length);
+}
+// A control that takes typing, whatever it calls itself: a box, or a
+// searchable dropdown that is typed into to filter its list.
+function takesTyping(c) {
+  const kind = String(c.type || c.kind || "").toLowerCase();
+  return TEXT_INPUT_KINDS.has(kind) || ((/^(?:combobox|listbox|input)$/.test(kind) || /\binput box\b/i.test(String(c.label || ""))) && !(c.options || []).length);
+}
 const CHOICE_SURE = 0.4;
 async function decisionMode() {
   return chrome.storage.local.get("decisionMode").then((g) => g.decisionMode || "plan").catch(() => "plan");
@@ -6666,7 +6684,7 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
       call = { name: "pageSelectOption", args: { selector: target.selector, value: picked.option.value || picked.option.text } };
     } else if (/checkbox|radio|switch/.test(kind)) {
       call = { name: "pageCheck", args: { selector: target.selector, on: !wantsOff } };
-    } else if (TEXT_INPUT_KINDS.has(kind)) {
+    } else if (takesTyping(target)) {
       // What to type is not a choice among options; the rest of the agent has that.
       if (round === 0) return null;
       break;
@@ -13052,15 +13070,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const parts = splitIntoSteps(wanted);
             const all = { history: [], calls: 0, tookMs: 0, cost: null };
             let handled = true;
-            for (const part of parts) {
+            // One step carrying a value: the normal path entire, as without choice.
+            if (parts.length === 1 && carriesAValue(parts[0])) handled = false;
+            for (const part of handled ? parts : []) {
               if (ASKING_TO_READ.test(part) || QUESTION_LED.test(part)) {
                 const read = await runModelAgent(route.global, part, { maxSteps: 2 }).catch(() => null);
                 all.history.push({ did: "then read the page", ok: !!(read && read.ok), changed: false, outcome: read && read.answer ? String(read.answer).slice(0, 300) : "no answer" });
                 if (read && read.answer) all.answer = read.answer;
                 continue;
               }
-              const one = await chooseAndAct(route.global, part).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
-              if (!one) { if (parts.length === 1) { handled = false; break; } all.history.push({ did: part, ok: false, changed: false, outcome: "the model was not sure enough to choose" }); break; }
+              // In a sequence, a step with a value - or one the choice handed back -
+              // goes the way any sequence step goes: the page, then the plan,
+              // then the step-by-step model.
+              const normally = async () => {
+                const step = await resolveStep(route.global, part, { exact: false, lateLooks: 2 }).catch(() => null);
+                if (step) {
+                  return step.kind === "search"
+                    ? { did: `searched for "${String(step.searched.words || "").slice(0, 40)}"`, ok: true, changed: true, outcome: "the page's own search" }
+                    : { did: String(step.did || part), ok: true, changed: step.changed !== false, outcome: step.outcome || "done by the page" };
+                }
+                const planned = await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null);
+                if (planned && planned.history.some((h) => h.ok && !h.skipped)) {
+                  return { did: part, ok: true, changed: planned.history.some((h) => h.changed), outcome: planned.history.map((h) => h.did).join("; ").slice(0, 90) };
+                }
+                return null;
+              };
+              const one = carriesAValue(part) ? null
+                : await chooseAndAct(route.global, part).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
+              if (!one) {
+                if (parts.length === 1) { handled = false; break; }
+                const done = await normally();
+                if (done) { all.history.push({ ...done, outcome: `${done.outcome} (normal path)` }); continue; }
+                all.history.push({ did: part, ok: false, changed: false, outcome: "neither the choice nor the normal path could do this step" });
+                break;
+              }
               all.history.push(...one.history); all.calls += one.calls; all.tookMs += one.tookMs; all.cost = one.cost || all.cost;
             }
             if (handled && all.history.length) {

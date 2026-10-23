@@ -418,7 +418,7 @@
         if (isIconGlyph(c)) { glyphs.push(String(c.textContent || "").trim()); continue; }
         if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
         if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
-        walk(c);
+        out += "\u0001"; walk(c); out += "\u0001";
       }
     };
     for (const node of el.childNodes) {
@@ -434,9 +434,14 @@
       else if (node.nodeType === 1 && String(node.tagName).toUpperCase() === "BR") out += " ";
       else if (node.nodeType === 1 && isIconGlyph(node)) glyphs.push(String(node.textContent || "").trim());
       else if (node.nodeType === 1 && !UNWORDED.test(String(node.tagName).toUpperCase())
-        && !(skipControls && isControlish(node))) walk(node);
+        && !(skipControls && isControlish(node))) { out += "\u0001"; walk(node); out += "\u0001"; }
       if (out.length > 200) break;
     }
+    // A count in its own element beside a name is not part of the name:
+    // "<span>69</span>Permitted Dischargers" read as "69Permitted Dischargers".
+    // Only a figure against a letter is parted; a word an element splits,
+    // "Sep<span>tember</span>", stays whole.
+    out = out.replace(/(\d)\u0001+(?=[A-Za-z])/g, "$1 ").replace(/([A-Za-z])\u0001+(?=\d)/g, "$1 ").replace(/\u0001/g, "");
     // An icon-only button is still called what its icon says: "close".
     if (!out.trim() && glyphs.length) out = glyphs.join(" ").replace(/_/g, " ");
     return out.slice(0, 200);
