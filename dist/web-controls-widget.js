@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.32 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.33 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.32";
+globalThis.WC_WIDGET_VERSION = "0.4.33";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -1769,6 +1769,17 @@ return (function () {
       return hits.length === 1 && hits[0] === el;
     } catch (e) { return true; }   // not valid on its own (crosses a shadow root); keep it
   };
+  /* Classes that do not stay put, left out of a path.
+   *
+   * City-FIDAP's menus are Material UI: each item's class list carries a
+   * generated "css-n4…" whose hash changes with the item's props, so
+   * opening a menu or switching a layer on renamed the very elements just
+   * read, and "Stream Gauges" was "not found" a moment after it was seen.
+   * Generated hashes (emotion, styled-components, JSS, CSS modules) and
+   * state classes say nothing lasting about where an element is; the walk
+   * below keeps a path unique with positions instead.
+   */
+  const VOLATILE_CLASS = /^(?:css-[a-z0-9]+(?:-[\w-]+)?|sc-[a-zA-Z0-9]+|jss\d+|makeStyles-[\w-]+-\d+|[\w-]+_[\w-]+__[a-zA-Z0-9_-]{5,}|Mui-(?:expanded|selected|focused|focusVisible|active|disabled|checked|open|completed|error)|(?:is-|has-)?(?:active|selected|open|opened|expanded|collapsed|current|focus|focused|hover|show|showing|visible|in)|ng-[\w-]+)$/;
   const cssPath = (el) => {
     // An id only where the page uses it once. EPA's tab sets each number
     // their tabs tabs--tab--0, --1...; "#tabs--tab--1" found a hidden URL tab
@@ -1785,7 +1796,8 @@ return (function () {
         if (namesOne(anchored, el)) return anchored;
       }
       let s = tagOf(cur);
-      if (cur.classList.length) s += "." + [...cur.classList].map((c) => CSS.escape(c)).join(".");
+      const steady = [...cur.classList].filter((c) => !VOLATILE_CLASS.test(c));
+      if (steady.length) s += "." + steady.map((c) => CSS.escape(c)).join(".");
       const p = cur.parentNode;
       if (p && p.firstElementChild) {
         // Walked, not materialised. Spreading an HTMLCollection copies it and
@@ -13581,6 +13593,10 @@ const CHOICE_SURE = 0.4;
 async function decisionMode() {
   return chrome.storage.local.get("decisionMode").then((g) => g.decisionMode || "choice").catch(() => "choice");
 }
+// Parts of a page, not things to press. City-FIDAP's Google map is a
+// region called "Map", and offered as a button it was chosen at 100% for
+// "put the flood maps on the map" and "show where the power plants are".
+const NOT_A_PRESS = /^(?:region|main|application|document|group|presentation|figure|article|section|navigation|banner|contentinfo|complementary|canvas|img|image)$/;
 function choiceLine(c) {
   const kind = String(c.type || c.kind || "").toLowerCase();
   const what = /checkbox|switch/.test(kind) ? `switch, ${c.checked ? "on" : "off"}`
@@ -13588,6 +13604,10 @@ function choiceLine(c) {
     : LIST_TYPE.test(kind) || (c.options || []).length ? "list"
     : TEXT_INPUT_KINDS.has(kind) ? "text box"
     : kind === "tab" ? "tab"
+    // A closed menu says so: the layers under City-FIDAP's "Weather &
+    // Environment" are not on the page until it opens, and the model,
+    // seeing only the heading, did not know anything was behind it.
+    : c.opensPanel && !c.expanded ? "menu, closed - opens more choices"
     : kind === "a" || kind === "link" ? (c.goesTo && navigatesAway(c) ? "link to another page" : "link")
     : "button";
   const where = c.section ? `, in ${String(c.section).slice(0, 30)}` : c.hidden && c.revealedByLabel ? `, behind ${String(c.revealedByLabel).slice(0, 30)}` : "";
@@ -13646,6 +13666,7 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
     const pressedLabels = new Set(history.filter((h) => h.label).map((h) => String(h.label).toLowerCase().trim()));
     const offered = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE })
       .filter((c) => !c.disabled && String(c.label || "").trim() && String(c.label).length <= 100 && (!c.hidden || c.revealedBy)
+        && !NOT_A_PRESS.test(String(c.kind || c.role || "").toLowerCase())
         && !pressedLabels.has(String(c.label).toLowerCase().trim())
         && (!revealedKeys || revealedKeys.has(controlKey(c)))), CHOICE_LETTERS.length);
     if (!offered.length) break;
@@ -19785,7 +19806,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // off a multi-minute wait a user didn't ask for.
   // that stays an explicit, separate choice (needs a key), not a fallback.
   if (msg.type === "cancelAsk") {
-    const a = msg.askId ? liveAsks.get(msg.askId) : activeAsk;
+    // Without an id, whatever is still running - the latest first. The
+    // latest alone could already be done while an earlier one, its answer
+    // still awaited, ran on, and Stop then found "nothing running" and the
+    // widget sat on "Stopping…" for minutes.
+    const a = msg.askId ? liveAsks.get(msg.askId)
+      : (activeAsk && !activeAsk.done && !activeAsk.cancelled ? activeAsk
+        : [...liveAsks.values()].reverse().find((x) => !x.done && !x.cancelled) || activeAsk);
     if (!a || a.done || a.cancelled) {
       // Nothing alive under that id - the worker restarted under it, or it
       // ended without answering - yet the panel still shows it running, and
@@ -23951,11 +23978,18 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   stopBtn.title = "Stop";
   stopBtn.innerHTML = STOP_ICON;
   stopBtn.hidden = true;
+  // Pressed: the agent is told to stop, and if it has not answered within
+  // a few seconds the card is ended here anyway. A request stuck somewhere
+  // the cancel does not reach left the panel on "Stopping…" for minutes,
+  // with everything typed after it queued behind.
+  let stopNow = null;
   stopBtn.addEventListener("click", () => {
     stopBtn.disabled = true;
     stopBtn.title = "Stopping…";
     if (runningCard) runningCard.replaceChildren(statusLine("Stopping…"));
     send({ type: "cancelAsk" }).catch(() => {});
+    const end = stopNow;
+    if (end) setTimeout(end, 3000);
   });
   compose.append(input, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
@@ -24220,7 +24254,12 @@ function createWidgetUI({ send, modelHost, storage, options }) {
       runningCard = line;
       showStop(true);
       let res;
-      try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      const stopped = new Promise((r) => { stopNow = () => r({ ok: false, cancelled: true, plannedBy: "cancelled",
+        display: { title: "Stopped", subtitle: "stopped at your request - anything already done on the page stays as it is",
+          stats: [], rows: [], source: "this page" } }); });
+      try { res = await Promise.race([send(message), stopped]); }
+      catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      stopNow = null;
       slot.card.replaceWith(cardFor(res));
       live.splice(live.indexOf(slot), 1);
       runningCard = null;
