@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.33 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.34 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.33";
+globalThis.WC_WIDGET_VERSION = "0.4.34";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -1440,17 +1440,33 @@ return (function () {
     // scrollIntoView, and without this every click threw there rather than
     // being exercised.
     if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center", inline: "center" });
+    // Where a person's click lands: the innermost element at the control's
+    // centre, from which the events bubble up through the control. City-
+    // FIDAP's layer items are <a><li onClick=...> - the handler on the item
+    // inside the link - and a click sent to the link itself never passed
+    // through it, so "Bridges" was pressed and nothing switched on. Only
+    // something inside the control: an overlay lying over it is not pressed.
+    let at = el;
+    try {
+      const r = el.getBoundingClientRect();
+      const root = el.getRootNode && el.getRootNode();
+      const finder = root && typeof root.elementFromPoint === "function" ? root : document;
+      const hit = r.width > 0 && r.height > 0 && typeof finder.elementFromPoint === "function"
+        ? finder.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+      if (hit && hit !== el && el.contains(hit)) at = hit;
+    } catch (e) { /* the control itself, then */ }
     // The pointer arrives before it presses, as a mouse's does. Menus that
     // open on hover - ifis.iowafloodcenter.org's whole sidebar - never saw a
     // press without one, and opened for a person and not for this.
-    el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
-    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    at.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    at.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
-    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    el.click();
+    at.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    at.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    at.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    at.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    if (typeof at.click === "function") at.click();
+    else at.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     return el;
   };
 
@@ -13331,6 +13347,7 @@ function controlsForModel(inv, { max = OFFER_MAX } = {}) {
     if (c.confidence === "low") continue;            // a pointer cursor, not a control
     if (c.hidden && !c.revealedBy) continue;         // hidden with no way in
     if (isSiteFurniture(c)) continue;                // chrome, never the answer
+    if (NOT_A_PRESS.test(String(c.kind || c.role || "").toLowerCase())) continue;  // a part of the page, not a press
     const key = `${c.kind}:${c.type || ""}:${label.toLowerCase()}`;
     if (seen.has(key)) continue;                     // the same thing twice over
     seen.add(key);
