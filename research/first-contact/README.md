@@ -49,7 +49,9 @@ MODEL=0 node gate.js ...                page layer alone
 | 7 | both | 1.99.13 | Llama 3.2 3B | 9/30 pass (30%), 8 maybe |
 | 8 | NCEI Storm Events Database, decide plan | 1.99.16 | Llama 3.2 3B, extension bench, user machine | 7/15 pass, 5 maybe |
 | 8 | NCEI Storm Events Database, decide choice | 1.99.16 | Llama 3.2 3B, extension bench, user machine | 5/15 pass, 2 maybe; after a menu opened, choice offered the whole page again and opened sibling menus |
-| 8 | EPA ECHO facility search, both modes | 1.99.17 | Llama 3.2 3B, extension bench, user machine | pending |
+| 8 | EPA ECHO facility search, decide plan | 1.99.17 | Llama 3.2 3B, extension bench, user machine | 5/15 pass, 4 maybe |
+| 8 | EPA ECHO facility search, decide choice | 1.99.17 | Llama 3.2 3B, extension bench, user machine | 6/15 pass, 5 maybe; choice decisions 6-13 s against 20-80 s planned |
+| 8 | both sites | 1.99.16-1.99.17 | Llama 3.2 3B | plan 12/30 (40%), 9 maybe; choice 11/30 (37%), 7 maybe |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the
