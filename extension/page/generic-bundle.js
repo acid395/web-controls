@@ -1213,6 +1213,21 @@
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // The submit of a site-wide search form: its form holds one text box,
+        // a search box. On a page with a search form of its own as well,
+        // "click search" means that one - ECHO has both, called Search.
+        inSiteSearch: (() => {
+          try {
+            if (!/^(?:button|input)$/i.test(el.tagName)) return undefined;
+            const f = el.form || el.closest("form");
+            if (!f) return undefined;
+            const boxes = [...f.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea, select")];
+            if (boxes.length !== 1) return undefined;
+            const b = boxes[0];
+            const said = `${b.type || ""} ${b.name || ""} ${b.id || ""} ${b.getAttribute("placeholder") || ""} ${b.getAttribute("aria-label") || ""}`;
+            return /\bsearch\b|query|querytext/i.test(said) ? true : undefined;
+          } catch (e) { return undefined; }
+        })(),
         // A box that only shows something - the Water Quality Portal's
         // "Current URL based on input search parameters" - is not one to type in.
         readOnly: (el.readOnly || el.getAttribute("aria-readonly") === "true") ? true : undefined,
@@ -1343,7 +1358,10 @@
       bySig.get(r._sig).push(r);
     }
     const groups = [...bySig.values()].map((rows) => {
-      const r = rows[0];
+      // A site-wide search's button does not stand for its namesakes: ECHO's
+      // header Search and its form's Search fold together, and "click
+      // search" means the form's.
+      const r = rows.length > 1 && rows[0].inSiteSearch ? (rows.find((x) => !x.inSiteSearch) || rows[0]) : rows[0];
       const { _sig, ...rest } = r;
       const group = { ...rest, count: rows.length };
       // The other rows' selectors, in page order. Folding twenty "View
@@ -3975,6 +3993,11 @@
       title: document.title,
       text: bodyText,
       headings: deepQueryAll("h1, h2").filter(isVisible).map(textOf).filter(Boolean).slice(0, 12),
+      // What images say of themselves: a logo is often the only place a
+      // site spells out its own name - "ECHO: Enforcement and Compliance
+      // History Online".
+      imageText: deepQueryAll("img[alt]").filter(isVisible).map((i) => String(i.getAttribute("alt") || "").replace(/\s+/g, " ").trim())
+        .filter((a) => a.length >= 8 && a.length <= 160).slice(0, 20),
       tables,
       pairs,
       readouts,

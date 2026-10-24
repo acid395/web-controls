@@ -16,7 +16,10 @@ const EXT = path.join(__dirname, "..");
 // throw in that handler fails every single ask at once and is invisible to
 // all of them. loadBackground({ page }) wires the stub to a real jsdom page
 // so a message can be sent in and an answer waited for, end to end.
-function loadBackground({ onFetch, page } = {}) {
+// decision: the stored decision mode a test starts in. Plan by default, so a
+// test of the planner and the step loop tests those; a choice test says
+// "decide choice", and null leaves the store empty to see the real default.
+function loadBackground({ onFetch, page, decision = "plan" } = {}) {
   const requests = [];
   // Chrome delivers a message to every listener; this kept only the last
   // one, so a second addListener silently replaced the first. That is not a
@@ -106,7 +109,7 @@ function loadBackground({ onFetch, page } = {}) {
       // here, and stubbing it away would test nothing.
       storage: {
         local: {
-          _data: {},
+          _data: decision ? { decisionMode: decision } : {},
           // Both shapes, because chrome.storage supports both and this
           // extension uses both - the panel passes a callback, the service
           // worker awaits. Promise-only here meant a callback was simply

@@ -38,6 +38,22 @@ globalThis.WC_MODELS = [
     note: "better at choosing; has crashed Chrome on smaller GPUs",
   },
   {
+    // Between the 3B and the 8B: the 8B's 5 GB stalled an 8 GB Mac at 0.03
+    // tokens a second; these leave room beside the page.
+    id: "Qwen3-4B-q4f16_1-MLC",
+    name: "Qwen3 4B",
+    vramMB: 3432,
+    aliases: ["4b", "qwen4b", "qwen34b"],
+    note: "a step up from the 3B that still fits beside a page on 8 GB",
+  },
+  {
+    id: "Qwen3.5-4B-q4f16_1-MLC",
+    name: "Qwen3.5 4B",
+    vramMB: 3868,
+    aliases: ["qwen354b", "35-4b"],
+    note: "newer 4B; a little larger",
+  },
+  {
     id: "Qwen2.5-7B-Instruct-q4f16_1-MLC",
     name: "Qwen2.5 7B",
     vramMB: 5107,

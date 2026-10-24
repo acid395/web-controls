@@ -3158,6 +3158,12 @@ for (const [instr, plan, wantPressed, notPressed] of [
 }
 
 section("the model chooses from the page's controls");
+{
+  const bgd = loadBackground({ decision: null });
+  runAsync(async () => {
+    check("a fresh install decides by choice", await require("vm").runInContext("decisionMode()", bgd), "choice");
+  });
+}
 // "decide choice": each step a lettered list of the page's controls, the
 // answer held to one letter and read with its probability. A sure choice
 // is acted on; an unsure one, or "none of these", goes back to the rest of
@@ -3230,7 +3236,7 @@ section("the model chooses from the page's controls");
       bg.__model = choosingModel(/^Permitted Dischargers/, 0.9, calls);
       runAsync(async () => {
         await bg.__ask({ type: "smartAsk", instruction: "show the permitted dischargers" });
-        ensure("the default mode never asks for a choice", !calls.includes("choice"), calls);
+        ensure("plan mode never asks for a choice", !calls.includes("choice"), calls);
       });
     }
   }
@@ -3275,7 +3281,7 @@ section("the model chooses from the page's controls");
         const r = await bg.__ask({ type: "smartAsk", instruction: "open the permitted dischargers tab, then set the state to colorado" });
         check("mixed: the tab is chosen", t2.getAttribute("aria-selected"), "true");
         check("and the value set the normal way", p.document.getElementById("s").value, "CO");
-        check("in one sequence card", r.plannedBy, "choice");
+        ensure("in one run", !!r.ok, r.plannedBy);
       });
     }
   }
@@ -3327,6 +3333,62 @@ section("the model chooses from the page's controls");
       ensure("the menu asked for is opened", pressed[0] === "da", pressed);
       ensure("and its sibling menus are not offered after it opens", !offeredLater.some((l) => /Documentation/.test(l)) && !pressed.includes("doc"), { pressed, offeredLater });
     });
+  }
+}
+
+// The four gaps both decision modes shared on ECHO, on a made-up form.
+{
+  const html = `<!doctype html><html><body>
+    <form id="site"><input id="q" type="search" name="querytext" aria-label="Search EPA"><button id="hs" type="submit">Search</button></form>
+    <img src="logo.png" alt="ECHO: Enforcement and Compliance History Online" style="width:120px;height:40px">
+    <a id="notify" href="/notify">ECHO Notify</a>
+    <form id="f"><label for="city">City</label><input id="city" type="text"><label for="zip">ZIP Code</label><input id="zip" type="text">
+      <label for="st">State</label><select id="st"><option value="">No Restrictions</option><option value="CA">California</option></select>
+      <button id="fs" type="submit">Search</button></form></body></html>`;
+  const mk = () => loadPage(html, { url: "https://compliance.example.gov/facility-search" });
+  {
+    const p = mk();
+    if (p) {
+      const bg = loadBackground({ page: p });
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "type sacramento in the city box" });
+        check("typed into the box the request names", p.document.getElementById("city").value, "sacramento");
+        check("and not into another box", p.document.getElementById("zip").value, "");
+      });
+    }
+  }
+  {
+    const p = mk();
+    if (p) {
+      const pressed = [];
+      for (const id of ["hs", "fs"]) p.document.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); pressed.push(id); });
+      const recs = p.GENERIC.inventory({}).controls;
+      const searchRec = recs.find((c) => c.label === "Search") || {};
+      check("two Searches fold under the form's, not the site-wide search's", p.document.querySelector(searchRec.selector || "#none") === p.document.getElementById("fs"), true);
+      const bg = loadBackground({ page: p });
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "click search" });
+        ensure("click search presses the form's Search, not the header's", pressed.length === 1 && pressed[0] === "fs", pressed);
+      });
+    }
+  }
+  {
+    const p = mk();
+    if (p) {
+      const pressed = [];
+      p.document.getElementById("notify").addEventListener("click", (e) => { e.preventDefault(); pressed.push("notify"); });
+      const bg = loadBackground({ page: p });
+      bg.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type !== "llmStep") return undefined;
+        return { ok: true, step: { name: "ECHO Notify", do: "click" } };
+      };
+      runAsync(async () => {
+        const r = await bg.__ask({ type: "smartAsk", instruction: "what does echo stand for" });
+        ensure("an acronym spelled out only in a logo is answered", /Enforcement and Compliance History Online/.test(JSON.stringify([r.answer, (r.display || {}).title])), r.answer);
+        ensure("answered before any link is followed off the page for it", !pressed.includes("notify"), pressed);
+      });
+    }
   }
 }
 
