@@ -335,3 +335,23 @@ action          open the help page
 explain         what does echo stand for
 
 ROUND 8 change, 2026-10-23, before any run: "view more search options" (echo) became "show more search options" - the bench's own rule forbids a prompt that is only a control's label.
+
+ROUND 9 - written 2026-10-24 from screenshots only, before the agent ran on these sites.
+Run as the extension bench (15 prompts a site) on 1.99.19 by the user in choice mode, once with use 3b and once with use 4b. Captured with LOOK only; the agent was not run on them.
+
+nohrsc  https://www.nohrsc.noaa.gov/nsa/
+action          show the schedule for snow surveys
+action          animate the snow depth map over the season
+action          animate two weeks of snow melt
+action          switch the numbers to metric
+action          go back one day
+action          move forward a day
+multistep       pick the sierra nevada region and press go
+action          show the interactive maps
+action          open the help and faq page
+action          show the station snowfall reports
+action          open the airborne surveys page
+action          show more of the model discussion
+explain         what percent of the area is covered by snow
+explain         which station had the most snowfall
+explain         how much snow fell at crested butte

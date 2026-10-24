@@ -52,6 +52,7 @@ MODEL=0 node gate.js ...                page layer alone
 | 8 | EPA ECHO facility search, decide plan | 1.99.17 | Llama 3.2 3B, extension bench, user machine | 5/15 pass, 4 maybe |
 | 8 | EPA ECHO facility search, decide choice | 1.99.17 | Llama 3.2 3B, extension bench, user machine | 6/15 pass, 5 maybe; choice decisions 6-13 s against 20-80 s planned |
 | 8 | both sites | 1.99.16-1.99.17 | Llama 3.2 3B | plan 12/30 (40%), 9 maybe; choice 11/30 (37%), 7 maybe |
+| 9 | NOAA NOHRSC National Snow Analyses | 1.99.19 | choice mode, once with Llama 3.2 3B and once with Qwen3 4B, extension bench, user machine | pending: 15 prompts, frozen 2026-10-24 before any run |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the

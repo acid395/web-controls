@@ -1950,3 +1950,126 @@ module.exports.echo = {
     }
   ]
 };
+
+// Round 9, 2026-10-24: one site for the 3B and 4B comparison in choice mode, prompts written
+// from screenshots before the agent ran on them. Not run offline either.
+module.exports.nohrsc = {
+  "url": "https://www.nohrsc.noaa.gov/nsa/",
+  "note": "NOAA NOHRSC National Snow Analyses: a sidebar of links, region/year/month/day lists with - / + / Go, nine map panels each with Season / Two weeks / One Day animation links, metric-unit links, the model discussion figures and a top-ten snow reports table.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "show the schedule for snow surveys",
+      "kind": "action",
+      "steps": [
+        "Snow Survey Schedule"
+      ],
+      "later": true
+    },
+    {
+      "say": "animate the snow depth map over the season",
+      "kind": "action",
+      "steps": [
+        "Season"
+      ],
+      "later": true
+    },
+    {
+      "say": "animate two weeks of snow melt",
+      "kind": "action",
+      "steps": [
+        "Two weeks"
+      ],
+      "later": true
+    },
+    {
+      "say": "switch the numbers to metric",
+      "kind": "action",
+      "steps": [
+        "Metric Units..."
+      ],
+      "later": true
+    },
+    {
+      "say": "go back one day",
+      "kind": "action",
+      "steps": [
+        "-"
+      ]
+    },
+    {
+      "say": "move forward a day",
+      "kind": "action",
+      "steps": [
+        "+"
+      ]
+    },
+    {
+      "say": "pick the sierra nevada region and press go",
+      "kind": "multistep",
+      "steps": [
+        "Region",
+        "Go"
+      ]
+    },
+    {
+      "say": "show the interactive maps",
+      "kind": "action",
+      "steps": [
+        "Interactive Maps"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the help and faq page",
+      "kind": "action",
+      "steps": [
+        "Help and FAQ"
+      ],
+      "later": true
+    },
+    {
+      "say": "show the station snowfall reports",
+      "kind": "action",
+      "steps": [
+        "Station Snowfall Reports"
+      ],
+      "later": true
+    },
+    {
+      "say": "open the airborne surveys page",
+      "kind": "action",
+      "steps": [
+        "Airborne Surveys"
+      ],
+      "later": true
+    },
+    {
+      "say": "show more of the model discussion",
+      "kind": "action",
+      "steps": [
+        "more..."
+      ],
+      "later": true
+    },
+    {
+      "say": "what percent of the area is covered by snow",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "which station had the most snowfall",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "how much snow fell at crested butte",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    }
+  ]
+};

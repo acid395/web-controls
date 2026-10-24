@@ -590,5 +590,27 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"open the help page","kind":"action","steps":["Help"],"later":true,"on":"Help","want":{"clicked":"Help"},"offline":null},
    {"say":"what does echo stand for","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "nohrsc": {
+  "firstContact": true,
+  "url": "https://www.nohrsc.noaa.gov/nsa/",
+  "note": "NOAA NOHRSC National Snow Analyses: a sidebar of links, region/year/month/day lists with - / + / Go, nine map panels each with Season / Two weeks / One Day animation links, metric-unit links, the model discussion figures and a top-ten snow reports table.",
+  "prompts": [
+   {"say":"show the schedule for snow surveys","kind":"action","steps":["Snow Survey Schedule"],"later":true,"on":"Snow Survey Schedule","want":{"clicked":"Snow Survey Schedule"},"offline":null},
+   {"say":"animate the snow depth map over the season","kind":"action","steps":["Season"],"later":true,"on":"Season","want":{"clicked":"Season"},"offline":null},
+   {"say":"animate two weeks of snow melt","kind":"action","steps":["Two weeks"],"later":true,"on":"Two weeks","want":{"clicked":"Two weeks"},"offline":null},
+   {"say":"switch the numbers to metric","kind":"action","steps":["Metric Units..."],"later":true,"on":"Metric Units...","want":{"clicked":"Metric Units..."},"offline":null},
+   {"say":"go back one day","kind":"action","steps":["-"],"on":"-","want":{"clicked":"-"},"offline":null},
+   {"say":"move forward a day","kind":"action","steps":["+"],"on":"+","want":{"clicked":"+"},"offline":null},
+   {"say":"pick the sierra nevada region and press go","kind":"multistep","steps":["Region","Go"],"on":"Region","want":{"clicked":"Region"},"offline":null},
+   {"say":"show the interactive maps","kind":"action","steps":["Interactive Maps"],"later":true,"on":"Interactive Maps","want":{"clicked":"Interactive Maps"},"offline":null},
+   {"say":"open the help and faq page","kind":"action","steps":["Help and FAQ"],"later":true,"on":"Help and FAQ","want":{"clicked":"Help and FAQ"},"offline":null},
+   {"say":"show the station snowfall reports","kind":"action","steps":["Station Snowfall Reports"],"later":true,"on":"Station Snowfall Reports","want":{"clicked":"Station Snowfall Reports"},"offline":null},
+   {"say":"open the airborne surveys page","kind":"action","steps":["Airborne Surveys"],"later":true,"on":"Airborne Surveys","want":{"clicked":"Airborne Surveys"},"offline":null},
+   {"say":"show more of the model discussion","kind":"action","steps":["more..."],"later":true,"on":"more...","want":{"clicked":"more..."},"offline":null},
+   {"say":"what percent of the area is covered by snow","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which station had the most snowfall","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how much snow fell at crested butte","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };
