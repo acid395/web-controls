@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.34 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.35 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.34";
+globalThis.WC_WIDGET_VERSION = "0.4.35";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -2075,7 +2075,7 @@ return (function () {
       // <ul> itself, so that fallback's catches get marked low confidence
       // rather than presented the same as a real button or role=button.
       const strong = TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || hasJsHandler(el);
-      const weak = !strong && looksClickable(el);
+      let weak = !strong && looksClickable(el);
       if (!(strong || weak)) continue;
       if (seen.has(el)) continue;
       // A link wrapping an icon and a caption is one control, not three.
@@ -2092,6 +2092,16 @@ return (function () {
       // "set the basemap to satellite" had nothing to set. Decoration can be
       // folded into the thing it decorates; a control cannot.
       const isRealControl = TAGS.includes(tag) || (role && ROLES.includes(role));
+      // A box around several controls is their container, not one of them.
+      // City-FIDAP's whole sidebar is a clickable div reading "Black Hawk
+      // CountyInfrastructureBuildingsBridges...", and asked "where are the
+      // police stations" the model pressed it. Held as a weak control: still
+      // read, never offered as the thing to press.
+      if (!isRealControl && !weak) {
+        try {
+          if (el.querySelectorAll("a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem]").length >= 2) weak = true;
+        } catch (e) { /* as it was */ }
+      }
       let nestedDuplicate = false;
       if (!isRealControl) {
         for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
@@ -2197,6 +2207,13 @@ return (function () {
         // The submit of a site-wide search form: its form holds one text box,
         // a search box. On a page with a search form of its own as well,
         // "click search" means that one - ECHO has both, called Search.
+        // A map library's own buttons - zoom, rotate, camera, keyboard
+        // shortcuts, the scale bar - rather than the site's. Offered only
+        // when a request is about moving the map itself.
+        mapChrome: (() => {
+          try { return el.closest(".gm-style, .gmnoprint, .gm-control-active, .leaflet-control-container, .maplibregl-ctrl, .mapboxgl-ctrl, .ol-control, .esri-ui, .cesium-viewer-toolbar") ? true : undefined; }
+          catch (e) { return undefined; }
+        })(),
         inSiteSearch: (() => {
           try {
             if (!/^(?:button|input)$/i.test(el.tagName)) return undefined;
@@ -13439,7 +13456,13 @@ function listChoicesFor(goal, pool) {
  * names and their options. Twenty lines is a prompt a 3B reads in seconds;
  * the whole page is a prompt it reads in a minute.
  */
+// A request about the map's view, the only kind a map library's own buttons
+// answer. "put the flood maps on the map" planned Google's camera controls,
+// rotate buttons and scale bar, and opened its keyboard-shortcuts dialog
+// over the page for every request after it.
+const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
 function shortlistFor(goal, controls, max = 20) {
+  if (!ABOUT_THE_MAP_VIEW.test(String(goal || ""))) controls = controls.filter((c) => !c.mapChrome);
   const words = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
   const scored = controls.map((c, i) => {
     const label = String(c.label || "").toLowerCase();
@@ -24000,14 +24023,15 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   // the cancel does not reach left the panel on "Stopping…" for minutes,
   // with everything typed after it queued behind.
   let stopNow = null;
-  stopBtn.addEventListener("click", () => {
+  const stop = () => {
     stopBtn.disabled = true;
     stopBtn.title = "Stopping…";
     if (runningCard) runningCard.replaceChildren(statusLine("Stopping…"));
     send({ type: "cancelAsk" }).catch(() => {});
     const end = stopNow;
     if (end) setTimeout(end, 3000);
-  });
+  };
+  stopBtn.addEventListener("click", stop);
   compose.append(input, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
   panel.appendChild(form);
@@ -24368,6 +24392,9 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     close: () => setOpen(false),
     toggle,
     ask,
+    // The same as pressing the stop square, so a site's own cancel frees
+    // the queue too, not only the agent underneath.
+    stop: () => { if (busy) stop(); else send({ type: "cancelAsk" }).catch(() => {}); return Promise.resolve({ ok: true }); },
     progress,
     loadModel,
     destroy: () => {
@@ -24492,7 +24519,7 @@ function mount(userOptions = {}) {
     },
     loadModel: ui.loadModel,
     // Stops the request in progress, as the Stop button does.
-    cancel: () => shim.send({ type: "cancelAsk" }),
+    cancel: () => (ui && ui.stop ? ui.stop() : shim.send({ type: "cancelAsk" })),
     // The same as choosing it in the panel: remembered for this site, and
     // swapped in now if a model is already loaded or loading.
     setModel: async (id) => {
