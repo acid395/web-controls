@@ -3535,6 +3535,34 @@ section("the model chooses from the page's controls");
   check("an open one does not", /menu, closed/.test(run(`choiceLine({ label: "Weather & Environment", kind: "div", opensPanel: true, expanded: true })`)), false);
 }
 
+// A click lands where a person's would: on the innermost element at the
+// control's centre. City-FIDAP's layer items keep their handler on the <li>
+// inside the link, and a click sent to the link never passed through it.
+{
+  const page = loadPage(`<!doctype html><html><body><a href="#b" id="a"><li id="li">Bridges</li></a>
+    <div id="cover" style="position:fixed">over it</div><button id="btn">Plain</button></body></html>`,
+    { url: "https://city.example.gov/lab/dt/3Dmap" });
+  if (page) {
+    const d = page.document;
+    const a = d.getElementById("a"); const li = d.getElementById("li"); const btn = d.getElementById("btn");
+    const box = () => ({ left: 0, top: 0, width: 100, height: 20, right: 100, bottom: 20 });
+    a.getBoundingClientRect = box; btn.getBoundingClientRect = box;
+    let item = 0; let cover = 0; let pressed = 0;
+    li.addEventListener("click", () => { item += 1; });
+    d.getElementById("cover").addEventListener("click", () => { cover += 1; });
+    btn.addEventListener("click", () => { pressed += 1; });
+    d.elementFromPoint = () => li;
+    page.GENERIC.click("#a");
+    {
+      check("the item inside a link gets the click", item, 1);
+      d.elementFromPoint = () => d.getElementById("cover");
+      page.GENERIC.click("#btn");
+      check("but an overlay lying over a control is not pressed", cover, 0);
+      check("the control is", pressed, 1);
+    }
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

@@ -6342,6 +6342,7 @@ function controlsForModel(inv, { max = OFFER_MAX } = {}) {
     if (c.confidence === "low") continue;            // a pointer cursor, not a control
     if (c.hidden && !c.revealedBy) continue;         // hidden with no way in
     if (isSiteFurniture(c)) continue;                // chrome, never the answer
+    if (NOT_A_PRESS.test(String(c.kind || c.role || "").toLowerCase())) continue;  // a part of the page, not a press
     const key = `${c.kind}:${c.type || ""}:${label.toLowerCase()}`;
     if (seen.has(key)) continue;                     // the same thing twice over
     seen.add(key);
