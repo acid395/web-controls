@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.29 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.30 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.29",
+    version: "0.4.30",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.29";
+globalThis.WC_WIDGET_VERSION = "0.4.30";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -71,6 +71,22 @@ globalThis.WC_MODELS = [
     vramMB: 2264,
     aliases: ["3b", "llama3b", "llama323b"],
     note: "better at choosing; has crashed Chrome on smaller GPUs",
+  },
+  {
+    // Between the 3B and the 8B: the 8B's 5 GB stalled an 8 GB Mac at 0.03
+    // tokens a second; these leave room beside the page.
+    id: "Qwen3-4B-q4f16_1-MLC",
+    name: "Qwen3 4B",
+    vramMB: 3432,
+    aliases: ["4b", "qwen4b", "qwen34b"],
+    note: "a step up from the 3B that still fits beside a page on 8 GB",
+  },
+  {
+    id: "Qwen3.5-4B-q4f16_1-MLC",
+    name: "Qwen3.5 4B",
+    vramMB: 3868,
+    aliases: ["qwen354b", "35-4b"],
+    note: "newer 4B; a little larger",
   },
   {
     id: "Qwen2.5-7B-Instruct-q4f16_1-MLC",
@@ -2148,6 +2164,21 @@ return (function () {
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // The submit of a site-wide search form: its form holds one text box,
+        // a search box. On a page with a search form of its own as well,
+        // "click search" means that one - ECHO has both, called Search.
+        inSiteSearch: (() => {
+          try {
+            if (!/^(?:button|input)$/i.test(el.tagName)) return undefined;
+            const f = el.form || el.closest("form");
+            if (!f) return undefined;
+            const boxes = [...f.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea, select")];
+            if (boxes.length !== 1) return undefined;
+            const b = boxes[0];
+            const said = `${b.type || ""} ${b.name || ""} ${b.id || ""} ${b.getAttribute("placeholder") || ""} ${b.getAttribute("aria-label") || ""}`;
+            return /\bsearch\b|query|querytext/i.test(said) ? true : undefined;
+          } catch (e) { return undefined; }
+        })(),
         // A box that only shows something - the Water Quality Portal's
         // "Current URL based on input search parameters" - is not one to type in.
         readOnly: (el.readOnly || el.getAttribute("aria-readonly") === "true") ? true : undefined,
@@ -2278,7 +2309,10 @@ return (function () {
       bySig.get(r._sig).push(r);
     }
     const groups = [...bySig.values()].map((rows) => {
-      const r = rows[0];
+      // A site-wide search's button does not stand for its namesakes: ECHO's
+      // header Search and its form's Search fold together, and "click
+      // search" means the form's.
+      const r = rows.length > 1 && rows[0].inSiteSearch ? (rows.find((x) => !x.inSiteSearch) || rows[0]) : rows[0];
       const { _sig, ...rest } = r;
       const group = { ...rest, count: rows.length };
       // The other rows' selectors, in page order. Folding twenty "View
@@ -4910,6 +4944,11 @@ return (function () {
       title: document.title,
       text: bodyText,
       headings: deepQueryAll("h1, h2").filter(isVisible).map(textOf).filter(Boolean).slice(0, 12),
+      // What images say of themselves: a logo is often the only place a
+      // site spells out its own name - "ECHO: Enforcement and Compliance
+      // History Online".
+      imageText: deepQueryAll("img[alt]").filter(isVisible).map((i) => String(i.getAttribute("alt") || "").replace(/\s+/g, " ").trim())
+        .filter((a) => a.length >= 8 && a.length <= 160).slice(0, 20),
       tables,
       pairs,
       readouts,
@@ -12457,7 +12496,13 @@ function namedByClause(all, clause) {
     }));
     return kept;
   };
-  const plain = match(clause);
+  let plain = match(clause);
+  // Two controls of one name, one of them the site-wide search's button:
+  // "click search" on ECHO's form is the form's Search, not the header's.
+  if (plain.length > 1 && !/\b(?:site|website|whole\s+site)\b/i.test(clause)) {
+    const own = plain.filter((c) => !c.inSiteSearch);
+    if (own.length && own.length < plain.length) plain = own;
+  }
   if (plain.length) {
     return { named: plain, n: null, word: null, how: exactly ? "exact" : namedOtherwise ? "named" : "close" };
   }
@@ -13433,8 +13478,10 @@ function takesTyping(c) {
   return TEXT_INPUT_KINDS.has(kind) || ((/^(?:combobox|listbox|input)$/.test(kind) || /\binput box\b/i.test(String(c.label || ""))) && !(c.options || []).length);
 }
 const CHOICE_SURE = 0.4;
+// Choice is the default: the page's controls to the model, and the model
+// picks. "decide plan" brings back the planner with the page's rules first.
 async function decisionMode() {
-  return chrome.storage.local.get("decisionMode").then((g) => g.decisionMode || "plan").catch(() => "plan");
+  return chrome.storage.local.get("decisionMode").then((g) => g.decisionMode || "choice").catch(() => "choice");
 }
 function choiceLine(c) {
   const kind = String(c.type || c.kind || "").toLowerCase();
@@ -13505,7 +13552,13 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
       round === 0 ? "none of these" : "nothing more - the request is done");
     calls++;
     if (asked.cost) cost = asked.cost;
-    if (asked.error) { history.push({ did: "asked the model to choose", ok: false, changed: false, outcome: `no usable choice: ${String(asked.error).slice(0, 60)}` }); break; }
+    // No usable choice at the first step hands the request back, as an unsure
+    // one does; later, it ends the run with what was done.
+    if (asked.error) {
+      if (round === 0) return null;
+      history.push({ did: "asked the model to choose", ok: false, changed: false, outcome: `no usable choice: ${String(asked.error).slice(0, 60)}` });
+      break;
+    }
     if (asked.letter === "Z") {
       if (round === 0) return null;
       history.push({ did: "the model chose to stop", ok: true, changed: false, skipped: true, outcome: `the request is done (${pct(asked.p)} sure)` });
@@ -15908,7 +15961,7 @@ function expansionIn(acronym, text) {
 }
 function answerInPageWords(goal, read, passages) {
   const r = read || {};
-  const text = [...(r.headings || []), String(r.text || ""), ...(passages || [])].join(" \n ").replace(/\s+/g, " ");
+  const text = [...(r.headings || []), ...(r.imageText || []), String(r.text || ""), ...(passages || [])].join(" \n ").replace(/\s+/g, " ");
   const sf = String(goal).match(STANDS_FOR);
   if (sf) {
     const x = expansionIn(sf[1], text);
@@ -18462,7 +18515,22 @@ function pagerControl(clause, all) {
   if (!pick.length || new Set(pick.map((c) => flat(c.label))).size !== 1) return null;
   return { control: pick[0], press: "click", label: pick[0].label };
 }
+// "Type sacramento in the city box", "enter 95814 into the zip code field":
+// the words go into the one box whose name the request gives.
+const TYPE_INTO = /^\s*(?:please\s+)?(?:type|enter|put|write|fill\s+in)\s+["'\u201c]?(.+?)["'\u201d]?\s+(?:in|into)\s+(?:the\s+)?(.+?)(?:\s+(?:box|field|bar|input))?(?:\s*,?\s*(?:and|then)\s+(?:press|click|hit)\s+(go|enter|search|submit))?\s*$/i;
+function typeIntoNamedBox(clause, all) {
+  const m = String(clause).match(TYPE_INTO);
+  if (!m) return null;
+  const words = listWords(m[2]).filter((w) => !/^(?:box|field|bar|input|text)$/.test(w));
+  if (!words.length) return null;
+  const boxes = all.filter((c) => !c.disabled && !c.readOnly && (!c.hidden || c.revealedBy) && TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+    && words.every((w) => wordMatchesText(w, String(c.label || "").toLowerCase())));
+  if (boxes.length !== 1) return null;
+  return { control: boxes[0], fill: m[1].trim(), submitAfter: !!m[3], label: `${boxes[0].label}: ${m[1].trim()}` };
+}
 function setToPlan(routeGlobal, clause, all) {
+  const typed = typeIntoNamedBox(clause, all);
+  if (typed) return typed;
   const pager = pagerControl(clause, all);
   if (pager) return pager;
   if (CLOSE_DIALOG.test(String(clause))) {
@@ -18676,6 +18744,7 @@ async function runSetToPlan(routeGlobal, setTo) {
         if (setTo.fill != null) {
           const ran = await runVerified(routeGlobal, { name: "pageFill", args: { selector: setTo.control.selector, text: setTo.fill } });
           if (!ran || ran.ok === false) return null;
+          if (setTo.submitAfter) await runVerified(routeGlobal, { name: "pageSubmit", args: { selector: setTo.control.selector } }).catch(() => null);
           return { changed: true };
         }
         if (setTo.openThenPick) {
@@ -19924,62 +19993,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             subtitle: modeSet[1].toLowerCase() === "choice" ? "the model chooses each step from the page's controls" : "the model plans, with the page's own rules first" } });
           return;
         }
-        // Choice mode: the page's controls to the model, and the model picks,
-        // before any of the page's own shortcuts. Questions read as before.
-        if (!forceBaseline && !conditional && !ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted)
-            && await decisionMode() === "choice") {
-          const status = (await startModelIfIdle().catch(() => null)) || await modelStatus();
-          if (status && status.ready) {
-            modelTried = true;
-            modelUsed = status.model || null;
-            const parts = splitIntoSteps(wanted);
-            const all = { history: [], calls: 0, tookMs: 0, cost: null };
-            let handled = true;
-            // One step carrying a value: the normal path entire, as without choice.
-            if (parts.length === 1 && carriesAValue(parts[0])) handled = false;
-            for (const part of handled ? parts : []) {
-              if (ASKING_TO_READ.test(part) || QUESTION_LED.test(part)) {
-                const read = await runModelAgent(route.global, part, { maxSteps: 2 }).catch(() => null);
-                all.history.push({ did: "then read the page", ok: !!(read && read.ok), changed: false, outcome: read && read.answer ? String(read.answer).slice(0, 300) : "no answer" });
-                if (read && read.answer) all.answer = read.answer;
-                continue;
-              }
-              // In a sequence, a step with a value - or one the choice handed back -
-              // goes the way any sequence step goes: the page, then the plan,
-              // then the step-by-step model.
-              const normally = async () => {
-                const step = await resolveStep(route.global, part, { exact: false, lateLooks: 2 }).catch(() => null);
-                if (step) {
-                  return step.kind === "search"
-                    ? { did: `searched for "${String(step.searched.words || "").slice(0, 40)}"`, ok: true, changed: true, outcome: "the page's own search" }
-                    : { did: String(step.did || part), ok: true, changed: step.changed !== false, outcome: step.outcome || "done by the page" };
-                }
-                const planned = await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null);
-                if (planned && planned.history.some((h) => h.ok && !h.skipped)) {
-                  return { did: part, ok: true, changed: planned.history.some((h) => h.changed), outcome: planned.history.map((h) => h.did).join("; ").slice(0, 90) };
-                }
-                return null;
-              };
-              const one = carriesAValue(part) ? null
-                : await chooseAndAct(route.global, part).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
-              if (!one) {
-                if (parts.length === 1) { handled = false; break; }
-                const done = await normally();
-                if (done) { all.history.push({ ...done, outcome: `${done.outcome} (normal path)` }); continue; }
-                all.history.push({ did: part, ok: false, changed: false, outcome: "neither the choice nor the normal path could do this step" });
-                break;
-              }
-              all.history.push(...one.history); all.calls += one.calls; all.tookMs += one.tookMs; all.cost = one.cost || all.cost;
-            }
-            if (handled && all.history.length) {
-              const card = choiceCard(route.global, wanted, all, modelName(modelUsed));
-              if (all.answer) { card.answer = all.answer; card.display.answer = all.answer; }
-              respond(card);
-              return;
-            }
-          }
-        }
-
         // The model plans, where it can. Everything below this - the scorer,
         // the manifests, the data lookups - runs when the model is not
         // available or could not finish, and under "baseline:" on request.
@@ -20838,6 +20851,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted) && splitIntoSteps(wanted).length <= 1) {
               const looked = await sectionsFirst(route.global, wanted).catch(() => null);
               if (looked) { respond(looked); return; }
+              // Choice, where the page could not settle it: the controls to the
+              // model, and it picks. Unsure, or no pick, and the planner has it.
+              if (await decisionMode() === "choice" && !carriesAValue(wanted)) {
+                const chosen = await chooseAndAct(route.global, wanted).catch((e) => { debugLog(`[choice] threw: ${String((e && e.message) || e)}`); return null; });
+                if (chosen) { respond(choiceCard(route.global, wanted, chosen, modelName(modelUsed))); return; }
+              }
               const plan = await planWithModel(route.global, wanted).catch((e) => { debugLog(`[plan] threw: ${String((e && e.message) || e)}`); return null; });
               if (plan) {
                 const unchecked = plan.history.filter((h) => h.ok && !h.changed).length;
@@ -20927,8 +20946,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 // One part of a chain is one thing: the control, and at most
                 // the panel that holds it. Twelve guesses at "clear the cached
                 // data" pressed whatever was nearby.
-                const planned = isCommand(part) ? await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null) : null;
-                const one = planned && planned.history.some((h) => h.ok && h.changed)
+                // In choice mode the model picks the part's control first.
+                const chosenPart = isCommand(part) && !carriesAValue(part) && await decisionMode() === "choice"
+                  ? await chooseAndAct(route.global, part).catch(() => null) : null;
+                const planned = chosenPart ? null : isCommand(part) ? await planWithModel(route.global, part, { maxSteps: 2 }).catch(() => null) : null;
+                const one = chosenPart ? { ok: true, history: chosenPart.history, tookMs: chosenPart.tookMs }
+                  : planned && planned.history.some((h) => h.ok && h.changed)
                   ? { ok: true, history: planned.history, tookMs: planned.tookMs }
                   : await runModelAgent(route.global, part, { maxSteps: 4, deadlineAt: together, chain: false, onlyModel: forceModel })
                     .catch((e) => ({ ok: false, error: String((e && e.message) || e), history: [] }));
