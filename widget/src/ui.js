@@ -260,14 +260,15 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   // the cancel does not reach left the panel on "Stopping…" for minutes,
   // with everything typed after it queued behind.
   let stopNow = null;
-  stopBtn.addEventListener("click", () => {
+  const stop = () => {
     stopBtn.disabled = true;
     stopBtn.title = "Stopping…";
     if (runningCard) runningCard.replaceChildren(statusLine("Stopping…"));
     send({ type: "cancelAsk" }).catch(() => {});
     const end = stopNow;
     if (end) setTimeout(end, 3000);
-  });
+  };
+  stopBtn.addEventListener("click", stop);
   compose.append(input, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
   panel.appendChild(form);
@@ -628,6 +629,9 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     close: () => setOpen(false),
     toggle,
     ask,
+    // The same as pressing the stop square, so a site's own cancel frees
+    // the queue too, not only the agent underneath.
+    stop: () => { if (busy) stop(); else send({ type: "cancelAsk" }).catch(() => {}); return Promise.resolve({ ok: true }); },
     progress,
     loadModel,
     destroy: () => {

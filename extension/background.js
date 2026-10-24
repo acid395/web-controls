@@ -6434,7 +6434,13 @@ function listChoicesFor(goal, pool) {
  * names and their options. Twenty lines is a prompt a 3B reads in seconds;
  * the whole page is a prompt it reads in a minute.
  */
+// A request about the map's view, the only kind a map library's own buttons
+// answer. "put the flood maps on the map" planned Google's camera controls,
+// rotate buttons and scale bar, and opened its keyboard-shortcuts dialog
+// over the page for every request after it.
+const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
 function shortlistFor(goal, controls, max = 20) {
+  if (!ABOUT_THE_MAP_VIEW.test(String(goal || ""))) controls = controls.filter((c) => !c.mapChrome);
   const words = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
   const scored = controls.map((c, i) => {
     const label = String(c.label || "").toLowerCase();

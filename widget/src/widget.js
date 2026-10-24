@@ -108,7 +108,7 @@ function mount(userOptions = {}) {
     },
     loadModel: ui.loadModel,
     // Stops the request in progress, as the Stop button does.
-    cancel: () => shim.send({ type: "cancelAsk" }),
+    cancel: () => (ui && ui.stop ? ui.stop() : shim.send({ type: "cancelAsk" })),
     // The same as choosing it in the panel: remembered for this site, and
     // swapped in now if a model is already loaded or loading.
     setModel: async (id) => {

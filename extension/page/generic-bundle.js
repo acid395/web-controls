@@ -1125,7 +1125,7 @@
       // <ul> itself, so that fallback's catches get marked low confidence
       // rather than presented the same as a real button or role=button.
       const strong = TAGS.includes(tag) || (role && ROLES.includes(role)) || tabbable || hasJsHandler(el);
-      const weak = !strong && looksClickable(el);
+      let weak = !strong && looksClickable(el);
       if (!(strong || weak)) continue;
       if (seen.has(el)) continue;
       // A link wrapping an icon and a caption is one control, not three.
@@ -1142,6 +1142,16 @@
       // "set the basemap to satellite" had nothing to set. Decoration can be
       // folded into the thing it decorates; a control cannot.
       const isRealControl = TAGS.includes(tag) || (role && ROLES.includes(role));
+      // A box around several controls is their container, not one of them.
+      // City-FIDAP's whole sidebar is a clickable div reading "Black Hawk
+      // CountyInfrastructureBuildingsBridges...", and asked "where are the
+      // police stations" the model pressed it. Held as a weak control: still
+      // read, never offered as the thing to press.
+      if (!isRealControl && !weak) {
+        try {
+          if (el.querySelectorAll("a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem]").length >= 2) weak = true;
+        } catch (e) { /* as it was */ }
+      }
       let nestedDuplicate = false;
       if (!isRealControl) {
         for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
@@ -1247,6 +1257,13 @@
         // The submit of a site-wide search form: its form holds one text box,
         // a search box. On a page with a search form of its own as well,
         // "click search" means that one - ECHO has both, called Search.
+        // A map library's own buttons - zoom, rotate, camera, keyboard
+        // shortcuts, the scale bar - rather than the site's. Offered only
+        // when a request is about moving the map itself.
+        mapChrome: (() => {
+          try { return el.closest(".gm-style, .gmnoprint, .gm-control-active, .leaflet-control-container, .maplibregl-ctrl, .mapboxgl-ctrl, .ol-control, .esri-ui, .cesium-viewer-toolbar") ? true : undefined; }
+          catch (e) { return undefined; }
+        })(),
         inSiteSearch: (() => {
           try {
             if (!/^(?:button|input)$/i.test(el.tagName)) return undefined;

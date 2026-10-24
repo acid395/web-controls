@@ -3563,6 +3563,28 @@ section("the model chooses from the page's controls");
   }
 }
 
+// A box around several controls is not one of them, and a map library's own
+// buttons answer only requests about the map's view.
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <div id="side" onclick="void 0">Black Hawk County<a href="#i">Infrastructure</a><a href="#p">Police Stations</a></div>
+    <div class="gm-style"><button aria-label="Map camera controls">cam</button><button aria-label="Keyboard shortcuts">kb</button></div>
+    <button id="flood">Flood Maps</button></body></html>`, { url: "https://city.example.gov/lab/dt/3Dmap" });
+  if (page) {
+    const inv = page.GENERIC.inventory({ includeHidden: true });
+    const side = inv.controls.find((c) => /^Black Hawk County/.test(c.label));
+    ensure("a box around several controls is held as weak", !side || side.confidence === "low", side);
+    const cam = inv.controls.find((c) => c.label === "Map camera controls");
+    ensure("a map library's button is marked as such", cam && cam.mapChrome === true, cam);
+    const bgm = loadBackground({ page });
+    const vm = require("vm");
+    const offered = (goal) => vm.runInContext(`shortlistFor(${JSON.stringify(goal)}, controlsForModel(${JSON.stringify(inv)}, { max: 400 })).map((c) => c.label)`, bgm);
+    ensure("not offered for putting a layer on the map", !offered("put the flood maps on the map").some((l) => /camera|Keyboard/.test(l)), offered("put the flood maps on the map"));
+    ensure("but offered when the request is about the view", offered("tilt the map camera").includes("Map camera controls"), offered("tilt the map camera"));
+    ensure("and the wrapper is never offered", !offered("where are the police stations").some((l) => /^Black Hawk County/.test(l)), offered("where are the police stations"));
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
