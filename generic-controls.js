@@ -519,6 +519,8 @@
     return el;
   };
 
+  // The list whose Go a choice last pressed, and when.
+  let jumpPressed = null;
   const setSelect = (elOrSel, valueOrText, add = false) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
@@ -556,6 +558,7 @@
       if (fields.length === 1 && buttons.length === 1
           && /^(go|apply|view|show|submit|ok|get)$/i.test(String(buttons[0].textContent || buttons[0].value || "").trim())) {
         realClick(buttons[0]);
+        jumpPressed = { el, at: Date.now() };
       }
     }
     return opt.value;
@@ -1350,6 +1353,66 @@
         r.label = `${r.label} (${heads[i]})`;
         r.section = heads[i];
         r._sig = `${r._sig}|${heads[i]}`;
+      });
+    }
+    /* Identical controls told apart by the panel each sits in alone.
+     *
+     * NOHRSC shows nine maps side by side, each in its own cell headed by
+     * its name - "Snow Water Equivalent", "Snow Melt" - with "Animate:
+     * Season --- Two weeks --- One Day" under it. Folded, the agent saw one
+     * "Two weeks" and no way to say whose. Each member's own container is
+     * the largest one holding no other member of the group, and its caption
+     * is the text that opens it, before any control. Only where every
+     * member has one and no two are the same: a control that opens its own
+     * container, or captions that repeat, leave the group as it was.
+     */
+    const bySig1 = new Map();
+    for (const r of all) {
+      if (!bySig1.has(r._sig)) bySig1.set(r._sig, []);
+      bySig1.get(r._sig).push(r);
+    }
+    for (const rows of bySig1.values()) {
+      // Three or more. A pair is most often one control printed twice - a
+      // header's and a footer's, a desktop's and a phone's - and on
+      // droughtmonitor splitting its two Previous Maps by panel left the
+      // plain "click previous map" scoring below Change Maps.
+      if (rows.length < 3 || rows.length > 60 || rows.some((r) => r.section)) continue;
+      if (!String(rows[0].label || "").trim()) continue;
+      const els = rows.map((r) => { try { return deepQuery(r.selector); } catch (e) { return null; } });
+      if (els.some((e) => !e) || new Set(els).size !== els.length) continue;
+      const captions = els.map((e) => {
+        let own = e;
+        while (own.parentElement && own.parentElement !== document.body
+          && !els.some((o) => o !== e && own.parentElement.contains(o))) own = own.parentElement;
+        if (own === e) return "";
+        const walker = document.createTreeWalker(own, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+        let text = "";
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (n.nodeType === 1) {
+            if (n.matches("a, button, input, select, textarea, [role=button], [role=link], [role=tab]")) break;
+            if (/^(?:SCRIPT|STYLE|NOSCRIPT)$/.test(n.tagName)) { text += " "; continue; }
+            continue;
+          }
+          if (n.parentElement && n.parentElement.closest("script, style, noscript")) continue;
+          text += ` ${n.nodeValue}`;
+        }
+        let t = text.replace(/\s+/g, " ").trim()
+          .replace(/(?:\s*[-\u2013\u2014|\u00b7]+)+\s*$/, "").trim();
+        // The word that introduces the controls is not the panel's name:
+        // "Snow Melt Animate:" is the Snow Melt panel.
+        const lead = t.match(/^(.*?[a-z0-9)])\s+[A-Za-z]\w{0,15}:$/i);
+        if (lead) t = lead[1].trim();
+        t = t.replace(/(?:\s*[-\u2013\u2014|:\u00b7]+)+\s*$/, "").trim();
+        return t.length >= 2 && t.length <= 60 && /[a-z]/i.test(t) ? t : "";
+      });
+      if (captions.some((c) => !c)) continue;
+      if (new Set(captions.map((c) => c.toLowerCase())).size !== rows.length) continue;
+      const own = String(rows[0].label || "").trim().toLowerCase();
+      if (captions.some((c) => c.toLowerCase() === own)) continue;
+      rows.forEach((r, i) => {
+        r.label = `${r.label} (${captions[i]})`;
+        r.section = captions[i];
+        r._sig = `${r._sig}|own:${captions[i]}`;
       });
     }
     const bySig = new Map();
@@ -2746,7 +2809,7 @@
    * Where a box shows signs of an autocomplete, the submit waits - up to two
    * and a half seconds - for its suggestions to appear.
    */
-  async function submitWhenReady(elOrSel) {
+  async function submitWhenReady(elOrSel, named) {
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`submit: not found: ${elOrSel}`);
     const hasAutocomplete = el.tagName === "INPUT" && (
@@ -2779,10 +2842,10 @@
         return { submitted: "suggestion", chose: String(first.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80) };
       }
     }
-    return submit(el);
+    return submit(el, named);
   }
 
-  function submit(elOrSel) {
+  function submit(elOrSel, named) {
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`submit: not found: ${elOrSel}`);
 
@@ -2796,9 +2859,27 @@
     // for styling reloads everything and throws the page's state away. So a
     // select follows through only via an explicit button, or not at all.
     if (el.tagName === "SELECT") {
+      // Its Go already pressed by choosing, as a jump menu's is. Pressing it
+      // again sent the same choice twice.
+      if (jumpPressed && jumpPressed.el === el && Date.now() - jumpPressed.at < 10000) {
+        jumpPressed = null;
+        return { submitted: "button" };
+      }
       const inline = String(el.getAttribute("onchange") || "") + String(el.getAttribute("onblur") || "");
       if (/location|navigate|\.submit\(|href/i.test(inline)) return { submitted: "change" };
       const near = el.form || el.closest("form") || el.parentElement || document;
+      // A button the request named: that one or none. NOHRSC's form opens
+      // with "-" and "+" submits that step the date, and the first submit
+      // in it was pressed for "and press go" - a day back, not the region.
+      if (named) {
+        const want = String(named).toLowerCase().replace(/\s+/g, " ").trim();
+        const said = (b) => [b.textContent, b.value, b.getAttribute("aria-label"), b.getAttribute("title")]
+          .some((t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim() === want);
+        const pick = [...near.querySelectorAll("button, input[type=submit], input[type=button], input[type=image], a[role=button]")]
+          .find((b) => said(b) && !b.disabled);
+        if (pick) { realClick(pick); return { submitted: "button" }; }
+        return { submitted: `change only - no ${named} button beside this list` };
+      }
       const go = near.querySelector('button[type=submit], input[type=submit], button[class*="go"], [aria-label*="Go"]')
         || [...near.querySelectorAll("button, input[type=button], a[role=button]")]
              .find((b) => /^(go|apply|view|submit|show)\b/i.test((b.textContent || b.value || "").trim()));

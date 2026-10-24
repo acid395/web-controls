@@ -35,7 +35,8 @@ globalThis.WC_MODELS = [
     name: "Llama 3.2 3B",
     vramMB: 2264,
     aliases: ["3b", "llama3b", "llama323b"],
-    note: "better at choosing; has crashed Chrome on smaller GPUs",
+    note: "the default where memory is short; has crashed Chrome on smaller GPUs",
+    fallback: true,
   },
   {
     // Between the 3B and the 8B: the 8B's 5 GB stalled an 8 GB Mac at 0.03
@@ -44,7 +45,8 @@ globalThis.WC_MODELS = [
     name: "Qwen3 4B",
     vramMB: 3432,
     aliases: ["4b", "qwen4b", "qwen34b"],
-    note: "a step up from the 3B that still fits beside a page on 8 GB",
+    note: "the default - a step up from the 3B that still fits beside a page on 8 GB",
+    default: true,
   },
   {
     id: "Qwen3.5-4B-q4f16_1-MLC",
@@ -65,8 +67,7 @@ globalThis.WC_MODELS = [
     name: "Llama 3.1 8B",
     vramMB: 5001,
     aliases: ["8b", "llama8b", "llama318b"],
-    note: "the default - best at chaining several steps",
-    default: true,
+    note: "best at chaining several steps; too large for an 8 GB machine",
   },
   {
     id: "Qwen3-8B-q4f16_1-MLC",
@@ -87,8 +88,15 @@ globalThis.WC_MODELS = [
   },
 ];
 
-globalThis.WC_DEFAULT_MODEL =
-  (globalThis.WC_MODELS.find((m) => m.default) || globalThis.WC_MODELS[0]).id;
+// Qwen3 4B, which beat the 3B on NOHRSC's fifteen requests, where the
+// machine says it has the room; the 3B where it says it does not. Only for
+// somebody who has not chosen - a stored choice is always carried out.
+globalThis.WC_DEFAULT_MODEL = (() => {
+  const main = globalThis.WC_MODELS.find((m) => m.default) || globalThis.WC_MODELS[0];
+  const small = globalThis.WC_MODELS.find((m) => m.fallback) || main;
+  const gb = Number((globalThis.navigator && globalThis.navigator.deviceMemory) || 0);
+  return gb > 0 && main.vramMB * 1.6 > gb * 1024 ? small.id : main.id;
+})();
 
 globalThis.WC_MODEL_VRAM = function (id) {
   const hit = globalThis.WC_MODELS.find((m) => m.id === id);

@@ -3392,6 +3392,124 @@ section("the model chooses from the page's controls");
   }
 }
 
+// Round nine, on made-up pages shaped like NOHRSC: what each fix must do,
+// and what it must not.
+{
+  const bgw = loadBackground({});
+  const vm = require("vm");
+  const run = (expr) => vm.runInContext(expr, bgw);
+  for (const s of ["go back one day", "move forward a day", "step back by one week", "go to the next day", "show the previous day's map, go to the previous day", "one day earlier"]) {
+    check(`a step through time is not a span: ${s}`, run(`A_STEP_IN_TIME.test(${JSON.stringify(s)})`), true);
+  }
+  for (const s of ["show one day", "show the last 7 days", "give me a week of data", "show the past day", "show the last 30 days of flow"]) {
+    check(`but a window still is: ${s}`, run(`A_STEP_IN_TIME.test(${JSON.stringify(s)})`), false);
+  }
+  check("a bare minus is described as a step back", /steps back/.test(run(`choiceLine({ label: "-", type: "button" })`)), true);
+  check("a bare plus as a step forward", /steps forward/.test(run(`choiceLine({ label: "+", type: "button" })`)), true);
+  check("but a minus inside a name is left alone", /steps/.test(run(`choiceLine({ label: "Zoom - out", type: "button" })`)), false);
+  check("a press at the end is read", run(`THEN_PRESS_GO.test("pick the sierra nevada region and press go")`), true);
+  check("and not where none is asked", run(`THEN_PRESS_GO.test("pick the sierra nevada region")`), false);
+  check("nor a go in the middle of a name", run(`THEN_PRESS_GO.test("press go to the river forecast page")`), false);
+}
+
+{
+  const panels = ["Snow Water Equivalent", "Snow Depth", "Snow Melt"];
+  const page = loadPage(`<!doctype html><html><body><table class="nsa_table"><tr>${
+    panels.map((p, i) => `<td><b>${p}</b><br><img alt=""><br>Animate: <a href="#s${i}" id="s${i}">Season</a> --- <a href="#w${i}" id="w${i}">Two weeks</a> --- <a href="#d${i}" id="d${i}">One Day</a></td>`).join("")
+  }</tr></table>
+  <div id="date">2026-10-23 <button id="back">-</button> <button id="fwd">+</button></div>
+  <nav><a href="/home">Home</a> <a href="/about">About</a></nav>
+  <footer><a href="/home">Home</a> <a href="/about">About</a></footer>
+  </body></html>`, { url: "https://snow.example.gov/nsa/" });
+  if (page) {
+    const inv = page.GENERIC.inventory({ includeHidden: true }).controls;
+    const labels = inv.map((c) => c.label);
+    ensure("identical links are named for the panel each sits in", labels.includes("Two weeks (Snow Melt)") && labels.includes("One Day (Snow Water Equivalent)") && labels.includes("Season (Snow Depth)"), labels);
+    ensure("and no longer fold into one", labels.filter((l) => /^Two weeks/.test(l)).length === 3, labels);
+    ensure("the panel's introducing word is not part of its name", !labels.some((l) => /Animate/.test(l)), labels);
+    const home = inv.find((c) => c.label === "Home");
+    ensure("links that open their own container stay as they were", home && home.count === 2, inv.filter((c) => /Home/.test(c.label)));
+    const pressed = [];
+    for (const id of ["d0", "d1", "d2", "back", "fwd"]) page.document.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); pressed.push(id); });
+    const bg = loadBackground({ page });
+    bg.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "go back one day" });
+      ensure("go back one day does not press an animation's One Day", !pressed.some((p) => /^d/.test(p)), pressed);
+    });
+    // With the model choosing: the minus is offered as a step back, and is
+    // what "go back one day" reaches.
+    const p2 = loadPage(page.document.documentElement.outerHTML, { url: "https://snow.example.gov/nsa/" });
+    if (p2) {
+      const hit = [];
+      for (const id of ["d0", "d1", "d2", "back", "fwd"]) p2.document.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); hit.push(id); });
+      const bgc = loadBackground({ page: p2, decision: "choice" });
+      let offered = "";
+      bgc.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" };
+        if (m.type !== "llmStep") return undefined;
+        if (m.mode !== "choice") return { ok: true, step: { do: "finish", answer: "" } };
+        offered = String(m.prompt);
+        const line = offered.split("\n").find((l) => /^[A-Z]\) /.test(l) && /steps back/.test(l));
+        const letter = line ? line[0] : "Z";
+        return { ok: true, step: { choice: letter }, logprobs: [{ token: letter, logprob: Math.log(0.9), top: [{ token: letter, logprob: Math.log(0.9) }] }] };
+      };
+      runAsync(async () => {
+        await bgc.__ask({ type: "smartAsk", instruction: "go back one day" });
+        check("choice mode: go back one day presses the step back", hit.join(","), "back");
+        ensure("and the model was shown the minus as a step back", /^[A-Z]\) - \(button, steps back/m.test(offered), offered.slice(0, 600));
+      });
+    }
+  }
+}
+
+{
+  const page = loadPage(`<!doctype html><html><body>
+    <form id="f" action="/nope"><input type="submit" id="minus" name="incr" value=" - "><label for="r">Region</label>
+    <select id="r"><option value="">Choose a region</option><option value="sn">Sierra Nevada</option><option value="cr">Colorado Rockies</option></select>
+    <label><input type="checkbox" id="st"> Show stations</label>
+    <input type="button" id="go" value="Go"></form>
+    <form><label for="q">Observations near</label><input id="q" type="text"><input type="submit" id="go2" value="Go"></form>
+    </body></html>`, { url: "https://snow.example.gov/nsa/" });
+  // A jump menu presses its own Go on a choice; asked to press it as well,
+  // it is pressed once, not twice.
+  const jump = loadPage(`<!doctype html><html><body><form><label for="j">Region</label>
+    <select id="j"><option value="">Choose a region</option><option value="sn">Sierra Nevada</option></select>
+    <input type="button" id="jgo" value="Go"></form></body></html>`, { url: "https://snow.example.gov/nsa/" });
+  if (jump) {
+    let n = 0;
+    jump.document.getElementById("jgo").addEventListener("click", () => { n += 1; });
+    const bgj = loadBackground({ page: jump });
+    bgj.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bgj.__ask({ type: "smartAsk", instruction: "pick the sierra nevada region and press go" });
+      check("a jump menu's Go is pressed once, not twice", n, 1);
+    });
+  }
+  if (page) {
+    let went = 0; let other = 0; let submitted = 0; let back = 0;
+    page.document.getElementById("minus").addEventListener("click", (e) => { e.preventDefault(); back += 1; });
+    page.document.getElementById("go").addEventListener("click", () => { went += 1; });
+    page.document.getElementById("go2").addEventListener("click", (e) => { e.preventDefault(); other += 1; });
+    page.document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); submitted += 1; });
+    const bg = loadBackground({ page });
+    bg.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: "pick the sierra nevada region and press go" });
+      check("the region is chosen", page.document.getElementById("r").value, "sn");
+      check("and the Go beside it pressed, once", went, 1);
+      check("not the other form's Go", other, 0);
+      check("nor the form's first submit, a step back in time", back, 0);
+      check("and the form is not submitted around it", submitted, 0);
+      ensure("the card says the button was pressed", /button pressed/.test(String((r.display || {}).subtitle || "")), r.display);
+      page.document.getElementById("r").value = "";
+      await bg.__ask({ type: "smartAsk", instruction: "pick the colorado rockies region" });
+      check("without being asked, the list is set", page.document.getElementById("r").value, "cr");
+      check("and nothing is pressed", went, 1);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

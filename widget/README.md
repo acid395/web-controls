@@ -106,8 +106,8 @@ Copy the files in `dist/` into the site and add one tag. It mounts itself once t
 | `position` | `data-position` | `"bottom-right"` | or `"bottom-left"` |
 | `theme` | `data-theme` | `"auto"` | `"light"`, `"dark"`, or follow the OS |
 | `accent` | `data-accent` | `#1a6fd1` | Any CSS color |
-| `model` | `data-model` | Llama 3.2 3B | The model a first-time visitor gets |
-| `models` | `data-models` (comma-separated) | 1B, 1.5B, 3B, 8B | What the panel's picker offers |
+| `model` | `data-model` | Qwen3 4B (Llama 3.2 3B where the device reports 4 GB or less) | The model a first-time visitor gets |
+| `models` | `data-models` (comma-separated) | 1B, 1.5B, 3B, Qwen3 4B, Qwen3.5 4B, 8B | What the panel's picker offers |
 | `autoLoad` | `data-auto-load` | `false` | Start the download when the panel opens, without the button |
 | `useModel` | `data-use-model="false"` | `true` | Never load a model; only the page's own controls and the no-model shortcuts |
 | `meaning` | `data-meaning` | `false` | Also load the 1 GB embedder that narrows big pages by meaning; without it, they're narrowed by words |

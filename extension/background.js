@@ -1144,9 +1144,9 @@ const TOOL_DEFS = {
     {
       // submitWhenReady: waits for an autocomplete's suggestions first, where
       // a box has one, because some forms refuse to submit without them.
-      name: "pageSubmit", fn: "submitWhenReady", argOrder: ["selector"],
+      name: "pageSubmit", fn: "submitWhenReady", argOrder: ["selector", "named"],
       description: "Submit a field after filling it - presses Enter, or submits the surrounding form, or clicks its submit button. Typing alone leaves the text sitting in the box.",
-      parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+      parameters: { type: "object", properties: { selector: { type: "string" }, named: { type: "string" } }, required: ["selector"] },
     },
     {
       name: "pageFill", fn: "fill", argOrder: ["selector", "text"],
@@ -5345,6 +5345,8 @@ const STEP_VERBS = "retrieve|fetch|query|click|press|tap|select|choose|pick|enab
 // before them - the Go of a jump menu, the submit of a typed box - and as a
 // step of their own they went looking for a Go button on the page the first
 // half had already left.
+// A request that ends by pressing the button that sends what it set.
+const THEN_PRESS_GO = /\b(?:and|then|,)\s+(?:then\s+)?(?:press|click|hit|tap)\s+(?:the\s+)?(?:go|submit|apply|update|search|enter|ok|view|show|plot)\b(?:\s+button)?\s*[.!]?\s*$/i;
 const FINISHES_THE_STEP = "(?:press|click|hit|tap)\\s+(?:go|enter|submit|search)\\b|submit\\b|get\\s+(?:the\\s+)?(?:forecast|weather|results?)\\b";
 const STEP_BOUNDARY = new RegExp(
   `\\s*(?:,\\s*then\\s+|\\s+then\\s+|\\s+and then\\s+)\\s*`
@@ -5605,6 +5607,17 @@ function namedByClause(all, clause) {
   if (plain.length > 1 && !/\b(?:site|website|whole\s+site)\b/i.test(clause)) {
     const own = plain.filter((c) => !c.inSiteSearch);
     if (own.length && own.length < plain.length) plain = own;
+  }
+  // Identical controls the reader named by their panels, and a request that
+  // names no panel: the first, as when they were folded into one. Split
+  // apart, "click previous map" on droughtmonitor met two Previous Maps,
+  // was called a choice, and pressed Change Maps instead.
+  if (plain.length > 1 && plain.every((c) => c.section)) {
+    const ownOf = (c) => flat(String(c.label).slice(0, Math.max(0, String(c.label).length - String(c.section).length - 3)));
+    const saidWords = new Set(flat(clause).split(" "));
+    const namesAPanel = plain.some((c) => flat(c.section).split(" ")
+      .some((w) => w.length > 2 && !/^(?:the|and|for|of|page)$/.test(w) && saidWords.has(w) && !ownOf(c).split(" ").includes(w)));
+    if (new Set(plain.map(ownOf)).size === 1 && !namesAPanel) plain = [plain[0]];
   }
   if (plain.length) {
     return { named: plain, n: null, word: null, how: exactly ? "exact" : namedOtherwise ? "named" : "close" };
@@ -6288,7 +6301,12 @@ function sameSpan(a, b) {
 }
 
 function isSiteFurniture(c) {
-  const label = String(c.label || "").toLowerCase();
+  // The control's own name. A section added to tell identical ones apart is
+  // ours: "Previous Map (United States and Puerto Rico (Page 1))" is not a
+  // pager for having "Page" in its panel's name.
+  const whole = String(c.label || "");
+  const own = c.section && whole.endsWith(` (${c.section})`) ? whole.slice(0, -(c.section.length + 3)) : whole;
+  const label = own.toLowerCase();
   // goesTo is where the nearest enclosing link points, which the inventory
   // already works out; there is no href field on these records, so the
   // first version of this check silently never fired.
@@ -6360,7 +6378,7 @@ function slowDecisionHint(ms, gpu) {
 
 function turnBudgetFor(modelId) {
   const mb = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM(modelId)) || 0;
-  return mb >= 4000 ? 180000 : mb >= 2000 ? 90000 : 45000;
+  return mb >= 3000 ? 180000 : mb >= 2000 ? 90000 : 45000;
 }
 function turnBudgetMs() {
   return turnBudgetFor((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL);
@@ -6596,7 +6614,13 @@ function choiceLine(c) {
     : kind === "a" || kind === "link" ? (c.goesTo && navigatesAway(c) ? "link to another page" : "link")
     : "button";
   const where = c.section ? `, in ${String(c.section).slice(0, 30)}` : c.hidden && c.revealedByLabel ? `, behind ${String(c.revealedByLabel).slice(0, 30)}` : "";
-  return `${String(c.label).replace(/\s+/g, " ").slice(0, 70)} (${what}${where})`;
+  // A bare arrow or sign says nothing to a model reading a list: "-" and
+  // "+" beside a date on NOHRSC were the back and forward steps, and "go
+  // back one day" could not be matched to either.
+  const bare = String(c.label || "").trim();
+  const step = /^(?:-|\u2212|\u2013|<|\u2039|\u00ab|\u25c0|\u2190|<<)$/.test(bare) ? ", steps back / previous"
+    : /^(?:\+|>|\u203a|\u00bb|\u25b6|\u2192|>>)$/.test(bare) ? ", steps forward / next" : "";
+  return `${String(c.label).replace(/\s+/g, " ").slice(0, 70)} (${what}${step}${where})`;
 }
 async function askChoice(goal, lines, question, zMeans) {
   const letters = CHOICE_LETTERS.slice(0, lines.length);
@@ -9437,7 +9461,10 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     // wrapper - City-FIDAP's #app, pressed for holding the word flood.
     const controls = all.filter((c) => !actedOn.has(c.selector) && !actedKeys.has(controlKey(c))
       && String(c.label || "").length <= 100
-      && !(stateCommand && c.tag === "a" && c.kind === "a" && (navigatesAway(c) || c.opensPanel)));
+      && !(stateCommand && c.tag === "a" && c.kind === "a" && (navigatesAway(c) || c.opensPanel))
+      // A step through time is not a window of it: "go to the previous day"
+      // pressed an animation's One Day for sharing the word day.
+      && !(A_STEP_IN_TIME.test(instruction) && setsATimeWindow(String(c.label || "").replace(/\s*\([^()]*\)\s*$/, ""))));
     const countNow = all.length;
 
 
@@ -11257,6 +11284,11 @@ function sectionQualifierIn(clause, controls) {
 // "this week's map" is the current map, not seven days of one: on
 // droughtmonitor "bring me back to this week's map" pressed Weekly Drought
 // Indices as the one control covering a week.
+// A step through time is not a window either. On NOHRSC "go back one day"
+// pressed the animation's One Day link as the control covering a day, when
+// the page's back arrow beside the date was the step asked for.
+const A_STEP_IN_TIME =
+  /\b(?:back|backward|backwards|forward|forwards|ahead|earlier|later)\s+(?:by\s+)?(?:a|an|one|1)\s+(?:day|week|month|year|hour)\b|\b(?:a|an|one|1)\s+(?:day|week|month|year|hour)\s+(?:back|backward|backwards|forward|forwards|ahead|earlier|later)\b|\b(?:go|step|move|jump|skip|advance)\s+(?:back\s+|forward\s+|ahead\s+)?(?:to\s+)?(?:the\s+)?(?:previous|next|prior|following)\s+(?:day|week|month|year|hour)\b|\b(?:next|following)\s+day\b/i;
 const A_MOMENT_NOT_A_SPAN =
   /\bthis\s+(?:week|month|year)(?:'s|s)?\b|\btoday'?s?\b|\blatest\b|\b(?:from|with|since|against|than|versus|vs\.?|to|as)\s+(?:the\s+)?(?:last|previous|prior)\s+(?:week|month|year)\b|\b(?:a|one|two|\d+)\s+(?:weeks?|months?|years?)\s+ago\b|\bthis\s+time\s+last\b|\bsame\s+(?:span|period|time|window|dates?)\b/i;
 
@@ -11283,7 +11315,7 @@ function soleSpanControl(clause, controls) {
   const text = String(clause || "");
   if (!NAMES_A_UNIT.test(text)) return null;
   if (IS_CONDITIONAL.test(text) || ASKING_TO_READ.test(text) || /\?\s*$/.test(text)) return null;
-  if (A_MOMENT_NOT_A_SPAN.test(text)) return null;
+  if (A_MOMENT_NOT_A_SPAN.test(text) || A_STEP_IN_TIME.test(text)) return null;
   const days = daysInPhrase(text);
   if (!days) return null;
   const spans = (controls || []).filter((c) => !c.disabled && c.confidence !== "low"
@@ -13459,12 +13491,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const settledOn = holdsIt
             || String(rr.now || "") === String(instantOption.option)
             || moved;
+          // "pick the sierra nevada region and press go" set the region and
+          // stopped there, the Go beside it never pressed. Where the request
+          // asks for the press, the list's own button is pressed after it -
+          // the select submit clicks a button beside the list and never
+          // submits a whole form.
+          let pressed = null;
+          if (ran.ok !== false && settledOn && THEN_PRESS_GO.test(wanted)
+              && !(ran.result && ran.result.navigated)) {
+            // The button the request names, and only that one. Left to pick,
+            // the form's first submit on NOHRSC was its "-" - a day back.
+            const named = (String(wanted).match(THEN_PRESS_GO) || [""])[0]
+              .replace(/^.*?\b(?:press|click|hit|tap)\s+(?:the\s+)?/i, "").replace(/\s+button\b.*$|[.!\s]+$/gi, "").trim();
+            const sent = await runVerified(route.global,
+              { name: "pageSubmit", args: { selector: instantOption.control.selector, named } }).catch(() => null);
+            const how = sent && sent.result && sent.result.submitted;
+            pressed = how === "button" || how === "change" ? how : null;
+          }
           if (ran.ok !== false && settledOn) {
             respond({
               ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
               display: {
                 title: String(instantOption.option).slice(0, 60),
-                subtitle: `${instantOption.control.label || "the list"} set to ${instantOption.option}`,
+                subtitle: `${instantOption.control.label || "the list"} set to ${instantOption.option}`
+                  + (pressed === "button" ? ", and its button pressed"
+                    : THEN_PRESS_GO.test(wanted) && !pressed ? " - no button beside it to press" : ""),
                 stats: [], rows: [],
                 note: `one list on this page offers "${instantOption.option}", so this did not`
                   + " wait for the model",
@@ -13645,6 +13696,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // not know explain.
         const askedDays = (!forceBaseline && !forceModel && !conditional && !looksAsking
           && !ASKING_TO_READ.test(wanted) && !A_MOMENT_NOT_A_SPAN.test(wanted)
+          && !A_STEP_IN_TIME.test(wanted)
           && NAMES_A_UNIT.test(wanted)
           && splitIntoSteps(wanted).length === 1) ? daysInPhrase(wanted) : null;
         if (askedDays) {
@@ -14754,8 +14806,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // catches what it cannot decide, and nothing that worked stops
         // working while this earns its place.
         if (!forceModel) {
-          const one = confidentPick(
+          let one = confidentPick(
             await unifiedTools(route.global, wanted, { acting: commandLike }), wanted);
+          // The browser's back is not a day back: "go back one day" on NOHRSC
+          // left the page for the one before it.
+          if (one && /^page(?:Back|Forward)$/.test(one.tool.name) && A_STEP_IN_TIME.test(wanted)) one = null;
           if (one) {
             let ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
 
@@ -15200,6 +15255,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             cameFromPage = true;
           }
         }
+        // Nor here: "go back one day" is a step on the page, not the page
+        // before this one.
+        if (manifestCall && /^page(?:Back|Forward)$/.test(manifestCall.name) && A_STEP_IN_TIME.test(wanted)) manifestCall = null;
         if (manifestCall) {
           // An action that cannot simply be undone is worth a question first.
           // Verification makes most things reversible; a download that has

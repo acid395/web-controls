@@ -15,13 +15,16 @@ const DEFAULTS = {
   // Off by default: a visitor has not agreed to a download by opening the
   // page, or even by opening the widget. The panel offers a button.
   autoLoad: false,
-  // The smallest model that chains steps reliably in the extension's runs.
-  // Sites with a technical audience can offer the 8B in `models`.
-  model: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+  // Qwen3 4B, which beat the 3B in the extension's runs; the 3B on a
+  // machine that says it has 4 GB or less (see mount). Sites with a
+  // technical audience can offer the 8B in `models`.
+  model: "Qwen3-4B-q4f16_1-MLC",
   models: [
     "Llama-3.2-1B-Instruct-q4f16_1-MLC",
     "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
     "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+    "Qwen3-4B-q4f16_1-MLC",
+    "Qwen3.5-4B-q4f16_1-MLC",
     "Llama-3.1-8B-Instruct-q4f16_1-MLC",
   ],
   // false = never load a model; only the page's own controls and the
@@ -42,6 +45,11 @@ let mounted = null;
 function mount(userOptions = {}) {
   if (mounted) return mounted;
   const options = { ...DEFAULTS, ...userOptions };
+  // Not a site's own choice: only the default steps down where memory is
+  // short, since the 4B's 3.4 GB beside a page pages on a 4 GB machine.
+  if (!userOptions.model && Number(navigator.deviceMemory || 0) > 0 && navigator.deviceMemory < 6) {
+    options.model = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+  }
   if (!options.models || !options.models.length) options.models = null;
   else if (!options.models.includes(options.model)) options.models = [options.model, ...options.models];
   // A URL the site gave wins. Otherwise the module build's own loaders,

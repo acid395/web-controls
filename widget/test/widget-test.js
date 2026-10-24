@@ -173,7 +173,7 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     s.dataset.manual = "";
     s.textContent = built;
     w.document.body.appendChild(s);
-    const wc = w.WebControls.mount({ _modelHost: fakeHost });
+    const wc = w.WebControls.mount({ _modelHost: fakeHost, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC" });
     const res = await wc.ask("overlay the long-term normal on the chart");
     const box = w.document.getElementById("avg");
     check("the model is asked through the page's own host", asked.length >= 1, JSON.stringify(res).slice(0, 300));
