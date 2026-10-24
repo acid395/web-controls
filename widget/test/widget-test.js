@@ -211,6 +211,22 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     await new Promise((r) => setTimeout(r, 4500));
     check("nothing is done to the page after it", w.document.getElementById("avg").checked === false);
     check("the model is told to stop", interrupted >= 1);
+    // The stop square sits in the input box, where the send arrow was, and
+    // pressing it is a cancel.
+    slowHost.step = async () => { await new Promise((r) => setTimeout(r, 4000)); return decide; };
+    const root = w.__widgetRoot;
+    const pending2 = wc.ask("overlay the long-term normal on the chart");
+    await new Promise((r) => setTimeout(r, 400));
+    const stopBtn = root.querySelector(".compose .stop");
+    const sendBtn = root.querySelector(".compose .send");
+    check("while running, the input box shows a stop button", !!stopBtn && !stopBtn.hidden && sendBtn.hidden);
+    check("and not one under the running card", !root.querySelector(".card .stop"));
+    const t1 = Date.now();
+    stopBtn.click();
+    const res2 = await pending2;
+    check("pressing it cancels at once", Date.now() - t1 < 1500 && !!(res2 && res2.cancelled), JSON.stringify(res2).slice(0, 200));
+    check("and the send arrow comes back", stopBtn.hidden && !sendBtn.hidden);
+    await new Promise((r) => setTimeout(r, 4500));
     slowHost.step = async () => decide;
     const next = await wc.ask("overlay the long-term normal on the chart");
     check("and the next request runs normally", w.document.getElementById("avg").checked === true, JSON.stringify(next).slice(0, 300));

@@ -137,7 +137,13 @@ textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: 
   padding: 6px 0; height: 34px; max-height: 120px; }
 textarea::placeholder { color: var(--ink-2); }
 .send { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; display: grid; place-items: center; }
-.stop { margin-top: 8px; font-size: 12px; padding: 4px 12px; border-radius: 8px; }
+.send[hidden], .stop[hidden] { display: none; }
+/* While a request runs, the send arrow becomes a stop square in the same
+   place - where the eye already is, as in a chat - rather than a button
+   under the running card. */
+.stop { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; display: grid; place-items: center; }
+.stop svg { width: 14px; height: 14px; }
+.stop:disabled { opacity: .55; }
 .send svg { width: 18px; height: 18px; }
 .foot { margin-top: 7px; text-align: center; font-size: 11px; color: var(--ink-2); }
 .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent);
@@ -149,6 +155,7 @@ textarea::placeholder { color: var(--ink-2); }
 `;
 
 const SEND_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
+const STOP_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor"/></svg>`;
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9 10h6M9 13.5h4"/></svg>`;
 
 function createWidgetUI({ send, modelHost, storage, options }) {
@@ -242,7 +249,19 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   sendBtn.title = "Ask";
   sendBtn.innerHTML = SEND_ICON;
   const compose = el("div", "compose");
-  compose.append(input, sendBtn);
+  const stopBtn = el("button", "btn stop");
+  stopBtn.type = "button";
+  stopBtn.setAttribute("aria-label", "Stop");
+  stopBtn.title = "Stop";
+  stopBtn.innerHTML = STOP_ICON;
+  stopBtn.hidden = true;
+  stopBtn.addEventListener("click", () => {
+    stopBtn.disabled = true;
+    stopBtn.title = "Stopping…";
+    if (runningCard) runningCard.replaceChildren(statusLine("Stopping…"));
+    send({ type: "cancelAsk" }).catch(() => {});
+  });
+  compose.append(input, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
   panel.appendChild(form);
 
@@ -501,27 +520,30 @@ function createWidgetUI({ send, modelHost, storage, options }) {
       attach(slot);
       busy = true;
       const line = statusLine("Working on it…");
-      const stop = el("button", "stop", "Stop");
-      stop.type = "button";
-      stop.addEventListener("click", () => {
-        stop.disabled = true;
-        stop.textContent = "Stopping…";
-        send({ type: "cancelAsk" }).catch(() => {});
-      });
-      slot.card.replaceChildren(line, stop);
+      slot.card.replaceChildren(line);
       runningCard = line;
+      showStop(true);
       let res;
       try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
       slot.card.replaceWith(cardFor(res));
       live.splice(live.indexOf(slot), 1);
       runningCard = null;
       busy = false;
+      showStop(false);
       scrollDown();
       drawModel();
       return res;
     });
     queue = job.catch(() => {});
     return job;
+  }
+  // The send arrow while idle, the stop square while a request runs. A
+  // request typed meanwhile still goes in with Enter, queued behind it.
+  function showStop(on) {
+    stopBtn.hidden = !on;
+    sendBtn.hidden = on;
+    stopBtn.disabled = false;
+    stopBtn.title = "Stop";
   }
   function ask(text) {
     const instruction = String(text || "").trim();

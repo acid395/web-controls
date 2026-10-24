@@ -355,3 +355,24 @@ action          show more of the model discussion
 explain         what percent of the area is covered by snow
 explain         which station had the most snowfall
 explain         how much snow fell at crested butte
+
+ROUND 10 - written 2026-10-24 from the page's menu items only, before the agent ran on it.
+City-FIDAP from github.com/uihilab/CityDigitalTwin, run locally (npm start, http://localhost:3000/lab/dt/)
+with the widget installed by script tag. Run by the user from the widget's suggestion list.
+
+city-fidap-local  http://localhost:3000/lab/dt/
+action          show me where the bridges are
+action          put the flood maps on the map
+action          where are the police stations
+action          show the river gauges
+action          show me the bus routes
+action          which roads are closed
+action          show where the power plants are
+action          show the wastewater treatment plants
+explain         what is this platform for
+explain         what can I look at under public services
+action+explain  pull up the weather forecast and tell me if it will rain
+action+explain  show the air quality and tell me if it is good or bad
+multistep       show the schools and then the fire stations
+multistep       close the welcome window, then show the drought maps
+multistep       show the train route and the railway crossings
