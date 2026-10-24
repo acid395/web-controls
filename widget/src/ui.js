@@ -255,11 +255,18 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   stopBtn.title = "Stop";
   stopBtn.innerHTML = STOP_ICON;
   stopBtn.hidden = true;
+  // Pressed: the agent is told to stop, and if it has not answered within
+  // a few seconds the card is ended here anyway. A request stuck somewhere
+  // the cancel does not reach left the panel on "Stopping…" for minutes,
+  // with everything typed after it queued behind.
+  let stopNow = null;
   stopBtn.addEventListener("click", () => {
     stopBtn.disabled = true;
     stopBtn.title = "Stopping…";
     if (runningCard) runningCard.replaceChildren(statusLine("Stopping…"));
     send({ type: "cancelAsk" }).catch(() => {});
+    const end = stopNow;
+    if (end) setTimeout(end, 3000);
   });
   compose.append(input, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
@@ -524,7 +531,12 @@ function createWidgetUI({ send, modelHost, storage, options }) {
       runningCard = line;
       showStop(true);
       let res;
-      try { res = await send(message); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      const stopped = new Promise((r) => { stopNow = () => r({ ok: false, cancelled: true, plannedBy: "cancelled",
+        display: { title: "Stopped", subtitle: "stopped at your request - anything already done on the page stays as it is",
+          stats: [], rows: [], source: "this page" } }); });
+      try { res = await Promise.race([send(message), stopped]); }
+      catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      stopNow = null;
       slot.card.replaceWith(cardFor(res));
       live.splice(live.indexOf(slot), 1);
       runningCard = null;

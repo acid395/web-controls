@@ -819,6 +819,17 @@
       return hits.length === 1 && hits[0] === el;
     } catch (e) { return true; }   // not valid on its own (crosses a shadow root); keep it
   };
+  /* Classes that do not stay put, left out of a path.
+   *
+   * City-FIDAP's menus are Material UI: each item's class list carries a
+   * generated "css-n4…" whose hash changes with the item's props, so
+   * opening a menu or switching a layer on renamed the very elements just
+   * read, and "Stream Gauges" was "not found" a moment after it was seen.
+   * Generated hashes (emotion, styled-components, JSS, CSS modules) and
+   * state classes say nothing lasting about where an element is; the walk
+   * below keeps a path unique with positions instead.
+   */
+  const VOLATILE_CLASS = /^(?:css-[a-z0-9]+(?:-[\w-]+)?|sc-[a-zA-Z0-9]+|jss\d+|makeStyles-[\w-]+-\d+|[\w-]+_[\w-]+__[a-zA-Z0-9_-]{5,}|Mui-(?:expanded|selected|focused|focusVisible|active|disabled|checked|open|completed|error)|(?:is-|has-)?(?:active|selected|open|opened|expanded|collapsed|current|focus|focused|hover|show|showing|visible|in)|ng-[\w-]+)$/;
   const cssPath = (el) => {
     // An id only where the page uses it once. EPA's tab sets each number
     // their tabs tabs--tab--0, --1...; "#tabs--tab--1" found a hidden URL tab
@@ -835,7 +846,8 @@
         if (namesOne(anchored, el)) return anchored;
       }
       let s = tagOf(cur);
-      if (cur.classList.length) s += "." + [...cur.classList].map((c) => CSS.escape(c)).join(".");
+      const steady = [...cur.classList].filter((c) => !VOLATILE_CLASS.test(c));
+      if (steady.length) s += "." + steady.map((c) => CSS.escape(c)).join(".");
       const p = cur.parentNode;
       if (p && p.firstElementChild) {
         // Walked, not materialised. Spreading an HTMLCollection copies it and

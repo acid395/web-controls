@@ -3510,6 +3510,31 @@ section("the model chooses from the page's controls");
   }
 }
 
+// Round ten, City-FIDAP run locally: a menu item's generated class changes
+// when the menu opens, and the address read a moment before must still
+// find it. And the map itself is not a control to choose.
+{
+  const page = loadPage(`<!doctype html><html><body><ul class="MuiList-root MuiList-padding css-n4abcd">
+    <li class="MuiListItem-root css-1x2y3z"><a href="#g" class="css-q1w2e3">Stream Gauges</a></li>
+    <li class="MuiListItem-root css-1x2y3z"><a href="#s" class="css-q1w2e3">Soil Moisture Gauges</a></li></ul></body></html>`,
+    { url: "https://city.example.gov/lab/dt/3Dmap" });
+  if (page) {
+    const c = page.GENERIC.inventory({ includeHidden: true }).controls.find((x) => x.label === "Stream Gauges");
+    ensure("a path leaves out generated class names", c && !/css-/.test(c.selector), c && c.selector);
+    page.document.querySelector("ul").className = "MuiList-root MuiList-padding css-zz9988";
+    for (const li of page.document.querySelectorAll("li")) li.className = "MuiListItem-root css-777aaa Mui-selected";
+    const found = c && page.document.querySelector(c.selector);
+    ensure("so it still finds the item after the page restyles it", found && found.textContent === "Stream Gauges", c && c.selector);
+  }
+  const bgw = loadBackground({});
+  const vm = require("vm");
+  const run = (expr) => vm.runInContext(expr, bgw);
+  check("a page region is not offered as a press", run(`NOT_A_PRESS.test("region")`), true);
+  check("but a button is", run(`NOT_A_PRESS.test("button")`), false);
+  check("a closed menu says it opens more choices", /menu, closed - opens more choices/.test(run(`choiceLine({ label: "Weather & Environment", kind: "div", opensPanel: true, expanded: false })`)), true);
+  check("an open one does not", /menu, closed/.test(run(`choiceLine({ label: "Weather & Environment", kind: "div", opensPanel: true, expanded: true })`)), false);
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,
