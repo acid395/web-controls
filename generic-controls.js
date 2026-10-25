@@ -1174,6 +1174,24 @@
   const offeredNow = (c) => currentRequestOf() === null
     || (!PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase())
       && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequestOf())));
+  // What a menu holds, by the menu's name, where the reader has looked inside.
+  function menuItems(label) {
+    const want = norm(label);
+    for (const [, d] of behindDoors) {
+      if (norm(d.label) === want) return { menu: d.label, items: d.items.map((it) => String(it.label || "").trim()).filter(Boolean) };
+    }
+    return { menu: null, items: [] };
+  }
+  // The remembered menu a request names: every word of its name is in it.
+  function menuNamedIn(text) {
+    const said = ` ${norm(text).replace(/[^a-z0-9]+/g, " ")} `;
+    let best = null;
+    for (const [, d] of behindDoors) {
+      const words = norm(d.label).replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter((w) => w.length > 1);
+      if (words.length && words.every((w) => said.includes(` ${w} `)) && (!best || words.length > best.n)) best = { d, n: words.length };
+    }
+    return best ? { menu: best.d.label, items: best.d.items.map((it) => String(it.label || "").trim()).filter(Boolean) } : { menu: null, items: [] };
+  }
   function inventory(opts = {}) {
     const raw = inventoryNow(opts);
     const out = currentRequestOf() === null ? raw : { ...raw, controls: raw.controls.filter(offeredNow) };
@@ -4229,6 +4247,8 @@
   const GENERIC = {
     inventory,
     peekClosed,
+    menuItems,
+    menuNamedIn,
     setRequest,
     readPage,
     submit,

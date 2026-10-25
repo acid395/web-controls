@@ -376,3 +376,9 @@ action+explain  show the air quality and tell me if it is good or bad
 multistep       show the schools and then the fire stations
 multistep       close the welcome window, then show the drought maps
 multistep       show the train route and the railway crossings
+
+ROUND 10 CORRECTION - 2026-10-24, after the first runs: prompts 11 and 12 asked for answers City-FIDAP does not
+put on the page (its weather layer fetches only current temperature and wind; air-quality readings load only when
+a station icon on the map canvas is clicked). Replaced by:
+action+explain  turn on the flood maps and tell me which flood years I can choose
+action+explain  open infrastructure and tell me what layers it has

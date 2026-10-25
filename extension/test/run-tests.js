@@ -3621,6 +3621,44 @@ section("the model chooses from the page's controls");
       check(`lazy menus, model off: "${say}" reaches ${want}`, L.pressed.join(","), want);
     });
   }
+  // "What can I look at under X" is X's items, read out by the page.
+  {
+    const L = lazyPage();
+    if (L) {
+      const bg = loadBackground({ page: L.pg, decision: "choice" });
+      bg.__model = (m) => (m.type === "llmStatus" ? { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" }
+        : m.type === "llmStep" ? { ok: true, step: { do: "finish", answer: "" } } : undefined);
+      runAsync(async () => {
+        const r = await bg.__ask({ type: "smartAsk", instruction: "what can I look at under public services" });
+        const said = String((r.display || {}).answer || r.answer || "");
+        ensure("what is under a closed menu is answered from its items", /Police Stations/.test(said) && /Fire Stations/.test(said), said || r.display);
+      });
+    }
+  }
+  // "Open X and tell me what it has" is X's items, not the whole page.
+  {
+    let stepN = 0;
+    const L = lazyPage();
+    if (L) {
+      const bg = loadBackground({ page: L.pg, decision: "choice" });
+      bg.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" };
+        if (m.type !== "llmStep") return undefined;
+        if (m.mode === "choice") {
+          const line = String(m.prompt).split("\n").find((l) => /^[A-Z]\) Infrastructure/.test(l));
+          const letter = line ? line[0] : "Z";
+          return { ok: true, step: { choice: letter }, logprobs: [{ token: letter, logprob: Math.log(0.9), top: [{ token: letter, logprob: Math.log(0.9) }] }] };
+        }
+        stepN += 1;
+        return { ok: true, step: stepN === 1 ? { do: "click", name: "Infrastructure" } : { do: "finish", answer: "Black Hawk County, Buildings, Bridges, GitHub" } };
+      };
+      runAsync(async () => {
+        const r = await bg.__ask({ type: "smartAsk", instruction: "open infrastructure and tell me what layers it has" });
+        const said = String((r.display || {}).answer || r.answer || "");
+        ensure("what an opened menu has is read off that menu", /Bridges/.test(said) && /Waste Water TP/.test(said) && !/Black Hawk|GitHub/.test(said), said || r.display);
+      });
+    }
+  }
   // Model on, choosing: it can only pick what it is shown.
   const picks = [["put the flood maps on the map", "Flood Maps"], ["where are the police stations", "Police Stations"],
     ["show the river gauges", "Stream Gauges"], ["which roads are closed", "Road Closures"], ["show where the power plants are", "Electric Power Plants"]];

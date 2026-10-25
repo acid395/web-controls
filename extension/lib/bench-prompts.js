@@ -629,8 +629,8 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"show the wastewater treatment plants","kind":"action","steps":["Waste Water TP"],"on":"Waste Water TP","want":{"clicked":"Waste Water TP"},"offline":null},
    {"say":"what is this platform for","keepOpen":true,"kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"what can I look at under public services","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
-   {"say":"pull up the weather forecast and tell me if it will rain","kind":"action+explain","steps":["Weather Forecast"],"explain":true,"on":"Weather Forecast","want":{"clicked":"Weather Forecast"},"offline":null},
-   {"say":"show the air quality and tell me if it is good or bad","kind":"action+explain","steps":["Air Quality Data"],"explain":true,"on":"Air Quality Data","want":{"clicked":"Air Quality Data"},"offline":null},
+   {"say":"turn on the flood maps and tell me which flood years I can choose","kind":"action+explain","steps":["Flood Maps"],"explain":true,"on":"Flood Maps","want":{"clicked":"Flood Maps"},"offline":null},
+   {"say":"open infrastructure and tell me what layers it has","kind":"action+explain","steps":["Infrastructure"],"explain":true,"on":"Infrastructure","want":{"clicked":"Infrastructure"},"offline":null},
    {"say":"show the schools and then the fire stations","kind":"multistep","steps":["School","Fire Stations"],"on":"School","want":{"clicked":"School"},"offline":null},
    {"say":"close the welcome window, then show the drought maps","keepOpen":true,"kind":"multistep","steps":["×","Drought Maps"],"on":"×","want":{"clicked":"×"},"offline":null},
    {"say":"show the train route and the railway crossings","kind":"multistep","steps":["Train Route","Railway Crossing"],"on":"Train Route","want":{"clicked":"Train Route"},"offline":null}
