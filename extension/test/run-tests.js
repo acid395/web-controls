@@ -3750,6 +3750,21 @@ section("the model chooses from the page's controls");
   }
 }
 
+// A press carries the name it is meant for. An address that now names
+// something else is not pressed: the named control is, or nothing is.
+{
+  const pg = loadPage(`<!doctype html><html><body><ul><li><a href="#" id="a1">Bicycle Amenities</a></li></ul><ul><li><a href="#" id="b1">Bus Route</a></li></ul></body></html>`, { url: "https://city.example.gov/lab/dt/3Dmap" });
+  if (pg) {
+    const pressed = [];
+    for (const a of pg.document.querySelectorAll("a")) a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(a.textContent); });
+    pg.GENERIC.click("#a1", "Bus Route");
+    check("an address now naming something else presses the named control", pressed.join(","), "Bus Route");
+    let threw = false;
+    try { pg.GENERIC.click("#a1", "Train Route"); } catch (e) { threw = /not found/.test(e.message); }
+    ensure("and with no control of that name, nothing is pressed", threw && pressed.length === 1, pressed);
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

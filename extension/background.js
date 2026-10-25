@@ -1117,7 +1117,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: {} },
     },
     {
-      name: "pageClick", fn: "click", argOrder: ["selector"],
+      name: "pageClick", fn: "click", argOrder: ["selector", "expect"],
       description: "Click an element on the page by CSS selector, e.g. one returned by pageInventory.",
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
     },
@@ -1159,7 +1159,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } }, required: ["selector", "text"] },
     },
     {
-      name: "pageCheck", fn: "check", argOrder: ["selector", "on"],
+      name: "pageCheck", fn: "check", argOrder: ["selector", "on", "expect"],
       description: "Tick or untick a checkbox by CSS selector - layer toggles, filters, 'show only ...' options.",
       parameters: { type: "object", properties: { selector: { type: "string" }, on: { type: "boolean", description: "true to tick, false to untick" } }, required: ["selector"] },
     },
@@ -9939,6 +9939,11 @@ async function runVerified(routeGlobal, toolCall) {
   }
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  // The name goes with the address, so the page can refuse to press
+  // something else that has since moved into the same place.
+  if (toolCall && toolCall.label && /^page(?:Click|Check)$/.test(toolCall.name) && !(toolCall.args || {}).expect) {
+    toolCall = { ...toolCall, args: { ...toolCall.args, expect: String(toolCall.label).replace(/\s*\([^()]*\)\s*$/, "") } };
+  }
   let result = await executeToolCall(routeGlobal, toolCall);
   // Found again by name. A menu that re-renders as it opens moves its items,
   // and the address read a moment before - City-FIDAP's "Public Transit" -

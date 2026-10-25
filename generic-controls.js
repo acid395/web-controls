@@ -4400,6 +4400,7 @@
     const now = findNow(item);
     return run(now ? now.selector : selector);
   }
+  const PLAIN_ACTIONS = { click: GENERIC.click, check: GENERIC.check };
   for (const fn of ["click", "check", "fill", "selectOption", "pickRadio", "submitWhenReady", "readControl", "scrollToElement"]) {
     const plain = GENERIC[fn];
     if (typeof plain !== "function") continue;
@@ -4407,6 +4408,65 @@
       const where = rememberedOf(selector);
       return where ? throughDoor(where, selector, (sel) => plain(sel, ...rest)) : plain(selector, ...rest);
     };
+  }
+  /* The control a press was meant for, checked by name.
+   *
+   * An address names a position. On City-FIDAP a menu closed between the
+   * agent reading it and pressing in it; Bus Route's address then named
+   * Bicycle Amenities, and the remembered menu's own address named another
+   * menu. A caller that knows the name passes it, and every step is checked
+   * against a name: the address is pressed only if it holds that control;
+   * otherwise the control is found by name; otherwise its remembered menu -
+   * itself found by name - is opened and the control waited for; otherwise
+   * nothing is pressed.
+   */
+  const nameKey = (t) => { const w = norm(t).replace(/[^a-z0-9]+/g, " ").trim(); return w || String(t || "").replace(/\s+/g, "").trim(); };
+  const nameOf = (el) => (el ? (rawLabelOf(el) || String(el.textContent || el.value || "")) : "");
+  const carries = (el, expect) => {
+    if (!el) return false;
+    const a = nameKey(nameOf(el)); const b = nameKey(expect);
+    if (!a || !b) return false;
+    return a === b || (a.length > 2 && b.length > 2 && (a.includes(b) || b.includes(a)));
+  };
+  const byName = (expect) => {
+    const want = nameKey(expect);
+    if (!want) return null;
+    const hits = inventoryNow({ includeHidden: true }).controls.filter((c) => nameKey(c.label) === want);
+    return hits.length === 1 ? hits[0].selector : null;
+  };
+  const rememberedByName = (expect) => {
+    for (const [door, d] of behindDoors) if (d.items.some((it) => nameKey(it.label) === nameKey(expect))) return { door, d };
+    return null;
+  };
+  async function openAndFind(where, expect) {
+    const doorEl = carries(deepQuery(where.door), where.d.label) ? deepQuery(where.door)
+      : (() => { const s2 = byName(where.d.label); return s2 ? deepQuery(s2) : null; })();
+    if (!doorEl) return null;
+    realClick(doorEl);
+    for (let t = 0; t < 15; t++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const found = byName(expect);
+      if (found && carries(deepQuery(found), expect)) return found;
+    }
+    return null;
+  }
+  const lost = (expect, selector) => new Error(`not found: "${expect}" is not at ${selector} any more, and the page shows no single control of that name`);
+  const pressNamed = (plain, selector, expect, rest) => {
+    if (window.__wcTrace) console.log(`[press] want "${expect}": the address holds "${nameOf(deepQuery(selector)).slice(0, 40)}"`);
+    if (carries(deepQuery(selector), expect)) return plain(selector, ...rest);
+    const now = byName(expect);
+    if (now && carries(deepQuery(now), expect)) return plain(now, ...rest);
+    const where = rememberedByName(expect);
+    if (!where) throw lost(expect, selector);
+    return openAndFind(where, expect).then((found) => { if (!found) throw lost(expect, selector); return plain(found, ...rest); });
+  };
+  {
+    const click = GENERIC.click; const check = GENERIC.check;
+    // Unnamed presses keep the remembered-item route above; named ones are
+    // checked from the bottom, against the press itself.
+    const rawClick = PLAIN_ACTIONS.click; const rawCheck = PLAIN_ACTIONS.check;
+    GENERIC.click = (selector, expect) => (expect ? pressNamed(rawClick, selector, expect, []) : click(selector));
+    GENERIC.check = (selector, on = true, expect) => (expect ? pressNamed((sel) => rawCheck(sel, on), selector, expect, []) : check(selector, on));
   }
 
   window.WC = WC;
