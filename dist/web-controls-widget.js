@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.42 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.43 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.42";
+globalThis.WC_WIDGET_VERSION = "0.4.43";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -5333,7 +5333,9 @@ return (function () {
   };
   // The item as it is now, by name: a menu opened by someone else - the
   // agent, a step before - can lay its items out under other addresses.
-  const findNow = (item) => inventoryNow({}).controls.find((c) => peekKey(c) === peekKey(item));
+  // Hidden ones included: a menu that slides open has its items on the page
+  // a moment before they count as visible, and a press can land on them.
+  const findNow = (item) => inventoryNow({ includeHidden: true }).controls.find((c) => peekKey(c) === peekKey(item));
   async function throughDoor({ door, d, item }, selector, run) {
     const showing = () => stillIs(selector, item) || findNow(item);
     // Opened only if none of its items is showing: pressing an open menu's
@@ -5342,11 +5344,11 @@ return (function () {
     const opened = d.items.some((it) => findNow(it));
     if (!showing() && !opened) {
       const el = deepQuery(door);
-      if (el) {
-        realClick(el);
-        for (let t = 0; t < 15 && !showing(); t++) await new Promise((r) => setTimeout(r, 100));
-      }
+      if (el) realClick(el);
     }
+    // Waited for either way: opened here or a moment ago by the caller, the
+    // item may still be arriving.
+    for (let t = 0; t < 15 && !showing(); t++) await new Promise((r) => setTimeout(r, 100));
     if (stillIs(selector, item)) return run(selector);
     const now = findNow(item);
     return run(now ? now.selector : selector);
