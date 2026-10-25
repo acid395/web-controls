@@ -1,19 +1,22 @@
-/*! web-controls widget 0.4.36 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.37 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.36";
+globalThis.WC_WIDGET_VERSION = "0.4.37";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
 const WC_BUILTINS = (() => {
   const own = { Map: globalThis.Map, Set: globalThis.Set, WeakMap: globalThis.WeakMap, WeakSet: globalThis.WeakSet, Promise: globalThis.Promise };
+  const isNative = (f) => { try { return typeof f === "function" && /\[native code\]/.test(Function.prototype.toString.call(f)); } catch (e) { return false; } };
+  const replaced = Object.keys(own).filter((k) => !isNative(own[k]));
+  if (!replaced.length) return own;
   try {
-    const f = document.createElement("iframe"); f.style.display = "none"; f.setAttribute("aria-hidden", "true");
+    const f = document.createElement("iframe"); f.style.display = "none"; f.setAttribute("aria-hidden", "true"); f.setAttribute("data-web-controls-builtins", "");
     (document.head || document.documentElement).appendChild(f);
-    const w = f.contentWindow; const out = {};
-    for (const k of Object.keys(own)) out[k] = (w && typeof w[k] === "function") ? w[k] : own[k];
-    f.remove(); return out;
+    const w = f.contentWindow; const out = { ...own };
+    for (const k of replaced) if (w && typeof w[k] === "function") out[k] = w[k];
+    return out;
   } catch (e) { return own; }
 })();
 const { Map, Set, WeakMap, WeakSet, Promise } = WC_BUILTINS;
@@ -2077,6 +2080,8 @@ return (function () {
       && !(c.goesTo && !/^#|^javascript:/i.test(String(c.goesTo)))).slice(0, max);
     const peeked = [];
     const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+    const trace = (m) => { if (window.__wcTrace) console.log(`[peek] ${m}`); };
+    trace(`doors: ${doors.map((d) => d.label).join(", ")}`);
     for (const door of doors) {
       const el = deepQuery(door.selector);
       if (!el) continue;
@@ -2094,6 +2099,7 @@ return (function () {
         realClick(again);
         await pause(250);
       }
+      trace(`${door.label}: ${found.length} items`);
       behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
     }
@@ -18757,9 +18763,7 @@ async function pickFromOpened(routeGlobal, opener, value) {
   if (!hit && opener.expanded !== true) {
     const opened = await runVerified(routeGlobal, { name: "pageClick", args: { selector: opener.selector } });
     if (!opened || opened.ok === false) return null;
-    if (globalThis.__wcTrace) debugLog("[trace] pickFromOpened: opened, waiting");
     await new Promise((r) => setTimeout(r, 600));
-    if (globalThis.__wcTrace) debugLog("[trace] pickFromOpened: looking");
     hit = await look();
   }
   if (!hit) return null;
