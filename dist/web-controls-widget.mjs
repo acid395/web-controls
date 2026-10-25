@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.40 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.41 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.40",
+    version: "0.4.41",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.40";
+globalThis.WC_WIDGET_VERSION = "0.4.41";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -2136,6 +2136,24 @@ return (function () {
   const offeredNow = (c) => currentRequestOf() === null
     || (!PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase())
       && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequestOf())));
+  // What a menu holds, by the menu's name, where the reader has looked inside.
+  function menuItems(label) {
+    const want = norm(label);
+    for (const [, d] of behindDoors) {
+      if (norm(d.label) === want) return { menu: d.label, items: d.items.map((it) => String(it.label || "").trim()).filter(Boolean) };
+    }
+    return { menu: null, items: [] };
+  }
+  // The remembered menu a request names: every word of its name is in it.
+  function menuNamedIn(text) {
+    const said = ` ${norm(text).replace(/[^a-z0-9]+/g, " ")} `;
+    let best = null;
+    for (const [, d] of behindDoors) {
+      const words = norm(d.label).replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter((w) => w.length > 1);
+      if (words.length && words.every((w) => said.includes(` ${w} `)) && (!best || words.length > best.n)) best = { d, n: words.length };
+    }
+    return best ? { menu: best.d.label, items: best.d.items.map((it) => String(it.label || "").trim()).filter(Boolean) } : { menu: null, items: [] };
+  }
   function inventory(opts = {}) {
     const raw = inventoryNow(opts);
     const out = currentRequestOf() === null ? raw : { ...raw, controls: raw.controls.filter(offeredNow) };
@@ -5191,6 +5209,8 @@ return (function () {
   const GENERIC = {
     inventory,
     peekClosed,
+    menuItems,
+    menuNamedIn,
     setRequest,
     readPage,
     submit,
@@ -12211,6 +12231,18 @@ async function answerAfterActing(res, ask) {
     note("the action did not work, so the question after it was not answered");
     return out;
   }
+  // "Open infrastructure and tell me what layers it has": the menu just
+  // opened holds the answer, and the reader knows what it holds. Read out
+  // from there, the title, footer links and other menus are not mixed in.
+  if (/\b(?:what|which)\b[^?]*\b(?:has|have|contains?|holds?|includes?|offers?|layers?|options?|items?|in\s+(?:it|there))\b/i.test(ask)) {
+    const said = String((activeAsk && activeAsk.instruction) || ask);
+    const got = await invokeOnActiveTab("menuNamedIn", [said]).catch(() => null);
+    const m = got && got.ok && got.result;
+    if (m && m.menu && m.items.length) {
+      const answer = `${m.menu}: ${m.items.join(", ")}`;
+      return { ...out, answer, display: { ...card, title: answer.slice(0, 60), answer, note: card.note ? `${card.note} - read off the menu it opened` : "read off the menu it opened" } };
+    }
+  }
   // The run answered it already. A model working through "click Learn More,
   // compare the last two weeks, and summarize the difference" reads and
   // answers inside its own run; asking again spends a turn and overwrites
@@ -12276,7 +12308,9 @@ async function answerAfterActing(res, ask) {
   const acted = [res.display && res.display.title,
     ...((res.history || res.steps || []).map((h) => h && h.label))].filter(Boolean).join(" ");
   const data = await pageDataLines(`${ask} ${acted}`);
+  if (globalThis.__wcTrace) debugLog(`[read] data lines: ${JSON.stringify(data).slice(0, 400)}`);
   seen = composeObservation(seen, await passagesFor(ask), data, 2200);
+  if (globalThis.__wcTrace) debugLog(`[read] observation: ${String(seen || "").replace(/\s+/g, " ").slice(0, 700)}`);
   const asked = await askModelForStep({ goal: ask, observation: String(seen || "nothing readable").slice(0, 2600),
     mode: "read" }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
   // A reply that would not parse still carries its words.
@@ -13622,12 +13656,21 @@ function turnBudgetMs() {
  * without a model. The best-matching list wins where the others are
  * subsets of it, far smaller, or named by fewer of the question's words.
  */
-const WHAT_CAN = /^\s*(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:be|i|you|we|one)\b|are\s+(?:available|offered|listed|there|possible|supported|provided)|is\s+available|options?|choices?)/i;
+const WHAT_CAN = /^\s*(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:be|i|you|we|one)\b|are\s+(?:available|offered|listed|there|possible|supported|provided)|is\s+available|options?|choices?|(?:are|is)\s+(?:in|under|inside|within|behind)\b)/i;
 function listChoicesFor(goal, pool) {
   const qWords = meaningfulWords(goal).filter((w) => w.length > 3 && !/^(?:what|which|here|this|page|displayed|available|there|does|tell|show|shown|list|listed|options?|choices?)$/.test(w));
   const stem = (w) => w.replace(/(?:ies|es|s)$/, "");
   const lines = [];
   const listed = [];
+  // A menu whose items the reader looked inside is a list too: "what can I
+  // look at under public services" is Public Services' items, read out.
+  const menus = new Map();
+  for (const c of pool) {
+    if (!c.remembered || !c.revealedByLabel || !String(c.label || "").trim()) continue;
+    if (!menus.has(c.revealedByLabel)) menus.set(c.revealedByLabel, []);
+    menus.get(c.revealedByLabel).push({ text: String(c.label).trim(), value: String(c.label).trim() });
+  }
+  pool = [...pool, ...[...menus].map(([label, options]) => ({ label, options, fromMenu: true }))];
   for (const c of pool) {
     if (!(c.options || []).length || lines.length >= 6) continue;
     const lab = String(c.label || "").toLowerCase();
@@ -14545,7 +14588,11 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // the answer to "if the gage height is above three feet" is on the page,
     // and what to do about it is one of the things to press.
     const conditionalGoal = IS_CONDITIONAL.test(goal);
-    if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal)) {
+    // "What can I look at under public services" is answered by what the
+    // page lists there, as a reading question is - not by pressing the menu
+    // and stopping.
+    const asksWhatIsOffered = WHAT_CAN.test(goal) && !conditionalGoal;
+    if (!history.length && !observation && (ASKING_TO_READ.test(goal) || conditionalGoal || asksWhatIsOffered)) {
       const read = await invokeOnActiveTab("readPage", []).catch(() => ({ ok: false }));
       let seen = read.ok ? summariseForModel(read.result) : null;
       // What a list offers answers "what products can be displayed": the
@@ -14553,7 +14600,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // Lists whose name shares a word with the question are read out with
       // their options, hidden ones included - a closed step is still an
       // answer to what the page can do.
-      if (ASKING_TO_READ.test(goal)) {
+      if (ASKING_TO_READ.test(goal) || asksWhatIsOffered) {
         const { lines, direct } = listChoicesFor(goal, wide.length > controls.length ? wide : controls);
         if (lines.length) seen = `${seen && seen !== "nothing readable" ? seen + "\n" : ""}Choices on this page:\n${lines.join("\n")}`;
         // "What radar products can be displayed here" is the list, read out.
@@ -21308,7 +21355,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             {
               const shown = await readInventory();
               const showing = ((shown.ok && shown.result && shown.result.controls) || []).filter((c) => !c.hidden);
-              if (!wholeNamedAmong(wanted, showing)) {
+              // Or a request asking what something holds: "open infrastructure
+              // and tell me what layers it has" names the menu, and the answer
+              // is what is inside it.
+              if (!wholeNamedAmong(wanted, showing) || /\b(?:what|which)\b/i.test(askedAs)) {
                 const peeked = await invokeOnActiveTab("peekClosed", [{}]).catch(() => null);
                 const seen = (peeked && peeked.ok && peeked.result && peeked.result.peeked) || [];
                 if (seen.length) {
