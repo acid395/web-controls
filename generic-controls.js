@@ -1137,7 +1137,10 @@
       const el = deepQuery(door.selector);
       if (!el) continue;
       const before = new Set(inventoryNow({}).controls.map(peekKey));
-      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector);
+      // Real items only: a wrapper whose name is all the menu text run
+      // together reads as "new" the moment the menu adds to it.
+      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector
+        && c.confidence !== "low" && String(c.label || "").trim().length <= 60);
       realClick(el);
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
