@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.41 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.42 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.41";
+globalThis.WC_WIDGET_VERSION = "0.4.42";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -2090,7 +2090,10 @@ return (function () {
       const el = deepQuery(door.selector);
       if (!el) continue;
       const before = new Set(inventoryNow({}).controls.map(peekKey));
-      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector);
+      // Real items only: a wrapper whose name is all the menu text run
+      // together reads as "new" the moment the menu adds to it.
+      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector
+        && c.confidence !== "low" && String(c.label || "").trim().length <= 60);
       realClick(el);
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }

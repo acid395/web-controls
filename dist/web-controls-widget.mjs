@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.41 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.42 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.41",
+    version: "0.4.42",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.41";
+globalThis.WC_WIDGET_VERSION = "0.4.42";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -2099,7 +2099,10 @@ return (function () {
       const el = deepQuery(door.selector);
       if (!el) continue;
       const before = new Set(inventoryNow({}).controls.map(peekKey));
-      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector);
+      // Real items only: a wrapper whose name is all the menu text run
+      // together reads as "new" the moment the menu adds to it.
+      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector
+        && c.confidence !== "low" && String(c.label || "").trim().length <= 60);
       realClick(el);
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
