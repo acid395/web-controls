@@ -3683,12 +3683,32 @@ section("the model chooses from the page's controls");
       await pg.GENERIC.peekClosed({});
       const flood = pg.GENERIC.inventory({ includeHidden: true }).controls.find((c) => c.label === "Flood Maps");
       ensure("the peek remembers what the menu holds", flood && flood.remembered && flood.hidden, flood);
+      // The extension injects the reader again before every call; what it
+      // remembered has to survive that.
+      pg.window.eval(require("fs").readFileSync(require("path").join(__dirname, "..", "page", "generic-bundle.js"), "utf8"));
+      const again = pg.window.GENERIC.inventory({ includeHidden: true }).controls.find((c) => c.label === "Flood Maps");
+      ensure("and still does after the reader is injected again", again && again.remembered, again);
       shift = true;
       d.getElementById("h").click();
       await pg.GENERIC.click(flood.selector);
       check("an item that moved is pressed by name", pressed.join(","), "Flood Maps");
       ensure("and its open menu is not shut by the press", !!d.querySelector("#m ul"), "menu closed");
     });
+  }
+}
+
+// A control with no state of its own that changes its look when pressed - a
+// layer item turning blue - is reported as changed, not "no change".
+{
+  const pg = loadPage(`<!doctype html><html><body><a href="#" id="b" class="item">Bridges</a><a href="#" id="n">Nothing</a></body></html>`, { url: "https://city.example.gov/lab/dt/3Dmap" });
+  if (pg) {
+    const b = pg.document.getElementById("b");
+    b.addEventListener("click", (e) => { e.preventDefault(); b.className = "item active"; });
+    pg.document.getElementById("n").addEventListener("click", (e) => e.preventDefault());
+    const r = pg.GENERIC.click("#b");
+    check("a press that changes the control's look is a change", r.itChanged, true);
+    const r2 = pg.GENERIC.click("#n");
+    check("a press that changes nothing is not", r2.itChanged, undefined);
   }
 }
 

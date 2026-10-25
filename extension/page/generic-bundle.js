@@ -536,7 +536,6 @@
   };
 
   // The list whose Go a choice last pressed, and when.
-  let jumpPressed = null;
   const setSelect = (elOrSel, valueOrText, add = false) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
@@ -574,7 +573,7 @@
       if (fields.length === 1 && buttons.length === 1
           && /^(go|apply|view|show|submit|ok|get)$/i.test(String(buttons[0].textContent || buttons[0].value || "").trim())) {
         realClick(buttons[0]);
-        jumpPressed = { el, at: Date.now() };
+        window.__wcJumpPressed = { el, at: Date.now() };
       }
     }
     return opt.value;
@@ -1116,11 +1115,16 @@
    * their menu, which every path already knows to open before pressing.
    * Forgotten when the page's address changes.
    */
-  const behindDoors = new Map();
-  let behindUrl = location.href;
+  // Kept on the page, not in this script: the extension injects the reader
+  // again before every call, and what one copy had seen behind the menus -
+  // and the request being worked on - was gone by the next call. The widget
+  // loads it once, which is why the peek worked there and not in the panel.
+  const kept = window.__wcReaderState || (window.__wcReaderState = { behindDoors: new Map(), behindUrl: location.href, request: null });
+  const behindDoors = kept.behindDoors;
+  let behindUrl = kept.behindUrl;
   const peekKey = (c) => `${norm(c.label)}|${c.kind || ""}`;
   async function peekClosed({ max = 8 } = {}) {
-    if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = location.href; }
+    if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = kept.behindUrl = location.href; }
     const inv = inventoryNow({ includeHidden: true });
     const doors = inv.controls.filter((c) => c.sectionHead && c.expanded !== true && !c.hidden && !c.disabled
       && !behindDoors.has(c.selector) && !inv.controls.some((x) => x.revealedBy === c.selector)
@@ -1163,18 +1167,18 @@
    * and a map library's buttons unless the request is about the map's view.
    * With none set - a corpus scoring the reader - nothing is left out.
    */
-  let currentRequest = null;
-  function setRequest(text) { currentRequest = text == null ? null : String(text); return { set: currentRequest !== null }; }
+  const currentRequestOf = () => kept.request;
+  function setRequest(text) { kept.request = text == null ? null : String(text); return { set: kept.request !== null }; }
   const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
   const PART_OF_THE_PAGE = /^(?:region|main|application|document|group|presentation|figure|article|navigation|banner|contentinfo|complementary)$/;
-  const offeredNow = (c) => currentRequest === null
+  const offeredNow = (c) => currentRequestOf() === null
     || (!PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase())
-      && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequest)));
+      && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequestOf())));
   function inventory(opts = {}) {
     const raw = inventoryNow(opts);
-    const out = currentRequest === null ? raw : { ...raw, controls: raw.controls.filter(offeredNow) };
+    const out = currentRequestOf() === null ? raw : { ...raw, controls: raw.controls.filter(offeredNow) };
     if (!opts.includeHidden || !behindDoors.size) return out;
-    if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = location.href; return out; }
+    if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = kept.behindUrl = location.href; return out; }
     const have = new Set(out.controls.map(peekKey));
     const extra = [];
     for (const [sel, d] of behindDoors) {
@@ -2992,8 +2996,9 @@
     if (el.tagName === "SELECT") {
       // Its Go already pressed by choosing, as a jump menu's is. Pressing it
       // again sent the same choice twice.
+      const jumpPressed = window.__wcJumpPressed;
       if (jumpPressed && jumpPressed.el === el && Date.now() - jumpPressed.at < 10000) {
-        jumpPressed = null;
+        window.__wcJumpPressed = null;
         return { submitted: "button" };
       }
       const inline = String(el.getAttribute("onchange") || "") + String(el.getAttribute("onblur") || "");
@@ -4286,11 +4291,28 @@
       };
       const before = typeof selector === "string" ? deepQuery(selector) : selector;
       const was = stateOf(before);
+      // Its look, where it carries no state to compare. A layer item on
+      // City-FIDAP says nothing in its attributes when switched on; it turns
+      // blue. Read as "no change", every layer the agent turned on was
+      // reported as not having worked.
+      const lookOf = (n) => {
+        if (!n || !n.getAttribute) return "";
+        const parts = [];
+        for (const x of [n, n.firstElementChild, n.parentElement]) {
+          if (!x) continue;
+          parts.push(String(x.className && x.className.baseVal !== undefined ? x.className.baseVal : x.className || ""));
+          try { const cs = getComputedStyle(x); parts.push(cs.backgroundColor, cs.color, cs.fontWeight); } catch (e) { /* no style */ }
+        }
+        return parts.join("|");
+      };
+      const lookWas = was === undefined ? lookOf(before) : "";
       const el = realClick(before || selector);
       const now = stateOf(before);
+      const lookChanged = was === undefined && before && before.isConnected && lookWas !== lookOf(before);
       return {
         clicked: String(el.tagName || "").toLowerCase(),
         label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined,
+        ...(lookChanged ? { control: rawLabelOf(before) || undefined, was: "as it was", now: "its look changed", itChanged: true, how: "look" } : {}),
         ...(was === undefined ? {} : {
           control: rawLabelOf(before) || undefined,
           was, now, itChanged: was !== now, how: "click",
