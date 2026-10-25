@@ -3650,6 +3650,18 @@ section("the model chooses from the page's controls");
   }
 }
 
+// "Put" types only into something; one verb with two "the" phrases is two steps.
+{
+  const bgw = loadBackground({});
+  const vm = require("vm");
+  const run = (expr) => vm.runInContext(expr, bgw);
+  check("put ... on the map is not typing", run(`carriesAValue("put the flood maps on the map")`), false);
+  check("put ... in a box is", run(`carriesAValue("put 20001 in the zip code box")`), true);
+  check("one verb, two things, is two steps", run(`JSON.stringify(splitIntoSteps("show the train route and the railway crossings"))`), JSON.stringify(["show the train route", "show the railway crossings"]));
+  check("a name with and in it stays whole", run(`splitIntoSteps("turn on the rivers and lakes layer").length`), 1);
+  check("and compare is not split", run(`splitIntoSteps("compare the gage height and the discharge").length`), 1);
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

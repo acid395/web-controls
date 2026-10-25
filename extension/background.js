@@ -5381,7 +5381,18 @@ function splitIntoSteps(instruction) {
     // but "click 30 days and then could you show the legend" carries it in
     // the middle, where only the clause it belongs to can see it.
     .map((t) => plainlyPut(t.trim())).filter(Boolean)
-    .flatMap(searchPressOfItsOwn);
+    .flatMap(searchPressOfItsOwn)
+    .flatMap(sharedVerbOfTwo);
+}
+/* One verb, two things: "show the train route and the railway crossings" is
+ * two layers to show, and as one step the second was never reached - the
+ * model pressed Train Route and called the request done. Only a showing or
+ * hiding verb, and two short phrases that each start with "the", so a name
+ * with "and" in it - "the rivers and lakes layer" - stays whole.
+ */
+function sharedVerbOfTwo(part) {
+  const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|open|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove)(?:\s+me)?)\s+(the\s+[a-z][a-z' -]{1,40}?)\s*,?\s+and\s+(the\s+[a-z][a-z' -]{1,40}?)\s*$/i);
+  return m ? [`${m[1]} ${m[2]}`, `${m[1]} ${m[3]}`] : [part];
 }
 /* "And click search" finishes a typed box, and stays with it. After a list
  * choice it is a step of its own: "choose the south platte division and
@@ -6343,7 +6354,19 @@ const OFFER_MAX = 120;
 const WHOLE_PAGE = 400;
 
 function controlsForModel(inv, { max = OFFER_MAX } = {}) {
-  const all = (inv && inv.controls) || [];
+  let all = (inv && inv.controls) || [];
+  // A menu whose items are listed is not offered itself: its items are, and
+  // pressing one opens it first. Offered both, a 4B planned "put the flood
+  // maps on the map" as a press of every menu heading before Flood Maps, and
+  // answered "where are the police stations" by opening Public Services and
+  // stopping there. Kept where the request names the menu.
+  const goal = String((activeAsk && activeAsk.instruction) || "");
+  const doors = new Set(all.filter((c) => c.remembered && c.revealedBy).map((c) => c.revealedBy));
+  if (doors.size) {
+    const words = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+    all = all.filter((c) => !doors.has(c.selector)
+      || meaningfulWords(String(c.label || "")).some((w) => words.some((g) => wordMatchesText(g, w) === "exact")));
+  }
   const seen = new Set();
   const kept = [];
   for (const c of all) {
@@ -6604,7 +6627,10 @@ const CHOICE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXY".split("");
  */
 function carriesAValue(part) {
   const t = String(part || "");
-  if (/^\s*(?:please\s+)?(?:type|enter|fill(?:\s+in)?|put|write|input)\b/i.test(t)) return true;
+  if (/^\s*(?:please\s+)?(?:type|enter|fill(?:\s+in)?|write|input)\b/i.test(t)) return true;
+  // "Put" is typing only into something: "put 20001 in the zip box" is, and
+  // "put the flood maps on the map" - a layer to show - is not.
+  if (/^\s*(?:please\s+)?put\b.*\b(?:in|into)\s+\S/i.test(t)) return true;
   if (SEARCH_CLAUSE.test(t) || RANGE_IN.test(t)) return true;
   const m = t.match(SET_TO);
   return !!(m && listWords(m[1]).filter((w) => !CONTROL_VERB.test(w) && !verbFamily(w)).length && listWords(m[2]).length);
