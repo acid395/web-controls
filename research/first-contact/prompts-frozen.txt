@@ -382,3 +382,21 @@ put on the page (its weather layer fetches only current temperature and wind; ai
 a station icon on the map canvas is clicked). Replaced by:
 action+explain  turn on the flood maps and tell me which flood years I can choose
 action+explain  open infrastructure and tell me what layers it has
+
+ROUND 10, SET 2 - written 2026-10-24 from City-FIDAP's source (menus and the panels they open), before any run.
+city-fidap-local  http://localhost:3000/lab/dt/  (prompts 16-30)
+action          turn on the groundwater wells layer
+action          where are the hospitals and nursing homes
+action          show the soil moisture sensors
+action          show the bicycle parking and repair spots
+action          show the traffic flow on the map
+action          turn on the railway bridges
+explain         what layers are under weather and environment
+explain         what transportation layers can I turn on
+explain         what are the three main things this platform does
+action+explain  turn on the drought maps and tell me what drought levels the legend shows
+action+explain  open demographic data and tell me which charts I can view
+action+explain  turn on the flood maps and tell me which flood year is selected
+multistep       turn on the flood maps, then switch to the 500 year flood
+multistep       open demographic data, then show the education chart
+multistep       show the roads, then select all of them

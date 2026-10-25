@@ -633,7 +633,22 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"open infrastructure and tell me what layers it has","kind":"action+explain","steps":["Infrastructure"],"explain":true,"on":"Infrastructure","want":{"clicked":"Infrastructure"},"offline":null},
    {"say":"show the schools and then the fire stations","kind":"multistep","steps":["School","Fire Stations"],"on":"School","want":{"clicked":"School"},"offline":null},
    {"say":"close the welcome window, then show the drought maps","keepOpen":true,"kind":"multistep","steps":["×","Drought Maps"],"on":"×","want":{"clicked":"×"},"offline":null},
-   {"say":"show the train route and the railway crossings","kind":"multistep","steps":["Train Route","Railway Crossing"],"on":"Train Route","want":{"clicked":"Train Route"},"offline":null}
+   {"say":"show the train route and the railway crossings","kind":"multistep","steps":["Train Route","Railway Crossing"],"on":"Train Route","want":{"clicked":"Train Route"},"offline":null},
+   {"say": "turn on the groundwater wells layer", "kind": "action", "steps": ["Groundwater Wells"], "on": "Groundwater Wells", "want": {"clicked": "Groundwater Wells"}, "offline": null},
+   {"say": "where are the hospitals and nursing homes", "kind": "action", "steps": ["Care Facilities"], "on": "Care Facilities", "want": {"clicked": "Care Facilities"}, "offline": null},
+   {"say": "show the soil moisture sensors", "kind": "action", "steps": ["Soil Moisture Gauges"], "on": "Soil Moisture Gauges", "want": {"clicked": "Soil Moisture Gauges"}, "offline": null},
+   {"say": "show the bicycle parking and repair spots", "kind": "action", "steps": ["Bicycle Amenities"], "on": "Bicycle Amenities", "want": {"clicked": "Bicycle Amenities"}, "offline": null},
+   {"say": "show the traffic flow on the map", "kind": "action", "steps": ["Traffic Flow"], "on": "Traffic Flow", "want": {"clicked": "Traffic Flow"}, "offline": null},
+   {"say": "turn on the railway bridges", "kind": "action", "steps": ["Railway Bridge"], "on": "Railway Bridge", "want": {"clicked": "Railway Bridge"}, "offline": null},
+   {"say": "what layers are under weather and environment", "kind": "explain", "steps": [], "explain": true, "on": null, "want": {"read": true}, "offline": null},
+   {"say": "what transportation layers can I turn on", "kind": "explain", "steps": [], "explain": true, "on": null, "want": {"read": true}, "offline": null},
+   {"say": "what are the three main things this platform does", "keepOpen": true, "kind": "explain", "steps": [], "explain": true, "on": null, "want": {"read": true}, "offline": null},
+   {"say": "turn on the drought maps and tell me what drought levels the legend shows", "kind": "action+explain", "steps": ["Drought Maps"], "explain": true, "on": "Drought Maps", "want": {"clicked": "Drought Maps"}, "offline": null},
+   {"say": "open demographic data and tell me which charts I can view", "kind": "action+explain", "steps": ["Demographic Data"], "explain": true, "on": "Demographic Data", "want": {"clicked": "Demographic Data"}, "offline": null},
+   {"say": "turn on the flood maps and tell me which flood year is selected", "kind": "action+explain", "steps": ["Flood Maps"], "explain": true, "on": "Flood Maps", "want": {"clicked": "Flood Maps"}, "offline": null},
+   {"say": "turn on the flood maps, then switch to the 500 year flood", "kind": "multistep", "steps": ["Flood Maps", "500yr"], "on": "Flood Maps", "want": {"clicked": "Flood Maps"}, "offline": null},
+   {"say": "open demographic data, then show the education chart", "kind": "multistep", "steps": ["Demographic Data", "Education"], "on": "Demographic Data", "want": {"clicked": "Demographic Data"}, "offline": null},
+   {"say": "show the roads, then select all of them", "kind": "multistep", "steps": ["Road", "Select All/None"], "on": "Road", "want": {"clicked": "Road"}, "offline": null}
   ]
  }
 };
