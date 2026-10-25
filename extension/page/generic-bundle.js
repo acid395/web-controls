@@ -75,6 +75,12 @@
   };
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  // A unit written short after a number: 500yr, 6hr, 2wk. Kept in step
+  // with spelledUnits in background.js.
+  const UNIT_SHORT = { yr: "year", yrs: "years", hr: "hour", hrs: "hours", wk: "week", wks: "weeks",
+    mo: "month", mos: "months", mth: "month", mths: "months", min: "minute", mins: "minutes",
+    sec: "second", secs: "seconds", dy: "day", dys: "days" };
+  const UNIT_AFTER_NUMBER = new RegExp(`(\\d)[\\s-]?(${Object.keys(UNIT_SHORT).join("|")})\\b`, "gi");
   let ariaIndex = null;
   // The page's menu button, found once per pass: undefined until looked for.
   let drawerToggle;
@@ -540,9 +546,13 @@
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
+    // Units spelled out on both sides as the last try: a request for the
+    // "500 year" option names the one the page wrote "500yr".
+    const plain = (t) => norm(String(t || "").replace(UNIT_AFTER_NUMBER, (_, d, u) => `${d} ${UNIT_SHORT[u.toLowerCase()]}`))
+      .replace(/[^a-z0-9.]+/g, " ").replace(/\b(years|hours|weeks|months|minutes|seconds|days)\b/g, (u) => u.slice(0, -1)).trim();
     const opt = [...el.options].find(
       (o) => o.value === valueOrText || norm(o.text) === norm(valueOrText)
-    );
+    ) || [...el.options].find((o) => plain(o.text) === plain(valueOrText));
     if (!opt) throw new Error(`setSelect: no option "${valueOrText}" in [${[...el.options].map((o) => o.value)}]`);
     // A second choice in a multi-select joins the first - the ctrl-click a
     // person makes - rather than replacing it. Only when asked to add: the
@@ -844,8 +854,15 @@
    * state classes say nothing lasting about where an element is; the walk
    * below keeps a path unique with positions instead.
    */
-  const VOLATILE_CLASS = /^(?:css-[a-z0-9]+(?:-[\w-]+)?|sc-[a-zA-Z0-9]+|jss\d+|makeStyles-[\w-]+-\d+|[\w-]+_[\w-]+__[a-zA-Z0-9_-]{5,}|Mui-(?:expanded|selected|focused|focusVisible|active|disabled|checked|open|completed|error)|(?:is-|has-)?(?:active|selected|open|opened|expanded|collapsed|current|focus|focused|hover|show|showing|visible|in)|ng-[\w-]+)$/;
-  const cssPath = (el) => {
+  const VOLATILE_CLASS = /^(?:css-[a-z0-9]+(?:-[\w-]+)?|sc-[a-zA-Z0-9]+|jss\d+|makeStyles-[\w-]+-\d+|[\w-]+_[\w-]+__[a-zA-Z0-9_-]{5,}|Mui-(?:expanded|selected|focused|focusVisible|active|disabled|checked|open|completed|error)|(?:is-|has-)?(?:active|selected|open|opened|expanded|collapsed|current|focus|focused|hover|show|showing|visible|in)|ng-[\w-]+|collapsing|[\w-]+-(?:entered|entering|exited|exiting|(?:enter|exit|appear)(?:-active|-done|-to)?))$/;
+  // A transition's state is the same kind of class. City-FIDAP's menus wear
+  // MuiCollapse-entered while open and keep it for a moment while closing,
+  // so "the entered menu's fourth item" - Flood Maps' address - named
+  // Railway Crossing while Infrastructure was still shutting.
+  // whole: walked to the top rather than stopping at the first address that
+  // is unique now. An address kept for later must stay unique as the page
+  // changes, and "unique now" is a fact about this moment only.
+  const cssPath = (el, whole = false) => {
     // An id only where the page uses it once. EPA's tab sets each number
     // their tabs tabs--tab--0, --1...; "#tabs--tab--1" found a hidden URL tab
     // in a share panel, and the Swimming tab it was meant for never moved.
@@ -886,7 +903,7 @@
         if (same > 1 && index && !capped) s += `:nth-of-type(${index})`;
       }
       parts.unshift(s);
-      if (parts.length >= 6 && namesOne(parts.join(" > "), el)) return parts.join(" > ");
+      if (!whole && parts.length >= 6 && namesOne(parts.join(" > "), el)) return parts.join(" > ");
       if (p instanceof ShadowRoot) return parts.join(" > ");
       cur = p;
       if (!cur || tagOf(cur) === "html") break;
@@ -1123,6 +1140,7 @@
   const behindDoors = kept.behindDoors;
   let behindUrl = kept.behindUrl;
   const peekKey = (c) => `${norm(c.label)}|${c.kind || ""}`;
+  let keptTags = kept.tags || 0;
   async function peekClosed({ max = 8 } = {}) {
     if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = kept.behindUrl = location.href; }
     const inv = inventoryNow({ includeHidden: true });
@@ -1145,6 +1163,22 @@
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
       if (found.length) { await pause(200); found = fresh(); }
+      // Kept by a whole address. Each menu is looked in alone, so its fourth
+      // item's shortest unique address was the same string as every other
+      // menu's fourth item's: a press for Flood Maps was taken for
+      // Infrastructure's Railway Crossing, which carried the same address.
+      //
+      // And tagged, because even a whole address is not always enough: on
+      // City-FIDAP the open menu's list is drawn beside the headings, one at
+      // a time, so Demographic Data and Buildings have the very same whole
+      // address. Which menu an item came from is known only here. The tag
+      // matches every element, so the page finds the item as before; it
+      // only makes each kept address its own, so a press is traced to the
+      // right menu.
+      found = found.map((c, i) => {
+        const it = deepQuery(c.selector);
+        return it ? { ...c, selector: `${cssPath(it, true)}:not([data-wc-kept="${keptTags++}"])` } : c;
+      });
       // Shut again if it opened, or if it says it changed state while
       // showing nothing: a look inside is not left as a press.
       const flipped = el.getAttribute && el.getAttribute("aria-expanded") === "true";
@@ -1157,6 +1191,7 @@
       behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
     }
+    kept.tags = keptTags;
     return { peeked };
   }
   /* The request being worked on, set by the agent at the start of each ask.
@@ -1171,7 +1206,43 @@
    * With none set - a corpus scoring the reader - nothing is left out.
    */
   const currentRequestOf = () => kept.request;
-  function setRequest(text) { kept.request = text == null ? null : String(text); return { set: kept.request !== null }; }
+  function setRequest(text) {
+    kept.request = text == null ? null : String(text);
+    // The page as the request found it, so what an action brings up can be
+    // told apart from what was there all along.
+    try {
+      kept.before = new Set(inventoryNow({}).controls.map(peekKey));
+      kept.headsBefore = new Set([...document.querySelectorAll("h1, h2, h3, h4, [role=heading]")].map((h) => norm(h.textContent)));
+    } catch (e) { kept.before = null; kept.headsBefore = null; }
+    return { set: kept.request !== null };
+  }
+  /* What came up since the request began: the controls and the heading an
+   * action brought onto the page. "Open demographic data and tell me which
+   * charts I can view" is the panel's Language and Education - not the
+   * sidebar, the map's credits and the footer, which a read of the whole
+   * page answered with. A menu's own items, and a close button, are not
+   * what anyone opened a panel to see.
+   */
+  function cameSince() {
+    if (!kept.before) return { heading: null, controls: [], lists: [] };
+    const menuItem = new Set();
+    for (const [, d] of behindDoors) for (const it of d.items) menuItem.add(peekKey(it));
+    const CLOSER = /^(?:[×✕✖xX]|close|dismiss|back)$/i;
+    const came = inventoryNow({}).controls.filter((c) => !kept.before.has(peekKey(c)) && !menuItem.has(peekKey(c))
+      && !c.sectionHead && !c.mapChrome && c.confidence !== "low" && !PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase()));
+    const controls = came.map((c) => String(c.label || "").trim()).filter((l) => l && l.length <= 60 && !CLOSER.test(l));
+    // A list that came up is read whole: "which flood years can I choose"
+    // is its options, and "which is selected" its current one.
+    const lists = came.filter((c) => (c.options || []).length).map((c) => {
+      const el = deepQuery(c.selector);
+      const chosen = el && el.tagName === "SELECT" && el.selectedIndex >= 0 ? String(el.options[el.selectedIndex].text || "").trim() : null;
+      return { label: String(c.label || "").trim(), options: c.options.map((o) => String(o.text || o.value || "").trim()).filter(Boolean), selected: chosen };
+    });
+    const heads = [...document.querySelectorAll("h1, h2, h3, h4, [role=heading]")]
+      .filter((h) => h.offsetParent !== null || h.getClientRects().length)
+      .map((h) => String(h.textContent || "").replace(/\s+/g, " ").trim()).filter((t) => t && t.length <= 80 && !(kept.headsBefore || new Set()).has(norm(t)));
+    return { heading: heads[0] || null, controls: [...new Set(controls)].slice(0, 20), lists };
+  }
   const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
   const PART_OF_THE_PAGE = /^(?:region|main|application|document|group|presentation|figure|article|navigation|banner|contentinfo|complementary)$/;
   const offeredNow = (c) => currentRequestOf() === null
@@ -4252,7 +4323,7 @@
     peekClosed,
     menuItems,
     menuNamedIn,
-    setRequest,
+    setRequest, cameSince,
     readPage,
     submit,
     submitWhenReady,
@@ -4372,11 +4443,13 @@
   const stillIs = (selector, item) => { const el = deepQuery(selector); return !!el && norm(rawLabelOf(el)) === norm(item.label); };
   const rememberedOf = (selector) => {
     if (typeof selector !== "string" || !behindDoors.size) return null;
+    const hits = [];
     for (const [door, d] of behindDoors) {
-      const item = d.items.find((it) => it.selector === selector);
-      if (item) return stillIs(selector, item) ? null : { door, d, item };
+      for (const item of d.items) if (item.selector === selector) hits.push({ door, d, item });
     }
-    return null;
+    // Whichever the address holds now is the one meant, and needs no door.
+    if (!hits.length || hits.some((h) => stillIs(selector, h.item))) return null;
+    return hits[0];
   };
   // The item as it is now, by name: a menu opened by someone else - the
   // agent, a step before - can lay its items out under other addresses.
@@ -4390,7 +4463,7 @@
     // pressed it again, so Flood Maps was "not found".
     const opened = d.items.some((it) => findNow(it));
     if (!showing() && !opened) {
-      const el = deepQuery(door);
+      const el = doorNow(door, d);
       if (el) realClick(el);
     }
     // Waited for either way: opened here or a moment ago by the caller, the
@@ -4398,8 +4471,20 @@
     for (let t = 0; t < 15 && !showing(); t++) await new Promise((r) => setTimeout(r, 100));
     if (stillIs(selector, item)) return run(selector);
     const now = findNow(item);
-    return run(now ? now.selector : selector);
+    // Not the old address as a last resort: it holds something else now.
+    // "Turn on the flood maps" opened Infrastructure by Weather &
+    // Environment's old address, then pressed whatever sat at Flood Maps'.
+    if (!now) throw new Error(`not found: "${item.label}" is not at ${selector} any more, and its menu did not show it`);
+    return run(now.selector);
   }
+  // The name of what an address presses: a kept item's own, else whatever is
+  // there now. A press sent by address alone is known by it, so one control
+  // reached by two addresses is still one control.
+  GENERIC.labelAt = (selector) => {
+    for (const [, d] of behindDoors) { const it = d.items.find((x) => x.selector === selector); if (it) return it.label; }
+    const el = typeof selector === "string" ? deepQuery(selector) : null;
+    return el ? rawLabelOf(el) || null : null;
+  };
   const PLAIN_ACTIONS = { click: GENERIC.click, check: GENERIC.check };
   for (const fn of ["click", "check", "fill", "selectOption", "pickRadio", "submitWhenReady", "readControl", "scrollToElement"]) {
     const plain = GENERIC[fn];
@@ -4434,6 +4519,26 @@
     const hits = inventoryNow({ includeHidden: true }).controls.filter((c) => nameKey(c.label) === want);
     return hits.length === 1 ? hits[0].selector : null;
   };
+  // A remembered menu, by its address only while that still holds its name.
+  const doorNow = (door, d) => {
+    const el = deepQuery(door);
+    if (!d || !d.label || carries(el, d.label)) return el;
+    const s2 = byName(d.label);
+    return s2 ? deepQuery(s2) : null;
+  };
+  {
+    // Opening a menu by address is checked the same way. Callers open an
+    // item's menu by the address read with it, and on a page that re-renders
+    // that address can name another menu.
+    const plainOpen = GENERIC.openDisclosure;
+    GENERIC.openDisclosure = (selector, ...rest) => {
+      const d = typeof selector === "string" ? behindDoors.get(selector) : null;
+      if (!d || !d.label || carries(deepQuery(selector), d.label)) return plainOpen(selector, ...rest);
+      const s2 = byName(d.label);
+      if (s2) return plainOpen(s2, ...rest);
+      return Promise.resolve({ opened: null, appeared: 0, notFound: `"${d.label}" is not at ${selector} any more` });
+    };
+  }
   const rememberedByName = (expect) => {
     for (const [door, d] of behindDoors) if (d.items.some((it) => nameKey(it.label) === nameKey(expect))) return { door, d };
     return null;

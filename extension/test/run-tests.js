@@ -3610,6 +3610,190 @@ section("the model chooses from the page's controls");
     }));
     return { pg, pressed };
   };
+  // Menus addressed by position, then reordered: a remembered menu's old
+  // address names its neighbour. City-FIDAP opened Infrastructure by Weather
+  // & Environment's address and pressed what sat at Flood Maps' old one.
+  {
+    const pg = loadPage(`<!doctype html><html><body><div class="side">${Object.keys(MENUS).map((m) =>
+      `<div class="menu"><div class="head" style="cursor:pointer">${m}<i class="material-icons-round">expand_less</i></div></div>`).join("")}</div></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      const d = pg.document; const pressed = [];
+      d.querySelectorAll(".head").forEach((h) => h.addEventListener("click", () => {
+        const box = h.parentElement; const open = box.querySelector("ul");
+        if (open) { open.remove(); return; }
+        const ul = d.createElement("ul");
+        for (const it of MENUS[h.firstChild.textContent]) { const li = d.createElement("li"); const a = d.createElement("a"); a.href = "#"; a.textContent = it;
+          a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(it); }); li.appendChild(a); ul.appendChild(li); }
+        box.appendChild(ul);
+      }));
+      runAsync(async () => {
+        pg.GENERIC.setRequest("turn on the flood maps");
+        await pg.GENERIC.peekClosed();
+        const flood = pg.GENERIC.inventory({ includeHidden: true }).controls.find((c) => c.label === "Flood Maps");
+        ensure("the peek remembers Flood Maps behind its menu", !!(flood && flood.revealedBy), flood);
+        if (!flood) return;
+        const side = d.querySelector(".side");
+        side.insertBefore(side.children[1], side.children[0]);   // Weather & Environment first now
+        await pg.GENERIC.click(flood.selector);
+        check("an unnamed press through a moved menu still reaches its item", pressed.join(","), "Flood Maps");
+        d.querySelectorAll(".menu ul").forEach((u) => u.remove());
+        side.insertBefore(side.children[1], side.children[0]);   // and back: the door's address names Infrastructure
+        const opened = await pg.GENERIC.openDisclosure(flood.revealedBy);
+        const shown = [...d.querySelectorAll(".menu ul a")].map((x) => x.textContent);
+        ensure("a menu opened by an address that moved is opened by its name", shown.includes("Flood Maps") && !shown.includes("Buildings"), { opened, shown });
+      });
+    }
+  }
+  // A menu closing keeps its open class a moment. An address that leaned on
+  // the class named the closing menu's item in the same place.
+  {
+    // Nested as City-FIDAP's are: list, collapse, wrapper, inner wrapper, a
+    // list per item - six steps from an item to the menu's own list.
+    const menu = (state, xs) => `<ul class="MuiList-root"><div class="MuiCollapse-root ${state}"><div class="MuiCollapse-wrapper"><div class="MuiCollapse-wrapperInner">${
+      xs.map((x) => `<ul class="MuiList-root"><a href="#">${x}</a></ul>`).join("")}</div></div></div></ul>`;
+    const pg = loadPage(`<!doctype html><html><body><ul class="MuiList-root">
+      <li class="MuiListItem-root"><div class="MuiBox-root">Infrastructure</div>${menu("MuiCollapse-exited", ["Buildings", "Bridges", "Bicycle Amenities", "Railway Crossing"])}</li>
+      <li class="MuiListItem-root"><div class="MuiBox-root">Weather &amp; Environment</div>${menu("MuiCollapse-entered", ["Weather Forecast", "Air Quality Data", "Drought Maps", "Flood Maps"])}</li>
+      </ul></body></html>`, { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      const fm = pg.GENERIC.inventory({}).controls.find((c) => c.label === "Flood Maps");
+      const first = pg.document.querySelector(".MuiCollapse-exited");
+      first.classList.replace("MuiCollapse-exited", "MuiCollapse-entered");
+      const at = fm && pg.document.querySelector(fm.selector);
+      check("an address does not lean on a menu's open-or-closing class", at && at.textContent, "Flood Maps");
+    }
+  }
+  // Lazy menus nested as City-FIDAP's, each looked in alone: every menu's
+  // fourth item had the same shortest address, and a press for Flood Maps
+  // opened Infrastructure and pressed Railway Crossing.
+  {
+    const pg = loadPage(`<!doctype html><html><body><ul class="MuiList-root">${Object.keys(MENUS).map((m) =>
+      `<li class="MuiListItem-root"><div class="MuiBox-root" style="cursor:pointer">${m}<i class="material-icons-round">expand_less</i></div></li>`).join("")}</ul></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      const d = pg.document; const pressed = [];
+      // The open menu's list sits beside the headings, not inside one, and
+      // only one is drawn at a time - as City-FIDAP's does. No address can
+      // then say which menu an item came from.
+      d.querySelectorAll(".MuiBox-root").forEach((h) => h.addEventListener("click", () => {
+        const li = h.parentElement; const mine = li.nextElementSibling && li.nextElementSibling.tagName === "UL" ? li.nextElementSibling : null;
+        d.querySelectorAll("body > ul > ul").forEach((u) => u.remove());
+        if (mine) return;
+        li.insertAdjacentHTML("afterend", `<ul class="MuiList-root"><div class="MuiCollapse-root"><div class="MuiCollapse-wrapper"><div class="MuiCollapse-wrapperInner">${
+          MENUS[h.firstChild.textContent].map((x) => `<ul class="MuiList-root"><a href="#">${x}</a></ul>`).join("")}</div></div></div></ul>`);
+        li.nextElementSibling.querySelectorAll("a").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(a.textContent); }));
+      }));
+      runAsync(async () => {
+        pg.GENERIC.setRequest("turn on the flood maps");
+        await pg.GENERIC.peekClosed();
+        const inv = pg.GENERIC.inventory({ includeHidden: true }).controls;
+        const flood = inv.find((c) => c.label === "Flood Maps");
+        const rail = inv.find((c) => c.label === "Electric Power Plants");
+        ensure("menus looked in alone keep different addresses for the same place", !!(flood && rail && flood.selector !== rail.selector), [flood && flood.selector, rail && rail.selector]);
+        const bld = inv.find((c) => c.label === "Buildings");
+        ensure("even where the page draws every menu's list in one place", !!(bld && pg.GENERIC.inventory({ includeHidden: true }).controls.find((c) => c.label === "Weather Forecast").selector !== bld.selector), bld && bld.selector);
+        if (!flood) return;
+        await pg.GENERIC.openDisclosure(flood.revealedBy);
+        await pg.GENERIC.click(flood.selector);
+        check("a remembered item's press reaches it, not another menu's item in its place", pressed.join(","), "Flood Maps");
+      });
+    }
+  }
+  // A layer pressed by address, then by name at another address, is one
+  // control pressed twice - which turns it off.
+  {
+    const pg = loadPage(`<!doctype html><html><body><a href="#" id="fm">Flood Maps</a> <a href="#" id="dm">Drought Maps</a></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      let n = 0; pg.document.getElementById("fm").addEventListener("click", (e) => { e.preventDefault(); n++; });
+      const bg = loadBackground({ page: pg, decision: "choice" });
+      const vm = require("vm");
+      runAsync(async () => {
+        vm.runInContext(`activeAsk = { instruction: "turn on the flood maps, then switch to the 500 year flood" }`, bg);
+        await vm.runInContext(`readInventory()`, bg);
+        await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: "#fm" } })`, bg);
+        await vm.runInContext(`readInventory()`, bg);
+        const r = await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: "body > a:nth-of-type(1)" }, label: "Flood Maps" })`, bg);
+        check("a control pressed by address is not pressed again by name", n, 1);
+        ensure("and says why", r && r.result && r.result.alreadyPressed, r);
+      });
+    }
+  }
+  // "Open X and tell me which ... I can view": what the action brought up.
+  {
+    const pg = loadPage(`<!doctype html><html><body><nav><a href="#" id="dd">Demographic Data</a> <a href="#">School</a> <a href="#">GitHub</a></nav><div id="slot"></div></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      const d = pg.document;
+      d.getElementById("dd").addEventListener("click", (e) => { e.preventDefault(); d.getElementById("slot").innerHTML =
+        `<div><button>&times;</button><h3>Black Hawk County Summary</h3><p>Loading</p><button>Language</button><button>Education</button></div>`; });
+      const bg = loadBackground({ page: pg });
+      bg.__model = (m) => (m.type === "llmStatus" ? { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" }
+        : m.type === "llmStep" ? { ok: true, step: m.mode === "read" ? { do: "finish", answer: "Demographic Data, School, GitHub" } : { do: "click", name: "Demographic Data" } } : undefined);
+      runAsync(async () => {
+        const r = await bg.__ask({ type: "smartAsk", instruction: "open demographic data and tell me which charts I can view" });
+        const said = String((r.display || {}).answer || "");
+        ensure("what an action brought up answers what can be viewed", /Language/.test(said) && /Education/.test(said) && !/GitHub|School/.test(said), said);
+      });
+    }
+  }
+  // A list an action brought up answers which values it offers, and which is set.
+  for (const [say, want] of [["turn on the flood maps and tell me which flood years I can choose", /10yr, 25yr, 50yr, 100yr, 500yr/],
+    ["turn on the flood maps and tell me which flood year is selected", /25yr is selected/]]) {
+    const pg = loadPage(`<!doctype html><html><body><nav><a href="#" id="fm">Flood Maps</a> <a href="#">GitHub</a></nav><div id="slot"></div></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (!pg) break;
+    const d = pg.document;
+    d.getElementById("fm").addEventListener("click", (e) => { e.preventDefault(); d.getElementById("slot").innerHTML = `<div><button>&times;</button><h3>WATERLOO</h3>
+      <h4>Flood Risk</h4><select id="ls">${["10", "25", "50", "100", "500"].map((y) => `<option value="${y}"${y === "25" ? " selected" : ""}>${y}yr</option>`).join("")}</select>
+      <label><input type="checkbox" checked> Show flood damage</label></div>`; });
+    const bg = loadBackground({ page: pg });
+    bg.__model = (m) => (m.type === "llmStatus" ? { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" }
+      : m.type === "llmStep" ? { ok: true, step: m.mode === "read" ? { do: "finish", answer: "not on this page" } : { do: "click", name: "Flood Maps" } } : undefined);
+    runAsync(async () => {
+      const r = await bg.__ask({ type: "smartAsk", instruction: say });
+      const said = String((r.display || {}).answer || "");
+      ensure(`a list brought up answers "${say.replace(/^.* and /, "")}"`, want.test(said), said);
+    });
+  }
+  // Open-then-close presses a control twice only when both steps are about it.
+  {
+    const pg = loadPage(`<!doctype html><html><body><a href="#" id="dm">Drought Maps</a> <a href="#" id="st">Settings</a></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      const bg = loadBackground({ page: pg, decision: "choice" });
+      const vm = require("vm");
+      runAsync(async () => {
+        const twice = async (asked, sel, label) => {
+          vm.runInContext(`activeAsk = { instruction: ${JSON.stringify(asked)} }`, bg);
+          await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: ${JSON.stringify(sel)} } })`, bg);
+          const r = await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: ${JSON.stringify(sel)} }, label: ${JSON.stringify(label)} })`, bg);
+          return !(r && r.result && r.result.alreadyPressed);
+        };
+        check("closing one thing does not license pressing another twice", await twice("close the welcome window, then show the drought maps", "#dm", "Drought Maps"), false);
+        check("but opening a panel and then closing it presses it twice", await twice("open the settings, then close it", "#st", "Settings"), true);
+      });
+    }
+  }
+  // "Them" points back at the step before; no control is called that.
+  {
+    const pg = loadPage(`<!doctype html><html><body><a href="#" id="road">Road</a> <a href="#">Bicycle</a><div id="slot"></div></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (pg) {
+      const d = pg.document;
+      d.getElementById("road").addEventListener("click", (e) => { e.preventDefault(); d.getElementById("slot").innerHTML = `<h3>Highway Layers</h3>
+        <label><input type="checkbox" id="all"><span>Select All/None</span></label>
+        ${["primary", "secondary", "residential"].map((t) => `<label><input type="checkbox" name="${t}"><span>${t}</span></label>`).join("")}`;
+        d.getElementById("all").addEventListener("change", (ev) => d.querySelectorAll("input[name]").forEach((x) => { x.checked = ev.target.checked; })); });
+      const bg = loadBackground({ page: pg });
+      bg.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "show the roads, then select all of them" });
+        check("select all of them is Select All/None", !!(d.getElementById("all") || {}).checked, true);
+      });
+    }
+  }
   // Model off: the page alone.
   for (const [say, want] of [["click flood maps", "Flood Maps"], ["show me the bus routes", "Bus Route"]]) {
     const L = lazyPage();
@@ -9003,6 +9187,33 @@ section("a plural is the same word");
 // These sites write spans both ways on the same page.
 check("singular reaches plural", sb.wordMatchesText("day", "7 days"), "exact");
 check("and plural reaches singular", sb.wordMatchesText("days", "1 day"), "exact");
+// "Switch to the 500 year flood" against a list reading 10yr ... 500yr:
+// the page abbreviates the unit and closes it up, the request does neither.
+check("a number reaches its abbreviated unit", sb.wordMatchesText("500", "500yr"), "exact");
+check("and the unit reaches its abbreviation", sb.wordMatchesText("year", "500yr"), "exact");
+check("and the other way round", sb.wordMatchesText("6hr", "6 hours"), "exact");
+check("but a unit word with no number before it is left alone", sb.wordMatchesText("minute", "min temperature"), false);
+{
+  const yrs = { kind: "select", label: "Flood Risk", selector: "#ls",
+    options: ["10yr", "25yr", "50yr", "100yr", "500yr"].map((t) => ({ text: t, value: t.replace("yr", "") })) };
+  const pick = sb.matchOption(yrs, sb.meaningfulWords("the 500 year flood"));
+  check("the 500 year flood chooses 500yr, not the first year", pick && pick.text, "500yr");
+  const bgu = loadBackground({});
+  const got = require("vm").runInContext(`actionToCall("select", ${JSON.stringify(yrs)}, { value: "500 years" })`, bgu);
+  check("a planned 500 years selects the 500yr option", got && got.args && got.args.value, "500");
+}
+// A step in a chain naming only a value in one list: that list, set to it.
+{
+  const all = [{ kind: "select", type: "select-one", label: "Flood Risk", selector: "#ls",
+      options: ["10yr", "25yr", "50yr", "100yr", "500yr"].map((t) => ({ text: t, value: t.replace("yr", "") })) },
+    { kind: "a", label: "Flood Maps", selector: "#fm" }, { kind: "input", type: "checkbox", label: "Show flood damage", selector: "#d" }];
+  const pick = (cl) => { const r = sb.optionSpokenIn(cl, all); return r ? r.label : null; };
+  check("switch to the 500 year flood names one option", pick("switch to the 500 year flood"), "Flood Risk: 500yr");
+  check("and 500 years too", pick("show the 500 years flood"), "Flood Risk: 500yr");
+  check("a step naming no option names none", pick("show the flood damage"), null);
+  const two = [...all, { kind: "select", type: "select-one", label: "Rain", selector: "#r", options: [{ text: "500yr", value: "x" }] }];
+  check("one option in two lists is a choice, left alone", sb.optionSpokenIn("switch to the 500 year flood", two), null);
+}
 // Not a licence for short words to collide.
 check("but a short word does not grow an s into a match",
   sb.wordMatchesText("is", "islands"), false);
@@ -13356,6 +13567,15 @@ const realLog = console.log;
     check("choosing from a jump menu presses its Go", went, 1);
   }
 
+  // The page's own list takes a request written out: "500 year" is "500yr".
+  const yp = loadPage(`<!doctype html><html><body>
+    <select id="ls"><option value="10">10yr</option><option value="25" selected>25yr</option>
+      <option value="500">500yr</option></select></body></html>`, { url: "https://example.org/flood" });
+  if (yp) {
+    yp.GENERIC.selectOption("#ls", "500 year");
+    check("a list written 500yr takes 500 year", yp.document.getElementById("ls").value, "500");
+  }
+
   // "the last 14 days" with no 14-day button fills the days box and applies.
   const dp = loadPage(`<!doctype html><html><body>
     <a href="#7">7 days</a> <a href="#30">30 days</a>
@@ -13619,7 +13839,9 @@ const realLog = console.log;
     };
     runAsync(async () => {
       const r = await bgl.__ask({ type: "smartAsk", instruction: "open the map layers panel and tell me which layers are available" });
-      ensure("the reader is shown the choices an action revealed", sawChoices, (r.display || {}).answer);
+      // Read off what the action brought up, or by the model shown it.
+      const said = String((r.display || {}).answer || "");
+      ensure("the reader is shown the choices an action revealed", sawChoices || (/Flood Inundation/.test(said) && /Snow Water Equivalent/.test(said)), said);
       check("and nothing else is pressed after the panel opens", closed, 0);
     });
   }
