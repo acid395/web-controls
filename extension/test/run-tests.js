@@ -3585,6 +3585,71 @@ section("the model chooses from the page's controls");
   }
 }
 
+// Menus whose items exist only once opened (City-FIDAP's Material UI
+// collapses), beside a map region and Google's own buttons. A request naming
+// an item word for word must reach it; the model must be shown items behind
+// closed menus; and a layer is pressed once, not on and then off.
+{
+  const MENUS = { "Infrastructure": ["Buildings", "Bridges", "Electric Power Plants", "Waste Water TP"],
+    "Weather & Environment": ["Weather Forecast", "Drought Maps", "Flood Maps", "Stream Gauges"],
+    "Public Services": ["School", "Police Stations", "Fire Stations"], "Data Analytics": ["Train Route", "Bus Route", "Road Closures"] };
+  const lazyPage = () => {
+    const pg = loadPage(`<!doctype html><html><body><div id="side"><h3>Black Hawk County</h3>${Object.keys(MENUS).map((m, i) =>
+      `<div id="m${i}"><div id="h${i}" style="cursor:pointer">${m}<i class="material-icons-round">expand_less</i></div></div>`).join("")}</div>
+      <div role="region" aria-label="Map" tabindex="0"><div class="gm-style"><button aria-label="Map camera controls">c</button><button aria-label="Keyboard shortcuts">k</button></div></div></body></html>`,
+      { url: "https://city.example.gov/lab/dt/3Dmap" });
+    if (!pg) return null;
+    const d = pg.document; const pressed = [];
+    Object.keys(MENUS).forEach((m, i) => d.getElementById(`h${i}`).addEventListener("click", () => {
+      const box = d.getElementById(`m${i}`); const open = box.querySelector("ul");
+      if (open) { open.remove(); return; }
+      const ul = d.createElement("ul");
+      for (const it of MENUS[m]) { const li = d.createElement("li"); const a = d.createElement("a"); a.href = "#"; a.textContent = it;
+        a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(it); }); li.appendChild(a); ul.appendChild(li); }
+      box.appendChild(ul);
+    }));
+    return { pg, pressed };
+  };
+  // Model off: the page alone.
+  for (const [say, want] of [["click flood maps", "Flood Maps"], ["show me the bus routes", "Bus Route"]]) {
+    const L = lazyPage();
+    if (!L) break;
+    const bg = loadBackground({ page: L.pg });
+    bg.__model = (m) => (m.type === "llmStatus" ? { ready: false, hasGpu: false } : undefined);
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: say });
+      check(`lazy menus, model off: "${say}" reaches ${want}`, L.pressed.join(","), want);
+    });
+  }
+  // Model on, choosing: it can only pick what it is shown.
+  const picks = [["put the flood maps on the map", "Flood Maps"], ["where are the police stations", "Police Stations"],
+    ["show the river gauges", "Stream Gauges"], ["which roads are closed", "Road Closures"], ["show where the power plants are", "Electric Power Plants"]];
+  for (const [say, want] of picks) {
+    const L = lazyPage();
+    if (!L) break;
+    const bg = loadBackground({ page: L.pg, decision: "choice" });
+    let shown = false;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" };
+      if (m.type !== "llmStep") return undefined;
+      const text = String(m.prompt || "") + JSON.stringify(m.controls || []);
+      if (text.includes(want)) shown = true;
+      if (m.mode === "choice") {
+        const line = String(m.prompt).split("\n").find((l) => /^[A-Z]\) /.test(l) && l.slice(3).startsWith(want));
+        const letter = line ? line[0] : "Z";
+        return { ok: true, step: { choice: letter }, logprobs: [{ token: letter, logprob: Math.log(0.9), top: [{ token: letter, logprob: Math.log(0.9) }] }] };
+      }
+      if (m.mode === "plan") return { ok: true, step: { steps: text.includes(want) ? [{ name: want, do: "click" }] : [] } };
+      return { ok: true, step: text.includes(want) ? { do: "click", name: want } : { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: say });
+      ensure(`lazy menus: ${want} is shown to the model, or reached by the page alone, for "${say}"`, shown || L.pressed.includes(want), say);
+      check(`and ${want} is pressed once`, L.pressed.join(","), want);
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

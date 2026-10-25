@@ -817,6 +817,24 @@ function benchSiteFor(url) {
   return best ? { site: best.site, meta: best.meta } : null;
 }
 
+// A set's "dismiss": what a person closes before asking anything - a welcome
+// window, a map's error dialog. Pressed after each load, in order, where it
+// shows; a prompt marked keepOpen is about the window itself and keeps it.
+async function dismissOnPage(labels) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  for (let round = 0; round < 3; round++) {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [labels], func: (names) => {
+      for (const name of names) {
+        const el = [...document.querySelectorAll("button, [role=button], span, a")]
+          .find((e) => e.offsetParent && (e.textContent || "").trim() === name && !e.closest("[data-web-controls-widget]"));
+        if (el) el.click();
+      }
+    } }).catch(() => null);
+    await new Promise((r) => setTimeout(r, 800));
+  }
+}
+
 async function resetTo(url) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) throw new Error("no active tab");
@@ -869,10 +887,10 @@ async function runBench(mode = "set") {
     ? found.meta.prompts.filter((p) => HARD_KINDS.has(p.kind))
     : found.meta.prompts;
   if (!prompts.length) { logEcho(`bench ${mode}: nothing to run on ${found.site}`); return; }
-  return runPromptSet(found.site, found.meta.url, prompts, mode);
+  return runPromptSet(found.site, found.meta.url, prompts, mode, found.meta);
 }
 
-async function runPromptSet(site, url, prompts, mode) {
+async function runPromptSet(site, url, prompts, mode, meta = {}) {
   const status = await currentModelStatus();
   if (!status.ready) {
     logEcho(`bench: the model is not loaded yet (${status.loading ? "still loading" : "nothing loaded"})`
@@ -890,6 +908,7 @@ async function runPromptSet(site, url, prompts, mode) {
     let res = null;
     try {
       await resetTo(url);
+      if ((meta.dismiss || []).length && !p.keepOpen) await dismissOnPage(meta.dismiss);
       res = await new Promise((resolve) => {
         // Ten minutes: a page that freezes while it works - RadarViz decoding
         // a radar file - was scored a failure at four while it was still

@@ -333,6 +333,7 @@ const raceCancel = (p) => Promise.race([p, whenAskCancelled().then(() => ({ ok: 
 const READS_ONLY = /^(?:inventory|pageSignature|signatureDiff|readPage|readControl|busyNow|disclosures|capturedSeries|findPassages)$/;
 
 async function invokeOnActiveTab(fn, args) {
+  if (globalThis.__wcTrace) debugLog(`[page?] ${fn}`);
   if (askCancelled() && !READS_ONLY.test(String(fn || ""))) return { ok: false, error: "cancelled" };
   let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if ((!tab || !tab.id || !tab.url) && lastPageTabId !== null) {
@@ -348,7 +349,11 @@ async function invokeOnActiveTab(fn, args) {
   }
   const route = routeFor(tab.url);
   await ensureInjected(tab.id, route.bundle);
+  const sentAt = Date.now();
+  if (globalThis.__wcTrace) debugLog(`[page] ${fn} ${JSON.stringify(args || []).slice(0, 120)}`);
   const result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  const tookMs = Date.now() - sentAt;
+  if (tookMs > 2000) debugLog(`[page] ${fn} took ${tookMs}ms`);
   return { ...result, calledOn: route.global }; // which manifest actually ran, for the popup log
 }
 
@@ -6131,6 +6136,11 @@ async function panelIsOpen() {
 }
 
 async function askModelForStep(payload) {
+  const askedAt = Date.now();
+  try { return await askModelForStepInner(payload); }
+  finally { debugLog(`[model] ${(payload && payload.mode) || "step"} call took ${Date.now() - askedAt}ms`); }
+}
+async function askModelForStepInner(payload) {
   if (askCancelled()) return { ok: false, error: "cancelled" };
   // Built here, so the panel and the offscreen document are given the same
   // words. It used to be built inside the offscreen document, which was
@@ -6751,6 +6761,7 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
       call = { name: "pageClick", args: { selector: target.selector } };
     }
     const before = (inv.result.controls || []).filter((c) => !c.hidden).map(controlKey);
+    call.label = String(target.label || "");
     const ran = await runVerified(routeGlobal, call);
     const r = (ran && ran.result) || {};
     const moved = typeof r.itChanged === "boolean" ? r.itChanged : didItMove(ran);
@@ -6873,6 +6884,7 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   if (asked && asked.cost) cost = asked.cost;
   const steps = asked && asked.ok && asked.step && Array.isArray(asked.step.steps) ? asked.step.steps : [];
   debugLog(`[plan] "${goal}": ${steps.length} step(s) over ${shortlist.length} controls in ${asked && asked.ms ? asked.ms : Date.now() - began}ms${round ? " (second plan)" : ""}${asked && asked.error ? ` - ${asked.error}` : ""}`);
+  if (globalThis.__wcTrace) debugLog(`[plan] steps: ${JSON.stringify(steps).slice(0, 600)}`);
   if (!steps.length) break;
   // A plan no longer than the request: a 3B answered a two-part request with
   // fifteen steps. Three a part and one to confirm is room for every real
@@ -8859,7 +8871,14 @@ function actionFits(act, control) {
   return true;
 }
 
+// The call carries the name it was meant for, so a press whose address went
+// stale can be found again by name (runVerified).
 function actionToCall(act, control, s) {
+  const call = actionToCallBare(act, control, s);
+  if (call && control && control.label) call.label = String(control.label);
+  return call;
+}
+function actionToCallBare(act, control, s) {
   const sel = control.selector;
   if (act === "click") {
     // A radio is not something you press, it is something you choose.
@@ -9849,9 +9868,40 @@ function pageWaitCredit() {
 
 async function runVerified(routeGlobal, toolCall) {
   if (askCancelled()) return { ok: false, error: "cancelled" };
+  // One press per control per request. A second press of a toggle is its
+  // undo: on City-FIDAP the section sweep pressed Electric Power Plants,
+  // could not see the layer change, and choice pressed it again - on, then
+  // off. Unless the request asks for it twice.
+  if (activeAsk && toolCall && /^page(?:Click|Check)$/.test(toolCall.name)) {
+    const pressed = activeAsk.pressed || (activeAsk.pressed = new Set());
+    const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const keys = [`s:${(toolCall.args || {}).selector || ""}`, toolCall.label ? `l:${flatL(toolCall.label)}` : null].filter(Boolean);
+    const asked = String(activeAsk.instruction || "");
+    const again = /\b(?:twice|again|two\s+times|\d+\s+times|three\s+times)\b/i.test(asked)
+      || (/\b(?:open|show|expand|turn\s+on|switch\s+on|enable)\b/i.test(asked) && /\b(?:close|hide|collapse|turn\s+off|switch\s+off|disable|shut)\b/i.test(asked));
+    if (!again && keys.some((k) => pressed.has(k))) {
+      return { ok: true, result: { alreadyPressed: true, note: "already pressed for this request - a second press would undo it" } };
+    }
+    keys.forEach((k) => pressed.add(k));
+  }
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
-  const result = await executeToolCall(routeGlobal, toolCall);
+  let result = await executeToolCall(routeGlobal, toolCall);
+  // Found again by name. A menu that re-renders as it opens moves its items,
+  // and the address read a moment before - City-FIDAP's "Public Transit" -
+  // was "not found". Where the caller said which control it meant and the
+  // page now shows exactly one of that name, that one is pressed; two or
+  // none, and the failure stands.
+  if (result.ok === false && toolCall && toolCall.label && /not found|no such control/i.test(String(result.error || ""))) {
+    const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const now = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+    const same = ((now && now.ok && now.result && now.result.controls) || [])
+      .filter((c) => !c.hidden && !c.disabled && flatL(c.label) === flatL(toolCall.label));
+    if (same.length === 1 && same[0].selector !== (toolCall.args || {}).selector) {
+      debugLog(`[verify] "${toolCall.label}" found again by name`);
+      result = await executeToolCall(routeGlobal, { ...toolCall, args: { ...toolCall.args, selector: same[0].selector } });
+    }
+  }
   if (!before.ok || result.ok === false) return result;
   const waitFrom = Date.now();
 
@@ -11568,7 +11618,9 @@ async function pickFromOpened(routeGlobal, opener, value) {
   if (!hit && opener.expanded !== true) {
     const opened = await runVerified(routeGlobal, { name: "pageClick", args: { selector: opener.selector } });
     if (!opened || opened.ok === false) return null;
+    if (globalThis.__wcTrace) debugLog("[trace] pickFromOpened: opened, waiting");
     await new Promise((r) => setTimeout(r, 600));
+    if (globalThis.__wcTrace) debugLog("[trace] pickFromOpened: looking");
     hit = await look();
   }
   if (!hit) return null;
@@ -12893,6 +12945,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         respond: (r) => respond(r) };
       activeAsk = thisAsk;
       liveAsks.set(askId, thisAsk);
+      // The page reader is told what is being asked, so it can leave out
+      // what cannot be the answer (setRequest in the reader).
+      await invokeOnActiveTab("setRequest", [String(msg.instruction || "")]).catch(() => null);
+      forgetPageTools();
       // The whole sentence is what was asked and what the card shows; the
       // paths below see only the action half, and the question is answered
       // once that half has responded.
@@ -14025,6 +14081,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // the model was asked to pick controls that did not exist yet. A
             // chain runs part by part below, each part planned over the page
             // as it is when its turn comes.
+            // Closed menus that show nothing of what they hold are looked
+            // inside once, so whatever decides next is shown their items,
+            // each behind its menu (peekClosed in the page reader). Not for a
+            // request the page already names whole. Questions too: "where are
+            // the police stations" is answered by the layer of that name.
+            {
+              const shown = await readInventory();
+              const showing = ((shown.ok && shown.result && shown.result.controls) || []).filter((c) => !c.hidden);
+              if (!wholeNamedAmong(wanted, showing)) {
+                const peeked = await invokeOnActiveTab("peekClosed", [{}]).catch(() => null);
+                const seen = (peeked && peeked.ok && peeked.result && peeked.result.peeked) || [];
+                if (seen.length) {
+                  forgetPageTools();
+                  debugLog(`[peek] ${seen.map((x) => `${x.menu}: ${x.items}`).join("; ")}`);
+                }
+              }
+            }
             if (!ASKING_TO_READ.test(wanted) && !QUESTION_LED.test(wanted) && splitIntoSteps(wanted).length <= 1) {
               const looked = await sectionsFirst(route.global, wanted).catch(() => null);
               if (looked) { respond(looked); return; }

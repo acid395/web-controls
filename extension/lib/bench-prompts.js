@@ -612,5 +612,28 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"which station had the most snowfall","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"how much snow fell at crested butte","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "city-fidap-local": {
+  "firstContact": true,
+  "url": "http://localhost:3000/lab/dt/",
+  "dismiss": ["OK", "\u00d7"],
+  "note": "City-FIDAP (uihilab/CityDigitalTwin) run locally with npm start. Layer menus are closed accordions whose items appear only once opened. Close the welcome window and Google's dialog first, except for prompt 14.",
+  "prompts": [
+   {"say":"show me where the bridges are","kind":"action","steps":["Bridges"],"on":"Bridges","want":{"clicked":"Bridges"},"offline":null},
+   {"say":"put the flood maps on the map","kind":"action","steps":["Flood Maps"],"on":"Flood Maps","want":{"clicked":"Flood Maps"},"offline":null},
+   {"say":"where are the police stations","kind":"action","steps":["Police Stations"],"on":"Police Stations","want":{"clicked":"Police Stations"},"offline":null},
+   {"say":"show the river gauges","kind":"action","steps":["Stream Gauges"],"on":"Stream Gauges","want":{"clicked":"Stream Gauges"},"offline":null},
+   {"say":"show me the bus routes","kind":"action","steps":["Bus Route"],"on":"Bus Route","want":{"clicked":"Bus Route"},"offline":null},
+   {"say":"which roads are closed","kind":"action","steps":["Road Closures"],"on":"Road Closures","want":{"clicked":"Road Closures"},"offline":null},
+   {"say":"show where the power plants are","kind":"action","steps":["Electric Power Plants"],"on":"Electric Power Plants","want":{"clicked":"Electric Power Plants"},"offline":null},
+   {"say":"show the wastewater treatment plants","kind":"action","steps":["Waste Water TP"],"on":"Waste Water TP","want":{"clicked":"Waste Water TP"},"offline":null},
+   {"say":"what is this platform for","keepOpen":true,"kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what can I look at under public services","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"pull up the weather forecast and tell me if it will rain","kind":"action+explain","steps":["Weather Forecast"],"explain":true,"on":"Weather Forecast","want":{"clicked":"Weather Forecast"},"offline":null},
+   {"say":"show the air quality and tell me if it is good or bad","kind":"action+explain","steps":["Air Quality Data"],"explain":true,"on":"Air Quality Data","want":{"clicked":"Air Quality Data"},"offline":null},
+   {"say":"show the schools and then the fire stations","kind":"multistep","steps":["School","Fire Stations"],"on":"School","want":{"clicked":"School"},"offline":null},
+   {"say":"close the welcome window, then show the drought maps","keepOpen":true,"kind":"multistep","steps":["×","Drought Maps"],"on":"×","want":{"clicked":"×"},"offline":null},
+   {"say":"show the train route and the railway crossings","kind":"multistep","steps":["Train Route","Railway Crossing"],"on":"Train Route","want":{"clicked":"Train Route"},"offline":null}
+  ]
  }
 };

@@ -2073,3 +2073,122 @@ module.exports.nohrsc = {
     }
   ]
 };
+
+// Round 10, 2026-10-24: City-FIDAP run locally, the same fifteen prompts the widget lists, so
+// the extension and the widget can be compared on one set.
+module.exports.city-fidap-local = {
+  "url": "http://localhost:3000/lab/dt/",
+  "note": "City-FIDAP (uihilab/CityDigitalTwin) run locally with npm start. Layer menus are closed accordions whose items appear only once opened. Close the welcome window and Google's dialog first, except for prompt 14.",
+  "later": true,
+  "firstContact": true,
+  "prompts": [
+    {
+      "say": "show me where the bridges are",
+      "kind": "action",
+      "steps": [
+        "Bridges"
+      ]
+    },
+    {
+      "say": "put the flood maps on the map",
+      "kind": "action",
+      "steps": [
+        "Flood Maps"
+      ]
+    },
+    {
+      "say": "where are the police stations",
+      "kind": "action",
+      "steps": [
+        "Police Stations"
+      ]
+    },
+    {
+      "say": "show the river gauges",
+      "kind": "action",
+      "steps": [
+        "Stream Gauges"
+      ]
+    },
+    {
+      "say": "show me the bus routes",
+      "kind": "action",
+      "steps": [
+        "Bus Route"
+      ]
+    },
+    {
+      "say": "which roads are closed",
+      "kind": "action",
+      "steps": [
+        "Road Closures"
+      ]
+    },
+    {
+      "say": "show where the power plants are",
+      "kind": "action",
+      "steps": [
+        "Electric Power Plants"
+      ]
+    },
+    {
+      "say": "show the wastewater treatment plants",
+      "kind": "action",
+      "steps": [
+        "Waste Water TP"
+      ]
+    },
+    {
+      "say": "what is this platform for",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "what can I look at under public services",
+      "kind": "explain",
+      "steps": [],
+      "explain": true
+    },
+    {
+      "say": "pull up the weather forecast and tell me if it will rain",
+      "kind": "action+explain",
+      "steps": [
+        "Weather Forecast"
+      ],
+      "explain": true
+    },
+    {
+      "say": "show the air quality and tell me if it is good or bad",
+      "kind": "action+explain",
+      "steps": [
+        "Air Quality Data"
+      ],
+      "explain": true
+    },
+    {
+      "say": "show the schools and then the fire stations",
+      "kind": "multistep",
+      "steps": [
+        "School",
+        "Fire Stations"
+      ]
+    },
+    {
+      "say": "close the welcome window, then show the drought maps",
+      "kind": "multistep",
+      "steps": [
+        "×",
+        "Drought Maps"
+      ]
+    },
+    {
+      "say": "show the train route and the railway crossings",
+      "kind": "multistep",
+      "steps": [
+        "Train Route",
+        "Railway Crossing"
+      ]
+    }
+  ]
+};

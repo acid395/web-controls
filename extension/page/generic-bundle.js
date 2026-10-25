@@ -1103,7 +1103,87 @@
     return { text: "" };
   }
 
-  function inventory({ includeHidden = false } = {}) {
+  /* What closed menus hold, where a page builds a menu's items only when it
+   * opens.
+   *
+   * City-FIDAP's layer menus are Material UI collapses that unmount their
+   * items while shut: "Flood Maps" is not on the page at all until "Weather
+   * & Environment" is opened. Every path that hands the page to a model
+   * handed it five headings, and the model guessed - "check Infrastructure",
+   * "type flood maps into Public Services". peekClosed opens each closed menu
+   * that shows nothing behind it, once, notes what appeared, and shuts it.
+   * inventory({ includeHidden }) then lists those items as hidden behind
+   * their menu, which every path already knows to open before pressing.
+   * Forgotten when the page's address changes.
+   */
+  const behindDoors = new Map();
+  let behindUrl = location.href;
+  const peekKey = (c) => `${norm(c.label)}|${c.kind || ""}`;
+  async function peekClosed({ max = 8 } = {}) {
+    if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = location.href; }
+    const inv = inventoryNow({ includeHidden: true });
+    const doors = inv.controls.filter((c) => c.sectionHead && c.expanded !== true && !c.hidden && !c.disabled
+      && !behindDoors.has(c.selector) && !inv.controls.some((x) => x.revealedBy === c.selector)
+      && !(c.goesTo && !/^#|^javascript:/i.test(String(c.goesTo)))).slice(0, max);
+    const peeked = [];
+    const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (const door of doors) {
+      const el = deepQuery(door.selector);
+      if (!el) continue;
+      const before = new Set(inventoryNow({}).controls.map(peekKey));
+      const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector);
+      realClick(el);
+      let found = [];
+      for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
+      if (found.length) { await pause(200); found = fresh(); }
+      // Shut again if it opened, or if it says it changed state while
+      // showing nothing: a look inside is not left as a press.
+      const flipped = el.getAttribute && el.getAttribute("aria-expanded") === "true";
+      if (found.length || flipped) {
+        const again = deepQuery(door.selector) || el;
+        realClick(again);
+        await pause(250);
+      }
+      behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
+      peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
+    }
+    return { peeked };
+  }
+  /* The request being worked on, set by the agent at the start of each ask.
+   *
+   * A map library's own buttons and the page's landmark regions were offered
+   * as presses on every path - the keyword sweep, the page's tools, the
+   * model's list - and on City-FIDAP "click flood maps" stopped at "which one
+   * did you mean?" between the Google map region called "Map" and Google's
+   * "Map camera controls", before ever looking inside the closed menus that
+   * hold Flood Maps. While a request is set, the reader leaves out regions,
+   * and a map library's buttons unless the request is about the map's view.
+   * With none set - a corpus scoring the reader - nothing is left out.
+   */
+  let currentRequest = null;
+  function setRequest(text) { currentRequest = text == null ? null : String(text); return { set: currentRequest !== null }; }
+  const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
+  const PART_OF_THE_PAGE = /^(?:region|main|application|document|group|presentation|figure|article|navigation|banner|contentinfo|complementary)$/;
+  const offeredNow = (c) => currentRequest === null
+    || (!PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase())
+      && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequest)));
+  function inventory(opts = {}) {
+    const raw = inventoryNow(opts);
+    const out = currentRequest === null ? raw : { ...raw, controls: raw.controls.filter(offeredNow) };
+    if (!opts.includeHidden || !behindDoors.size) return out;
+    if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = location.href; return out; }
+    const have = new Set(out.controls.map(peekKey));
+    const extra = [];
+    for (const [sel, d] of behindDoors) {
+      for (const it of d.items) {
+        if (have.has(peekKey(it))) continue;
+        have.add(peekKey(it));
+        extra.push({ ...it, hidden: true, revealedBy: sel, revealedByLabel: d.label, remembered: true });
+      }
+    }
+    return extra.length ? { ...out, controlCount: out.controlCount + extra.length, controls: [...out.controls, ...extra] } : out;
+  }
+  function inventoryNow({ includeHidden = false } = {}) {
     freshPass();
     ariaIndex = null; labelForIndex = null; drawerToggle = undefined;
     const seen = new Set();
@@ -1254,6 +1334,9 @@
           } catch (e) { return undefined; }
         })(),
         opensPanel: (looksLikeTitle || expandedAttr !== null) ? true : undefined,
+        // A section's heading - chevron, <summary>, accordion title - as
+        // opposed to any button that says it expands something.
+        sectionHead: looksLikeTitle ? true : undefined,
         // The submit of a site-wide search form: its form holds one text box,
         // a search box. On a page with a search form of its own as well,
         // "click search" means that one - ECHO has both, called Search.
@@ -3573,10 +3656,10 @@
     // earlier step had opened it, and closed it again.
     const details = el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS" ? el.parentElement : null;
     if (el.getAttribute("aria-expanded") === "true" || (details && details.open)) {
-      const n = inventory({ includeHidden: true }).controlCount;
+      const n = inventoryNow({ includeHidden: true }).controlCount;
       return { opened: rawLabelOf(el).slice(0, 60) || selector, alreadyOpen: true, controlsBefore: n, controlsAfter: n, appeared: 0 };
     }
-    const before = inventory({ includeHidden: true }).controlCount;
+    const before = inventoryNow({ includeHidden: true }).controlCount;
     /* Hovered before it is pressed.
      *
      * A menu that opens on hover is usually a link as well - "Maps" on
@@ -3607,9 +3690,9 @@
       }
       await settle({ quietMs: 120, timeoutMs: 900 });
     } catch (e) { /* no pointer events here; the click below still stands */ }
-    const hovered = inventory({ includeHidden: true }).controlCount;
+    const hovered = inventoryNow({ includeHidden: true }).controlCount;
     if (hovered > before) {
-      const after = inventory({ includeHidden: true });
+      const after = inventoryNow({ includeHidden: true });
       return {
         opened: rawLabelOf(el).slice(0, 60) || selector,
         controlsBefore: before, controlsAfter: after.controlCount,
@@ -3627,7 +3710,7 @@
     }
     realClick(el);
     await settle({ quietMs: 150, timeoutMs: 2000 });
-    const after = inventory({ includeHidden: true });
+    const after = inventoryNow({ includeHidden: true });
     return {
       opened: rawLabelOf(el).slice(0, 60) || selector,
       controlsBefore: before, controlsAfter: after.controlCount,
@@ -4137,6 +4220,8 @@
 
   const GENERIC = {
     inventory,
+    peekClosed,
+    setRequest,
     readPage,
     submit,
     submitWhenReady,
@@ -4222,6 +4307,38 @@
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),
   };
+
+  /* An action on a remembered item opens its menu first. peekClosed noted
+   * what a closed menu holds; the item itself does not exist until the menu
+   * opens again, so a press sent to its address hit nothing - "where are the
+   * police stations" chose Police Stations and pressed empty space. Every
+   * action that takes an address goes through here: if the address names
+   * nothing now and belongs to a remembered item, its menu is opened and the
+   * item waited for, up to a second and a half.
+   */
+  // The menu a remembered item sits behind, where the item is not on the
+  // page now; null otherwise, and then the action runs exactly as before.
+  const rememberedDoorOf = (selector) => {
+    if (typeof selector !== "string" || !behindDoors.size || deepQuery(selector)) return null;
+    for (const [door, d] of behindDoors) if (d.items.some((it) => it.selector === selector)) return door;
+    return null;
+  };
+  async function throughDoor(door, selector, run) {
+    const el = deepQuery(door);
+    if (el) {
+      realClick(el);
+      for (let t = 0; t < 15 && !deepQuery(selector); t++) await new Promise((r) => setTimeout(r, 100));
+    }
+    return run();
+  }
+  for (const fn of ["click", "check", "fill", "selectOption", "pickRadio", "submitWhenReady", "readControl", "scrollToElement"]) {
+    const plain = GENERIC[fn];
+    if (typeof plain !== "function") continue;
+    GENERIC[fn] = (selector, ...rest) => {
+      const door = rememberedDoorOf(selector);
+      return door ? throughDoor(door, selector, () => plain(selector, ...rest)) : plain(selector, ...rest);
+    };
+  }
 
   window.WC = WC;
   window.GENERIC = GENERIC;
