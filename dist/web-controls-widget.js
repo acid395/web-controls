@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.45 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.46 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.45";
+globalThis.WC_WIDGET_VERSION = "0.4.46";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -1007,19 +1007,25 @@ return (function () {
   // A selector inside a frame cannot be queried from the top document, so it
   // is written as "<frame> >>> <inner>" and resolved by hopping in. The same
   // string therefore identifies a control wherever it lives.
+  // A shadow root is hopped into the same way, from its host: an address
+  // inside one is only unique inside it, and searched from the top it
+  // found the page's own first match - a lone "button" in a component was
+  // the page's first button.
   const FRAME_SEP = " >>> ";
   const deepQuery = (sel, root) => {
     if (typeof sel === "string" && sel.includes(FRAME_SEP)) {
       const [frameSel, ...rest] = sel.split(FRAME_SEP);
       const frame = deepQueryAll(frameSel, root)[0];
-      const doc = frame && sameOriginDoc(frame);
-      return doc ? deepQuery(rest.join(FRAME_SEP), doc) : null;
+      const inner = frame && (/^i?frame$/i.test(frame.tagName) ? sameOriginDoc(frame) : frame.shadowRoot);
+      return inner ? deepQuery(rest.join(FRAME_SEP), inner) : null;
     }
     return deepQueryAll(sel, root)[0] || null;
   };
 
   // Where an element lives, as a selector prefix.
   const framePrefixOf = (el) => {
+    const root = el.getRootNode && el.getRootNode();
+    if (root && root.nodeType === 11 && root.host) return framePrefixOf(root.host) + cssPath(root.host) + FRAME_SEP;
     const doc = el.ownerDocument;
     if (!doc || doc === document) return "";
     const frame = doc.defaultView && doc.defaultView.frameElement;
@@ -1505,7 +1511,9 @@ return (function () {
       .replace(/[^a-z0-9.]+/g, " ").replace(/\b(years|hours|weeks|months|minutes|seconds|days)\b/g, (u) => u.slice(0, -1)).trim();
     const opt = [...el.options].find(
       (o) => o.value === valueOrText || norm(o.text) === norm(valueOrText)
-    ) || [...el.options].find((o) => plain(o.text) === plain(valueOrText));
+    // Words on both sides, or no match: text in a script these letters do
+    // not cover plains to nothing, and nothing equalled the empty option.
+    ) || (plain(valueOrText) ? [...el.options].find((o) => plain(o.text) === plain(valueOrText)) : null);
     if (!opt) throw new Error(`setSelect: no option "${valueOrText}" in [${[...el.options].map((o) => o.value)}]`);
     // A second choice in a multi-select joins the first - the ctrl-click a
     // person makes - rather than replacing it. Only when asked to add: the
@@ -1542,11 +1550,17 @@ return (function () {
     return opt.value;
   };
 
+  // Ticked or not. A box drawn as a <div role="checkbox"> has no .checked
+  // at all - it says so in aria-checked - so reading .checked took every one
+  // as unticked: "check" pressed a ticked box off, and "uncheck" never
+  // pressed anything.
+  const checkedOf = (el) => (el.tagName !== "INPUT" && el.hasAttribute && el.hasAttribute("aria-checked"))
+    ? el.getAttribute("aria-checked") === "true" : !!el.checked;
   const setChecked = (elOrSel, on = true) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`setChecked: not found: ${elOrSel}`);
-    if (!!el.checked !== !!on) realClick(el);
+    if (checkedOf(el) !== !!on) realClick(el);
     // Through its label, where pressing the box itself did not take - which
     // is what a person presses, and what some widgets listen to. Only for an
     // actual box: called on a <label>, which has no checked state of its
@@ -1557,7 +1571,7 @@ return (function () {
       const label = (el.labels && el.labels[0]) || (el.closest && el.closest("label"));
       if (label) realClick(label);
     }
-    return el.checked;
+    return checkedOf(el);
   };
 
   // Picks a radio inside a name-group by value, then exact label, then
@@ -2103,6 +2117,9 @@ return (function () {
     const peeked = [];
     const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     const trace = (m) => { if (window.__wcTrace) console.log(`[peek] ${m}`); };
+    // Where the person was reading. Each press scrolls its door into view,
+    // and a look inside is not meant to move the page.
+    const scrolledTo = [window.scrollX, window.scrollY];
     trace(`doors: ${doors.map((d) => d.label).join(", ")}`);
     for (const door of doors) {
       const el = deepQuery(door.selector);
@@ -2112,6 +2129,8 @@ return (function () {
       // together reads as "new" the moment the menu adds to it.
       const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector
         && c.confidence !== "low" && String(c.label || "").trim().length <= 60);
+      const details = el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS" ? el.parentElement : null;
+      const detailsWasOpen = !!(details && details.open);
       realClick(el);
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
@@ -2130,11 +2149,14 @@ return (function () {
       // right menu.
       found = found.map((c, i) => {
         const it = deepQuery(c.selector);
-        return it ? { ...c, selector: `${cssPath(it, true)}:not([data-wc-kept="${keptTags++}"])` } : c;
+        return it ? { ...c, selector: `${framePrefixOf(it)}${cssPath(it, true)}:not([data-wc-kept="${keptTags++}"])` } : c;
       });
       // Shut again if it opened, or if it says it changed state while
       // showing nothing: a look inside is not left as a press.
-      const flipped = el.getAttribute && el.getAttribute("aria-expanded") === "true";
+      // A <details> says it opened by being open: an FAQ answer holds no
+      // controls and has no aria-expanded, and was left open on the page.
+      const flipped = (el.getAttribute && el.getAttribute("aria-expanded") === "true")
+        || !!(details && !detailsWasOpen && details.open);
       if (found.length || flipped) {
         const again = deepQuery(door.selector) || el;
         realClick(again);
@@ -2145,6 +2167,7 @@ return (function () {
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
     }
     kept.tags = keptTags;
+    if (doors.length) { try { window.scrollTo(scrolledTo[0], scrolledTo[1]); } catch (e) { /* stays where it is */ } }
     return { peeked };
   }
   /* The request being worked on, set by the agent at the start of each ask.
@@ -2342,12 +2365,16 @@ return (function () {
       const rec = {
         kind: role || tag, tag, type: el.type || "", label: lab.slice(0, 80),
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
-        checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked : undefined,
+        checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked
+          : (/^(?:checkbox|switch|radio|menuitemcheckbox|menuitemradio)$/.test(role) && el.hasAttribute("aria-checked")) ? checkedOf(el) : undefined,
         selector: framePrefixOf(el) + cssPath(el),
         confidence: weak ? "low" : "high",
         // Offered as usable, a disabled control is a lie: acting on it does
         // nothing and the card reports success. Recorded, not offered.
-        disabled: el.disabled ? true : undefined,
+        // Through its fieldset too: a field inside <fieldset disabled> is as
+        // dead as one disabled itself, and only :disabled says so.
+        disabled: (el.disabled || (/^(?:INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName)
+          && (() => { try { return el.matches(":disabled"); } catch (e) { return false; } })())) ? true : undefined,
         // Hidden behind something that can be opened. Carried through so a
         // caller can open it rather than report the control missing.
         hidden: shown ? undefined : true,
@@ -2418,7 +2445,7 @@ return (function () {
         // not the sidebar's.
         inDialog: (() => { try { return el.closest("[role=dialog], [role=alertdialog], [aria-modal=true], dialog, .modal, .MuiDialog-root, .MuiModal-root, [class*='popup']") ? true : undefined; } catch (e) { return undefined; } })(),
         expanded,
-        revealedBy: opener ? cssPath(opener) : undefined,
+        revealedBy: opener ? framePrefixOf(opener) + cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
         // What its tooltip calls it, where that differs: another name a
         // request may use.
@@ -2576,13 +2603,16 @@ return (function () {
           if (n.parentElement && n.parentElement.closest("script, style, noscript")) continue;
           text += ` ${n.nodeValue}`;
         }
-        let t = text.replace(/\s+/g, " ").trim()
-          .replace(/(?:\s*[-\u2013\u2014|\u00b7]+)+\s*$/, "").trim();
+        // Trailing rules and separators off, walked back a character at a
+        // time. Written as a nested regex it backtracked exponentially: an
+        // old page's "Flow ------------------------------ cfs" hung the tab.
+        const trimTail = (s, chars) => { let i = s.length; while (i > 0 && chars.includes(s[i - 1])) i--; return s.slice(0, i).trim(); };
+        let t = trimTail(text.replace(/\s+/g, " ").trim(), " -\u2013\u2014|\u00b7");
         // The word that introduces the controls is not the panel's name:
         // "Snow Melt Animate:" is the Snow Melt panel.
         const lead = t.match(/^(.*?[a-z0-9)])\s+[A-Za-z]\w{0,15}:$/i);
         if (lead) t = lead[1].trim();
-        t = t.replace(/(?:\s*[-\u2013\u2014|:\u00b7]+)+\s*$/, "").trim();
+        t = trimTail(t, " -\u2013\u2014|:\u00b7");
         return t.length >= 2 && t.length <= 60 && /[a-z]/i.test(t) ? t : "";
       });
       if (captions.some((c) => !c)) continue;
@@ -4061,9 +4091,28 @@ return (function () {
         if (pick) { realClick(pick); return { submitted: "button" }; }
         return { submitted: `change only - no ${named} button beside this list` };
       }
-      const go = near.querySelector('button[type=submit], input[type=submit], button[class*="go"], [aria-label*="Go"]')
-        || [...near.querySelectorAll("button, input[type=button], a[role=button]")]
-             .find((b) => /^(go|apply|view|submit|show)\b/i.test((b.textContent || b.value || "").trim()));
+      // The nearest Go, looked for outward from the list. A page wrapped
+      // whole in one form - every ASP.NET WebForms page - has its header's
+      // site search as the form's first submit, and choosing a value pressed
+      // it. A form that big with no Go of the list's own presses nothing.
+      // A "go" in a class or a label is a word of its own: as a substring it
+      // was "category", "logo" and "Google".
+      const goLike = (b) => b.matches('button[type=submit], input[type=submit]')
+        || String(b.className && b.className.baseVal !== undefined ? b.className.baseVal : b.className || "").split(/\s+/).some((k) => /^(?:go|btn-go|go-btn|go-button|gobutton|gobtn)$/i.test(k))
+        || /^\s*go\s*$/i.test(b.getAttribute("aria-label") || "");
+      const goWord = (b) => /^(go|apply|view|submit|show)\b/i.test((b.textContent || b.value || "").trim());
+      const findGo = (scope) => [...scope.querySelectorAll("button, input[type=submit], [aria-label]")].find(goLike)
+        || [...scope.querySelectorAll("button, input[type=button], a[role=button]")].find(goWord);
+      const fieldsIn = (scope) => scope.querySelectorAll("select, textarea, input:not([type=button]):not([type=submit]):not([type=hidden]):not([type=image]):not([type=reset])").length;
+      let go = null;
+      if (near.tagName === "FORM" && near.contains(el)) {
+        for (let scope = el.parentElement; scope; scope = scope === near ? null : scope.parentElement) {
+          const hit = findGo(scope);
+          if (hit) { go = scope !== near || fieldsIn(scope) <= 8 ? hit : null; break; }
+        }
+      } else {
+        go = findGo(near);
+      }
       if (go) { realClick(go); return { submitted: "button" }; }
       return { submitted: "change only - this dropdown has no go button" };
     }
@@ -4551,7 +4600,7 @@ return (function () {
         // while precipitation estimate was what actually moved. Only the
         // named control's own state can tell those apart.
         const el = resolve();
-        const was = el ? !!el.checked : null;
+        const was = el ? checkedOf(el) : null;
         const now = setChecked(el || sel, on !== false);
         return {
           ...named(el),
@@ -17344,6 +17393,16 @@ function pageWaitCredit() {
   };
 }
 
+// A control's name as a key: letters and digits in any script, or failing
+// those the name as written. Flattened to a-z and 0-9 alone, every name in
+// another script and every symbol - 検索, Войти, "×", "+" - came out as
+// the same empty key, so pressing one counted as having pressed them all.
+function pressNameKey(name) {
+  const raw = String(name || "").replace(/\s*\([^()]*\)\s*$/, "");
+  return foldAccents(raw).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+    || raw.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 async function runVerified(routeGlobal, toolCall) {
   if (askCancelled()) return { ok: false, error: "cancelled" };
   // One press per control per request. A second press of a toggle is its
@@ -17352,7 +17411,6 @@ async function runVerified(routeGlobal, toolCall) {
   // off. Unless the request asks for it twice.
   if (activeAsk && toolCall && /^page(?:Click|Check)$/.test(toolCall.name)) {
     const pressed = activeAsk.pressed || (activeAsk.pressed = new Set());
-    const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     // A press sent by address alone is known by its name too, from the page
     // as last read. "Turn on the flood maps, then switch to the 500 year
     // flood" pressed Flood Maps by a remembered address, then by its name
@@ -17365,7 +17423,7 @@ async function runVerified(routeGlobal, toolCall) {
       const at = await invokeOnActiveTab("labelAt", [sel0]).catch(() => null);
       if (at && at.ok && at.result) name = at.result;
     }
-    const keys = [`s:${sel0 || ""}`, name ? `l:${flatL(String(name).replace(/\s*\([^()]*\)\s*$/, ""))}` : null].filter(Boolean);
+    const keys = [`s:${sel0 || ""}`, pressNameKey(name) ? `l:${pressNameKey(name)}` : null].filter(Boolean);
     const asked = String(activeAsk.instruction || "");
     // Open and then close is two presses of one control - but only of the
     // control both steps name. "Close the welcome window, then show the
@@ -17401,10 +17459,10 @@ async function runVerified(routeGlobal, toolCall) {
   // page now shows exactly one of that name, that one is pressed; two or
   // none, and the failure stands.
   if (result.ok === false && toolCall && toolCall.label && /not found|no such control/i.test(String(result.error || ""))) {
-    const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const now = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+    const want = pressNameKey(toolCall.label);
+    const now = want ? await invokeOnActiveTab("inventory", [{}]).catch(() => null) : null;
     const same = ((now && now.ok && now.result && now.result.controls) || [])
-      .filter((c) => !c.hidden && !c.disabled && flatL(c.label) === flatL(toolCall.label));
+      .filter((c) => !c.hidden && !c.disabled && pressNameKey(c.label) === want);
     if (same.length === 1 && same[0].selector !== (toolCall.args || {}).selector) {
       debugLog(`[verify] "${toolCall.label}" found again by name`);
       result = await executeToolCall(routeGlobal, { ...toolCall, args: { ...toolCall.args, selector: same[0].selector } });
@@ -17708,9 +17766,15 @@ let pageRead = null;
 function forgetInventory() { pageRead = null; forgetMeaning(); }
 async function readInventory() {
   if (pageRead) return pageRead;
-  pageRead = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+  // A read that failed at once - the page still loading, the reader not
+  // yet in it - is tried again next time rather than kept: kept, it stood
+  // in for the page for the rest of the request. One that failed slowly
+  // is kept, or every later read would wait out the same timeout again.
+  const startedAt = Date.now();
+  const read = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
     .catch(() => ({ ok: false }));
-  return pageRead;
+  if ((read && read.ok) || Date.now() - startedAt > 3000) pageRead = read;
+  return read;
 }
 
 function forgetPageTools(tabId) {
@@ -24090,7 +24154,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
  * Everything else it touches at load - side panels, offscreen documents,
  * content-script registration - has no meaning here and is a no-op.
  */
-function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm } = {}) {
+function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm, pageGlobals } = {}) {
   const messageHandlers = [];
   const updatedListeners = new Set();
   const changeListeners = new Set();
@@ -24223,8 +24287,12 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   async function callPage(m) {
     if (!m || m.type !== "call") return {};
     if (beforeCall) { try { beforeCall(); } catch (e) { /* GENERIC still answers */ } }
-    const names = ["USGS", "SITE", "NOAA", "FCP", "GENERIC"];
-    const owner = names.map((n) => window[n]).find((t) => t && typeof t[m.fn] === "function");
+    // Only the manifests the widget loaded itself. A window.SITE is as
+    // likely the host's own - or an element with id="SITE", whose native
+    // click() then answered the agent's click and pressed nothing.
+    const names = pageGlobals ? pageGlobals() : ["USGS", "SITE", "NOAA", "FCP", "GENERIC"];
+    const owner = names.map((n) => window[n])
+      .find((t) => t && typeof t.nodeType !== "number" && typeof t[m.fn] === "function");
     if (!owner) return { ok: false, error: `${m.fn} is not a function on any manifest loaded here` };
     try { return { ok: true, result: postable(await owner[m.fn](...(m.args || []))) }; }
     catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
@@ -24533,9 +24601,21 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   const host = document.createElement("div");
   host.setAttribute("data-web-controls-widget", "");
   const shadow = host.attachShadow({ mode: "closed" });
-  const style = document.createElement("style");
-  style.textContent = WIDGET_CSS;
-  shadow.appendChild(style);
+  // A constructed sheet where the browser has one: a site whose
+  // Content-Security-Policy refuses inline styles blocks a <style> element
+  // even inside a shadow root, and the widget drew as a bare button.
+  let adopted = false;
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(WIDGET_CSS);
+    shadow.adoptedStyleSheets = [sheet];
+    adopted = true;
+  } catch (e) { /* an older browser: the element below */ }
+  if (!adopted) {
+    const style = document.createElement("style");
+    style.textContent = WIDGET_CSS;
+    shadow.appendChild(style);
+  }
 
   const root = el("div", `root ${options.position === "bottom-left" ? "bottom-left" : "bottom-right"}`);
   if (options.theme === "dark") root.classList.add("dark");
@@ -24982,6 +25062,14 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggle(); }
   };
   if (options.hotkey !== false) window.addEventListener("keydown", onHotkey);
+  // Typing here is not typing at the page. Keys leave a shadow root, and a
+  // host's shortcuts - "/" to search, "k" to pause - fired on every letter
+  // of a request. The widget's own hotkey still reaches the window.
+  const keepKeys = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") return;
+    e.stopPropagation();
+  };
+  for (const type of ["keydown", "keypress", "keyup"]) host.addEventListener(type, keepKeys);
 
   (document.body || document.documentElement).appendChild(host);
   // Open again after a navigation if it was open before: on a multi-page
@@ -25074,10 +25162,12 @@ function mount(userOptions = {}) {
   // The site's own manifest, where background.js has one for this URL and
   // it is not loaded yet. Checked on every call rather than once, because
   // an app that routes client-side can move between them.
+  const loadedNamed = new Set();
   const ensureNamed = () => {
     const route = agent && agent.routeFor(location.href);
-    if (route && route.global !== "GENERIC" && !window[route.global] && WC_NAMED_BUNDLES[route.global]) {
+    if (route && route.global !== "GENERIC" && !loadedNamed.has(route.global) && WC_NAMED_BUNDLES[route.global]) {
       WC_NAMED_BUNDLES[route.global]();
+      loadedNamed.add(route.global);
     }
   };
   // `_modelHost` is for tests: the same interface, decisions scripted.
@@ -25091,6 +25181,7 @@ function mount(userOptions = {}) {
     storageKey: options.storageKey,
     onBroadcast: (m) => { if (ui) ui.progress(m); },
     beforeCall: ensureNamed,
+    pageGlobals: () => [...loadedNamed, "GENERIC"],
     onWarm: () => { if (ui) ui.loadModel(); },
   });
 
