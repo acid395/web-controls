@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.44 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.45 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.44",
+    version: "0.4.45",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.44";
+globalThis.WC_WIDGET_VERSION = "0.4.45";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -1037,6 +1037,12 @@ return (function () {
   };
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  // A unit written short after a number: 500yr, 6hr, 2wk. Kept in step
+  // with spelledUnits in background.js.
+  const UNIT_SHORT = { yr: "year", yrs: "years", hr: "hour", hrs: "hours", wk: "week", wks: "weeks",
+    mo: "month", mos: "months", mth: "month", mths: "months", min: "minute", mins: "minutes",
+    sec: "second", secs: "seconds", dy: "day", dys: "days" };
+  const UNIT_AFTER_NUMBER = new RegExp(`(\\d)[\\s-]?(${Object.keys(UNIT_SHORT).join("|")})\\b`, "gi");
   let ariaIndex = null;
   // The page's menu button, found once per pass: undefined until looked for.
   let drawerToggle;
@@ -1502,9 +1508,13 @@ return (function () {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
+    // Units spelled out on both sides as the last try: a request for the
+    // "500 year" option names the one the page wrote "500yr".
+    const plain = (t) => norm(String(t || "").replace(UNIT_AFTER_NUMBER, (_, d, u) => `${d} ${UNIT_SHORT[u.toLowerCase()]}`))
+      .replace(/[^a-z0-9.]+/g, " ").replace(/\b(years|hours|weeks|months|minutes|seconds|days)\b/g, (u) => u.slice(0, -1)).trim();
     const opt = [...el.options].find(
       (o) => o.value === valueOrText || norm(o.text) === norm(valueOrText)
-    );
+    ) || [...el.options].find((o) => plain(o.text) === plain(valueOrText));
     if (!opt) throw new Error(`setSelect: no option "${valueOrText}" in [${[...el.options].map((o) => o.value)}]`);
     // A second choice in a multi-select joins the first - the ctrl-click a
     // person makes - rather than replacing it. Only when asked to add: the
@@ -1806,8 +1816,15 @@ return (function () {
    * state classes say nothing lasting about where an element is; the walk
    * below keeps a path unique with positions instead.
    */
-  const VOLATILE_CLASS = /^(?:css-[a-z0-9]+(?:-[\w-]+)?|sc-[a-zA-Z0-9]+|jss\d+|makeStyles-[\w-]+-\d+|[\w-]+_[\w-]+__[a-zA-Z0-9_-]{5,}|Mui-(?:expanded|selected|focused|focusVisible|active|disabled|checked|open|completed|error)|(?:is-|has-)?(?:active|selected|open|opened|expanded|collapsed|current|focus|focused|hover|show|showing|visible|in)|ng-[\w-]+)$/;
-  const cssPath = (el) => {
+  const VOLATILE_CLASS = /^(?:css-[a-z0-9]+(?:-[\w-]+)?|sc-[a-zA-Z0-9]+|jss\d+|makeStyles-[\w-]+-\d+|[\w-]+_[\w-]+__[a-zA-Z0-9_-]{5,}|Mui-(?:expanded|selected|focused|focusVisible|active|disabled|checked|open|completed|error)|(?:is-|has-)?(?:active|selected|open|opened|expanded|collapsed|current|focus|focused|hover|show|showing|visible|in)|ng-[\w-]+|collapsing|[\w-]+-(?:entered|entering|exited|exiting|(?:enter|exit|appear)(?:-active|-done|-to)?))$/;
+  // A transition's state is the same kind of class. City-FIDAP's menus wear
+  // MuiCollapse-entered while open and keep it for a moment while closing,
+  // so "the entered menu's fourth item" - Flood Maps' address - named
+  // Railway Crossing while Infrastructure was still shutting.
+  // whole: walked to the top rather than stopping at the first address that
+  // is unique now. An address kept for later must stay unique as the page
+  // changes, and "unique now" is a fact about this moment only.
+  const cssPath = (el, whole = false) => {
     // An id only where the page uses it once. EPA's tab sets each number
     // their tabs tabs--tab--0, --1...; "#tabs--tab--1" found a hidden URL tab
     // in a share panel, and the Swimming tab it was meant for never moved.
@@ -1848,7 +1865,7 @@ return (function () {
         if (same > 1 && index && !capped) s += `:nth-of-type(${index})`;
       }
       parts.unshift(s);
-      if (parts.length >= 6 && namesOne(parts.join(" > "), el)) return parts.join(" > ");
+      if (!whole && parts.length >= 6 && namesOne(parts.join(" > "), el)) return parts.join(" > ");
       if (p instanceof ShadowRoot) return parts.join(" > ");
       cur = p;
       if (!cur || tagOf(cur) === "html") break;
@@ -2085,6 +2102,7 @@ return (function () {
   const behindDoors = kept.behindDoors;
   let behindUrl = kept.behindUrl;
   const peekKey = (c) => `${norm(c.label)}|${c.kind || ""}`;
+  let keptTags = kept.tags || 0;
   async function peekClosed({ max = 8 } = {}) {
     if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = kept.behindUrl = location.href; }
     const inv = inventoryNow({ includeHidden: true });
@@ -2107,6 +2125,22 @@ return (function () {
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
       if (found.length) { await pause(200); found = fresh(); }
+      // Kept by a whole address. Each menu is looked in alone, so its fourth
+      // item's shortest unique address was the same string as every other
+      // menu's fourth item's: a press for Flood Maps was taken for
+      // Infrastructure's Railway Crossing, which carried the same address.
+      //
+      // And tagged, because even a whole address is not always enough: on
+      // City-FIDAP the open menu's list is drawn beside the headings, one at
+      // a time, so Demographic Data and Buildings have the very same whole
+      // address. Which menu an item came from is known only here. The tag
+      // matches every element, so the page finds the item as before; it
+      // only makes each kept address its own, so a press is traced to the
+      // right menu.
+      found = found.map((c, i) => {
+        const it = deepQuery(c.selector);
+        return it ? { ...c, selector: `${cssPath(it, true)}:not([data-wc-kept="${keptTags++}"])` } : c;
+      });
       // Shut again if it opened, or if it says it changed state while
       // showing nothing: a look inside is not left as a press.
       const flipped = el.getAttribute && el.getAttribute("aria-expanded") === "true";
@@ -2119,6 +2153,7 @@ return (function () {
       behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
     }
+    kept.tags = keptTags;
     return { peeked };
   }
   /* The request being worked on, set by the agent at the start of each ask.
@@ -2133,7 +2168,43 @@ return (function () {
    * With none set - a corpus scoring the reader - nothing is left out.
    */
   const currentRequestOf = () => kept.request;
-  function setRequest(text) { kept.request = text == null ? null : String(text); return { set: kept.request !== null }; }
+  function setRequest(text) {
+    kept.request = text == null ? null : String(text);
+    // The page as the request found it, so what an action brings up can be
+    // told apart from what was there all along.
+    try {
+      kept.before = new Set(inventoryNow({}).controls.map(peekKey));
+      kept.headsBefore = new Set([...document.querySelectorAll("h1, h2, h3, h4, [role=heading]")].map((h) => norm(h.textContent)));
+    } catch (e) { kept.before = null; kept.headsBefore = null; }
+    return { set: kept.request !== null };
+  }
+  /* What came up since the request began: the controls and the heading an
+   * action brought onto the page. "Open demographic data and tell me which
+   * charts I can view" is the panel's Language and Education - not the
+   * sidebar, the map's credits and the footer, which a read of the whole
+   * page answered with. A menu's own items, and a close button, are not
+   * what anyone opened a panel to see.
+   */
+  function cameSince() {
+    if (!kept.before) return { heading: null, controls: [], lists: [] };
+    const menuItem = new Set();
+    for (const [, d] of behindDoors) for (const it of d.items) menuItem.add(peekKey(it));
+    const CLOSER = /^(?:[×✕✖xX]|close|dismiss|back)$/i;
+    const came = inventoryNow({}).controls.filter((c) => !kept.before.has(peekKey(c)) && !menuItem.has(peekKey(c))
+      && !c.sectionHead && !c.mapChrome && c.confidence !== "low" && !PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase()));
+    const controls = came.map((c) => String(c.label || "").trim()).filter((l) => l && l.length <= 60 && !CLOSER.test(l));
+    // A list that came up is read whole: "which flood years can I choose"
+    // is its options, and "which is selected" its current one.
+    const lists = came.filter((c) => (c.options || []).length).map((c) => {
+      const el = deepQuery(c.selector);
+      const chosen = el && el.tagName === "SELECT" && el.selectedIndex >= 0 ? String(el.options[el.selectedIndex].text || "").trim() : null;
+      return { label: String(c.label || "").trim(), options: c.options.map((o) => String(o.text || o.value || "").trim()).filter(Boolean), selected: chosen };
+    });
+    const heads = [...document.querySelectorAll("h1, h2, h3, h4, [role=heading]")]
+      .filter((h) => h.offsetParent !== null || h.getClientRects().length)
+      .map((h) => String(h.textContent || "").replace(/\s+/g, " ").trim()).filter((t) => t && t.length <= 80 && !(kept.headsBefore || new Set()).has(norm(t)));
+    return { heading: heads[0] || null, controls: [...new Set(controls)].slice(0, 20), lists };
+  }
   const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
   const PART_OF_THE_PAGE = /^(?:region|main|application|document|group|presentation|figure|article|navigation|banner|contentinfo|complementary)$/;
   const offeredNow = (c) => currentRequestOf() === null
@@ -5214,7 +5285,7 @@ return (function () {
     peekClosed,
     menuItems,
     menuNamedIn,
-    setRequest,
+    setRequest, cameSince,
     readPage,
     submit,
     submitWhenReady,
@@ -5334,11 +5405,13 @@ return (function () {
   const stillIs = (selector, item) => { const el = deepQuery(selector); return !!el && norm(rawLabelOf(el)) === norm(item.label); };
   const rememberedOf = (selector) => {
     if (typeof selector !== "string" || !behindDoors.size) return null;
+    const hits = [];
     for (const [door, d] of behindDoors) {
-      const item = d.items.find((it) => it.selector === selector);
-      if (item) return stillIs(selector, item) ? null : { door, d, item };
+      for (const item of d.items) if (item.selector === selector) hits.push({ door, d, item });
     }
-    return null;
+    // Whichever the address holds now is the one meant, and needs no door.
+    if (!hits.length || hits.some((h) => stillIs(selector, h.item))) return null;
+    return hits[0];
   };
   // The item as it is now, by name: a menu opened by someone else - the
   // agent, a step before - can lay its items out under other addresses.
@@ -5352,7 +5425,7 @@ return (function () {
     // pressed it again, so Flood Maps was "not found".
     const opened = d.items.some((it) => findNow(it));
     if (!showing() && !opened) {
-      const el = deepQuery(door);
+      const el = doorNow(door, d);
       if (el) realClick(el);
     }
     // Waited for either way: opened here or a moment ago by the caller, the
@@ -5360,8 +5433,20 @@ return (function () {
     for (let t = 0; t < 15 && !showing(); t++) await new Promise((r) => setTimeout(r, 100));
     if (stillIs(selector, item)) return run(selector);
     const now = findNow(item);
-    return run(now ? now.selector : selector);
+    // Not the old address as a last resort: it holds something else now.
+    // "Turn on the flood maps" opened Infrastructure by Weather &
+    // Environment's old address, then pressed whatever sat at Flood Maps'.
+    if (!now) throw new Error(`not found: "${item.label}" is not at ${selector} any more, and its menu did not show it`);
+    return run(now.selector);
   }
+  // The name of what an address presses: a kept item's own, else whatever is
+  // there now. A press sent by address alone is known by it, so one control
+  // reached by two addresses is still one control.
+  GENERIC.labelAt = (selector) => {
+    for (const [, d] of behindDoors) { const it = d.items.find((x) => x.selector === selector); if (it) return it.label; }
+    const el = typeof selector === "string" ? deepQuery(selector) : null;
+    return el ? rawLabelOf(el) || null : null;
+  };
   const PLAIN_ACTIONS = { click: GENERIC.click, check: GENERIC.check };
   for (const fn of ["click", "check", "fill", "selectOption", "pickRadio", "submitWhenReady", "readControl", "scrollToElement"]) {
     const plain = GENERIC[fn];
@@ -5396,6 +5481,26 @@ return (function () {
     const hits = inventoryNow({ includeHidden: true }).controls.filter((c) => nameKey(c.label) === want);
     return hits.length === 1 ? hits[0].selector : null;
   };
+  // A remembered menu, by its address only while that still holds its name.
+  const doorNow = (door, d) => {
+    const el = deepQuery(door);
+    if (!d || !d.label || carries(el, d.label)) return el;
+    const s2 = byName(d.label);
+    return s2 ? deepQuery(s2) : null;
+  };
+  {
+    // Opening a menu by address is checked the same way. Callers open an
+    // item's menu by the address read with it, and on a page that re-renders
+    // that address can name another menu.
+    const plainOpen = GENERIC.openDisclosure;
+    GENERIC.openDisclosure = (selector, ...rest) => {
+      const d = typeof selector === "string" ? behindDoors.get(selector) : null;
+      if (!d || !d.label || carries(deepQuery(selector), d.label)) return plainOpen(selector, ...rest);
+      const s2 = byName(d.label);
+      if (s2) return plainOpen(s2, ...rest);
+      return Promise.resolve({ opened: null, appeared: 0, notFound: `"${d.label}" is not at ${selector} any more` });
+    };
+  }
   const rememberedByName = (expect) => {
     for (const [door, d] of behindDoors) if (d.items.some((it) => nameKey(it.label) === nameKey(expect))) return { door, d };
     return null;
@@ -7630,7 +7735,8 @@ async function invokeOnActiveTab(fn, args) {
   const route = routeFor(tab.url);
   await ensureInjected(tab.id, route.bundle);
   const sentAt = Date.now();
-  if (globalThis.__wcTrace) debugLog(`[page] ${fn} ${JSON.stringify(args || []).slice(0, 120)}`);
+  // The end kept: an address tells its items apart at its tail.
+  if (globalThis.__wcTrace) { const a = JSON.stringify(args || []); debugLog(`[page] ${fn} ${a.length > 240 ? `${a.slice(0, 60)}...${a.slice(-180)}` : a}`); }
   const result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
   const tookMs = Date.now() - sentAt;
   if (tookMs > 2000) debugLog(`[page] ${fn} took ${tookMs}ms`);
@@ -9946,6 +10052,10 @@ const STOP_WORDS = new Set([
   "please", "click", "press", "select", "choose", "set", "show", "switch",
   "change", "toggle", "open", "me", "my", "it", "this", "that", "button",
   "option", "tab", "give", "get", "want", "would", "like", "can", "you",
+  // The plural of "it": a pointer back to the step before, never a name.
+  // "Show the roads, then select all of them" matched nothing, because no
+  // control was called "them".
+  "them", "they", "these", "those",
 ]);
 
 // Accents folded away before anything is compared. Splitting on [^a-z0-9]
@@ -9957,6 +10067,21 @@ const STOP_WORDS = new Set([
 function foldAccents(text) {
   try { return String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
   catch (e) { return String(text || ""); }
+}
+
+/* A unit written short after a number, written out. "Switch to the 500 year
+ * flood" never reached an option reading "500yr": the page wrote one token,
+ * the request two, and neither "500" nor "year" matched "500yr". Pages
+ * abbreviate spans freely - 6hr, 2wk, 3mo, 30min - and people write them
+ * out. Only after a number, so "min temperature" and a person called Mo
+ * are left alone.
+ */
+const UNIT_SHORT = { yr: "year", yrs: "years", hr: "hour", hrs: "hours", wk: "week", wks: "weeks",
+  mo: "month", mos: "months", mth: "month", mths: "months", min: "minute", mins: "minutes",
+  sec: "second", secs: "seconds", dy: "day", dys: "days" };
+const UNIT_AFTER_NUMBER = new RegExp(`(\\d)[\\s-]?(${Object.keys(UNIT_SHORT).join("|")})\\b`, "gi");
+function spelledUnits(text) {
+  return String(text || "").replace(UNIT_AFTER_NUMBER, (_, d, u) => `${d} ${UNIT_SHORT[u.toLowerCase()]}`);
 }
 
 /* The instruction, with the conversation taken off the front and back.
@@ -10007,7 +10132,7 @@ function plainlyPut(instruction) {
 }
 
 function meaningfulWords(text) {
-  return foldAccents(text || "")
+  return foldAccents(spelledUnits(text))
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     // A lone digit is a word. Dropping anything shorter than two characters
@@ -10391,8 +10516,8 @@ function conceptsInPhrase(text) {
 }
 
 function wordMatchesText(rawWord, rawText) {
-  const word = foldAccents(rawWord).toLowerCase();
-  const text = foldAccents(rawText).toLowerCase();
+  const word = foldAccents(spelledUnits(rawWord)).toLowerCase();
+  const text = foldAccents(spelledUnits(rawText)).toLowerCase();
   if (!word || !text) return false;
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // A short word matching by prefix is noise. "Go to mayaguez tide gauge"
@@ -12306,6 +12431,30 @@ async function answerAfterActing(res, ask) {
     if (m && m.menu && m.items.length) {
       const answer = `${m.menu}: ${m.items.join(", ")}`;
       return { ...out, answer, display: { ...card, title: answer.slice(0, 60), answer, note: card.note ? `${card.note} - read off the menu it opened` : "read off the menu it opened" } };
+    }
+  }
+  // "Open demographic data and tell me which charts I can view": what the
+  // action brought up is the answer - the panel's own controls, under the
+  // heading it came with - not the whole page read again.
+  const AFTER_WHAT_CAN = /\b(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:i|you|we|one|be)\b|(?:i|you|we|one)\s+(?:can|could)\b|are\s+(?:there|available|offered|listed|shown)\b|is\s+available\b|options?\b|choices?\b)/i;
+  const AFTER_WHICH_SET = /\b(?:what|which)\b[^?]{0,60}?\b(?:is|are)\s+(?:selected|chosen|set|picked|current(?:ly\s+\w+)?|active|showing|shown)\b/i;
+  if (AFTER_WHAT_CAN.test(ask) || AFTER_WHICH_SET.test(ask)) {
+    const got = await invokeOnActiveTab("cameSince", []).catch(() => null);
+    const came = got && got.ok && got.result;
+    // A list the question is about, by its name or by its options' words.
+    const qWords = meaningfulWords(ask).filter((w) => w.length > 2 && !CONTROL_VERB.test(w)
+      && !/^(?:what|which|tell|can|could|selected|chosen|current|currently|available|options?|choices?|view|see)$/.test(w));
+    const about = ((came && came.lists) || []).filter((l) => qWords.some((w) => wordMatchesText(w, l.label) || l.options.some((o) => wordMatchesText(w, o))));
+    if (about.length === 1) {
+      const l = about[0];
+      const answer = AFTER_WHICH_SET.test(ask)
+        ? (l.selected ? `${l.label}: ${l.selected} is selected` : null)
+        : `${l.label}: ${l.options.join(", ")}`;
+      if (answer) return { ...out, answer, display: { ...card, title: answer.slice(0, 60), answer, note: card.note ? `${card.note} - read off the list it brought up` : "read off the list it brought up" } };
+    }
+    if (AFTER_WHAT_CAN.test(ask) && came && came.controls && came.controls.length >= 2) {
+      const answer = `${came.heading ? `${came.heading}: ` : ""}${came.controls.join(", ")}`;
+      return { ...out, answer, display: { ...card, title: answer.slice(0, 60), answer, note: card.note ? `${card.note} - read off what it opened` : "read off what it opened" } };
     }
   }
   // The run answered it already. A model working through "click Learn More,
@@ -16237,7 +16386,7 @@ function actionToCallBare(act, control, s) {
     const options = control.options || [];
     // Punctuation aside: "Last Record Update Newest" is the option written
     // "Last Record Update (Newest)".
-    const bare = (t) => String(t ?? "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+    const bare = (t) => spelledUnits(String(t ?? "")).toLowerCase().replace(/[^a-z0-9.]+/g, " ").replace(/\b(years|hours|weeks|months|minutes|seconds|days)\b/g, (u) => u.slice(0, -1)).trim();
     const want = bare(s.value);
     const hit = want ? (options.find((o) => bare(o.text || o.value) === want)
       || options.find((o) => bare(o.text || o.value).includes(want))) : null;
@@ -16901,7 +17050,12 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       // built with {#if open} does not exist until it is pressed and the
       // control inside it was never in any inventory.
       const listed = (doors.ok && doors.result && doors.result.disclosures) || [];
-      const fresh = (d) => !actedOn.has(d.selector) && !doorsOpenedThisAsk.has(d.selector);
+      // Nor one already pressed by name this request, at whatever address:
+      // an item pressed from behind its menu is listed again once the menu
+      // shows it, and a second press is its undo.
+      const flatD = (t) => String(t || "").toLowerCase().replace(/\s*\([^()]*\)\s*$/, "").replace(/[^a-z0-9]+/g, " ").trim();
+      const pressedByName = (d) => !!(activeAsk && activeAsk.pressed && activeAsk.pressed.has(`l:${flatD(d.label)}`));
+      const fresh = (d) => !actedOn.has(d.selector) && !doorsOpenedThisAsk.has(d.selector) && !pressedByName(d);
       // Then a run of chevron sections, one at a time: City-FIDAP's sidebar
       // names "Weather & Environment", not the Flood Maps inside it.
       const door = listed.find((d) => (d.related || d.generic) && fresh(d)) || listed.find((d) => d.section && fresh(d));
@@ -17208,10 +17362,35 @@ async function runVerified(routeGlobal, toolCall) {
   if (activeAsk && toolCall && /^page(?:Click|Check)$/.test(toolCall.name)) {
     const pressed = activeAsk.pressed || (activeAsk.pressed = new Set());
     const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const keys = [`s:${(toolCall.args || {}).selector || ""}`, toolCall.label ? `l:${flatL(toolCall.label)}` : null].filter(Boolean);
+    // A press sent by address alone is known by its name too, from the page
+    // as last read. "Turn on the flood maps, then switch to the 500 year
+    // flood" pressed Flood Maps by a remembered address, then by its name
+    // at another address - two keys, one control, and the layer went off.
+    const sel0 = (toolCall.args || {}).selector;
+    const known = !toolCall.label && sel0 && pageRead && pageRead.ok
+      ? ((pageRead.result && pageRead.result.controls) || []).find((c) => c.selector === sel0) : null;
+    let name = toolCall.label || (known && known.label);
+    if (!name && sel0) {
+      const at = await invokeOnActiveTab("labelAt", [sel0]).catch(() => null);
+      if (at && at.ok && at.result) name = at.result;
+    }
+    const keys = [`s:${sel0 || ""}`, name ? `l:${flatL(String(name).replace(/\s*\([^()]*\)\s*$/, ""))}` : null].filter(Boolean);
     const asked = String(activeAsk.instruction || "");
+    // Open and then close is two presses of one control - but only of the
+    // control both steps name. "Close the welcome window, then show the
+    // drought maps" opens one thing and closes another, and on that reading
+    // Drought Maps was pressed twice, on and then off.
+    const OPENS = /\b(?:open|show|expand|turn\s+on|switch\s+on|enable)\b/i;
+    const CLOSES = /\b(?:close|hide|collapse|turn\s+off|switch\s+off|disable|shut)\b/i;
+    const nameWords = name ? meaningfulWords(String(name).replace(/\s*\([^()]*\)\s*$/, "")).filter((w) => !CONTROL_VERB.test(w)) : [];
+    const namesIt = (st) => {
+      const w = meaningfulWords(st).filter((x) => !CONTROL_VERB.test(x));
+      return !w.length || (nameWords.length > 0 && nameWords.every((x) => w.includes(x)));
+    };
+    const stepsAsked = splitIntoSteps(asked);
     const again = /\b(?:twice|again|two\s+times|\d+\s+times|three\s+times)\b/i.test(asked)
-      || (/\b(?:open|show|expand|turn\s+on|switch\s+on|enable)\b/i.test(asked) && /\b(?:close|hide|collapse|turn\s+off|switch\s+off|disable|shut)\b/i.test(asked));
+      || (stepsAsked.length < 2 && OPENS.test(asked) && CLOSES.test(asked))
+      || (stepsAsked.some((st) => OPENS.test(st) && namesIt(st)) && stepsAsked.some((st) => CLOSES.test(st) && namesIt(st)));
     if (!again && keys.some((k) => pressed.has(k))) {
       return { ok: true, result: { alreadyPressed: true, note: "already pressed for this request - a second press would undo it" } };
     }
@@ -18796,6 +18975,8 @@ async function pressConfirmIfRevealed(routeGlobal, clause, before) {
   if (!pick) return null;
   const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: pick.selector } });
   forgetPageTools();
+  // Refused as a second press of the step's own control: nothing was done.
+  if (ran && ran.result && ran.result.alreadyPressed) return null;
   return ran && ran.ok !== false ? pick : null;
 }
 
@@ -19267,6 +19448,38 @@ async function awaitNamedListReady(clause, { waitMs = 8000 } = {}) {
   }
 }
 
+/* The one option, in one list, every word of which the step says.
+ *
+ * "Turn on the flood maps, then switch to the 500 year flood": the second
+ * step names no control, only a value in the Flood Risk list (written
+ * 500yr). A one-step request had a path for that; a step in a chain had
+ * none, went to the model, and the model pressed Flood Maps again - which
+ * turned it off. Only where nothing on the page is named, only visible
+ * lists, and only where exactly one option qualifies.
+ */
+function optionSpokenIn(clause, all) {
+  const fold = (w) => (w.length > 3 ? w.replace(/s$/, "") : w);
+  const said = new Set(meaningfulWords(clause).map(fold));
+  const hits = [];
+  for (const c of all) {
+    if (c.disabled || c.hidden || !(c.options || []).length) continue;
+    for (const o of c.options) {
+      if (placeholderOption(o)) continue;
+      const words = meaningfulWords(o.text || o.value).map(fold);
+      if (!words.length || words.join("").length < 3 || words.every((w) => CONTROL_VERB.test(w))) continue;
+      if (words.every((w) => said.has(w))) hits.push({ c, o, n: words.length });
+    }
+  }
+  if (!hits.length) return null;
+  // The fullest name said wins where one sits inside another: "500 year"
+  // over a bare "year"; two equally full are a choice, and left alone.
+  const most = Math.max(...hits.map((h) => h.n));
+  const top = hits.filter((h) => h.n === most);
+  if (top.length !== 1) return null;
+  const { c, o } = top[0];
+  return { control: c, option: o, label: `${c.label}: ${o.text || o.value}` };
+}
+
 async function runSetToPlan(routeGlobal, setTo) {
         if (setTo.range) return runRange(routeGlobal, setTo.range);
         if (setTo.control.hidden && setTo.control.revealedBy) {
@@ -19464,6 +19677,13 @@ async function certainClausePlan(routeGlobal, clause) {
   const core = times > 1 ? String(clause).replace(REPEAT_TAIL, "").trim() : clause;
   const { named, n } = namedByClause(all, core);
   debugLog(`[chain] "${clause}": named ${named.map((c) => c.label).slice(0, 3).join(" / ") || "nothing"}`);
+  if (!named.length) {
+    const spoken = optionSpokenIn(core, all);
+    if (spoken) {
+      debugLog(`[chain] "${clause}": names the option ${spoken.label}`);
+      return { label: spoken.label, run: () => runSetToPlan(routeGlobal, spoken) };
+    }
+  }
   if (named.length !== 1) return null;
   const only = n === null ? named[0] : nthOf(named[0], n);
   if (!only) return null;
