@@ -3662,6 +3662,36 @@ section("the model chooses from the page's controls");
   check("and compare is not split", run(`splitIntoSteps("compare the gage height and the discharge").length`), 1);
 }
 
+// A remembered item, pressed when its menu is already open and the item has
+// moved since it was seen: the menu stays open and the item is found by name.
+{
+  const pg = loadPage(`<!doctype html><html><body><div id="m"><div id="h" style="cursor:pointer">Weather & Environment<i class="material-icons-round">expand_less</i></div></div></body></html>`,
+    { url: "https://city.example.gov/lab/dt/3Dmap" });
+  if (pg) {
+    const d = pg.document; const pressed = []; let shift = false;
+    d.getElementById("h").addEventListener("click", () => {
+      const box = d.getElementById("m"); const open = box.querySelector("ul");
+      if (open) { open.remove(); return; }
+      const ul = d.createElement("ul");
+      for (const it of [...(shift ? ["New"] : []), "Drought Maps", "Flood Maps"]) {
+        const li = d.createElement("li"); const a = d.createElement("a"); a.href = "#"; a.textContent = it;
+        a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(it); }); li.appendChild(a); ul.appendChild(li);
+      }
+      box.appendChild(ul);
+    });
+    runAsync(async () => {
+      await pg.GENERIC.peekClosed({});
+      const flood = pg.GENERIC.inventory({ includeHidden: true }).controls.find((c) => c.label === "Flood Maps");
+      ensure("the peek remembers what the menu holds", flood && flood.remembered && flood.hidden, flood);
+      shift = true;
+      d.getElementById("h").click();
+      await pg.GENERIC.click(flood.selector);
+      check("an item that moved is pressed by name", pressed.join(","), "Flood Maps");
+      ensure("and its open menu is not shut by the press", !!d.querySelector("#m ul"), "menu closed");
+    });
+  }
+}
+
 // weather.gov has a link called "Puerto Rico/Virgin Islands" and, elsewhere
 // on the same page, a "Warnings By State" dropdown with an option called
 // "Virgin Islands". "Click Puerto Rico/Virgin Islands" matched the option,

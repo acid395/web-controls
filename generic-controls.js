@@ -4321,25 +4321,44 @@
    */
   // The menu a remembered item sits behind, where the item is not on the
   // page now; null otherwise, and then the action runs exactly as before.
-  const rememberedDoorOf = (selector) => {
-    if (typeof selector !== "string" || !behindDoors.size || deepQuery(selector)) return null;
-    for (const [door, d] of behindDoors) if (d.items.some((it) => it.selector === selector)) return door;
+  // The address is checked against the name: after a menu re-renders, an
+  // item's old address can land on its neighbour - Flood Maps' on Drought
+  // Maps - which is worse than landing on nothing.
+  const stillIs = (selector, item) => { const el = deepQuery(selector); return !!el && norm(rawLabelOf(el)) === norm(item.label); };
+  const rememberedOf = (selector) => {
+    if (typeof selector !== "string" || !behindDoors.size) return null;
+    for (const [door, d] of behindDoors) {
+      const item = d.items.find((it) => it.selector === selector);
+      if (item) return stillIs(selector, item) ? null : { door, d, item };
+    }
     return null;
   };
-  async function throughDoor(door, selector, run) {
-    const el = deepQuery(door);
-    if (el) {
-      realClick(el);
-      for (let t = 0; t < 15 && !deepQuery(selector); t++) await new Promise((r) => setTimeout(r, 100));
+  // The item as it is now, by name: a menu opened by someone else - the
+  // agent, a step before - can lay its items out under other addresses.
+  const findNow = (item) => inventoryNow({}).controls.find((c) => peekKey(c) === peekKey(item));
+  async function throughDoor({ door, d, item }, selector, run) {
+    const showing = () => stillIs(selector, item) || findNow(item);
+    // Opened only if none of its items is showing: pressing an open menu's
+    // heading shuts it. Choice had opened Weather & Environment, and this
+    // pressed it again, so Flood Maps was "not found".
+    const opened = d.items.some((it) => findNow(it));
+    if (!showing() && !opened) {
+      const el = deepQuery(door);
+      if (el) {
+        realClick(el);
+        for (let t = 0; t < 15 && !showing(); t++) await new Promise((r) => setTimeout(r, 100));
+      }
     }
-    return run();
+    if (stillIs(selector, item)) return run(selector);
+    const now = findNow(item);
+    return run(now ? now.selector : selector);
   }
   for (const fn of ["click", "check", "fill", "selectOption", "pickRadio", "submitWhenReady", "readControl", "scrollToElement"]) {
     const plain = GENERIC[fn];
     if (typeof plain !== "function") continue;
     GENERIC[fn] = (selector, ...rest) => {
-      const door = rememberedDoorOf(selector);
-      return door ? throughDoor(door, selector, () => plain(selector, ...rest)) : plain(selector, ...rest);
+      const where = rememberedOf(selector);
+      return where ? throughDoor(where, selector, (sel) => plain(sel, ...rest)) : plain(selector, ...rest);
     };
   }
 
