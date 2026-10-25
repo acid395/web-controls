@@ -63,14 +63,24 @@ function body(scriptUrlExpr, loadersExpr) {
     // agent died at boot on new Map(). A blank iframe's are untouched by
     // anything the page did; the page's own are the fallback where an
     // iframe cannot be made. Bound here, so every section below sees them.
+    // Only where the page replaced one. The blank iframe used to be removed
+    // once read, and a Promise from a removed frame belongs to a dead
+    // document: Chrome does not run the code waiting on it, so any
+    // "await new Promise(...)" in the agent could hang for good - the
+    // pause after opening a menu, the Stop that sat on "Stopping..." for two
+    // minutes. A built-in the page left alone is used as it is; one it
+    // replaced comes from a hidden frame that stays attached.
     "const WC_BUILTINS = (() => {",
     "  const own = { Map: globalThis.Map, Set: globalThis.Set, WeakMap: globalThis.WeakMap, WeakSet: globalThis.WeakSet, Promise: globalThis.Promise };",
+    "  const isNative = (f) => { try { return typeof f === \"function\" && /\\[native code\\]/.test(Function.prototype.toString.call(f)); } catch (e) { return false; } };",
+    "  const replaced = Object.keys(own).filter((k) => !isNative(own[k]));",
+    "  if (!replaced.length) return own;",
     "  try {",
-    "    const f = document.createElement(\"iframe\"); f.style.display = \"none\"; f.setAttribute(\"aria-hidden\", \"true\");",
+    "    const f = document.createElement(\"iframe\"); f.style.display = \"none\"; f.setAttribute(\"aria-hidden\", \"true\"); f.setAttribute(\"data-web-controls-builtins\", \"\");",
     "    (document.head || document.documentElement).appendChild(f);",
-    "    const w = f.contentWindow; const out = {};",
-    "    for (const k of Object.keys(own)) out[k] = (w && typeof w[k] === \"function\") ? w[k] : own[k];",
-    "    f.remove(); return out;",
+    "    const w = f.contentWindow; const out = { ...own };",
+    "    for (const k of replaced) if (w && typeof w[k] === \"function\") out[k] = w[k];",
+    "    return out;",
     "  } catch (e) { return own; }",
     "})();",
     "const { Map, Set, WeakMap, WeakSet, Promise } = WC_BUILTINS;",

@@ -1127,6 +1127,8 @@
       && !(c.goesTo && !/^#|^javascript:/i.test(String(c.goesTo)))).slice(0, max);
     const peeked = [];
     const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+    const trace = (m) => { if (window.__wcTrace) console.log(`[peek] ${m}`); };
+    trace(`doors: ${doors.map((d) => d.label).join(", ")}`);
     for (const door of doors) {
       const el = deepQuery(door.selector);
       if (!el) continue;
@@ -1144,6 +1146,7 @@
         realClick(again);
         await pause(250);
       }
+      trace(`${door.label}: ${found.length} items`);
       behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
     }

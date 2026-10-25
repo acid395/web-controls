@@ -11618,9 +11618,7 @@ async function pickFromOpened(routeGlobal, opener, value) {
   if (!hit && opener.expanded !== true) {
     const opened = await runVerified(routeGlobal, { name: "pageClick", args: { selector: opener.selector } });
     if (!opened || opened.ok === false) return null;
-    if (globalThis.__wcTrace) debugLog("[trace] pickFromOpened: opened, waiting");
     await new Promise((r) => setTimeout(r, 600));
-    if (globalThis.__wcTrace) debugLog("[trace] pickFromOpened: looking");
     hit = await look();
   }
   if (!hit) return null;
