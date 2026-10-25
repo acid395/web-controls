@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.43 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.44 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.43";
+globalThis.WC_WIDGET_VERSION = "0.4.44";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -5353,6 +5353,7 @@ return (function () {
     const now = findNow(item);
     return run(now ? now.selector : selector);
   }
+  const PLAIN_ACTIONS = { click: GENERIC.click, check: GENERIC.check };
   for (const fn of ["click", "check", "fill", "selectOption", "pickRadio", "submitWhenReady", "readControl", "scrollToElement"]) {
     const plain = GENERIC[fn];
     if (typeof plain !== "function") continue;
@@ -5360,6 +5361,65 @@ return (function () {
       const where = rememberedOf(selector);
       return where ? throughDoor(where, selector, (sel) => plain(sel, ...rest)) : plain(selector, ...rest);
     };
+  }
+  /* The control a press was meant for, checked by name.
+   *
+   * An address names a position. On City-FIDAP a menu closed between the
+   * agent reading it and pressing in it; Bus Route's address then named
+   * Bicycle Amenities, and the remembered menu's own address named another
+   * menu. A caller that knows the name passes it, and every step is checked
+   * against a name: the address is pressed only if it holds that control;
+   * otherwise the control is found by name; otherwise its remembered menu -
+   * itself found by name - is opened and the control waited for; otherwise
+   * nothing is pressed.
+   */
+  const nameKey = (t) => { const w = norm(t).replace(/[^a-z0-9]+/g, " ").trim(); return w || String(t || "").replace(/\s+/g, "").trim(); };
+  const nameOf = (el) => (el ? (rawLabelOf(el) || String(el.textContent || el.value || "")) : "");
+  const carries = (el, expect) => {
+    if (!el) return false;
+    const a = nameKey(nameOf(el)); const b = nameKey(expect);
+    if (!a || !b) return false;
+    return a === b || (a.length > 2 && b.length > 2 && (a.includes(b) || b.includes(a)));
+  };
+  const byName = (expect) => {
+    const want = nameKey(expect);
+    if (!want) return null;
+    const hits = inventoryNow({ includeHidden: true }).controls.filter((c) => nameKey(c.label) === want);
+    return hits.length === 1 ? hits[0].selector : null;
+  };
+  const rememberedByName = (expect) => {
+    for (const [door, d] of behindDoors) if (d.items.some((it) => nameKey(it.label) === nameKey(expect))) return { door, d };
+    return null;
+  };
+  async function openAndFind(where, expect) {
+    const doorEl = carries(deepQuery(where.door), where.d.label) ? deepQuery(where.door)
+      : (() => { const s2 = byName(where.d.label); return s2 ? deepQuery(s2) : null; })();
+    if (!doorEl) return null;
+    realClick(doorEl);
+    for (let t = 0; t < 15; t++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const found = byName(expect);
+      if (found && carries(deepQuery(found), expect)) return found;
+    }
+    return null;
+  }
+  const lost = (expect, selector) => new Error(`not found: "${expect}" is not at ${selector} any more, and the page shows no single control of that name`);
+  const pressNamed = (plain, selector, expect, rest) => {
+    if (window.__wcTrace) console.log(`[press] want "${expect}": the address holds "${nameOf(deepQuery(selector)).slice(0, 40)}"`);
+    if (carries(deepQuery(selector), expect)) return plain(selector, ...rest);
+    const now = byName(expect);
+    if (now && carries(deepQuery(now), expect)) return plain(now, ...rest);
+    const where = rememberedByName(expect);
+    if (!where) throw lost(expect, selector);
+    return openAndFind(where, expect).then((found) => { if (!found) throw lost(expect, selector); return plain(found, ...rest); });
+  };
+  {
+    const click = GENERIC.click; const check = GENERIC.check;
+    // Unnamed presses keep the remembered-item route above; named ones are
+    // checked from the bottom, against the press itself.
+    const rawClick = PLAIN_ACTIONS.click; const rawCheck = PLAIN_ACTIONS.check;
+    GENERIC.click = (selector, expect) => (expect ? pressNamed(rawClick, selector, expect, []) : click(selector));
+    GENERIC.check = (selector, on = true, expect) => (expect ? pressNamed((sel) => rawCheck(sel, on), selector, expect, []) : check(selector, on));
   }
 
   window.WC = WC;
@@ -8328,7 +8388,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: {} },
     },
     {
-      name: "pageClick", fn: "click", argOrder: ["selector"],
+      name: "pageClick", fn: "click", argOrder: ["selector", "expect"],
       description: "Click an element on the page by CSS selector, e.g. one returned by pageInventory.",
       parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
     },
@@ -8370,7 +8430,7 @@ const TOOL_DEFS = {
       parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } }, required: ["selector", "text"] },
     },
     {
-      name: "pageCheck", fn: "check", argOrder: ["selector", "on"],
+      name: "pageCheck", fn: "check", argOrder: ["selector", "on", "expect"],
       description: "Tick or untick a checkbox by CSS selector - layer toggles, filters, 'show only ...' options.",
       parameters: { type: "object", properties: { selector: { type: "string" }, on: { type: "boolean", description: "true to tick, false to untick" } }, required: ["selector"] },
     },
@@ -17150,6 +17210,11 @@ async function runVerified(routeGlobal, toolCall) {
   }
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
+  // The name goes with the address, so the page can refuse to press
+  // something else that has since moved into the same place.
+  if (toolCall && toolCall.label && /^page(?:Click|Check)$/.test(toolCall.name) && !(toolCall.args || {}).expect) {
+    toolCall = { ...toolCall, args: { ...toolCall.args, expect: String(toolCall.label).replace(/\s*\([^()]*\)\s*$/, "") } };
+  }
   let result = await executeToolCall(routeGlobal, toolCall);
   // Found again by name. A menu that re-renders as it opens moves its items,
   // and the address read a moment before - City-FIDAP's "Public Transit" -
