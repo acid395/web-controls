@@ -169,9 +169,21 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   const host = document.createElement("div");
   host.setAttribute("data-web-controls-widget", "");
   const shadow = host.attachShadow({ mode: "closed" });
-  const style = document.createElement("style");
-  style.textContent = WIDGET_CSS;
-  shadow.appendChild(style);
+  // A constructed sheet where the browser has one: a site whose
+  // Content-Security-Policy refuses inline styles blocks a <style> element
+  // even inside a shadow root, and the widget drew as a bare button.
+  let adopted = false;
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(WIDGET_CSS);
+    shadow.adoptedStyleSheets = [sheet];
+    adopted = true;
+  } catch (e) { /* an older browser: the element below */ }
+  if (!adopted) {
+    const style = document.createElement("style");
+    style.textContent = WIDGET_CSS;
+    shadow.appendChild(style);
+  }
 
   const root = el("div", `root ${options.position === "bottom-left" ? "bottom-left" : "bottom-right"}`);
   if (options.theme === "dark") root.classList.add("dark");
@@ -618,6 +630,14 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggle(); }
   };
   if (options.hotkey !== false) window.addEventListener("keydown", onHotkey);
+  // Typing here is not typing at the page. Keys leave a shadow root, and a
+  // host's shortcuts - "/" to search, "k" to pause - fired on every letter
+  // of a request. The widget's own hotkey still reaches the window.
+  const keepKeys = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") return;
+    e.stopPropagation();
+  };
+  for (const type of ["keydown", "keypress", "keyup"]) host.addEventListener(type, keepKeys);
 
   (document.body || document.documentElement).appendChild(host);
   // Open again after a navigation if it was open before: on a multi-page

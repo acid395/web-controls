@@ -265,6 +265,29 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("a page that redefines Map, Set and Promise still gets a working widget", !!mounted && typeof mounted.ask === "function", threw);
     if (mounted) { const r = await mounted.ask("click go"); check("and an ask on it comes back as a card", !!(r && r.display), JSON.stringify(r).slice(0, 120)); }
   }
+  {
+    // A page with an element whose id is a manifest's name, and its own
+    // keyboard shortcuts. window.SITE is then that element, whose native
+    // click() took the agent's click; and typing in the widget reached the
+    // page's shortcuts.
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on("jsdomError", () => {});
+    const w = new JSDOM(`<!doctype html><html><body><div id="SITE"></div><button id="go">Go</button></body></html>`, { url: "https://example.org/", runScripts: "outside-only",
+      pretendToBeVisual: true, virtualConsole }).window;
+    w.Element.prototype.getBoundingClientRect = () => ({ width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 });
+    let pressed = 0, shortcuts = 0;
+    w.document.getElementById("go").addEventListener("click", () => { pressed++; });
+    w.document.addEventListener("keydown", () => { shortcuts++; });
+    // And a global of the host's own under another manifest's name.
+    w.NOAA = { inventory: () => ({ controls: [] }), pageToolCall: () => ({ ok: false, error: "the host's own" }) };
+    w.eval(built);
+    const mounted = w.WebControls.mount({ _modelHost: { status: () => ({ ready: false, loading: false, hasGpu: false }), async step() { throw new Error("off"); }, load() {}, embed: async () => { throw new Error("off"); }, release: async () => {} } });
+    await mounted.ask("click go");
+    check("a host global or element under a manifest's name does not take the agent's calls", pressed === 1, `pressed ${pressed}`);
+    const host = w.document.querySelector("[data-web-controls-widget]");
+    host.dispatchEvent(new w.KeyboardEvent("keydown", { key: "k", bubbles: true, composed: true }));
+    check("a key typed in the widget does not reach the page's shortcuts", shortcuts === 0, `shortcuts ${shortcuts}`);
+  }
 
   console.log("routing");
   {

@@ -14109,4 +14109,111 @@ else {
   });
 }
 
+// A run of dashes in a row's caption. The trim was a nested regex that
+// backtracked exponentially: thirty dashes and the tab hung.
+{
+  const rule = "-".repeat(40);
+  const pg = loadPage(`<!doctype html><html><body>${["Flow", "Stage", "Rain"].map((n) =>
+    `<div class="row"><span>${n} ${rule} cfs</span> <button class="b">Plot</button></div>`).join("")}</body></html>`, { url: "https://river.example.gov/" });
+  if (pg) {
+    const t0 = Date.now();
+    pg.GENERIC.inventory({ includeHidden: true });
+    ensure("a caption with a long rule in it is read in time", Date.now() - t0 < 3000, Date.now() - t0);
+  }
+}
+// A value in a script the unit fallback does not cover is not "matched"
+// to the list's empty first option.
+{
+  const pg = loadPage(`<!doctype html><html><body><select id="s"><option value=""></option><option value="osaka">大阪</option></select></body></html>`, { url: "https://jp.example.org/" });
+  if (pg) {
+    let threw = false;
+    try { pg.WC.setSelect("#s", "大阪府"); } catch (e) { threw = true; }
+    ensure("an option that is not in the list is not chosen as the empty one", threw && pg.document.getElementById("s").value === "", pg.document.getElementById("s").value);
+    pg.WC.setSelect("#s", "大阪");
+    check("and one that is there still is", pg.document.getElementById("s").value, "osaka");
+  }
+}
+// A box drawn as a div says whether it is ticked in aria-checked.
+{
+  const pg = loadPage(`<!doctype html><html><body><div role="checkbox" aria-checked="true" tabindex="0" id="c">Email me updates</div></body></html>`, { url: "https://shop.example.com/" });
+  if (pg) {
+    const box = pg.document.getElementById("c");
+    let presses = 0;
+    box.addEventListener("click", () => { presses++; box.setAttribute("aria-checked", box.getAttribute("aria-checked") === "true" ? "false" : "true"); });
+    pg.WC.setChecked("#c", true);
+    check("checking a ticked aria box leaves it ticked", box.getAttribute("aria-checked") + "/" + presses, "true/0");
+    pg.WC.setChecked("#c", false);
+    check("and unchecking it unticks it", box.getAttribute("aria-checked"), "false");
+    const c = pg.GENERIC.inventory({ includeHidden: true }).controls.find((x) => x.label === "Email me updates");
+    check("the inventory says how it stands", c && c.checked, false);
+  }
+}
+// A field in a disabled fieldset is disabled.
+{
+  const pg = loadPage(`<!doctype html><html><body><form><fieldset disabled><label for="z">Zip code</label><input id="z" name="zip"></fieldset><input id="n" name="name" aria-label="Name"></form></body></html>`, { url: "https://forms.example.gov/" });
+  if (pg) {
+    const inv = pg.GENERIC.inventory({ includeHidden: true }).controls;
+    const z = inv.find((c) => c.label === "Zip code"), n = inv.find((c) => c.label === "Name");
+    check("a field in a disabled fieldset is offered as disabled", !!(z && z.disabled) + "/" + !!(n && n.disabled), "true/false");
+  }
+}
+// A control in a shadow root is found at its own address, not the page's
+// first match for the same tags.
+{
+  const pg = loadPage(`<!doctype html><html><body><button id="pg">Page button</button><x-panel></x-panel><x-panel></x-panel></body></html>`, { url: "https://components.example.com/" });
+  if (pg) {
+    const hosts = pg.document.querySelectorAll("x-panel");
+    hosts.forEach((h, i) => { h.attachShadow({ mode: "open" }).innerHTML = `<button>Panel ${i + 1} save</button>`; });
+    const inv = pg.GENERIC.inventory({ includeHidden: true }).controls;
+    const second = inv.find((c) => c.label === "Panel 2 save");
+    const el = second && pg.WC.deepQuery(second.selector);
+    ensure("a shadow root's control resolves to itself", !!el && el.textContent === "Panel 2 save", second && second.selector);
+  }
+}
+// A look inside a closed <details> does not leave it open.
+{
+  const pg = loadPage(`<!doctype html><html><body><details><summary>What does the flood map show?</summary><p>Areas with a one percent annual chance of flooding.</p></details><a href="/next">Next</a></body></html>`, { url: "https://faq.example.gov/" });
+  if (pg) {
+    runAsync(async () => {
+      await pg.GENERIC.peekClosed({});
+      check("an FAQ answer looked inside is shut again", pg.document.querySelector("details").open, false);
+    });
+  }
+}
+// Choosing a value does not press a submit somewhere else in a page-wide
+// form, nor a button whose class merely contains "go".
+{
+  const fields = Array.from({ length: 10 }, (_, i) => `<input name="f${i}" aria-label="Field ${i}">`).join("");
+  const pg = loadPage(`<!doctype html><html><body><form id="aspnetForm"><header><input name="q" aria-label="Search"><button type="submit" id="search">Search</button></header>
+    <main>${fields}<div><label for="st">State</label><select id="st"><option>Iowa</option><option>Ohio</option></select></div></main></form>
+    <div><select id="cat" aria-label="Category"><option>A</option><option>B</option></select><button class="category-toggle" id="ct">Categories</button></div>
+    <form id="small"><select id="yr" aria-label="Year"><option>2024</option><option>2025</option></select><button type="submit" id="go">Go</button></form></body></html>`, { url: "https://webforms.example.gov/" });
+  if (pg) {
+    const hit = [];
+    for (const id of ["search", "ct", "go"]) pg.document.getElementById(id).addEventListener("click", (e) => { e.preventDefault(); hit.push(id); });
+    pg.GENERIC.submit("#st");
+    pg.GENERIC.submit("#cat");
+    check("a list in a page-wide form or beside a 'category' button presses neither", hit.join(","), "");
+    pg.GENERIC.submit("#yr");
+    check("a list with its own Go still presses it", hit.join(","), "go");
+  }
+}
+// Two controls named in another script are two controls, not one.
+{
+  const pg = loadPage(`<!doctype html><html><body><button id="a">検索</button> <button id="b">ログイン</button></body></html>`, { url: "https://jp.example.org/" });
+  if (pg) {
+    const hit = [];
+    for (const id of ["a", "b"]) pg.document.getElementById(id).addEventListener("click", () => hit.push(id));
+    const bg = loadBackground({ page: pg, decision: "choice" });
+    const vm = require("vm");
+    runAsync(async () => {
+      vm.runInContext(`activeAsk = { instruction: "click 検索 then click ログイン" }`, bg);
+      await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: "#a" }, label: "検索" })`, bg);
+      const r = await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: "#b" }, label: "ログイン" })`, bg);
+      check("a second control named in another script is pressed too", hit.join(","), "a,b");
+      ensure("and not reported as already pressed", !(r && r.result && r.result.alreadyPressed), r);
+    });
+  }
+}
+
 bodyDone = true;

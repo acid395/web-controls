@@ -9968,6 +9968,16 @@ function pageWaitCredit() {
   };
 }
 
+// A control's name as a key: letters and digits in any script, or failing
+// those the name as written. Flattened to a-z and 0-9 alone, every name in
+// another script and every symbol - 検索, Войти, "×", "+" - came out as
+// the same empty key, so pressing one counted as having pressed them all.
+function pressNameKey(name) {
+  const raw = String(name || "").replace(/\s*\([^()]*\)\s*$/, "");
+  return foldAccents(raw).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+    || raw.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 async function runVerified(routeGlobal, toolCall) {
   if (askCancelled()) return { ok: false, error: "cancelled" };
   // One press per control per request. A second press of a toggle is its
@@ -9976,7 +9986,6 @@ async function runVerified(routeGlobal, toolCall) {
   // off. Unless the request asks for it twice.
   if (activeAsk && toolCall && /^page(?:Click|Check)$/.test(toolCall.name)) {
     const pressed = activeAsk.pressed || (activeAsk.pressed = new Set());
-    const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     // A press sent by address alone is known by its name too, from the page
     // as last read. "Turn on the flood maps, then switch to the 500 year
     // flood" pressed Flood Maps by a remembered address, then by its name
@@ -9989,7 +9998,7 @@ async function runVerified(routeGlobal, toolCall) {
       const at = await invokeOnActiveTab("labelAt", [sel0]).catch(() => null);
       if (at && at.ok && at.result) name = at.result;
     }
-    const keys = [`s:${sel0 || ""}`, name ? `l:${flatL(String(name).replace(/\s*\([^()]*\)\s*$/, ""))}` : null].filter(Boolean);
+    const keys = [`s:${sel0 || ""}`, pressNameKey(name) ? `l:${pressNameKey(name)}` : null].filter(Boolean);
     const asked = String(activeAsk.instruction || "");
     // Open and then close is two presses of one control - but only of the
     // control both steps name. "Close the welcome window, then show the
@@ -10025,10 +10034,10 @@ async function runVerified(routeGlobal, toolCall) {
   // page now shows exactly one of that name, that one is pressed; two or
   // none, and the failure stands.
   if (result.ok === false && toolCall && toolCall.label && /not found|no such control/i.test(String(result.error || ""))) {
-    const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const now = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+    const want = pressNameKey(toolCall.label);
+    const now = want ? await invokeOnActiveTab("inventory", [{}]).catch(() => null) : null;
     const same = ((now && now.ok && now.result && now.result.controls) || [])
-      .filter((c) => !c.hidden && !c.disabled && flatL(c.label) === flatL(toolCall.label));
+      .filter((c) => !c.hidden && !c.disabled && pressNameKey(c.label) === want);
     if (same.length === 1 && same[0].selector !== (toolCall.args || {}).selector) {
       debugLog(`[verify] "${toolCall.label}" found again by name`);
       result = await executeToolCall(routeGlobal, { ...toolCall, args: { ...toolCall.args, selector: same[0].selector } });
@@ -10332,9 +10341,15 @@ let pageRead = null;
 function forgetInventory() { pageRead = null; forgetMeaning(); }
 async function readInventory() {
   if (pageRead) return pageRead;
-  pageRead = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
+  // A read that failed at once - the page still loading, the reader not
+  // yet in it - is tried again next time rather than kept: kept, it stood
+  // in for the page for the rest of the request. One that failed slowly
+  // is kept, or every later read would wait out the same timeout again.
+  const startedAt = Date.now();
+  const read = await invokeOnActiveTab("inventory", [{ includeHidden: true }])
     .catch(() => ({ ok: false }));
-  return pageRead;
+  if ((read && read.ok) || Date.now() - startedAt > 3000) pageRead = read;
+  return read;
 }
 
 function forgetPageTools(tabId) {

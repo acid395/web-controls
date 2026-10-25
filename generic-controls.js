@@ -54,19 +54,25 @@
   // A selector inside a frame cannot be queried from the top document, so it
   // is written as "<frame> >>> <inner>" and resolved by hopping in. The same
   // string therefore identifies a control wherever it lives.
+  // A shadow root is hopped into the same way, from its host: an address
+  // inside one is only unique inside it, and searched from the top it
+  // found the page's own first match - a lone "button" in a component was
+  // the page's first button.
   const FRAME_SEP = " >>> ";
   const deepQuery = (sel, root) => {
     if (typeof sel === "string" && sel.includes(FRAME_SEP)) {
       const [frameSel, ...rest] = sel.split(FRAME_SEP);
       const frame = deepQueryAll(frameSel, root)[0];
-      const doc = frame && sameOriginDoc(frame);
-      return doc ? deepQuery(rest.join(FRAME_SEP), doc) : null;
+      const inner = frame && (/^i?frame$/i.test(frame.tagName) ? sameOriginDoc(frame) : frame.shadowRoot);
+      return inner ? deepQuery(rest.join(FRAME_SEP), inner) : null;
     }
     return deepQueryAll(sel, root)[0] || null;
   };
 
   // Where an element lives, as a selector prefix.
   const framePrefixOf = (el) => {
+    const root = el.getRootNode && el.getRootNode();
+    if (root && root.nodeType === 11 && root.host) return framePrefixOf(root.host) + cssPath(root.host) + FRAME_SEP;
     const doc = el.ownerDocument;
     if (!doc || doc === document) return "";
     const frame = doc.defaultView && doc.defaultView.frameElement;
@@ -552,7 +558,9 @@
       .replace(/[^a-z0-9.]+/g, " ").replace(/\b(years|hours|weeks|months|minutes|seconds|days)\b/g, (u) => u.slice(0, -1)).trim();
     const opt = [...el.options].find(
       (o) => o.value === valueOrText || norm(o.text) === norm(valueOrText)
-    ) || [...el.options].find((o) => plain(o.text) === plain(valueOrText));
+    // Words on both sides, or no match: text in a script these letters do
+    // not cover plains to nothing, and nothing equalled the empty option.
+    ) || (plain(valueOrText) ? [...el.options].find((o) => plain(o.text) === plain(valueOrText)) : null);
     if (!opt) throw new Error(`setSelect: no option "${valueOrText}" in [${[...el.options].map((o) => o.value)}]`);
     // A second choice in a multi-select joins the first - the ctrl-click a
     // person makes - rather than replacing it. Only when asked to add: the
@@ -589,11 +597,17 @@
     return opt.value;
   };
 
+  // Ticked or not. A box drawn as a <div role="checkbox"> has no .checked
+  // at all - it says so in aria-checked - so reading .checked took every one
+  // as unticked: "check" pressed a ticked box off, and "uncheck" never
+  // pressed anything.
+  const checkedOf = (el) => (el.tagName !== "INPUT" && el.hasAttribute && el.hasAttribute("aria-checked"))
+    ? el.getAttribute("aria-checked") === "true" : !!el.checked;
   const setChecked = (elOrSel, on = true) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`setChecked: not found: ${elOrSel}`);
-    if (!!el.checked !== !!on) realClick(el);
+    if (checkedOf(el) !== !!on) realClick(el);
     // Through its label, where pressing the box itself did not take - which
     // is what a person presses, and what some widgets listen to. Only for an
     // actual box: called on a <label>, which has no checked state of its
@@ -604,7 +618,7 @@
       const label = (el.labels && el.labels[0]) || (el.closest && el.closest("label"));
       if (label) realClick(label);
     }
-    return el.checked;
+    return checkedOf(el);
   };
 
   // Picks a radio inside a name-group by value, then exact label, then
@@ -1150,6 +1164,9 @@
     const peeked = [];
     const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     const trace = (m) => { if (window.__wcTrace) console.log(`[peek] ${m}`); };
+    // Where the person was reading. Each press scrolls its door into view,
+    // and a look inside is not meant to move the page.
+    const scrolledTo = [window.scrollX, window.scrollY];
     trace(`doors: ${doors.map((d) => d.label).join(", ")}`);
     for (const door of doors) {
       const el = deepQuery(door.selector);
@@ -1159,6 +1176,8 @@
       // together reads as "new" the moment the menu adds to it.
       const fresh = () => inventoryNow({}).controls.filter((c) => !before.has(peekKey(c)) && c.selector !== door.selector
         && c.confidence !== "low" && String(c.label || "").trim().length <= 60);
+      const details = el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS" ? el.parentElement : null;
+      const detailsWasOpen = !!(details && details.open);
       realClick(el);
       let found = [];
       for (let t = 0; t < 12 && !found.length; t++) { await pause(100); found = fresh(); }
@@ -1177,11 +1196,14 @@
       // right menu.
       found = found.map((c, i) => {
         const it = deepQuery(c.selector);
-        return it ? { ...c, selector: `${cssPath(it, true)}:not([data-wc-kept="${keptTags++}"])` } : c;
+        return it ? { ...c, selector: `${framePrefixOf(it)}${cssPath(it, true)}:not([data-wc-kept="${keptTags++}"])` } : c;
       });
       // Shut again if it opened, or if it says it changed state while
       // showing nothing: a look inside is not left as a press.
-      const flipped = el.getAttribute && el.getAttribute("aria-expanded") === "true";
+      // A <details> says it opened by being open: an FAQ answer holds no
+      // controls and has no aria-expanded, and was left open on the page.
+      const flipped = (el.getAttribute && el.getAttribute("aria-expanded") === "true")
+        || !!(details && !detailsWasOpen && details.open);
       if (found.length || flipped) {
         const again = deepQuery(door.selector) || el;
         realClick(again);
@@ -1192,6 +1214,7 @@
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
     }
     kept.tags = keptTags;
+    if (doors.length) { try { window.scrollTo(scrolledTo[0], scrolledTo[1]); } catch (e) { /* stays where it is */ } }
     return { peeked };
   }
   /* The request being worked on, set by the agent at the start of each ask.
@@ -1389,12 +1412,16 @@
       const rec = {
         kind: role || tag, tag, type: el.type || "", label: lab.slice(0, 80),
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
-        checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked : undefined,
+        checked: (el.type === "checkbox" || el.type === "radio") ? !!el.checked
+          : (/^(?:checkbox|switch|radio|menuitemcheckbox|menuitemradio)$/.test(role) && el.hasAttribute("aria-checked")) ? checkedOf(el) : undefined,
         selector: framePrefixOf(el) + cssPath(el),
         confidence: weak ? "low" : "high",
         // Offered as usable, a disabled control is a lie: acting on it does
         // nothing and the card reports success. Recorded, not offered.
-        disabled: el.disabled ? true : undefined,
+        // Through its fieldset too: a field inside <fieldset disabled> is as
+        // dead as one disabled itself, and only :disabled says so.
+        disabled: (el.disabled || (/^(?:INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName)
+          && (() => { try { return el.matches(":disabled"); } catch (e) { return false; } })())) ? true : undefined,
         // Hidden behind something that can be opened. Carried through so a
         // caller can open it rather than report the control missing.
         hidden: shown ? undefined : true,
@@ -1465,7 +1492,7 @@
         // not the sidebar's.
         inDialog: (() => { try { return el.closest("[role=dialog], [role=alertdialog], [aria-modal=true], dialog, .modal, .MuiDialog-root, .MuiModal-root, [class*='popup']") ? true : undefined; } catch (e) { return undefined; } })(),
         expanded,
-        revealedBy: opener ? cssPath(opener) : undefined,
+        revealedBy: opener ? framePrefixOf(opener) + cssPath(opener) : undefined,
         revealedByLabel: opener ? rawLabelOf(opener).slice(0, 40) : undefined,
         // What its tooltip calls it, where that differs: another name a
         // request may use.
@@ -1623,13 +1650,16 @@
           if (n.parentElement && n.parentElement.closest("script, style, noscript")) continue;
           text += ` ${n.nodeValue}`;
         }
-        let t = text.replace(/\s+/g, " ").trim()
-          .replace(/(?:\s*[-\u2013\u2014|\u00b7]+)+\s*$/, "").trim();
+        // Trailing rules and separators off, walked back a character at a
+        // time. Written as a nested regex it backtracked exponentially: an
+        // old page's "Flow ------------------------------ cfs" hung the tab.
+        const trimTail = (s, chars) => { let i = s.length; while (i > 0 && chars.includes(s[i - 1])) i--; return s.slice(0, i).trim(); };
+        let t = trimTail(text.replace(/\s+/g, " ").trim(), " -\u2013\u2014|\u00b7");
         // The word that introduces the controls is not the panel's name:
         // "Snow Melt Animate:" is the Snow Melt panel.
         const lead = t.match(/^(.*?[a-z0-9)])\s+[A-Za-z]\w{0,15}:$/i);
         if (lead) t = lead[1].trim();
-        t = t.replace(/(?:\s*[-\u2013\u2014|:\u00b7]+)+\s*$/, "").trim();
+        t = trimTail(t, " -\u2013\u2014|:\u00b7");
         return t.length >= 2 && t.length <= 60 && /[a-z]/i.test(t) ? t : "";
       });
       if (captions.some((c) => !c)) continue;
@@ -3108,9 +3138,28 @@
         if (pick) { realClick(pick); return { submitted: "button" }; }
         return { submitted: `change only - no ${named} button beside this list` };
       }
-      const go = near.querySelector('button[type=submit], input[type=submit], button[class*="go"], [aria-label*="Go"]')
-        || [...near.querySelectorAll("button, input[type=button], a[role=button]")]
-             .find((b) => /^(go|apply|view|submit|show)\b/i.test((b.textContent || b.value || "").trim()));
+      // The nearest Go, looked for outward from the list. A page wrapped
+      // whole in one form - every ASP.NET WebForms page - has its header's
+      // site search as the form's first submit, and choosing a value pressed
+      // it. A form that big with no Go of the list's own presses nothing.
+      // A "go" in a class or a label is a word of its own: as a substring it
+      // was "category", "logo" and "Google".
+      const goLike = (b) => b.matches('button[type=submit], input[type=submit]')
+        || String(b.className && b.className.baseVal !== undefined ? b.className.baseVal : b.className || "").split(/\s+/).some((k) => /^(?:go|btn-go|go-btn|go-button|gobutton|gobtn)$/i.test(k))
+        || /^\s*go\s*$/i.test(b.getAttribute("aria-label") || "");
+      const goWord = (b) => /^(go|apply|view|submit|show)\b/i.test((b.textContent || b.value || "").trim());
+      const findGo = (scope) => [...scope.querySelectorAll("button, input[type=submit], [aria-label]")].find(goLike)
+        || [...scope.querySelectorAll("button, input[type=button], a[role=button]")].find(goWord);
+      const fieldsIn = (scope) => scope.querySelectorAll("select, textarea, input:not([type=button]):not([type=submit]):not([type=hidden]):not([type=image]):not([type=reset])").length;
+      let go = null;
+      if (near.tagName === "FORM" && near.contains(el)) {
+        for (let scope = el.parentElement; scope; scope = scope === near ? null : scope.parentElement) {
+          const hit = findGo(scope);
+          if (hit) { go = scope !== near || fieldsIn(scope) <= 8 ? hit : null; break; }
+        }
+      } else {
+        go = findGo(near);
+      }
       if (go) { realClick(go); return { submitted: "button" }; }
       return { submitted: "change only - this dropdown has no go button" };
     }
@@ -3598,7 +3647,7 @@
         // while precipitation estimate was what actually moved. Only the
         // named control's own state can tell those apart.
         const el = resolve();
-        const was = el ? !!el.checked : null;
+        const was = el ? checkedOf(el) : null;
         const now = setChecked(el || sel, on !== false);
         return {
           ...named(el),

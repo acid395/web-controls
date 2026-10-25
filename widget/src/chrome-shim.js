@@ -19,7 +19,7 @@
  * Everything else it touches at load - side panels, offscreen documents,
  * content-script registration - has no meaning here and is a no-op.
  */
-function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm } = {}) {
+function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm, pageGlobals } = {}) {
   const messageHandlers = [];
   const updatedListeners = new Set();
   const changeListeners = new Set();
@@ -152,8 +152,12 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   async function callPage(m) {
     if (!m || m.type !== "call") return {};
     if (beforeCall) { try { beforeCall(); } catch (e) { /* GENERIC still answers */ } }
-    const names = ["USGS", "SITE", "NOAA", "FCP", "GENERIC"];
-    const owner = names.map((n) => window[n]).find((t) => t && typeof t[m.fn] === "function");
+    // Only the manifests the widget loaded itself. A window.SITE is as
+    // likely the host's own - or an element with id="SITE", whose native
+    // click() then answered the agent's click and pressed nothing.
+    const names = pageGlobals ? pageGlobals() : ["USGS", "SITE", "NOAA", "FCP", "GENERIC"];
+    const owner = names.map((n) => window[n])
+      .find((t) => t && typeof t.nodeType !== "number" && typeof t[m.fn] === "function");
     if (!owner) return { ok: false, error: `${m.fn} is not a function on any manifest loaded here` };
     try { return { ok: true, result: postable(await owner[m.fn](...(m.args || []))) }; }
     catch (e) { return { ok: false, error: String((e && e.message) || e) }; }

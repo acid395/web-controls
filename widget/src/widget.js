@@ -62,10 +62,12 @@ function mount(userOptions = {}) {
   // The site's own manifest, where background.js has one for this URL and
   // it is not loaded yet. Checked on every call rather than once, because
   // an app that routes client-side can move between them.
+  const loadedNamed = new Set();
   const ensureNamed = () => {
     const route = agent && agent.routeFor(location.href);
-    if (route && route.global !== "GENERIC" && !window[route.global] && WC_NAMED_BUNDLES[route.global]) {
+    if (route && route.global !== "GENERIC" && !loadedNamed.has(route.global) && WC_NAMED_BUNDLES[route.global]) {
       WC_NAMED_BUNDLES[route.global]();
+      loadedNamed.add(route.global);
     }
   };
   // `_modelHost` is for tests: the same interface, decisions scripted.
@@ -79,6 +81,7 @@ function mount(userOptions = {}) {
     storageKey: options.storageKey,
     onBroadcast: (m) => { if (ui) ui.progress(m); },
     beforeCall: ensureNamed,
+    pageGlobals: () => [...loadedNamed, "GENERIC"],
     onWarm: () => { if (ui) ui.loadModel(); },
   });
 
