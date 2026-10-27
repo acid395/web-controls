@@ -83,6 +83,7 @@ function routeFor(url) {
   return NAMED_MANIFESTS.find((r) => r.test.test(url || "")) || { bundle: GENERIC_BUNDLE, global: "GENERIC" };
 }
 
+const CLOSED_TO_EXTENSIONS = /^(?:chrome|chrome-extension|chrome-search|chrome-untrusted|devtools|edge|about|view-source):|^https:\/\/(?:chromewebstore\.google\.com|chrome\.google\.com\/webstore)(?:\/|$)/i;
 function originPatternFor(url) {
   try {
     const u = new URL(url);
@@ -357,6 +358,11 @@ async function invokeOnActiveTab(fn, args) {
   }
   if (!tab || !tab.id || !tab.url) throw new Error("no active tab");
   lastPageTabId = tab.id;
+  // Pages Chrome closes to every extension. Asked of one, the permission
+  // check threw "Invalid url pattern" at the person, which says nothing.
+  if (CLOSED_TO_EXTENSIONS.test(tab.url)) {
+    throw new Error("Chrome does not let extensions work on this page - browser pages, the Chrome Web Store and the PDF viewer are closed to them. Try it on a website.");
+  }
   const pattern = originPatternFor(tab.url);
   if (!pattern) throw new Error("can't determine this page's origin");
   const granted = await chrome.permissions.contains({ origins: [pattern] });
@@ -368,7 +374,20 @@ async function invokeOnActiveTab(fn, args) {
   const sentAt = Date.now();
   // The end kept: an address tells its items apart at its tail.
   if (globalThis.__wcTrace) { const a = JSON.stringify(args || []); debugLog(`[page] ${fn} ${a.length > 240 ? `${a.slice(0, 60)}...${a.slice(-180)}` : a}`); }
-  const result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  let result;
+  try {
+    result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  } catch (e) {
+    // The call arrived and the page went away before it could answer: a
+    // press that navigated, which is the press working. It surfaced as
+    // "That did not work". Only for an action - a read that loses its page
+    // has not read anything.
+    if (!READS_ONLY.test(String(fn || "")) && /message (?:channel|port) closed before a response/i.test(String((e && e.message) || e))) {
+      debugLog(`[page] ${fn}: the page unloaded as it ran`);
+      return { ok: true, result: { navigated: true, note: "the page moved on as this ran" }, calledOn: route.global };
+    }
+    throw e;
+  }
   const tookMs = Date.now() - sentAt;
   if (tookMs > 2000) debugLog(`[page] ${fn} took ${tookMs}ms`);
   return { ...result, calledOn: route.global }; // which manifest actually ran, for the popup log
@@ -4942,7 +4961,18 @@ const CONTROL_VERB = /\b(click|press|select|choose|pick|set|change|switch|toggle
  */
 const ACTS_FIRST = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look\s*up|find|type|enter|zoom|view|go|navigate|graph|plot|chart|get|put|play|bring|pull|take|load|move|filter|sort|apply)\b/i;
 const THEN_ASKS = /^(.+?\S)(?:\s*,\s*|\s+)(?:and\s+(?:then\s+)?|then\s+)((?:tell\s+me|explain|describe|summari[sz]e|say|list|report|give\s+me\s+(?:the\s+)?(?:value|number|reading|date|figure)|what|which|how|where|when|whether|is\s|are\s)\b.*)$/i;
+// The question first, the action after it: "which flood years can I choose
+// after opening the flood maps" opened the maps and never answered - the
+// sentence did not read as an action with a question, so the question was
+// lost once the action was found in it.
+const AFTER_DOING = { opening: "open", turning: "turn", choosing: "choose", selecting: "select", picking: "pick",
+  clicking: "click", pressing: "press", showing: "show", setting: "set", switching: "switch", enabling: "enable",
+  expanding: "expand", loading: "load", filtering: "filter" };
+const ASKS_THEN_AFTER = new RegExp("^\\s*((?:what|which|how|where|when|is|are|does|do)\\b.+?)\\s*,?\\s+(?:after|once)\\s+(?:i\\s+|you\\s+|we\\s+)?("
+  + [...Object.keys(AFTER_DOING), ...new Set(Object.values(AFTER_DOING))].join("|") + ")\\s+(.+?)\\s*[?.!]*\\s*$", "i");
 function actThenAsk(instruction) {
+  const q = String(instruction || "").match(ASKS_THEN_AFTER);
+  if (q) return { act: `${AFTER_DOING[q[2].toLowerCase()] || q[2].toLowerCase()} ${q[3].trim()}`, ask: q[1].trim() };
   const m = String(instruction || "").match(THEN_ASKS);
   if (!m) return null;
   const act = m[1].trim(), ask = m[2].trim();

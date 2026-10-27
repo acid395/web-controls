@@ -14420,4 +14420,88 @@ else {
   }
 }
 
+// Values that come as numbers, and fields that refuse what they are given.
+{
+  const pg = loadPage(`<!doctype html><html><body><input id="q" aria-label="Station"><select id="y"><option>2023</option><option>2024</option></select>
+    <label><input type="radio" name="u" value="1"> Feet</label><label><input type="radio" name="u" value="2"> Meters</label>
+    <input type="date" id="d" aria-label="Start date"><input type="number" id="n" aria-label="Count"></body></html>`, { url: "https://forms.example.gov/" });
+  if (pg) {
+    const d = pg.document;
+    let threw = "";
+    try { pg.WC.fill("#q", 46026); pg.WC.setSelect("#y", 2024); pg.WC.pickRadio("u", 2); } catch (e) { threw = e.message; }
+    check("a value given as a number is typed, chosen and picked", [threw, d.getElementById("q").value, d.getElementById("y").value, d.querySelector("input[value='2']").checked].join("/"), "/46026/2024/true");
+    pg.WC.fill("#d", "Jan 5, 2024");
+    check("a date written as people write it goes into a date field as the field takes it", d.getElementById("d").value, "2024-01-05");
+    let refused = "";
+    try { pg.WC.fill("#n", "lots"); } catch (e) { refused = e.message; }
+    ensure("a field that refuses what it was given says so", /does not take/.test(refused), refused);
+  }
+}
+// Pages Chrome closes to extensions, and a press that took the page away.
+{
+  const pg = loadPage(`<!doctype html><html><body><button>Go</button></body></html>`, { url: "https://site.example.gov/" });
+  if (pg) {
+    const bg = loadBackground({ page: pg });
+    const vm = require("vm");
+    runAsync(async () => {
+      const realQuery = bg.chrome.tabs.query;
+      bg.chrome.tabs.query = async () => [{ id: 1, url: "chrome://settings/" }];
+      let said = "";
+      try { await vm.runInContext(`invokeOnActiveTab("inventory", [{}])`, bg); } catch (e) { said = e.message; }
+      ensure("a browser page is said to be closed to extensions, plainly", /Chrome does not let extensions work on this page/.test(said), said);
+      bg.chrome.tabs.query = realQuery;
+      const realSend = bg.chrome.tabs.sendMessage;
+      bg.chrome.tabs.sendMessage = async () => { throw new Error("A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received"); };
+      const pressed = await vm.runInContext(`invokeOnActiveTab("click", ["button"])`, bg);
+      check("a press whose page unloaded mid-reply is the page moving on", !!(pressed.ok && pressed.result && pressed.result.navigated), true);
+      let readErr = "";
+      try { await vm.runInContext(`invokeOnActiveTab("inventory", [{}])`, bg); } catch (e) { readErr = e.message; }
+      ensure("but a read that lost its page is still a failure", /channel closed/.test(readErr), readErr);
+      bg.chrome.tabs.sendMessage = realSend;
+    });
+  }
+}
+// The question first, the action after.
+{
+  const bgq = loadBackground({});
+  const at = (t) => JSON.stringify(require("vm").runInContext(`actThenAsk(${JSON.stringify(t)})`, bgq));
+  check("which ... after opening X is open X, then the question", at("which flood years can I choose after opening the flood maps"), JSON.stringify({ act: "open the flood maps", ask: "which flood years can I choose" }));
+  check("and once I open X", at("what layers are there once I open infrastructure?"), JSON.stringify({ act: "open infrastructure", ask: "what layers are there" }));
+  check("a question about something after something else is only a question", at("how much rain fell after the storm"), "null");
+}
+// A look inside a menu that opens on hover leaves it as it found it.
+{
+  const pg = loadPage(`<!doctype html><html><body><nav><div id="m"><div role="button" tabindex="0" class="accordion-title">Products</div><div id="slot"></div></div></nav><main><p>Text</p></main></body></html>`, { url: "https://shop.example.com/" });
+  if (pg) {
+    const d = pg.document, m = d.getElementById("m");
+    m.addEventListener("mouseover", () => { if (!d.getElementById("slot").children.length) d.getElementById("slot").innerHTML = `<a href="#alpha">Alpha</a> <a href="#beta">Beta</a>`; });
+    m.addEventListener("mouseout", (e) => { if (!m.contains(e.relatedTarget)) d.getElementById("slot").innerHTML = ""; });
+    runAsync(async () => {
+      const r = await pg.GENERIC.peekClosed({});
+      ensure("the hover menu was looked inside", (r.peeked || []).some((x) => x.menu === "Products" && x.items >= 2), r);
+      check("and is not left open", d.getElementById("slot").children.length, 0);
+    });
+  }
+}
+// A streamed response is read up to the cap, not held until it ends.
+{
+  const sp = loadPage(`<!doctype html><html><body></body></html>`);
+  if (sp) {
+    if (!sp.TextDecoder) sp.TextDecoder = require("util").TextDecoder;
+    let cancelled = false, chunks = 0;
+    const chunk = new Uint8Array(1000000).fill(97);
+    sp.fetch = async () => ({ status: 200, headers: { get: () => "application/x-ndjson" },
+      clone() { return { body: { getReader: () => ({ read: async () => { chunks++; return { done: false, value: chunk }; }, cancel: async () => { cancelled = true; } }) } }; } });
+    const sc = sp.document.createElement("script");
+    sc.textContent = require("fs").readFileSync(require("path").join(__dirname, "..", "page", "feed-capture.js"), "utf8");
+    sp.document.body.appendChild(sc);
+    runAsync(async () => {
+      await sp.fetch("https://chat.example.com/api/stream");
+      await new Promise((r) => setTimeout(r, 300));
+      const f = sp.__wcFeedCapture.feeds[0];
+      check("a stream that never ends is read to the cap and let go", [cancelled, chunks <= 6, !!(f && f.truncated)].join("/"), "true/true/true");
+    });
+  }
+}
+
 bodyDone = true;

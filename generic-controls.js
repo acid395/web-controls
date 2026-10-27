@@ -80,7 +80,9 @@
     return cssPath(frame) + FRAME_SEP;
   };
 
-  const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  // Any value, not only a string: a model's JSON gives a year as 2024, and
+  // (2024 || "").replace threw inside every list and radio match.
+  const norm = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().toLowerCase();
   // A unit written short after a number: 500yr, 6hr, 2wk. Kept in step
   // with spelledUnits in background.js.
   const UNIT_SHORT = { yr: "year", yrs: "years", hr: "hour", hrs: "hours", wk: "week", wks: "weeks",
@@ -543,14 +545,34 @@
     return el;
   };
 
+  // A date as the field takes it. A date input holds only yyyy-mm-dd, and
+  // "Jan 5 2024" or "1/5/2024" set it to nothing - reported as filled.
+  const DATE_SHAPED = { date: (d) => d.slice(0, 10), month: (d) => d.slice(0, 7), "datetime-local": (d) => d.slice(0, 16) };
+  const asFieldDate = (el, text) => {
+    const shape = DATE_SHAPED[String(el.type || "").toLowerCase()];
+    if (!shape || /^\d{4}-\d{2}(?:-\d{2})?(?:T\d{2}:\d{2})?$/.test(text.trim())) return text;
+    const t = new Date(text);
+    if (isNaN(t)) return text;
+    const p2 = (n) => String(n).padStart(2, "0");
+    return shape(`${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}T${p2(t.getHours())}:${p2(t.getMinutes())}`);
+  };
   const fill = (elOrSel, text) => {
     pageTouched();
+    text = text == null ? "" : String(text);
     const el0 = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el0) throw new Error(`fill: not found: ${elOrSel}`);
     const el = typingTarget(el0);
     el.focus();
     if (el.isContentEditable && !el.matches(TYPED_INTO)) el.textContent = text;
-    else setNativeValue(el, text);
+    else {
+      text = asFieldDate(el, text);
+      setNativeValue(el, text);
+      // A field that refuses what it was given empties itself; said, not
+      // reported as typed.
+      if (text.trim() && el.value === "" && el.tagName === "INPUT" && /^(?:number|date|month|week|time|datetime-local|email|url|color|range)$/i.test(el.type || "")) {
+        throw new Error(`fill: a ${el.type} field does not take "${text.slice(0, 40)}"`);
+      }
+    }
     el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: text.slice(-1) || "a" }));
@@ -563,6 +585,7 @@
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
+    if (valueOrText != null) valueOrText = String(valueOrText);
     // Units spelled out on both sides as the last try: a request for the
     // "500 year" option names the one the page wrote "500yr".
     const plain = (t) => norm(String(t || "").replace(UNIT_AFTER_NUMBER, (_, d, u) => `${d} ${UNIT_SHORT[u.toLowerCase()]}`))
@@ -640,6 +663,7 @@
   // the browser's native grouping. In that fallback groupName is unused,
   // since there's no real group to search within, so pass anything.
   const pickRadio = (groupName, valueOrLabel) => {
+    if (valueOrLabel != null) valueOrLabel = String(valueOrLabel);
     let radios = deepQueryAll(`input[type=radio][name="${CSS.escape(groupName)}"]`);
     if (!radios.length) radios = deepQueryAll("input[type=radio]:not([name])");
     if (!radios.length) throw new Error(`pickRadio: no radio group "${groupName}"`);
@@ -1220,6 +1244,14 @@
         realClick(again);
         await pause(250);
       }
+      // The pointer leaves again. A press arrives as a mouse does, over the
+      // door first, and a menu that opens on hover stayed open after a look.
+      try {
+        const d = deepQuery(door.selector) || el;
+        d.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+        d.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+        d.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false, relatedTarget: document.body }));
+      } catch (e) { /* nothing to leave */ }
       trace(`${door.label}: ${found.length} items`);
       behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });

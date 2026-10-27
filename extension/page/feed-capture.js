@@ -63,6 +63,23 @@
     }
   };
 
+  // Read up to the cap and no further. text() held a streamed response - a
+  // chat reply, a live feed under /api/ - in memory until it ended, which a
+  // stream may never do.
+  const readCapped = async (r) => {
+    if (!r.body || typeof r.body.getReader !== "function") return r.text();
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let out = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += dec.decode(value, { stream: true });
+      if (out.length > FEED_BODY_CAP) { reader.cancel().catch(() => {}); return out; }
+    }
+    return out + dec.decode();
+  };
+
   const nativeFetch = window.fetch;
   if (nativeFetch) {
     window.fetch = function (...args) {
@@ -73,7 +90,7 @@
           if (url && FEED_URL_RE.test(url) && !(type && NOT_DATA.test(type))) {
             // Clone first: reading the body the page is about to read
             // would consume the stream and break the page itself.
-            res.clone().text()
+            readCapped(res.clone())
               .then((t) => record(url, (args[1] && args[1].method) || "GET", res.status, t, type))
               .catch(() => {});
           }
