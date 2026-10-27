@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.47 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.48 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.47",
+    version: "0.4.48",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.47";
+globalThis.WC_WIDGET_VERSION = "0.4.48";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -907,6 +907,23 @@ function installFeedCapture() {
     }
   };
 
+  // Read up to the cap and no further. text() held a streamed response - a
+  // chat reply, a live feed under /api/ - in memory until it ended, which a
+  // stream may never do.
+  const readCapped = async (r) => {
+    if (!r.body || typeof r.body.getReader !== "function") return r.text();
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let out = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += dec.decode(value, { stream: true });
+      if (out.length > FEED_BODY_CAP) { reader.cancel().catch(() => {}); return out; }
+    }
+    return out + dec.decode();
+  };
+
   const nativeFetch = window.fetch;
   if (nativeFetch) {
     window.fetch = function (...args) {
@@ -917,7 +934,7 @@ function installFeedCapture() {
           if (url && FEED_URL_RE.test(url) && !(type && NOT_DATA.test(type))) {
             // Clone first: reading the body the page is about to read
             // would consume the stream and break the page itself.
-            res.clone().text()
+            readCapped(res.clone())
               .then((t) => record(url, (args[1] && args[1].method) || "GET", res.status, t, type))
               .catch(() => {});
           }
@@ -1042,7 +1059,9 @@ return (function () {
     return cssPath(frame) + FRAME_SEP;
   };
 
-  const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  // Any value, not only a string: a model's JSON gives a year as 2024, and
+  // (2024 || "").replace threw inside every list and radio match.
+  const norm = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().toLowerCase();
   // A unit written short after a number: 500yr, 6hr, 2wk. Kept in step
   // with spelledUnits in background.js.
   const UNIT_SHORT = { yr: "year", yrs: "years", hr: "hour", hrs: "hours", wk: "week", wks: "weeks",
@@ -1505,14 +1524,34 @@ return (function () {
     return el;
   };
 
+  // A date as the field takes it. A date input holds only yyyy-mm-dd, and
+  // "Jan 5 2024" or "1/5/2024" set it to nothing - reported as filled.
+  const DATE_SHAPED = { date: (d) => d.slice(0, 10), month: (d) => d.slice(0, 7), "datetime-local": (d) => d.slice(0, 16) };
+  const asFieldDate = (el, text) => {
+    const shape = DATE_SHAPED[String(el.type || "").toLowerCase()];
+    if (!shape || /^\d{4}-\d{2}(?:-\d{2})?(?:T\d{2}:\d{2})?$/.test(text.trim())) return text;
+    const t = new Date(text);
+    if (isNaN(t)) return text;
+    const p2 = (n) => String(n).padStart(2, "0");
+    return shape(`${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}T${p2(t.getHours())}:${p2(t.getMinutes())}`);
+  };
   const fill = (elOrSel, text) => {
     pageTouched();
+    text = text == null ? "" : String(text);
     const el0 = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el0) throw new Error(`fill: not found: ${elOrSel}`);
     const el = typingTarget(el0);
     el.focus();
     if (el.isContentEditable && !el.matches(TYPED_INTO)) el.textContent = text;
-    else setNativeValue(el, text);
+    else {
+      text = asFieldDate(el, text);
+      setNativeValue(el, text);
+      // A field that refuses what it was given empties itself; said, not
+      // reported as typed.
+      if (text.trim() && el.value === "" && el.tagName === "INPUT" && /^(?:number|date|month|week|time|datetime-local|email|url|color|range)$/i.test(el.type || "")) {
+        throw new Error(`fill: a ${el.type} field does not take "${text.slice(0, 40)}"`);
+      }
+    }
     el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: text.slice(-1) || "a" }));
@@ -1525,6 +1564,7 @@ return (function () {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
+    if (valueOrText != null) valueOrText = String(valueOrText);
     // Units spelled out on both sides as the last try: a request for the
     // "500 year" option names the one the page wrote "500yr".
     const plain = (t) => norm(String(t || "").replace(UNIT_AFTER_NUMBER, (_, d, u) => `${d} ${UNIT_SHORT[u.toLowerCase()]}`))
@@ -1602,6 +1642,7 @@ return (function () {
   // the browser's native grouping. In that fallback groupName is unused,
   // since there's no real group to search within, so pass anything.
   const pickRadio = (groupName, valueOrLabel) => {
+    if (valueOrLabel != null) valueOrLabel = String(valueOrLabel);
     let radios = deepQueryAll(`input[type=radio][name="${CSS.escape(groupName)}"]`);
     if (!radios.length) radios = deepQueryAll("input[type=radio]:not([name])");
     if (!radios.length) throw new Error(`pickRadio: no radio group "${groupName}"`);
@@ -2182,6 +2223,14 @@ return (function () {
         realClick(again);
         await pause(250);
       }
+      // The pointer leaves again. A press arrives as a mouse does, over the
+      // door first, and a menu that opens on hover stayed open after a look.
+      try {
+        const d = deepQuery(door.selector) || el;
+        d.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+        d.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+        d.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false, relatedTarget: document.body }));
+      } catch (e) { /* nothing to leave */ }
       trace(`${door.label}: ${found.length} items`);
       behindDoors.set(door.selector, { label: door.label, items: found.slice(0, 40) });
       peeked.push({ menu: String(door.label).slice(0, 60), items: found.length });
@@ -7540,6 +7589,7 @@ function routeFor(url) {
   return NAMED_MANIFESTS.find((r) => r.test.test(url || "")) || { bundle: GENERIC_BUNDLE, global: "GENERIC" };
 }
 
+const CLOSED_TO_EXTENSIONS = /^(?:chrome|chrome-extension|chrome-search|chrome-untrusted|devtools|edge|about|view-source):|^https:\/\/(?:chromewebstore\.google\.com|chrome\.google\.com\/webstore)(?:\/|$)/i;
 function originPatternFor(url) {
   try {
     const u = new URL(url);
@@ -7814,6 +7864,11 @@ async function invokeOnActiveTab(fn, args) {
   }
   if (!tab || !tab.id || !tab.url) throw new Error("no active tab");
   lastPageTabId = tab.id;
+  // Pages Chrome closes to every extension. Asked of one, the permission
+  // check threw "Invalid url pattern" at the person, which says nothing.
+  if (CLOSED_TO_EXTENSIONS.test(tab.url)) {
+    throw new Error("Chrome does not let extensions work on this page - browser pages, the Chrome Web Store and the PDF viewer are closed to them. Try it on a website.");
+  }
   const pattern = originPatternFor(tab.url);
   if (!pattern) throw new Error("can't determine this page's origin");
   const granted = await chrome.permissions.contains({ origins: [pattern] });
@@ -7825,7 +7880,20 @@ async function invokeOnActiveTab(fn, args) {
   const sentAt = Date.now();
   // The end kept: an address tells its items apart at its tail.
   if (globalThis.__wcTrace) { const a = JSON.stringify(args || []); debugLog(`[page] ${fn} ${a.length > 240 ? `${a.slice(0, 60)}...${a.slice(-180)}` : a}`); }
-  const result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  let result;
+  try {
+    result = await chrome.tabs.sendMessage(tab.id, { type: "call", fn, args });
+  } catch (e) {
+    // The call arrived and the page went away before it could answer: a
+    // press that navigated, which is the press working. It surfaced as
+    // "That did not work". Only for an action - a read that loses its page
+    // has not read anything.
+    if (!READS_ONLY.test(String(fn || "")) && /message (?:channel|port) closed before a response/i.test(String((e && e.message) || e))) {
+      debugLog(`[page] ${fn}: the page unloaded as it ran`);
+      return { ok: true, result: { navigated: true, note: "the page moved on as this ran" }, calledOn: route.global };
+    }
+    throw e;
+  }
   const tookMs = Date.now() - sentAt;
   if (tookMs > 2000) debugLog(`[page] ${fn} took ${tookMs}ms`);
   return { ...result, calledOn: route.global }; // which manifest actually ran, for the popup log
@@ -12399,7 +12467,18 @@ const CONTROL_VERB = /\b(click|press|select|choose|pick|set|change|switch|toggle
  */
 const ACTS_FIRST = /^\s*(?:please\s+)?(?:click|press|tap|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look\s*up|find|type|enter|zoom|view|go|navigate|graph|plot|chart|get|put|play|bring|pull|take|load|move|filter|sort|apply)\b/i;
 const THEN_ASKS = /^(.+?\S)(?:\s*,\s*|\s+)(?:and\s+(?:then\s+)?|then\s+)((?:tell\s+me|explain|describe|summari[sz]e|say|list|report|give\s+me\s+(?:the\s+)?(?:value|number|reading|date|figure)|what|which|how|where|when|whether|is\s|are\s)\b.*)$/i;
+// The question first, the action after it: "which flood years can I choose
+// after opening the flood maps" opened the maps and never answered - the
+// sentence did not read as an action with a question, so the question was
+// lost once the action was found in it.
+const AFTER_DOING = { opening: "open", turning: "turn", choosing: "choose", selecting: "select", picking: "pick",
+  clicking: "click", pressing: "press", showing: "show", setting: "set", switching: "switch", enabling: "enable",
+  expanding: "expand", loading: "load", filtering: "filter" };
+const ASKS_THEN_AFTER = new RegExp("^\\s*((?:what|which|how|where|when|is|are|does|do)\\b.+?)\\s*,?\\s+(?:after|once)\\s+(?:i\\s+|you\\s+|we\\s+)?("
+  + [...Object.keys(AFTER_DOING), ...new Set(Object.values(AFTER_DOING))].join("|") + ")\\s+(.+?)\\s*[?.!]*\\s*$", "i");
 function actThenAsk(instruction) {
+  const q = String(instruction || "").match(ASKS_THEN_AFTER);
+  if (q) return { act: `${AFTER_DOING[q[2].toLowerCase()] || q[2].toLowerCase()} ${q[3].trim()}`, ask: q[1].trim() };
   const m = String(instruction || "").match(THEN_ASKS);
   if (!m) return null;
   const act = m[1].trim(), ask = m[2].trim();
