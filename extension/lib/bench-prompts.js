@@ -650,5 +650,27 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say": "open demographic data, then show the education chart", "kind": "multistep", "steps": ["Demographic Data", "Education"], "on": "Demographic Data", "want": {"clicked": "Demographic Data"}, "offline": null},
    {"say": "show the roads, then select all of them", "kind": "multistep", "steps": ["Road", "Select All/None"], "on": "Road", "want": {"clicked": "Road"}, "offline": null}
   ]
+ },
+ "epa-daily": {
+  "firstContact": true,
+  "url": "https://www.epa.gov/outdoor-air-quality-data/download-daily-data",
+  "note": "EPA Download Daily Data (outdoor air quality): Pollutant, Year, Geographic Area (state, city or county) and Monitor Site lists that fill in one after another, a Get Data button that leaves a Download CSV link, the official-website banner, header menus and search, and a sidebar of air-data links.",
+  "prompts": [
+   {"say":"choose ozone as the pollutant","kind":"action","steps":["Pollutant"],"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"set the pollutant to PM2.5","kind":"action","steps":["Pollutant"],"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"show me how I know this is an official government website","kind":"action","steps":["Here’s how you know"],"on":"Here’s how you know","want":{"clicked":"Here’s how you know"},"offline":null},
+   {"say":"open the environmental topics menu","kind":"action","steps":["Environmental Topics"],"on":"Environmental Topics","want":{"clicked":"Environmental Topics"},"offline":null},
+   {"say":"go to the ozone watch page","kind":"action","steps":["Ozone Watch"],"on":"Ozone Watch","want":{"clicked":"Ozone Watch"},"offline":null},
+   {"say":"search epa.gov for ozone","kind":"action","steps":["Search"],"on":"Search","want":{"clicked":"Search"},"offline":null},
+   {"say":"pick nitrogen dioxide, then the year 2023","kind":"multistep","steps":["Pollutant","Year"],"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"select ozone for 2024 in Iowa","kind":"multistep","steps":["Pollutant","Year","Geographic Area"],"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"choose PM10, the year 2022 and the state of Colorado, then get the data","kind":"multistep","steps":["Pollutant","Year","Geographic Area","Get Data"],"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"set the pollutant to carbon monoxide and the year to 2020, then choose Arizona","kind":"multistep","steps":["Pollutant","Year","Geographic Area"],"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"choose ozone and tell me which years I can pick","kind":"action+explain","steps":["Pollutant"],"explain":true,"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"pick ozone for 2024 in Iowa and tell me how many monitor sites there are","kind":"action+explain","steps":["Pollutant","Year","Geographic Area"],"explain":true,"on":"Pollutant","want":{"clicked":"Pollutant"},"offline":null},
+   {"say":"which pollutants can I download data for","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"where does the recent ozone and particle data come from","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"when was this page last updated","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
+  ]
  }
 };

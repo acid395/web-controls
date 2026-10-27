@@ -18,7 +18,7 @@ const path = require("path");
 
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const WIDGET = path.join(__dirname, "../../widget/dist/web-controls-widget.js");
-const WEBLLM = "https://cdn.jsdelivr.net/gh/acid395/web-controls@widget-v0.1.1/dist/web-llm.js";
+const WEBLLM = process.env.WEBLLM || "https://cdn.jsdelivr.net/gh/acid395/web-controls@widget-v0.1.1/dist/web-llm.js";
 const PORT = +(process.env.PORT || 9370);
 const PER = +(process.env.PER || 300000);
 const MODEL = process.env.MODEL !== "0";

@@ -54,11 +54,15 @@ MODEL=0 node gate.js ...                page layer alone
 | 8 | both sites | 1.99.16-1.99.17 | Llama 3.2 3B | plan 12/30 (40%), 9 maybe; choice 11/30 (37%), 7 maybe |
 | 9 | NOAA NOHRSC National Snow Analyses | 1.99.19 | choice mode, Llama 3.2 3B, extension bench, user machine | 9/15 pass, 2 maybe |
 | 9 | NOAA NOHRSC National Snow Analyses | 1.99.19 | choice mode, Qwen3 4B, extension bench, user machine | 10/15 pass, 2 maybe (the snowfall-reports press counted a pass by the user: it reached the page and stopped) |
+| 11 | EPA Download Daily Data (air quality; lists that fill one after another) | 1.99.35 | Qwen3 4B, widget gate, window on screen | 9/15 by the checks - 8 pass, 1 maybe ("search epa.gov for ozone" searched for "epa.gov for ozone"); two prompts timed out |
+| 11 | same, after the fixes written from those failures (site retired) | 1.99.36 | Qwen3 4B, widget gate | 15/15 - measures the fixes, not the agent |
 
 Two rows above were re-scored from the recorded answers after four checks
 turned out to carry a doubled backslash in their regular expressions (the
 IEM request-limit answer "1000" and the CDO cart answer "0 items" had been
 marked FAIL by broken checks). The TSVs keep the original marks.
+
+EPA Download Daily Data is retired after 1.99.36 (furniture the request names offered to the model, an unnamed menu not opened while the request's list is in view, a plan per level of a form that fills as it goes, every value of a step set as its list fills, a list that fills counted as what the action brought up, a fully named menu ending a choice run, a site's address before "for" read as where to search).
 
 Round 1 sites are retired: the naming fixes in 1.94.0 were written with
 their pages open. NOHRSC is retired after 1.99.20 (three or more identical controls named for the panel each sits in alone, a step back or forward in time no longer read as a span, bare arrow and sign buttons described as back and forward to the model, a list's own button pressed when the request asks for it, and Qwen3 4B made the default where memory allows). USACE Water Management is retired after 1.99.7 (repeated per-row controls are named for their row). NDBC and Colorado DWR are retired after 1.99.12 (list choice named by option and list, search pressed after a choice, state said last, pager totals and controls, split grid headers, identifiers searched bare). Climate at a Glance and Water Data for Texas are retired after 1.99.9 (table cells read by row and column, start and end ranges, the CSV link on screen over a hidden one, search boxes typed into only when asked). RISE and NID are retired after 1.99.8 (unasked plan steps left alone, the first result taken from what a search added, named filter boxes ticked, pickers that are buttons opened, typing into a button sent to its form's box, and acronyms and stated counts read off the page). Round 3 sites are retired after 1.96.0 (the shortlist no longer offers

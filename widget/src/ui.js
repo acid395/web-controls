@@ -640,6 +640,17 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   for (const type of ["keydown", "keypress", "keyup"]) host.addEventListener(type, keepKeys);
 
   (document.body || document.documentElement).appendChild(host);
+  // Put back when the host takes it out. Turbo and pjax swap the whole
+  // <body> and `body.innerHTML = ...` empties it, and the widget went too:
+  // nothing could be asked until a full reload. Bounded, in case a page
+  // keeps clearing what it did not draw.
+  let putBack = 0;
+  const keepAttached = new MutationObserver(() => {
+    if (host.isConnected || putBack >= 50) return;
+    putBack++;
+    (document.body || document.documentElement).appendChild(host);
+  });
+  keepAttached.observe(document.documentElement, { childList: true, subtree: true });
   // Open again after a navigation if it was open before: on a multi-page
   // site every link is one.
   try { if (sessionStorage.getItem(OPEN_KEY) === "1") setOpen(true); } catch (e) { /* closed */ }
@@ -657,6 +668,7 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     destroy: () => {
       if (poll) clearInterval(poll);
       window.removeEventListener("keydown", onHotkey);
+      keepAttached.disconnect();
       host.remove();
     },
     host,

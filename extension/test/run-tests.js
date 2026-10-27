@@ -14155,6 +14155,9 @@ else {
     const inv = pg.GENERIC.inventory({ includeHidden: true }).controls;
     const z = inv.find((c) => c.label === "Zip code"), n = inv.find((c) => c.label === "Name");
     check("a field in a disabled fieldset is offered as disabled", !!(z && z.disabled) + "/" + !!(n && n.disabled), "true/false");
+    pg.document.body.insertAdjacentHTML("beforeend", `<div role="button" tabindex="0" aria-disabled="true">Previous page</div><div role="button" tabindex="0">Next page</div>`);
+    const inv2 = pg.GENERIC.inventory({ includeHidden: true }).controls;
+    check("and a control that says aria-disabled is disabled", ["Previous page", "Next page"].map((l) => !!(inv2.find((c) => c.label === l) || {}).disabled).join("/"), "true/false");
   }
 }
 // A control in a shadow root is found at its own address, not the page's
@@ -14212,6 +14215,207 @@ else {
       const r = await vm.runInContext(`runVerified({}, { name: "pageClick", args: { selector: "#b" }, label: "ログイン" })`, bg);
       check("a second control named in another script is pressed too", hit.join(","), "a,b");
       ensure("and not reported as already pressed", !(r && r.result && r.result.alreadyPressed), r);
+    });
+  }
+}
+
+// An ask stays on the tab it began on when the person switches tabs, and
+// follows a tab its own tab opened.
+{
+  const bg = loadBackground({});
+  const vm = require("vm");
+  runAsync(async () => {
+    let front = { id: 2, url: "https://mail.example.com/" };
+    bg.chrome.tabs.query = async () => [front];
+    bg.chrome.tabs.get = async (id) => (id === 1 ? { id: 1, url: "https://water.example.gov/" } : null);
+    vm.runInContext(`activeAsk = { instruction: "click go", tabId: 1 }`, bg);
+    let [t] = await vm.runInContext(`askTabQuery()`, bg);
+    check("a step of an ask goes to the tab it began on, not the one in front", t && t.id, 1);
+    front = { id: 3, url: "https://water.example.gov/report", openerTabId: 1 };
+    [t] = await vm.runInContext(`askTabQuery()`, bg);
+    check("but a tab it opened itself is followed", (t && t.id) + "/" + vm.runInContext(`activeAsk.tabId`, bg), "3/3");
+    vm.runInContext(`activeAsk = null`, bg);
+    [t] = await vm.runInContext(`askTabQuery()`, bg);
+    check("outside an ask, the tab in front", t && t.id, 3);
+  });
+}
+
+// A list that was on the page all along, filled by choosing in another, is
+// what the choice brought up.
+{
+  const pg = loadPage(`<!doctype html><html><body><form><label for="poll">Pollutant</label><select id="poll"><option>Select ...</option><option>Ozone</option></select>
+    <label for="year">Year</label><select id="year"></select></form></body></html>`, { url: "https://air.example.gov/daily" });
+  if (pg) {
+    const d = pg.document;
+    d.getElementById("poll").addEventListener("change", () => { d.getElementById("year").innerHTML = ["Select ...", "2026", "2025", "2024"].map((y) => `<option>${y}</option>`).join(""); });
+    pg.GENERIC.setRequest("choose ozone and tell me which years I can pick");
+    pg.WC.setSelect("#poll", "Ozone");
+    const came = pg.GENERIC.cameSince();
+    const year = came.lists.find((l) => l.label === "Year");
+    ensure("a list filled by another choice counts as brought up", !!year && year.options.includes("2024"), came.lists);
+    check("and the list chosen in does not", came.lists.some((l) => l.label === "Pollutant"), false);
+  }
+}
+
+// The planner on a form whose lists fill one after another, under a header
+// of menus (EPA's daily air data download).
+{
+  const html = `<!doctype html><html><body><section class="usa-banner"><button aria-expanded="false" class="usa-banner__button">Here’s how you know</button></section>
+    <header><button aria-expanded="false" id="env">Environmental Topics</button><a href="/data">Data</a></header>
+    <form><label for="poll">Pollutant</label><select id="poll"><option value="-1">Select ...</option><option>Ozone</option><option>PM10</option></select>
+    <label for="year">Year</label><select id="year"></select></form><input type="button" id="get" value="Get Data"></body></html>`;
+  const setUp = (plansFor) => {
+    const page = loadPage(html, { url: "https://air.example.gov/daily-data" });
+    if (!page) return null;
+    const d = page.document;
+    d.getElementById("env").addEventListener("click", (e) => e.currentTarget.setAttribute("aria-expanded", "true"));
+    d.getElementById("poll").addEventListener("change", () => { d.getElementById("year").innerHTML = ["Select ...", "2025", "2024"].map((y) => `<option>${y}</option>`).join(""); });
+    let gotData = 0; d.getElementById("get").addEventListener("click", () => { gotData++; });
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    const calls = [];
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") { calls.push(m.controls.map((c) => c.label)); return { ok: true, step: { steps: plansFor(calls.length, m) } }; }
+      return { ok: true, step: { do: "finish", answer: "x" } };
+    };
+    return { page, bg, calls, gotData: () => gotData };
+  };
+  const t1 = setUp((n) => n === 1 ? [{ name: "Environmental Topics", do: "click" }, { name: "Pollutant", do: "select", value: "Ozone" }] : [{ name: "Year", do: "select", value: "2024" }]);
+  if (t1) runAsync(async () => {
+    await t1.bg.__ask({ type: "smartAsk", instruction: "select ozone for 2024" });
+    const d = t1.page.document;
+    check("a header menu the request names nothing of is not opened while the list it names is in view", d.getElementById("env").getAttribute("aria-expanded"), "false");
+    check("the list is set", d.getElementById("poll").value, "Ozone");
+    check("and a value that only appeared once it was set gets a second plan", d.getElementById("year").value + "/" + t1.calls.length, "2024/2");
+  });
+  const t2 = setUp(() => [{ name: "Data", do: "click" }]);
+  if (t2) runAsync(async () => {
+    await t2.bg.__ask({ type: "smartAsk", instruction: "then get the data" });
+    check("\"get the data\" planned as the Data link presses Get Data", t2.gotData(), 1);
+  });
+  const t3 = setUp(() => []);
+  if (t3) runAsync(async () => {
+    const vm = require("vm");
+    vm.runInContext(`activeAsk = { instruction: "show me how I know this is an official government website" }`, t3.bg);
+    t3.bg.__inv = t3.page.GENERIC.inventory({ includeHidden: true });
+    const offered = vm.runInContext(`controlsForModel(__inv).map((c) => c.label)`, t3.bg);
+    check("the gov banner is offered when the request names it", offered.includes("Here’s how you know"), true);
+    vm.runInContext(`activeAsk = { instruction: "choose ozone" }`, t3.bg);
+    check("and only then", vm.runInContext(`controlsForModel(__inv).map((c) => c.label)`, t3.bg).includes("Here’s how you know"), false);
+  });
+}
+
+// A site named by its address in a search is where to search, not what for.
+{
+  const bgs = loadBackground({});
+  const q = (t) => { const r = require("vm").runInContext(`searchParts(${JSON.stringify(t)})`, bgs); return r && r.query; };
+  check("search epa.gov for ozone searches for ozone", q("search epa.gov for ozone"), "ozone");
+  check("a query that merely has a dot in it is kept", q("search for version 2.5 notes"), "version 2.5 notes");
+  check("and a plain one is untouched", q("search for flood maps"), "flood maps");
+}
+
+// A form whose lists fill one after another: pollutant, then year, then
+// state, then sites - and a Get Data button that shows only once a state is
+// chosen (EPA's daily air data download).
+{
+  const cascade = () => {
+    const pg = loadPage(`<!doctype html><html><body><header><a href="/data">Data</a></header>
+      <form><label for="poll">Pollutant</label><select id="poll"><option value="-1">Select ...</option><option value="44201">Ozone</option><option value="81102">PM10</option></select>
+      <label for="year">Year</label><select id="year"></select>
+      <label for="state">Geographic Area</label><select id="state"></select>
+      <label for="site">Monitor Site</label><select id="site" multiple></select></form>
+      <div id="launch" style="display:none"><input type="button" id="get" value="Get Data"></div><div id="results"></div></body></html>`, { url: "https://air.example.gov/daily-data" });
+    if (!pg) return null;
+    const d = pg.document;
+    const fill = (id, opts) => { d.getElementById(id).innerHTML = opts.map((o) => `<option value="${o === opts[0] ? -1 : o}">${o}</option>`).join(""); };
+    d.getElementById("poll").addEventListener("change", () => setTimeout(() => fill("year", ["Select ...", "2024", "2023", "2022"]), 300));
+    d.getElementById("year").addEventListener("change", () => setTimeout(() => fill("state", ["Select a State ...", "Arizona", "Colorado", "Iowa"]), 300));
+    d.getElementById("state").addEventListener("change", () => setTimeout(() => {
+      d.getElementById("site").innerHTML = ["All Sites", "190170011", "190450021"].map((o) => `<option>${o}</option>`).join("");
+      d.getElementById("launch").style.display = "block";
+    }, 300));
+    d.getElementById("get").addEventListener("click", () => { d.getElementById("results").textContent = "Download CSV (spreadsheet)"; });
+    return pg;
+  };
+  const text = (pg, id) => { const s = pg.document.getElementById(id); return s.selectedIndex >= 0 ? s.options[s.selectedIndex].text : ""; };
+  const off = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+  {
+    const pg = cascade();
+    if (pg) {
+      const bg = loadBackground({ page: pg });
+      bg.__model = off;
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "choose PM10, the year 2022 and the state of Colorado, then get the data" });
+        check("a step with three values sets each list as it fills", [text(pg, "poll"), text(pg, "year"), text(pg, "state")].join("/"), "PM10/2022/Colorado");
+        check("and the button that appeared is the one pressed, not the Data link", pg.document.getElementById("results").textContent, "Download CSV (spreadsheet)");
+      });
+    }
+  }
+  {
+    const pg = cascade();
+    if (pg) {
+      const bg = loadBackground({ page: pg });
+      bg.__model = off;
+      runAsync(async () => {
+        const r = await bg.__ask({ type: "smartAsk", instruction: "pick ozone for 2024 in Iowa and tell me how many monitor sites there are" });
+        check("one list's value named first does not drop the others", [text(pg, "poll"), text(pg, "year"), text(pg, "state")].join("/"), "Ozone/2024/Iowa");
+        const pg2 = cascade(); const bg2 = loadBackground({ page: pg2 }); bg2.__model = off;
+        const r2 = await bg2.__ask({ type: "smartAsk", instruction: "choose PM10 and tell me which years I can pick" });
+        check("the years that can be picked, without the list's placeholder", String((r2.display || {}).answer || r2.answer || ""), "Year: 2024, 2023, 2022");
+        const said = String((r.display || {}).answer || r.answer || "");
+        ensure("how many is counted off the list that filled", /Monitor Site: 2\b/.test(said), said || r.display);
+      });
+    }
+  }
+  {
+    const pg = cascade();
+    if (pg) {
+      const bg = loadBackground({ page: pg });
+      bg.__plans = true;
+      let plans = 0;
+      bg.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type !== "llmStep") return undefined;
+        if (m.mode !== "plan") return { ok: true, step: { do: "finish", answer: "x" } };
+        plans++;
+        const has = (l) => m.controls.some((c) => c.label === l && (c.options || []).length > 1);
+        return { ok: true, step: { steps: plans === 1 ? [{ name: "Pollutant", do: "select", value: "Ozone" }]
+          : has("Geographic Area") ? [{ name: "Geographic Area", do: "select", value: "Iowa" }]
+          : [{ name: "Year", do: "select", value: "2024" }] } };
+      };
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: "model: select ozone for 2024 in the state of iowa" });
+        check("the planner takes a plan a level down a form that fills as it goes", [text(pg, "poll"), text(pg, "year"), text(pg, "state"), plans].join("/"), "Ozone/2024/Iowa/3");
+      });
+    }
+  }
+}
+// Choosing: a menu the request names whole is the request.
+{
+  const pg = loadPage(`<!doctype html><html><body><nav><button aria-expanded="false" aria-controls="sub" id="env">Environmental Topics</button>
+    <ul id="sub" hidden><li><a href="/air">Air</a></li><li><a href="/topics-az">A-Z Topic Index</a></li></ul></nav><main><p>Daily data</p></main></body></html>`,
+    { url: "https://agency.example.gov/daily" });
+  if (pg) {
+    const d = pg.document;
+    d.getElementById("env").addEventListener("click", (e) => { e.currentTarget.setAttribute("aria-expanded", "true"); d.getElementById("sub").hidden = false; });
+    const pressed = [];
+    d.querySelectorAll("a").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); pressed.push(a.textContent); }));
+    const bg = loadBackground({ page: pg, decision: "choice" });
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "Qwen3-4B-q4f16_1-MLC" };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "choice") {
+        const line = String(m.prompt).split("\n").find((l) => /^[A-Y]\) (?:Environmental Topics|A-Z Topic Index)/.test(l));
+        const letter = line ? line[0] : "Z";
+        return { ok: true, step: { choice: letter }, logprobs: [{ token: letter, logprob: Math.log(0.95), top: [{ token: letter, logprob: Math.log(0.95) }] }] };
+      }
+      return { ok: true, step: { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "open the environmental topics menu" });
+      check("opening the menu the request names is the whole request", d.getElementById("env").getAttribute("aria-expanded") + "/" + pressed.join(","), "true/");
     });
   }
 }

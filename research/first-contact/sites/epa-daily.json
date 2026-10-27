@@ -1,0 +1,81 @@
+{
+ "name": "epa-daily",
+ "url": "https://www.epa.gov/outdoor-air-quality-data/download-daily-data",
+ "prompts": [
+  {
+   "q": "choose ozone as the pollutant",
+   "kind": "act",
+   "check": "() => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Ozone\""
+  },
+  {
+   "q": "set the pollutant to PM2.5",
+   "kind": "act",
+   "check": "() => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"PM2.5\""
+  },
+  {
+   "q": "show me how I know this is an official government website",
+   "kind": "act",
+   "check": "() => (document.querySelector(\".usa-banner__button\") || { getAttribute: () => null }).getAttribute(\"aria-expanded\") === \"true\""
+  },
+  {
+   "q": "open the environmental topics menu",
+   "kind": "act",
+   "check": "() => [...document.querySelectorAll(\"header button\")].some((b) => b.textContent.trim() === \"Environmental Topics\" && b.getAttribute(\"aria-expanded\") === \"true\")"
+  },
+  {
+   "q": "go to the ozone watch page",
+   "kind": "act",
+   "check": "() => /ozone-watch/i.test(location.href)"
+  },
+  {
+   "q": "search epa.gov for ozone",
+   "kind": "act",
+   "check": "() => /search/i.test(location.href) && /ozone/i.test(decodeURIComponent(location.href))"
+  },
+  {
+   "q": "pick nitrogen dioxide, then the year 2023",
+   "kind": "chain",
+   "check": "() => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"NO2\" && String((((document.getElementById(\"year\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"2023\""
+  },
+  {
+   "q": "select ozone for 2024 in Iowa",
+   "kind": "chain",
+   "check": "() => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Ozone\" && String((((document.getElementById(\"year\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"2024\" && String((((document.getElementById(\"state\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Iowa\""
+  },
+  {
+   "q": "choose PM10, the year 2022 and the state of Colorado, then get the data",
+   "kind": "chain",
+   "check": "() => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"PM10\" && String((((document.getElementById(\"year\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"2022\" && String((((document.getElementById(\"state\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Colorado\" && /Download CSV/i.test((document.getElementById(\"results\") || {}).innerText || \"\")"
+  },
+  {
+   "q": "set the pollutant to carbon monoxide and the year to 2020, then choose Arizona",
+   "kind": "chain",
+   "check": "() => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"CO\" && String((((document.getElementById(\"year\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"2020\" && String((((document.getElementById(\"state\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Arizona\""
+  },
+  {
+   "q": "choose ozone and tell me which years I can pick",
+   "kind": "do-and-tell",
+   "check": "(card) => String((((document.getElementById(\"poll\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Ozone\" && /1980/.test([card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \")) && /2026/.test([card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"))"
+  },
+  {
+   "q": "pick ozone for 2024 in Iowa and tell me how many monitor sites there are",
+   "kind": "do-and-tell",
+   "check": "(card) => String((((document.getElementById(\"state\") || {}).selectedOptions || [{}])[0] || {}).text || \"\").trim() === \"Iowa\" && /\\b13\\b|thirteen/i.test([card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"))"
+  },
+  {
+   "q": "which pollutants can I download data for",
+   "kind": "explain",
+   "check": "(card) => { const t = [card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"); return [/\\bCO\\b|carbon monoxide/i, /\\bPb\\b|lead/i, /NO2|nitrogen/i, /ozone/i, /PM10/i, /PM2\\.5/i, /SO2|sulfur/i].filter((r) => r.test(t)).length >= 6; }"
+  },
+  {
+   "q": "where does the recent ozone and particle data come from",
+   "kind": "explain",
+   "check": "(card) => /AirNow/i.test([card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"))"
+  },
+  {
+   "q": "when was this page last updated",
+   "kind": "explain",
+   "check": "(card) => /March 25,? 2026/i.test([card.title, card.sub, card.answer, ...(card.rows || [])].join(\" \"))"
+  }
+ ]
+}

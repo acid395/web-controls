@@ -287,6 +287,13 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     const host = w.document.querySelector("[data-web-controls-widget]");
     host.dispatchEvent(new w.KeyboardEvent("keydown", { key: "k", bubbles: true, composed: true }));
     check("a key typed in the widget does not reach the page's shortcuts", shortcuts === 0, `shortcuts ${shortcuts}`);
+    // A Turbo-style visit swaps the body; the widget comes back.
+    const fresh = w.document.createElement("body");
+    fresh.innerHTML = "<p>next page</p>";
+    w.document.documentElement.replaceChild(fresh, w.document.body);
+    await new Promise((r) => setTimeout(r, 0));
+    check("a swapped-out body does not take the widget with it", !!w.document.querySelector("[data-web-controls-widget]"));
+    mounted.unmount ? mounted.unmount() : null;
   }
 
   console.log("routing");

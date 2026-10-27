@@ -212,22 +212,15 @@ function loadBackground({ onFetch, page, decision = "plan" } = {}) {
 function loadPage(html, { url = "https://waterdata.usgs.gov/state/Idaho/" } = {}) {
   let JSDOM, VirtualConsole;
   try { ({ JSDOM, VirtualConsole } = require("jsdom")); } catch (e) { return null; }
-  // jsdom reports "Not implemented: navigation" as a jsdomError, raised
-  // asynchronously. Unhandled, it killed the run - sometimes after the
-  // summary and sometimes instead of it, so the same code reported 462
-  // passes on one run and eight on the next. Clicking a link and submitting
-  // a form are both meant to navigate; that a browser would and jsdom will
-  // not is a limit of the harness, not a result.
+  // jsdom's errors are swallowed, all of them: "Not implemented: navigation"
+  // from a clicked link, and a real page's scripts reaching for APIs jsdom
+  // does not have. Both are limits of the harness, not results, and raised
+  // asynchronously they killed the run - sometimes after the summary and
+  // sometimes instead of it.
   const virtualConsole = new VirtualConsole();
-  // Swallowed, all of them. A real page's scripts routinely fail under jsdom
-  // - they reach for APIs it does not implement - and that is a limit of the
-  // harness, not a result. Rethrowing killed the whole run on any page that
-  // ships JavaScript, which is every page worth testing against.
   virtualConsole.on("jsdomError", () => {});
   const dom = new JSDOM(html, { pretendToBeVisual: true, runScripts: "dangerously", url, virtualConsole });
   const w = dom.window;
-  // jsdom lays nothing out, so every element measures zero and the bundle's
-  // isVisible() would reject all of them.
   // jsdom lays nothing out, so every element measures zero and isVisible()
   // would reject all of them. A flat "everything is 100x20" stub goes too
   // far the other way: in a browser a child of a display:none parent

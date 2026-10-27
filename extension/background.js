@@ -181,7 +181,7 @@ const PUBLISHED_RECENTLY = new Map();
 // Publishing is idempotent but not free. Guarded by the same map the page-load
 // path uses, so a page is published to once however it is reached.
 async function publishOnce(tabId, routeGlobal) {
-  const [tab] = tabId ? [{ id: tabId }] : await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = tabId ? [{ id: tabId }] : await askTabQuery();
   if (!tab || !tab.id) return;
   const full = await chrome.tabs.get(tab.id).catch(() => null);
   const url = full && full.url;
@@ -310,6 +310,22 @@ async function invokeOnTab(tabId, fn, args) {
 // some other window's: acting on a different site would be worse than
 // failing.
 let lastPageTabId = null;
+/* The tab an ask works on: the one it began on, wherever the person goes
+ * meanwhile. Each step asked which tab was in front, so switching tabs
+ * during a request sent its next press to the other site - and diffed two
+ * different pages as a change. A tab the ask's own tab opens is followed,
+ * as a link that opens a new tab is followed by a person; a tab that has
+ * gone is replaced by whichever is in front, as before. Outside an ask,
+ * the tab in front.
+ */
+async function askTabQuery() {
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const pinned = activeAsk && activeAsk.tabId;
+  if (!pinned || !active || active.id === pinned) return active ? [active] : [];
+  if (active.openerTabId === pinned) { activeAsk.tabId = active.id; return [active]; }
+  const tab = await chrome.tabs.get(pinned).catch(() => null);
+  return [tab || active];
+}
 /* Stopping a request.
  *
  * The person asked for something and changed their mind. The answer to the
@@ -335,7 +351,7 @@ const READS_ONLY = /^(?:inventory|pageSignature|signatureDiff|readPage|readContr
 async function invokeOnActiveTab(fn, args) {
   if (globalThis.__wcTrace) debugLog(`[page?] ${fn}`);
   if (askCancelled() && !READS_ONLY.test(String(fn || ""))) return { ok: false, error: "cancelled" };
-  let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let [tab] = await askTabQuery();
   if ((!tab || !tab.id || !tab.url) && lastPageTabId !== null) {
     tab = await chrome.tabs.get(lastPageTabId).catch(() => null);
   }
@@ -5053,18 +5069,31 @@ async function answerAfterActing(res, ask) {
   // heading it came with - not the whole page read again.
   const AFTER_WHAT_CAN = /\b(?:what|which)\b[^?]{0,60}?\b(?:can\s+(?:i|you|we|one|be)\b|(?:i|you|we|one)\s+(?:can|could)\b|are\s+(?:there|available|offered|listed|shown)\b|is\s+available\b|options?\b|choices?\b)/i;
   const AFTER_WHICH_SET = /\b(?:what|which)\b[^?]{0,60}?\b(?:is|are)\s+(?:selected|chosen|set|picked|current(?:ly\s+\w+)?|active|showing|shown)\b/i;
-  if (AFTER_WHAT_CAN.test(ask) || AFTER_WHICH_SET.test(ask)) {
+  // "How many monitor sites are there" after the step that filled that list:
+  // its options, counted, less a placeholder and an "All ..." of them.
+  const AFTER_HOW_MANY = /\bhow\s+many\b/i;
+  if (AFTER_WHAT_CAN.test(ask) || AFTER_WHICH_SET.test(ask) || AFTER_HOW_MANY.test(ask)) {
+    // What the action brings up can arrive after it returns: the site list
+    // fills from the server once the state is set.
+    await Promise.race([invokeOnActiveTab("settle", [{ quietMs: 400, timeoutMs: 3000 }]).catch(() => null),
+      new Promise((r) => setTimeout(r, 5000))]);
     const got = await invokeOnActiveTab("cameSince", []).catch(() => null);
     const came = got && got.ok && got.result;
     // A list the question is about, by its name or by its options' words.
     const qWords = meaningfulWords(ask).filter((w) => w.length > 2 && !CONTROL_VERB.test(w)
       && !/^(?:what|which|tell|can|could|selected|chosen|current|currently|available|options?|choices?|view|see)$/.test(w));
     const about = ((came && came.lists) || []).filter((l) => qWords.some((w) => wordMatchesText(w, l.label) || l.options.some((o) => wordMatchesText(w, o))));
-    if (about.length === 1) {
+    if (about.length === 1 && AFTER_HOW_MANY.test(ask) && !AFTER_WHICH_SET.test(ask)) {
+      const l = about[0];
+      const real = l.options.filter((o) => !/^(?:all\b|select\b|choose\b|--)/i.test(o) && o.trim());
+      const answer = `${l.label}: ${real.length} (${real.slice(0, 12).join(", ")}${real.length > 12 ? ", ..." : ""})`;
+      return { ...out, answer, display: { ...card, title: answer.slice(0, 60), answer, note: card.note ? `${card.note} - counted off the list it brought up` : "counted off the list it brought up" } };
+    }
+    if (about.length === 1 && !AFTER_HOW_MANY.test(ask)) {
       const l = about[0];
       const answer = AFTER_WHICH_SET.test(ask)
         ? (l.selected ? `${l.label}: ${l.selected} is selected` : null)
-        : `${l.label}: ${l.options.join(", ")}`;
+        : `${l.label}: ${l.options.filter((o) => !/^\s*(?:select|choose|pick|please)\b|^\s*-+\s*$/i.test(o)).join(", ")}`;
       if (answer) return { ...out, answer, display: { ...card, title: answer.slice(0, 60), answer, note: card.note ? `${card.note} - read off the list it brought up` : "read off the list it brought up" } };
     }
     if (AFTER_WHAT_CAN.test(ask) && came && came.controls && came.controls.length >= 2) {
@@ -6379,6 +6408,16 @@ function sameSpan(a, b) {
   return Math.abs(a - b) <= Math.max(1, Math.round(Math.max(a, b) * 0.12));
 }
 
+// Furniture the request names is not furniture. "Show me how I know this is
+// an official government website" is the gov banner's "Here's how you know",
+// and leaving it out on principle left the model only the header's menus.
+// Two words of its name in the request, so a stray "page" does not bring
+// every pager back.
+function furnitureAskedFor(goal, c) {
+  const want = meaningfulWords(goal).filter((w) => w.length > 2 && !CONTROL_VERB.test(w));
+  return meaningfulWords(String(c.label || "")).filter((w) => w.length > 2 && want.includes(w)).length >= 2;
+}
+
 function isSiteFurniture(c) {
   // The control's own name. A section added to tell identical ones apart is
   // ours: "Previous Map (United States and Puerto Rico (Page 1))" is not a
@@ -6432,7 +6471,7 @@ function controlsForModel(inv, { max = OFFER_MAX } = {}) {
     if (!label || c.disabled) continue;
     if (c.confidence === "low") continue;            // a pointer cursor, not a control
     if (c.hidden && !c.revealedBy) continue;         // hidden with no way in
-    if (isSiteFurniture(c)) continue;                // chrome, never the answer
+    if (isSiteFurniture(c) && !furnitureAskedFor(goal, c)) continue;  // chrome, unless the request names it
     if (NOT_A_PRESS.test(String(c.kind || c.role || "").toLowerCase())) continue;  // a part of the page, not a press
     const key = `${c.kind}:${c.type || ""}:${label.toLowerCase()}`;
     if (seen.has(key)) continue;                     // the same thing twice over
@@ -6877,6 +6916,10 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
     // asked. A tab, a button, a switch is the request carried out, and asked
     // again a 3B went on pressing whatever the press had revealed.
     if (!appeared || call.name !== "pageClick" || !target.opensPanel) break;
+    // And a menu the request names whole is the request too: "open the
+    // environmental topics menu" opened it, and asked again a 4B went on to
+    // the menu's A-Z Topic Index and left the page.
+    if (wholeNamedAmong(goal, [target]) === target && splitIntoSteps(goal).length < 2) break;
     revealedKeys = new Set(newly.map(controlKey));
   }
   if (!history.length) return null;
@@ -6962,8 +7005,13 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   let revealedOnly = false;
   const pressedKeys = new Set();
   let cost = null;
-  for (let round = 0; round < 2; round++) {
+  let rounds = 2;
+  for (let round = 0; round < rounds; round++) {
+  const changedBefore = history.filter((h) => h.ok && h.changed && !h.skipped).length;
   if (round) {
+    // The bound is on what was done, not on what was refused: a first plan
+    // padded with steps left alone had spent the budget the second needed.
+    budget = Math.max(budget, (maxSteps || Math.min(12, evident * 3 + 1)) - history.filter((h) => h.ok && !h.skipped).length);
     // What the first plan revealed is on the list now: a scenario list that
     // appears once its layer is on was not there to be chosen the first time.
     const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
@@ -6993,6 +7041,15 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   const goalWordsP = meaningfulWords(goal);
   const wantsOpenP = /^(?:please\s+)?(?:show|open|expand|display|turn\s+on|enable|reveal|view)\b/i.test(goal);
   const wantsShutP = /^(?:please\s+)?(?:hide|close|collapse|turn\s+off|disable|dismiss)\b/i.test(goal);
+  // Something the request names is in view - by its name, or as an option
+  // of a list. Then opening a menu or section it names nothing of is not a
+  // way in to it: "select ozone for 2024 in Iowa" was planned as the
+  // header's Environmental Topics and Laws & Regulations menus, then the
+  // list. Only openers: a list or a button the request has no word for is
+  // still the model's call - "the last month of rain" is 30-Day
+  // Precipitation.
+  const namedInView = shortlist.some((c) => !c.hidden && !c.disabled && (!namesNothingOf(goal, c, null)
+    || (c.options || []).some((o) => goalWordsP.some((w) => w.length > 1 && wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))));
   for (const st of steps) {
     if (budget-- <= 0) break;
     let act = String(st.do || "click").toLowerCase();
@@ -7018,10 +7075,20 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // The fuller name the request says in full: "show the permitted
     // dischargers" was planned as Dischargers, "expand all the waterbodies"
     // as All - each the part of a name the request gave whole.
+    // Its small words count where the request says them too: "then get the
+    // data" was planned as the site's Data link, and Get Data - the button
+    // beside the form - was not fuller by meaningful words alone.
     if (planned && act === "click") {
+      const rawWords = (t) => flat(t).split(" ").filter(Boolean);
+      const goalRaw = new Set(rawWords(goal));
       const ownW = meaningfulWords(String(planned.label || ""));
+      const ownRaw = rawWords(planned.label);
       const fuller = shortlist.filter((c) => c !== planned && !c.hidden && !c.disabled && !c.elsewhere && String(c.label || "").length <= 60)
-        .filter((c) => { const w = meaningfulWords(String(c.label || "")); return w.length > ownW.length && ownW.every((x) => w.includes(x)) && w.every((x) => goalWordsP.some((g) => wordMatchesText(x, g) || wordMatchesText(g, x))); });
+        .filter((c) => {
+          const w = meaningfulWords(String(c.label || "")), wr = rawWords(c.label);
+          return (w.length > ownW.length || wr.length > ownRaw.length) && ownW.every((x) => w.includes(x))
+            && wr.every((x) => goalRaw.has(x) || goalWordsP.some((g) => wordMatchesText(x, g) || wordMatchesText(g, x)));
+        });
       if (ownW.length && fuller.length && new Set(fuller.map((c) => flat(c.label))).size === 1) planned = fuller[0];
     }
     // The page's own repairs: a value that is an option of exactly one list
@@ -7095,7 +7162,8 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // Where the plan holds the control named completely, a step on anything
     // not named completely is extra: "open the explore wqp sites menu" opened
     // it and then followed two links inside it, each sharing "wqp".
-    if ((namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident))
+    if ((namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident
+          || (namedInView && !target.hidden && (target.expanded === false || target.sectionHead || target.opensPanel))))
         || (namesWhole && wholeNamedAmong(goal, [target]) !== target)) {
       history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - the request names nothing of it" });
@@ -7153,7 +7221,33 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     }
   }
   const short = history.filter((h) => h.ok && h.changed && !h.door).length < evident;
-  if (!(short || history.some((h) => !h.ok) || (revealedOnly && !history.some((h) => h.named)))) break;
+  // Values the request gave that no step used, now offered by a list: a
+  // form that fills Year once a pollutant is chosen, and the state list
+  // once a year is. The first plan could not choose what was not there.
+  let leftListed = false;
+  if (!(short || history.some((h) => !h.ok))) {
+    const used = history.filter((h) => h.ok && !h.skipped).map((h) => h.did).join(" ").toLowerCase();
+    const left = goalWordsP.filter((w) => !CONTROL_VERB.test(w) && !KIND_WORDS.has(w) && !wordMatchesText(w, used));
+    // Looked for while a list is still filling: the year list arrives from
+    // the server a moment after the pollutant is chosen.
+    for (const until = Date.now() + 6000; left.length && !leftListed && Date.now() < until;) {
+      forgetInventory();
+      const now = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+      const cs = (now && now.ok && now.result && now.result.controls) || [];
+      leftListed = cs.some((c) => !c.hidden && !c.disabled
+        && (c.options || []).some((o) => !placeholderOption(o) && left.some((w) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact")));
+      const filling = cs.some((c) => !c.hidden && LIST_TYPE.test(String(c.type || c.kind || ""))
+        && (c.disabled || !(c.options || []).some((o) => !placeholderOption(o))));
+      if (leftListed || !filling) break;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  }
+  if (!(short || leftListed || history.some((h) => !h.ok) || (revealedOnly && !history.some((h) => h.named)))) break;
+  // A list that fills as the one before it is set - pollutant, then year,
+  // then state - takes a plan a level. Another, while the plan before it set
+  // something and the request still has values a list now offers.
+  if (leftListed && round + 1 >= rounds && rounds < 4
+      && history.filter((h) => h.ok && h.changed && !h.skipped).length > changedBefore) rounds++;
   revealedOnly = false;
   }
   // A plan that did nothing but be refused hands the request on.
@@ -9899,7 +9993,7 @@ function couldCheck(ran) {
 // Chrome always sets one, and anything else asking is not a browser.
 async function waitForPageLoad({ timeoutMs = 10000 } = {}) {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await askTabQuery();
     if (!tab || !tab.status || tab.status === "complete") return true;
     if (!(chrome.tabs && chrome.tabs.onUpdated && chrome.tabs.onUpdated.addListener)) return true;
     return await new Promise((resolve) => {
@@ -9929,7 +10023,7 @@ async function waitForPageLoad({ timeoutMs = 10000 } = {}) {
  */
 async function currentTabUrl() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await askTabQuery();
     return (tab && tab.url) || "";
   } catch (e) { return ""; }
 }
@@ -9937,7 +10031,7 @@ async function waitForNavigation(fromUrl, timeoutMs = 4000) {
   const began = Date.now();
   while (Date.now() - began < timeoutMs) {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] = await askTabQuery();
       if (!tab) return false;
       if (tab.status === "loading" || (fromUrl && tab.url && tab.url !== fromUrl)) {
         await waitForPageLoad({ timeoutMs: 12000 });
@@ -10484,7 +10578,7 @@ async function agentTools(routeGlobal, instruction = "", { max = 24 } = {}) {
   const dataNames = new Set(DATA_TOOLS.map((d) => d.name));
   const verified = (TOOL_DEFS[routeGlobal] || [])
     .filter((d) => !dataNames.has(d.name) && !needsRealSelector(d));
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+  const [tab] = await askTabQuery().catch(() => [null]);
   const pageTools = tab && tab.id
     ? await cachedPageTools(tab.id, tab.url)
     : (((await invokeOnActiveTab("pageTools", [{}]).catch(() => ({ ok: false }))).result) || {}).tools || [];
@@ -10829,7 +10923,7 @@ async function runDiagnostics() {
 
   // Nothing above the steps may throw, or the diagnostic fails to diagnose.
   const mf = (() => { try { return chrome.runtime.getManifest(); } catch (e) { return { version: "unknown" }; } })();
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+  const [tab] = await askTabQuery().catch(() => [null]);
   const url = (tab && tab.url) || "";
 
   await step("extension version", () => mf.version);
@@ -12311,7 +12405,7 @@ async function certainClausePlan(routeGlobal, clause) {
     const spoken = optionSpokenIn(core, all);
     if (spoken) {
       debugLog(`[chain] "${clause}": names the option ${spoken.label}`);
-      return { label: spoken.label, run: () => runSetToPlan(routeGlobal, spoken) };
+      return { label: spoken.label, run: () => runSpokenOptions(routeGlobal, core, spoken) };
     }
   }
   if (named.length !== 1) return null;
@@ -12329,6 +12423,48 @@ async function certainClausePlan(routeGlobal, clause) {
       return { changed: did.verified ? did.verified.changed !== false : true };
     },
   };
+}
+
+/* Every value a step gives, each in its own list. "Choose PM10, the year
+ * 2022 and the state of Colorado" set PM10 and dropped the rest without a
+ * word: the year list fills only once a pollutant is chosen, and the state
+ * list once a year is. Each further value is looked for as the lists fill,
+ * while words of the step are still unused and a list is still filling -
+ * so a step with one value pays nothing for this.
+ */
+async function runSpokenOptions(routeGlobal, clause, spoken) {
+  const first = await runSetToPlan(routeGlobal, spoken);
+  if (!first) return first;
+  await followSpokenOptions(routeGlobal, clause, [spoken.control.selector], [spoken.label]);
+  return first;
+}
+// The values after the first, each set as its list fills. Returns the labels set.
+async function followSpokenOptions(routeGlobal, clause, setSelectors, usedLabels) {
+  const setLists = new Set(setSelectors);
+  const used = [...usedLabels];
+  const added = [];
+  const unused = () => meaningfulWords(clause).filter((w) => !CONTROL_VERB.test(w) && !verbFamily(w) && !KIND_WORDS.has(w)
+    && !used.some((u) => wordMatchesText(w, String(u).toLowerCase())));
+  for (let k = 0; k < 3 && unused().length; k++) {
+    let next = null;
+    for (const until = Date.now() + 6000; !next && Date.now() < until;) {
+      forgetInventory();
+      const inv = await invokeOnActiveTab("inventory", [{}]).catch(() => null);
+      const cs = ((inv && inv.ok && inv.result && inv.result.controls) || []).filter((c) => !setLists.has(c.selector));
+      next = optionSpokenIn(clause, cs);
+      const filling = cs.some((c) => !c.hidden && LIST_TYPE.test(String(c.type || c.kind || ""))
+        && (c.disabled || !(c.options || []).some((o) => !placeholderOption(o))));
+      if (!next && !filling) break;
+      if (!next) await new Promise((r) => setTimeout(r, 700));
+    }
+    if (!next) break;
+    debugLog(`[chain] "${clause}": and the option ${next.label}`);
+    setLists.add(next.control.selector);
+    used.push(next.label);
+    if (!(await runSetToPlan(routeGlobal, next))) break;
+    added.push(next.label);
+  }
+  return added;
 }
 
 const REPEAT_TAIL = /\s+(?:twice|thrice|(\d|two|three|four|five)\s+times)\s*$/i;
@@ -12357,7 +12493,11 @@ function searchParts(clause) {
   let query = asked[1].trim();
   let where = null;
   const named = query.match(/^(?:the|this|our|that)\s+([a-z][a-z\s-]{0,40}?)\s+for\s+(.+)$/i);
+  // A site named by its address is where, not what: "search epa.gov for
+  // ozone" typed "epa.gov for ozone" into the box.
+  const site = query.match(/^((?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\s+for\s+(.+)$/i);
   if (named) { where = named[1]; query = named[2]; }
+  else if (site) query = site[2];
   else {
     const inside = query.match(/^(.+?)\s+(?:in|on|using|with|through)\s+(?:the|this)\s+([a-z][a-z\s-]{0,40}?(?:search|box|field|bar|lookup|tool|map|finder))$/i);
     if (inside) { query = inside[1]; where = inside[2]; }
@@ -12511,7 +12651,7 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
 }
 
 async function benchmarkPlanners({ onlyTargets = null } = {}) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await askTabQuery();
   if (!tab || !tab.url) throw new Error("no active tab");
   const route = routeFor(tab.url);
   const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]);
@@ -12631,7 +12771,7 @@ function median(ns) {
 }
 
 async function buildCapabilities() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await askTabQuery();
   if (!tab || !tab.url) throw new Error("no active tab");
   const route = routeFor(tab.url);
 
@@ -12876,7 +13016,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       const stopKeepAlive = keepAlive();
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const [tab] = await askTabQuery();
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
         const defs = toolsFor(route.global);
@@ -12926,7 +13066,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(res);
       };
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const [tab] = await askTabQuery();
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
         const call = msg.toolCall || {};
@@ -13036,7 +13176,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "showContext") {
     (async () => {
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const [tab] = await askTabQuery();
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
         const context = await buildContext(route.global);
@@ -13131,6 +13271,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         respond: (r) => respond(r) };
       activeAsk = thisAsk;
       liveAsks.set(askId, thisAsk);
+      const [startTab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+      if (startTab && startTab.id) thisAsk.tabId = startTab.id;
       // The page reader is told what is being asked, so it can leave out
       // what cannot be the answer (setRequest in the reader).
       await invokeOnActiveTab("setRequest", [String(msg.instruction || "")]).catch(() => null);
@@ -13348,7 +13490,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       };
       const stopKeepAlive = keepAlive();
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const [tab] = await askTabQuery();
         if (!tab || !tab.url) throw new Error("no active tab");
         const route = routeFor(tab.url);
 
@@ -13772,12 +13914,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const how = sent && sent.result && sent.result.submitted;
             pressed = how === "button" || how === "change" ? how : null;
           }
+          // The other values the request gave, in lists that fill once this
+          // one is set: "pick ozone for 2024 in Iowa" set Ozone and stopped,
+          // the year and state lists still empty when it looked.
+          const alsoSet = ran.ok !== false && settledOn && !pressed && !(ran.result && ran.result.navigated)
+            ? await followSpokenOptions(route.global, wanted, [instantOption.control.selector],
+              [`${instantOption.control.label || ""}: ${instantOption.option}`]).catch(() => [])
+            : [];
           if (ran.ok !== false && settledOn) {
             respond({
               ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
               display: {
                 title: String(instantOption.option).slice(0, 60),
                 subtitle: `${instantOption.control.label || "the list"} set to ${instantOption.option}`
+                  + (alsoSet.length ? `; ${alsoSet.join("; ")}` : "")
                   + (pressed === "button" ? ", and its button pressed"
                     : THEN_PRESS_GO.test(wanted) && !pressed ? " - no button beside it to press" : ""),
                 stats: [], rows: [],
@@ -15454,7 +15604,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           let usedHint = null;
           const call = { ...dataCall, args: { ...dataCall.args } };
           if (!call.args.state) {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+            const [tab] = await askTabQuery().catch(() => [null]);
             const hint = tab && tab.url ? stateFromSite(tab.url, tab.title) : null;
             const def = findToolDef(route.global, call.name);
             const takesState = !!((def && def.parameters && def.parameters.properties) || {}).state;

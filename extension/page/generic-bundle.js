@@ -160,12 +160,22 @@
         || role.toLowerCase().replace("listbox", "list of choices");
     }
     if ((el.tagName || "").toLowerCase() === "select") {
-      let outside = clean(rowText(el));
+      // The joiners between lists are not part of any one's name: EPA's
+      // county list was "Geographic Area -- or -- -- or --".
+      let outside = clean(clean(rowText(el)).replace(/[-\u2013\u2014]+\s*(?:or|and)\s*[-\u2013\u2014]+/gi, " ").replace(/(?:^|\s)[-\u2013\u2014|:]+(?=\s|$)/g, " "));
+      if (!/[a-z0-9]/i.test(outside.replace(/\b(?:or|and)\b/gi, ""))) outside = "";
       // Three lists in one row - year, month, day under "Start Date:" - read
-      // as three "Start Date:". What a list holds says which it is.
-      if (outside && el.parentElement && el.parentElement.querySelectorAll("select").length > 1) {
-        const hint = optionShape(el);
-        if (hint) outside = `${outside} ${hint}`;
+      // as three "Start Date:". What a list holds says which it is: its
+      // placeholder first ("Select a County ..."), then its options' shape.
+      if (el.parentElement && el.parentElement.querySelectorAll("select").length > 1) {
+        const first = el.options && el.options[0] ? clean(el.options[0].text) : "";
+        const said = first.match(/^(?:select|choose|pick)\s+(?:an?\s+|the\s+)?(.+?)\s*(?:\.{2,}|\u2026)?$/i);
+        const placeholderName = said && said[1].length <= 40 ? said[1] : "";
+        if (placeholderName) outside = outside && !outside.toLowerCase().includes(placeholderName.toLowerCase()) ? `${outside}: ${placeholderName}` : (outside || placeholderName);
+        else if (outside) {
+          const hint = optionShape(el);
+          if (hint) outside = `${outside} ${hint}`;
+        }
       }
       const shorthand = clean(el.name || el.id || "")
         .replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
@@ -327,7 +337,8 @@
       while (n && n.nodeType === 3 && !clean(n.nodeValue)) n = n[dir];
       if (!n || n.nodeType !== 3) continue;
       const t = clean(n.nodeValue).split(/(?<=[.!?])\s+/).pop().replace(/:$/, "");
-      if (t && t.length <= 80 && /[a-z]/i.test(t)) return t;
+      // A word, not a joiner: EPA's three area lists sit between "-- or --".
+      if (t && t.length <= 80 && /[a-z]/i.test(t.replace(/\b(?:or|and)\b/gi, ""))) return t;
     }
     for (const dir of ["previousElementSibling", "nextElementSibling"]) {
       let sib = el[dir];
@@ -1229,14 +1240,19 @@
    * With none set - a corpus scoring the reader - nothing is left out.
    */
   const currentRequestOf = () => kept.request;
+  // What a list offers, as one string: a list that was there all along can
+  // still be what an action brought up, by filling.
+  const optionsKey = (c) => (c.options || []).map((o) => String(o.text || o.value || "")).join("\u0001");
   function setRequest(text) {
     kept.request = text == null ? null : String(text);
     // The page as the request found it, so what an action brings up can be
     // told apart from what was there all along.
     try {
-      kept.before = new Set(inventoryNow({}).controls.map(peekKey));
+      const now = inventoryNow({}).controls;
+      kept.before = new Set(now.map(peekKey));
+      kept.optionsBefore = new Map(now.map((c) => [peekKey(c), optionsKey(c)]));
       kept.headsBefore = new Set([...document.querySelectorAll("h1, h2, h3, h4, [role=heading]")].map((h) => norm(h.textContent)));
-    } catch (e) { kept.before = null; kept.headsBefore = null; }
+    } catch (e) { kept.before = null; kept.headsBefore = null; kept.optionsBefore = null; }
     return { set: kept.request !== null };
   }
   /* What came up since the request began: the controls and the heading an
@@ -1251,7 +1267,12 @@
     const menuItem = new Set();
     for (const [, d] of behindDoors) for (const it of d.items) menuItem.add(peekKey(it));
     const CLOSER = /^(?:[×✕✖xX]|close|dismiss|back)$/i;
-    const came = inventoryNow({}).controls.filter((c) => !kept.before.has(peekKey(c)) && !menuItem.has(peekKey(c))
+    // New, or a list there all along whose options changed: choosing a
+    // pollutant fills the Year list beside it, and "which years can I pick"
+    // is that list - which, being there before, did not count as come.
+    const refilled = (c) => (c.options || []).length > 0 && kept.optionsBefore
+      && kept.optionsBefore.has(peekKey(c)) && kept.optionsBefore.get(peekKey(c)) !== optionsKey(c);
+    const came = inventoryNow({}).controls.filter((c) => (!kept.before.has(peekKey(c)) || refilled(c)) && !menuItem.has(peekKey(c))
       && !c.sectionHead && !c.mapChrome && c.confidence !== "low" && !PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase()));
     const controls = came.map((c) => String(c.label || "").trim()).filter((l) => l && l.length <= 60 && !CLOSER.test(l));
     // A list that came up is read whole: "which flood years can I choose"
@@ -1419,8 +1440,10 @@
         // Offered as usable, a disabled control is a lie: acting on it does
         // nothing and the card reports success. Recorded, not offered.
         // Through its fieldset too: a field inside <fieldset disabled> is as
-        // dead as one disabled itself, and only :disabled says so.
-        disabled: (el.disabled || (/^(?:INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName)
+        // dead as one disabled itself, and only :disabled says so. A control
+        // drawn from divs says it in aria-disabled - a pager's Previous on
+        // its first page.
+        disabled: (el.disabled || el.getAttribute("aria-disabled") === "true" || (/^(?:INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName)
           && (() => { try { return el.matches(":disabled"); } catch (e) { return false; } })())) ? true : undefined,
         // Hidden behind something that can be opened. Carried through so a
         // caller can open it rather than report the control missing.
