@@ -175,8 +175,16 @@
         const placeholderName = said && said[1].length <= 40 ? said[1] : "";
         if (placeholderName) outside = outside && !outside.toLowerCase().includes(placeholderName.toLowerCase()) ? `${outside}: ${placeholderName}` : (outside || placeholderName);
         else if (outside) {
+          // The kind of list, where its own word does not already say it:
+          // "Month: [list]" was "Month month".
           const hint = optionShape(el);
-          if (hint) outside = `${outside} ${hint}`;
+          if (hint && !new RegExp(`\\b${hint}\\b`, "i").test(outside)) outside = `${outside} ${hint}`;
+          // And the run it belongs to. "Start: Year: [list] Month: [list]
+          // End: Year: [list] Month: [list]" named both month lists "Month",
+          // and the model was shown one of them: "change the end month"
+          // could not be done, and was not.
+          const group = groupLeadOf(el);
+          if (group && !outside.toLowerCase().startsWith(group.toLowerCase())) outside = `${group}: ${outside}`;
         }
       }
       const shorthand = clean(el.name || el.id || "")
@@ -287,6 +295,23 @@
   //
   // Bounded hard. A row is a few words; anything longer is a container, and
   // a container's text is not a label.
+  // "Start" of "Start: Year: [list] Month: [list] Day: [list]": walked back
+  // past the lists before it to the text that opens the run - a word, a
+  // colon, then the first list's own word. A line or a block ends the look.
+  const groupLeadOf = (sel) => {
+    for (let n = sel.previousSibling, lists = 0; n && lists < 4; n = n.previousSibling) {
+      if (n.nodeType === 1) {
+        if (/^(?:BR|P|DIV|TR|TD|TABLE|HR|LI|UL|FIELDSET)$/.test(n.tagName)) return "";
+        if (n.tagName === "SELECT") lists++;
+        continue;
+      }
+      if (n.nodeType !== 3) continue;
+      const t = String(n.nodeValue || "").replace(/[\s\u00a0]+/g, " ").trim();
+      const m = t.match(/^([A-Za-z][A-Za-z ]{0,20}?)\s*:\s*[A-Za-z][A-Za-z ]{0,20}:?$/);
+      if (m) return m[1].trim();
+    }
+    return "";
+  };
   const optionShape = (sel) => {
     const texts = [...sel.options].map((o) => String(o.text || "").trim()).filter(Boolean).slice(0, 40);
     if (texts.length < 3) return "";
@@ -317,6 +342,26 @@
     } catch (e) { /* exotic markup: no caption */ }
     return undefined;
   };
+  /* A code in its own cell, and what the code means in the next. Reclamation's
+   * Hydromet lists each parameter as a box and "FB" in one cell and
+   * "Reservoir Water Surface Elevation, feet" in the next; named "FB" alone,
+   * "tick the water surface elevation" had nothing to reach but SURFACEAREA,
+   * on the one word they shared. The code is kept, so "fb" still names it.
+   */
+  const withRowDescription = (el, t) => {
+    try {
+      if (!/^[A-Za-z0-9_.-]{1,15}$/.test(t)) return t;
+      const cell = el.closest && el.closest("td, th");
+      if (!cell || cell.querySelectorAll("input, select, textarea").length > 1) return t;
+      for (let c = cell.nextElementSibling; c; c = c.nextElementSibling) {
+        if (c.querySelector("input, select, textarea, button, a[href]")) break;
+        const d = String(c.textContent || "").replace(/\s+/g, " ").trim();
+        if (d && /[a-z]{3}/i.test(d) && d.length <= 70) return `${t}: ${d}`;
+        if (d) break;
+      }
+    } catch (e) { /* the code alone, then */ }
+    return t;
+  };
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
     const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -340,7 +385,7 @@
       if (!n || n.nodeType !== 3) continue;
       const t = clean(n.nodeValue).split(/(?<=[.!?])\s+/).pop().replace(/:$/, "");
       // A word, not a joiner: EPA's three area lists sit between "-- or --".
-      if (t && t.length <= 80 && /[a-z]/i.test(t.replace(/\b(?:or|and)\b/gi, ""))) return t;
+      if (t && t.length <= 80 && /[a-z]/i.test(t.replace(/\b(?:or|and)\b/gi, ""))) return box ? withRowDescription(el, t) : t;
     }
     for (const dir of ["previousElementSibling", "nextElementSibling"]) {
       let sib = el[dir];

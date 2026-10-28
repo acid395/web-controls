@@ -5508,7 +5508,7 @@ function splitIntoSteps(instruction) {
  * with "and" in it - "the rivers and lakes layer" - stays whole.
  */
 function sharedVerbOfTwo(part) {
-  const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|open|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove)(?:\s+me)?)\s+(the\s+[a-z][a-z' -]{1,40}?)\s*,?\s+and\s+(the\s+[a-z][a-z' -]{1,40}?)\s*$/i);
+  const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|open|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove|check|tick|uncheck|untick|select|choose|pick)(?:\s+me)?)\s+(the\s+[a-z][a-z' -]{1,40}?)\s*,?\s+and\s+(the\s+[a-z][a-z' -]{1,40}?)\s*$/i);
   return m ? [`${m[1]} ${m[2]}`, `${m[1]} ${m[3]}`] : [part];
 }
 /* "And click search" finishes a typed box, and stays with it. After a list
@@ -12234,6 +12234,53 @@ function optionSpokenIn(clause, all) {
   return { control: c, option: o, label: `${c.label}: ${o.text || o.value}` };
 }
 
+/* A date said whole, against a run of Year / Month / Day lists. "Set the
+ * start to January 1 2024" set Start: Year to 2024 and nothing else - the
+ * month and day were words no single option wore. The run the clause names
+ * ("start", "end") where there are several; each list the date has a part for.
+ */
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+function dateSaidIn(clause) {
+  const t = String(clause || "").toLowerCase();
+  const mon = (w) => MONTHS.findIndex((m) => m.startsWith(w.slice(0, 3)));
+  let m = t.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (m) return { year: +m[1], month: +m[2], day: +m[3] };
+  m = t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (m) return { year: +m[3], month: +m[1], day: +m[2] };
+  m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/);
+  if (m) return { year: +m[3], month: mon(m[1]) + 1, day: +m[2] };
+  m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})\b/);
+  if (m) return { year: +m[3], month: mon(m[2]) + 1, day: +m[1] };
+  m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})\b/);
+  if (m) return { year: +m[2], month: mon(m[1]) + 1 };
+  return null;
+}
+function dateGroupPlan(clause, all) {
+  const date = dateSaidIn(clause);
+  if (!date) return null;
+  const groups = new Map();
+  for (const c of all) {
+    if (c.hidden || c.disabled || !LIST_TYPE.test(String(c.type || c.kind || ""))) continue;
+    const m = String(c.label || "").match(/^(.*?)[\s:]*\b(year|month|day)$/i);
+    if (!m) continue;
+    const key = m[1].trim().toLowerCase();
+    if (!groups.has(key)) groups.set(key, {});
+    groups.get(key)[m[2].toLowerCase()] = c;
+  }
+  const said = ` ${String(clause).toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  let runs = [...groups.entries()].filter(([, g]) => g.year && (g.month || g.day));
+  if (runs.length > 1) runs = runs.filter(([k]) => k && k.split(/\s+/).every((w) => said.includes(` ${w} `)));
+  if (runs.length !== 1) return null;
+  const g = runs[0][1];
+  const pick = (c, ok) => { const o = (c.options || []).find((x) => ok(String(x.text || "").trim().toLowerCase(), String(x.value ?? ""))); return o ? { control: c, option: o, label: `${c.label}: ${o.text || o.value}` } : null; };
+  const parts = [
+    g.year && pick(g.year, (t) => t === String(date.year)),
+    date.month && g.month && pick(g.month, (t, v) => t === MONTHS[date.month - 1] || t === MONTHS[date.month - 1].slice(0, 3) || t === String(date.month) || v === String(date.month)),
+    date.day && g.day && pick(g.day, (t) => t === String(date.day) || t === String(date.day).padStart(2, "0")),
+  ].filter(Boolean);
+  return parts.length >= 2 ? parts : null;
+}
+
 async function runSetToPlan(routeGlobal, setTo) {
         if (setTo.range) return runRange(routeGlobal, setTo.range);
         if (setTo.control.hidden && setTo.control.revealedBy) {
@@ -12422,6 +12469,18 @@ async function certainClausePlan(routeGlobal, clause) {
       run: async () => {
         const sent = await fillZipAndSend(routeGlobal, zipped.box, zipped.zip);
         return sent && sent.ok !== false ? { changed: true } : null;
+      },
+    };
+  }
+  const dated = dateGroupPlan(clause, all);
+  if (dated) {
+    debugLog(`[chain] "${clause}": a date across ${dated.map((d) => d.label).join(", ")}`);
+    return {
+      label: dated.map((d) => d.label).join(", "),
+      run: async () => {
+        let changed = false;
+        for (const d of dated) { const r = await runSetToPlan(routeGlobal, d); if (!r) return null; changed = changed || r.changed !== false; }
+        return { changed };
       },
     };
   }
@@ -13826,6 +13885,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 source: "this page",
               } });
             return;
+          }
+        }
+
+        // A date said whole against a run of Year / Month / Day lists, each
+        // list set to its part. "Set the end date to 3/15/2025" set the
+        // year alone; the month and day were no option's words.
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted) && splitIntoSteps(wanted).length === 1) {
+          const dinv = await readInventory();
+          const dated = dateGroupPlan(wanted, (dinv.ok && dinv.result && dinv.result.controls) || []);
+          if (dated) {
+            const rows = [];
+            for (const d of dated) {
+              const r = await runSetToPlan(route.global, d).catch(() => null);
+              rows.push({ name: d.label, value: r ? "set" : "failed", tone: r ? "ok" : "warn" });
+              if (!r) break;
+            }
+            if (rows.every((x) => x.value === "set")) {
+              respond({ ok: true, plannedBy: "exact-match", display: {
+                title: rows.map((x) => String(x.name).split(": ").pop()).join(" ").slice(0, 60),
+                subtitle: rows.map((x) => x.name).join("; "), stats: [], rows,
+                note: "a date said whole, set list by list, so this did not wait for the model", source: "this page",
+              } });
+              return;
+            }
           }
         }
 

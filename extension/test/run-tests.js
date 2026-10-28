@@ -14504,4 +14504,45 @@ else {
   }
 }
 
+// A form that names its boxes by code, with what each code means in the
+// next cell, and two runs of Year / Month / Day lists (Reclamation Hydromet).
+{
+  const yrs = Array.from({ length: 6 }, (_, i) => `<option>${2021 + i}</option>`).join("");
+  const mons = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m, i) => `<option value="${i + 1}">${m}</option>`).join("");
+  const days = Array.from({ length: 31 }, (_, i) => `<option>${i + 1}</option>`).join("");
+  const html = `<!doctype html><html><body><form><p>Start:&nbsp;&nbsp;Year:<select name="year">${yrs}</select> Month:<select name="month">${mons}</select> Day:<select name="day">${days}</select><br>
+    End:&nbsp;&nbsp;Year:<select name="year">${yrs}</select> Month:<select name="month">${mons}</select> Day:<select name="day">${days}</select></p>
+    <table><tr><td><input type="checkbox" name="pcode" value="fb" id="fb">FB</td><td>Reservoir Water Surface Elevation, feet</td><td>1925-2026</td></tr>
+    <tr><td><input type="checkbox" name="pcode" value="id" id="id">ID</td><td>Computed Average Reservoir Inflow, cfs</td><td>1926-2026</td></tr>
+    <tr><td><input type="checkbox" name="pcode" value="af" id="af">AF</td><td>Reservoir Water Storage, acre-feet</td><td>1925-2026</td></tr>
+    <tr><td><input type="checkbox" name="pcode" value="sa" id="sa">SURFACEAREA</td><td></td><td></td></tr></table>
+    <input type="submit" value="Retrieve Daily Data"></form></body></html>`;
+  const page = () => loadPage(html, { url: "https://water.example.gov/inventory?site=AMF" });
+  const pg0 = page();
+  if (pg0) {
+    const labels = pg0.GENERIC.inventory({ includeHidden: true }).controls.map((c) => c.label);
+    check("a box named by a code carries what the code means", labels.includes("FB: Reservoir Water Surface Elevation, feet"), true);
+    check("lists in a run carry the run's name, and no doubled kind", ["Start: Year", "Start: Month", "End: Month", "End: Day"].every((l) => labels.includes(l)) && !labels.some((l) => /month month/i.test(l)), true);
+    const off = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    const sel = (pg) => [...pg.document.querySelectorAll("select")].map((x) => x.options[x.selectedIndex].text).join("/");
+    const boxes = (pg) => [...pg.document.querySelectorAll("input[type=checkbox]:checked")].map((b) => b.id).join(",");
+    const cases = [
+      ["tick the reservoir water surface elevation box", (pg) => boxes(pg), "fb"],
+      ["check the computed average inflow and the reservoir storage", (pg) => boxes(pg), "id,af"],
+      ["set the start to January 1 2024 and the end to March 15 2025", sel, "2024/January/1/2025/March/15"],
+      ["set the end date to 3/15/2025", sel, "2021/January/1/2025/March/15"],
+    ];
+    for (const [say, read, want] of cases) {
+      const pg = page();
+      pg.document.forms[0].addEventListener("submit", (e) => e.preventDefault());
+      const bg = loadBackground({ page: pg });
+      bg.__model = off;
+      runAsync(async () => {
+        await bg.__ask({ type: "smartAsk", instruction: say });
+        check(`without the model: ${say}`, read(pg), want);
+      });
+    }
+  }
+}
+
 bodyDone = true;
