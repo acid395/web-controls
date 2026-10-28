@@ -80,6 +80,23 @@
     return out + dec.decode();
   };
 
+  // Which elements the page listens to for a press. A handler attached with
+  // addEventListener leaves no trace a reader can find afterwards, so
+  // AirNow's 24 Hours | 7 Days | 30 Days - plain spans, each with its own
+  // click listener - were not controls at all, and "show the last 7 days"
+  // had nothing to press. Noted as they are attached, from the page's start.
+  try {
+    if (!window.__wcPressListened && typeof WeakSet === "function" && window.EventTarget) {
+      const listened = window.__wcPressListened = new WeakSet();
+      const addNative = EventTarget.prototype.addEventListener;
+      const PRESS = /^(?:click|mousedown|mouseup|pointerdown|pointerup|touchstart|touchend)$/;
+      EventTarget.prototype.addEventListener = function (type, fn, opts) {
+        try { if (this && this.nodeType === 1 && PRESS.test(type)) listened.add(this); } catch (e) { /* never in the way */ }
+        return addNative.call(this, type, fn, opts);
+      };
+    }
+  } catch (e) { /* the page's own addEventListener stays as it was */ }
+
   const nativeFetch = window.fetch;
   if (nativeFetch) {
     window.fetch = function (...args) {

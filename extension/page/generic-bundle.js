@@ -881,6 +881,16 @@
     // counts only on something with no words of its own - an icon - since
     // on text it is far more often a highlight than an action.
     if (typeof el.onclick === "function" || typeof el.onmousedown === "function") return true;
+    // A press listener attached in script, noted as the page set it up
+    // (feed-capture.js). Only on something the size of one control: a page
+    // listens on its containers and <html> too, and those are not presses.
+    try {
+      const noted = window.__wcPressListened;
+      if (noted && noted.has(el) && !/^(?:HTML|BODY|MAIN|FORM|TABLE|TBODY|UL|OL|NAV|SECTION|ARTICLE|HEADER|FOOTER)$/.test(el.tagName)) {
+        const words = String(el.textContent || "").replace(/\s+/g, " ").trim();
+        if (el.getElementsByTagName("*").length <= 6 && (words ? words.length <= 60 : !!el.querySelector("img, svg"))) return true;
+      }
+    } catch (e) { /* nothing noted */ }
     try {
       const jq = window.jQuery;
       const ev = jq && typeof jq._data === "function" ? jq._data(el, "events") : null;

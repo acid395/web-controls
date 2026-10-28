@@ -14545,4 +14545,58 @@ else {
   }
 }
 
+// An AirNow-shaped page: trend spans wired in script, a map switch that
+// shares its name with links to another site, and a place search box.
+{
+  const capture = require("fs").readFileSync(require("path").join(__dirname, "..", "page", "feed-capture.js"), "utf8");
+  const airPage = () => {
+    const pg = loadPage(`<!doctype html><html><head><script>${capture}</script></head><body>
+      <div id="trends"><span id="24h"><strong>24 Hours</strong></span> | <span id="7d">7 Days</span> | <span id="30d">30 Days</span></div>
+      <a href="https://fire.example.com/" target="_blank">Fire and Smoke Map</a>
+      <div class="map-toggle"><input type="radio" name="map-mode" id="epa" checked><label for="epa">Interactive Map</label>
+      <input type="radio" name="map-mode" id="fire"><label for="fire">Fire and Smoke Map</label></div>
+      <div id="extra"></div>
+      <input type="text" id="loc" placeholder="ZIP Code, City, or State"><button id="go">Search</button></body></html>`, { url: "https://air.example.gov/?city=Denver" });
+    if (!pg) return null;
+    const d = pg.document;
+    pg.picked = [];
+    for (const id of ["24h", "7d", "30d"]) d.getElementById(id).addEventListener("click", () => pg.picked.push(id));
+    d.getElementById("fire").addEventListener("change", () => { d.getElementById("extra").innerHTML = `<a href="https://fire.example.com/x" id="openfire">Open in the Fire and Smoke Map</a>`; });
+    d.getElementById("go").addEventListener("click", () => {});
+    return pg;
+  };
+  const off = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+  const run = (say, then) => {
+    const pg = airPage();
+    if (!pg) return;
+    let left = 0;
+    pg.document.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a"); if (a) { e.preventDefault(); left++; } }, true);
+    const bg = loadBackground({ page: pg });
+    bg.__model = off;
+    runAsync(async () => { await bg.__ask({ type: "smartAsk", instruction: say }); then(pg, left); });
+  };
+  run("show the air quality for the last 7 days", (pg) => check("a span the page listens to is pressed: 7 Days", pg.picked.join(","), "7d"));
+  run("switch to the fire and smoke map", (pg, left) => check("the switch on this page, not the link to another site", `${pg.document.getElementById("fire").checked}/${left}`, "true/0"));
+  run("switch to the fire and smoke map, then back to the interactive map", (pg, left) => check("and back again, without following a link away", `${pg.document.getElementById("epa").checked}/${left}`, "true/0"));
+  run("look up the air quality in Seattle", (pg) => check("a place box is given the place", pg.document.getElementById("loc").value, "Seattle"));
+}
+// The planner types only what the request gave.
+{
+  const pg = loadPage(`<!doctype html><html><body><input type="text" id="zip" aria-label="ZIP Code, City, or State"><button id="d7">7 Days</button></body></html>`, { url: "https://air.example.gov/" });
+  if (pg) {
+    const bg = loadBackground({ page: pg });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") return { ok: true, step: { steps: [{ name: "ZIP Code, City, or State", do: "type", value: "12345" }] } };
+      return { ok: true, step: { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "model: show the air quality for the past week" });
+      check("a value the request never gave is not typed", pg.document.getElementById("zip").value, "");
+    });
+  }
+}
+
 bodyDone = true;
