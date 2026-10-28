@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.48 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.49 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.48",
+    version: "0.4.49",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.48";
+globalThis.WC_WIDGET_VERSION = "0.4.49";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -1154,8 +1154,16 @@ return (function () {
         const placeholderName = said && said[1].length <= 40 ? said[1] : "";
         if (placeholderName) outside = outside && !outside.toLowerCase().includes(placeholderName.toLowerCase()) ? `${outside}: ${placeholderName}` : (outside || placeholderName);
         else if (outside) {
+          // The kind of list, where its own word does not already say it:
+          // "Month: [list]" was "Month month".
           const hint = optionShape(el);
-          if (hint) outside = `${outside} ${hint}`;
+          if (hint && !new RegExp(`\\b${hint}\\b`, "i").test(outside)) outside = `${outside} ${hint}`;
+          // And the run it belongs to. "Start: Year: [list] Month: [list]
+          // End: Year: [list] Month: [list]" named both month lists "Month",
+          // and the model was shown one of them: "change the end month"
+          // could not be done, and was not.
+          const group = groupLeadOf(el);
+          if (group && !outside.toLowerCase().startsWith(group.toLowerCase())) outside = `${group}: ${outside}`;
         }
       }
       const shorthand = clean(el.name || el.id || "")
@@ -1266,6 +1274,23 @@ return (function () {
   //
   // Bounded hard. A row is a few words; anything longer is a container, and
   // a container's text is not a label.
+  // "Start" of "Start: Year: [list] Month: [list] Day: [list]": walked back
+  // past the lists before it to the text that opens the run - a word, a
+  // colon, then the first list's own word. A line or a block ends the look.
+  const groupLeadOf = (sel) => {
+    for (let n = sel.previousSibling, lists = 0; n && lists < 4; n = n.previousSibling) {
+      if (n.nodeType === 1) {
+        if (/^(?:BR|P|DIV|TR|TD|TABLE|HR|LI|UL|FIELDSET)$/.test(n.tagName)) return "";
+        if (n.tagName === "SELECT") lists++;
+        continue;
+      }
+      if (n.nodeType !== 3) continue;
+      const t = String(n.nodeValue || "").replace(/[\s\u00a0]+/g, " ").trim();
+      const m = t.match(/^([A-Za-z][A-Za-z ]{0,20}?)\s*:\s*[A-Za-z][A-Za-z ]{0,20}:?$/);
+      if (m) return m[1].trim();
+    }
+    return "";
+  };
   const optionShape = (sel) => {
     const texts = [...sel.options].map((o) => String(o.text || "").trim()).filter(Boolean).slice(0, 40);
     if (texts.length < 3) return "";
@@ -1296,6 +1321,26 @@ return (function () {
     } catch (e) { /* exotic markup: no caption */ }
     return undefined;
   };
+  /* A code in its own cell, and what the code means in the next. Reclamation's
+   * Hydromet lists each parameter as a box and "FB" in one cell and
+   * "Reservoir Water Surface Elevation, feet" in the next; named "FB" alone,
+   * "tick the water surface elevation" had nothing to reach but SURFACEAREA,
+   * on the one word they shared. The code is kept, so "fb" still names it.
+   */
+  const withRowDescription = (el, t) => {
+    try {
+      if (!/^[A-Za-z0-9_.-]{1,15}$/.test(t)) return t;
+      const cell = el.closest && el.closest("td, th");
+      if (!cell || cell.querySelectorAll("input, select, textarea").length > 1) return t;
+      for (let c = cell.nextElementSibling; c; c = c.nextElementSibling) {
+        if (c.querySelector("input, select, textarea, button, a[href]")) break;
+        const d = String(c.textContent || "").replace(/\s+/g, " ").trim();
+        if (d && /[a-z]{3}/i.test(d) && d.length <= 70) return `${t}: ${d}`;
+        if (d) break;
+      }
+    } catch (e) { /* the code alone, then */ }
+    return t;
+  };
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
     const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -1319,7 +1364,7 @@ return (function () {
       if (!n || n.nodeType !== 3) continue;
       const t = clean(n.nodeValue).split(/(?<=[.!?])\s+/).pop().replace(/:$/, "");
       // A word, not a joiner: EPA's three area lists sit between "-- or --".
-      if (t && t.length <= 80 && /[a-z]/i.test(t.replace(/\b(?:or|and)\b/gi, ""))) return t;
+      if (t && t.length <= 80 && /[a-z]/i.test(t.replace(/\b(?:or|and)\b/gi, ""))) return box ? withRowDescription(el, t) : t;
     }
     for (const dir of ["previousElementSibling", "nextElementSibling"]) {
       let sib = el[dir];
@@ -13014,7 +13059,7 @@ function splitIntoSteps(instruction) {
  * with "and" in it - "the rivers and lakes layer" - stays whole.
  */
 function sharedVerbOfTwo(part) {
-  const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|open|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove)(?:\s+me)?)\s+(the\s+[a-z][a-z' -]{1,40}?)\s*,?\s+and\s+(the\s+[a-z][a-z' -]{1,40}?)\s*$/i);
+  const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|open|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove|check|tick|uncheck|untick|select|choose|pick)(?:\s+me)?)\s+(the\s+[a-z][a-z' -]{1,40}?)\s*,?\s+and\s+(the\s+[a-z][a-z' -]{1,40}?)\s*$/i);
   return m ? [`${m[1]} ${m[2]}`, `${m[1]} ${m[3]}`] : [part];
 }
 /* "And click search" finishes a typed box, and stays with it. After a list
@@ -19740,6 +19785,53 @@ function optionSpokenIn(clause, all) {
   return { control: c, option: o, label: `${c.label}: ${o.text || o.value}` };
 }
 
+/* A date said whole, against a run of Year / Month / Day lists. "Set the
+ * start to January 1 2024" set Start: Year to 2024 and nothing else - the
+ * month and day were words no single option wore. The run the clause names
+ * ("start", "end") where there are several; each list the date has a part for.
+ */
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+function dateSaidIn(clause) {
+  const t = String(clause || "").toLowerCase();
+  const mon = (w) => MONTHS.findIndex((m) => m.startsWith(w.slice(0, 3)));
+  let m = t.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (m) return { year: +m[1], month: +m[2], day: +m[3] };
+  m = t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (m) return { year: +m[3], month: +m[1], day: +m[2] };
+  m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/);
+  if (m) return { year: +m[3], month: mon(m[1]) + 1, day: +m[2] };
+  m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})\b/);
+  if (m) return { year: +m[3], month: mon(m[2]) + 1, day: +m[1] };
+  m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})\b/);
+  if (m) return { year: +m[2], month: mon(m[1]) + 1 };
+  return null;
+}
+function dateGroupPlan(clause, all) {
+  const date = dateSaidIn(clause);
+  if (!date) return null;
+  const groups = new Map();
+  for (const c of all) {
+    if (c.hidden || c.disabled || !LIST_TYPE.test(String(c.type || c.kind || ""))) continue;
+    const m = String(c.label || "").match(/^(.*?)[\s:]*\b(year|month|day)$/i);
+    if (!m) continue;
+    const key = m[1].trim().toLowerCase();
+    if (!groups.has(key)) groups.set(key, {});
+    groups.get(key)[m[2].toLowerCase()] = c;
+  }
+  const said = ` ${String(clause).toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  let runs = [...groups.entries()].filter(([, g]) => g.year && (g.month || g.day));
+  if (runs.length > 1) runs = runs.filter(([k]) => k && k.split(/\s+/).every((w) => said.includes(` ${w} `)));
+  if (runs.length !== 1) return null;
+  const g = runs[0][1];
+  const pick = (c, ok) => { const o = (c.options || []).find((x) => ok(String(x.text || "").trim().toLowerCase(), String(x.value ?? ""))); return o ? { control: c, option: o, label: `${c.label}: ${o.text || o.value}` } : null; };
+  const parts = [
+    g.year && pick(g.year, (t) => t === String(date.year)),
+    date.month && g.month && pick(g.month, (t, v) => t === MONTHS[date.month - 1] || t === MONTHS[date.month - 1].slice(0, 3) || t === String(date.month) || v === String(date.month)),
+    date.day && g.day && pick(g.day, (t) => t === String(date.day) || t === String(date.day).padStart(2, "0")),
+  ].filter(Boolean);
+  return parts.length >= 2 ? parts : null;
+}
+
 async function runSetToPlan(routeGlobal, setTo) {
         if (setTo.range) return runRange(routeGlobal, setTo.range);
         if (setTo.control.hidden && setTo.control.revealedBy) {
@@ -19928,6 +20020,18 @@ async function certainClausePlan(routeGlobal, clause) {
       run: async () => {
         const sent = await fillZipAndSend(routeGlobal, zipped.box, zipped.zip);
         return sent && sent.ok !== false ? { changed: true } : null;
+      },
+    };
+  }
+  const dated = dateGroupPlan(clause, all);
+  if (dated) {
+    debugLog(`[chain] "${clause}": a date across ${dated.map((d) => d.label).join(", ")}`);
+    return {
+      label: dated.map((d) => d.label).join(", "),
+      run: async () => {
+        let changed = false;
+        for (const d of dated) { const r = await runSetToPlan(routeGlobal, d); if (!r) return null; changed = changed || r.changed !== false; }
+        return { changed };
       },
     };
   }
@@ -21332,6 +21436,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 source: "this page",
               } });
             return;
+          }
+        }
+
+        // A date said whole against a run of Year / Month / Day lists, each
+        // list set to its part. "Set the end date to 3/15/2025" set the
+        // year alone; the month and day were no option's words.
+        if (!forceBaseline && !forceModel && !conditional && isCommand(wanted) && splitIntoSteps(wanted).length === 1) {
+          const dinv = await readInventory();
+          const dated = dateGroupPlan(wanted, (dinv.ok && dinv.result && dinv.result.controls) || []);
+          if (dated) {
+            const rows = [];
+            for (const d of dated) {
+              const r = await runSetToPlan(route.global, d).catch(() => null);
+              rows.push({ name: d.label, value: r ? "set" : "failed", tone: r ? "ok" : "warn" });
+              if (!r) break;
+            }
+            if (rows.every((x) => x.value === "set")) {
+              respond({ ok: true, plannedBy: "exact-match", display: {
+                title: rows.map((x) => String(x.name).split(": ").pop()).join(" ").slice(0, 60),
+                subtitle: rows.map((x) => x.name).join("; "), stats: [], rows,
+                note: "a date said whole, set list by list, so this did not wait for the model", source: "this page",
+              } });
+              return;
+            }
           }
         }
 
