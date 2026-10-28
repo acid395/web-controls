@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.49 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.50 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.49";
+globalThis.WC_WIDGET_VERSION = "0.4.50";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -914,6 +914,23 @@ function installFeedCapture() {
     }
     return out + dec.decode();
   };
+
+  // Which elements the page listens to for a press. A handler attached with
+  // addEventListener leaves no trace a reader can find afterwards, so
+  // AirNow's 24 Hours | 7 Days | 30 Days - plain spans, each with its own
+  // click listener - were not controls at all, and "show the last 7 days"
+  // had nothing to press. Noted as they are attached, from the page's start.
+  try {
+    if (!window.__wcPressListened && typeof WeakSet === "function" && window.EventTarget) {
+      const listened = window.__wcPressListened = new WeakSet();
+      const addNative = EventTarget.prototype.addEventListener;
+      const PRESS = /^(?:click|mousedown|mouseup|pointerdown|pointerup|touchstart|touchend)$/;
+      EventTarget.prototype.addEventListener = function (type, fn, opts) {
+        try { if (this && this.nodeType === 1 && PRESS.test(type)) listened.add(this); } catch (e) { /* never in the way */ }
+        return addNative.call(this, type, fn, opts);
+      };
+    }
+  } catch (e) { /* the page's own addEventListener stays as it was */ }
 
   const nativeFetch = window.fetch;
   if (nativeFetch) {
@@ -1851,6 +1868,16 @@ return (function () {
     // counts only on something with no words of its own - an icon - since
     // on text it is far more often a highlight than an action.
     if (typeof el.onclick === "function" || typeof el.onmousedown === "function") return true;
+    // A press listener attached in script, noted as the page set it up
+    // (feed-capture.js). Only on something the size of one control: a page
+    // listens on its containers and <html> too, and those are not presses.
+    try {
+      const noted = window.__wcPressListened;
+      if (noted && noted.has(el) && !/^(?:HTML|BODY|MAIN|FORM|TABLE|TBODY|UL|OL|NAV|SECTION|ARTICLE|HEADER|FOOTER)$/.test(el.tagName)) {
+        const words = String(el.textContent || "").replace(/\s+/g, " ").trim();
+        if (el.getElementsByTagName("*").length <= 6 && (words ? words.length <= 60 : !!el.querySelector("img, svg"))) return true;
+      }
+    } catch (e) { /* nothing noted */ }
     try {
       const jq = window.jQuery;
       const ev = jq && typeof jq._data === "function" ? jq._data(el, "events") : null;
@@ -13119,7 +13146,7 @@ function nthOf(control, n) {
 // The compound form first. With a bare "set" earlier in the alternation,
 // "set the time zone to UTC" lost only "set " and "the time zone to UTC"
 // was taken for a name; "switch" and "change", with no bare form, worked.
-const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to|click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to)\s+(?:me\s+)?/i;
+const CLAUSE_LEAD = /^\s*(?:please\s+)?(?:(?:switch|change|set)\s+(?:it|this|that|the\s+[a-z ]{1,30}?)\s+to|click|press|tap|select|choose|pick|set|toggle|enable|disable|turn\s+(?:on|off)|switch\s+(?:on|off)|check|tick|open|show|hide|pull\s+up|bring\s+up|go\s+to|take\s+me\s+to|(?:go\s+|switch\s+|change\s+)?back\s+to)\s+(?:me\s+)?/i;
 /* The other names a label gives itself. "Hydrologic Ensemble Forecast
  * System (HEFS)" is called HEFS as surely as it is called the long form -
  * that is what the parentheses are for - and "pull up HEFS" matched
@@ -13202,6 +13229,13 @@ function namedByClause(all, clause) {
       return l === bare || l === whole || l === plainWhole || closeName(bare, l)
         || alsoCalled(c.label, c).some((a) => a === bare || a === whole || a === plainWhole);
     });
+    // The one on this page, where a link elsewhere wears the same name.
+    // AirNow's "Fire and Smoke Map" is a switch on the map and two links to
+    // fire.airnow.gov; "switch to the fire and smoke map" is the switch.
+    if (named.length > 1 && !/\b(?:go|visit|navigate|take\s+me|website|site)\b/i.test(text)) {
+      const here = named.filter((c) => !c.elsewhere && !leavesThePage(c));
+      if (here.length && here.length < named.length) named = here;
+    }
     // Where it is, said after what it is. "zoom in on the location map" is
     // Zoom in, on the map - and the place made the whole sentence a name
     // nothing wore, so a 3B was asked and pressed Site Location. Cut at each
@@ -14643,7 +14677,11 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
         outcome: searched ? "searched" : "no search box for that here" });
       continue;
     }
-    let planned = shortlist[names.indexOf(flat(st.name))] || shortlist[Number(st.n)] || null;
+    // Of controls sharing the name, one that stays on the page: the model's
+    // "Fire and Smoke Map" found the link to another site before the switch.
+    const sameName = shortlist.filter((c, i) => names[i] === flat(st.name));
+    let planned = (sameName.length > 1 ? (sameName.find((c) => !c.elsewhere && !leavesThePage(c)) || sameName[0]) : sameName[0])
+      || shortlist[Number(st.n)] || null;
     // The fuller name the request says in full: "show the permitted
     // dischargers" was planned as Dischargers, "expand all the waterbodies"
     // as All - each the part of a name the request gave whole.
@@ -14748,6 +14786,17 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
         outcome: ok ? `picked "${String(picked.label).slice(0, 40)}"` : `failed: no "${String(st.value).slice(0, 30)}" to pick there` });
       forgetInventory();
       continue;
+    }
+    // Only words the request gave. "Show the air quality for the last 7
+    // days" was planned as typing 12345 into the ZIP box - a value nobody
+    // said, made up to fill the step.
+    if (act === "type" && st.value != null && String(st.value).trim()) {
+      const said = meaningfulWords(String(st.value));
+      if (said.length && !said.some((w) => goalWordsP.some((g) => wordMatchesText(w, g) || wordMatchesText(g, w)))) {
+        history.push({ did: `type "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
+          outcome: "left alone - the request gave nothing like that to type" });
+        continue;
+      }
     }
     // A site's search box is typed into only when the request asks to
     // search. "Define a custom base period from 1991 to 2020" went into
@@ -19261,7 +19310,9 @@ async function pressConfirmIfRevealed(routeGlobal, clause, before) {
   if (!before) return null;
   const after = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
   const was = new Set(usableButtons(before).map((c) => c.selector));
-  const fresh = usableButtons(after).filter((c) => !was.has(c.selector));
+  // Not a link away: after the Fire and Smoke Map switch, "Open in the Fire
+  // and Smoke Map" appeared - a link to another site - and was pressed.
+  const fresh = usableButtons(after).filter((c) => !was.has(c.selector) && !c.elsewhere && !leavesThePage(c));
   debugLog(`[chain] after "${clause}": ${fresh.length} button(s) became usable${fresh.length ? " - " + fresh.map((c) => c.label).slice(0, 4).join(" / ") : ""}`);
   if (!fresh.length) return null;
   const words = new Set(meaningfulWords(clause));
@@ -20157,6 +20208,12 @@ async function searchClause(routeGlobal, clause) {
   }
   const box = findSearchBox(all, where);
   if (!box) return null;
+  // A box for places takes the place. "Look up the air quality in Seattle"
+  // typed the whole phrase into AirNow's "ZIP Code, City, or State".
+  if (/\b(?:location|city|zip|address|place|town|postal|where)\b/i.test(`${box.label || ""} ${box.placeholder || ""}`)) {
+    const place = String(words).match(/^(?:the\s+)?[a-z][a-z ]{1,40}?\s+(?:in|for|near|around|at)\s+(.+)$/i);
+    if (place && place[1].trim()) words = place[1].trim();
+  }
   // "Search for station 46042" in a box called Station ID Search: the box's
   // own word is not part of the identifier. Only where what is left is one
   // or two words with a figure in them.
