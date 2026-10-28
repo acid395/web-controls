@@ -418,3 +418,37 @@ action+explain  pick ozone for 2024 in Iowa and tell me how many monitor sites t
 explain         which pollutants can I download data for
 explain         where does the recent ozone and particle data come from
 explain         when was this page last updated
+
+ROUND 12 - written 2026-10-27 from the rendered pages (Hydromet's AMF form after choosing the station; AirNow after searching Denver), before any run.
+hydromet  https://www.usbr.gov/pn-bin/inventory.pl?site=AMF&ui=true&interval=daily
+action          tick the reservoir water surface elevation box
+action          select the reservoir storage in acre-feet
+action          check the daily total precipitation
+action          set the start year to 2020
+action          change the end month to March
+action          retrieve the daily data
+multistep       check the computed average inflow and the reservoir storage
+multistep       set the start to January 1 2024 and the end to December 31 2024
+multistep       tick the maximum and minimum air temperature, then retrieve the daily data
+multistep       choose reservoir storage, set the start year to 2023, then get the data
+action+explain  check the reservoir storage, retrieve the daily data and tell me the storage on the first day shown
+action+explain  tick the average inflow and tell me since when inflow records are available
+explain         which station is this data for
+explain         since what year are reservoir storage records available
+explain         which parameters measure air temperature
+airnow  https://www.airnow.gov/?city=Denver&state=CO&country=USA
+action          show the air quality for the last 7 days
+action          switch the map to the fire and smoke map
+action          open the AQI legend
+action          show the monitors near me
+action          look up the air quality in Seattle
+action          show the air quality alerts
+multistep       show the 30 day trend, then open the AQI legend
+multistep       open national maps and switch to the fire and smoke map
+multistep       search for Boise, then show the last 24 hours
+multistep       switch to the fire and smoke map, then back to the interactive map
+action+explain  search for Phoenix and tell me the current AQI there
+action+explain  open the AQI legend and tell me which range is unhealthy for sensitive groups
+explain         what is the air quality in Denver right now
+explain         which pollutant is the highest right now
+explain         what is the air quality forecast for tomorrow

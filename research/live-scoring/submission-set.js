@@ -2390,3 +2390,394 @@ module.exports["epa-daily"] = {
     }
   ]
 };
+
+// Round 12, 2026-10-27: Reclamation Hydromet archive (AMF) and AirNow (Denver), written from the rendered pages before any run.
+module.exports["hydromet"] = {
+  "firstContact": true,
+  "later": true,
+  "url": "https://www.usbr.gov/pn-bin/inventory.pl?site=AMF&ui=true&interval=daily",
+  "note": "Bureau of Reclamation Hydromet archive, daily data for AMF (American Falls Reservoir at American Falls, ID): Start and End Year / Month / Day lists, a table of parameters (FB elevation, GAIN, ID inflow, PU, MM/MX/MN air temperature, PC, AF storage, PP precipitation, SA, NETEVAP) each with a checkbox, its years of record and description, and a Retrieve Daily Data button that opens the data as text.",
+  "prompts": [
+    {
+      "say": "tick the reservoir water surface elevation box",
+      "kind": "action",
+      "steps": [
+        "fb"
+      ],
+      "on": "fb",
+      "want": {
+        "clicked": "fb"
+      },
+      "offline": null
+    },
+    {
+      "say": "select the reservoir storage in acre-feet",
+      "kind": "action",
+      "steps": [
+        "af"
+      ],
+      "on": "af",
+      "want": {
+        "clicked": "af"
+      },
+      "offline": null
+    },
+    {
+      "say": "check the daily total precipitation",
+      "kind": "action",
+      "steps": [
+        "pp"
+      ],
+      "on": "pp",
+      "want": {
+        "clicked": "pp"
+      },
+      "offline": null
+    },
+    {
+      "say": "set the start year to 2020",
+      "kind": "action",
+      "steps": [
+        "Start Year"
+      ],
+      "on": "Start Year",
+      "want": {
+        "clicked": "Start Year"
+      },
+      "offline": null
+    },
+    {
+      "say": "change the end month to March",
+      "kind": "action",
+      "steps": [
+        "End Month"
+      ],
+      "on": "End Month",
+      "want": {
+        "clicked": "End Month"
+      },
+      "offline": null
+    },
+    {
+      "say": "retrieve the daily data",
+      "kind": "action",
+      "steps": [
+        "Retrieve Daily Data"
+      ],
+      "on": "Retrieve Daily Data",
+      "want": {
+        "clicked": "Retrieve Daily Data"
+      },
+      "offline": null
+    },
+    {
+      "say": "check the computed average inflow and the reservoir storage",
+      "kind": "multistep",
+      "steps": [
+        "id",
+        "af"
+      ],
+      "on": "id",
+      "want": {
+        "clicked": "id"
+      },
+      "offline": null
+    },
+    {
+      "say": "set the start to January 1 2024 and the end to December 31 2024",
+      "kind": "multistep",
+      "steps": [
+        "Start Year",
+        "Start Month",
+        "Start Day",
+        "End Year",
+        "End Month",
+        "End Day"
+      ],
+      "on": "Start Year",
+      "want": {
+        "clicked": "Start Year"
+      },
+      "offline": null
+    },
+    {
+      "say": "tick the maximum and minimum air temperature, then retrieve the daily data",
+      "kind": "multistep",
+      "steps": [
+        "mx",
+        "mn",
+        "Retrieve Daily Data"
+      ],
+      "on": "mx",
+      "want": {
+        "clicked": "mx"
+      },
+      "offline": null
+    },
+    {
+      "say": "choose reservoir storage, set the start year to 2023, then get the data",
+      "kind": "multistep",
+      "steps": [
+        "af",
+        "Start Year",
+        "Retrieve Daily Data"
+      ],
+      "on": "af",
+      "want": {
+        "clicked": "af"
+      },
+      "offline": null
+    },
+    {
+      "say": "check the reservoir storage, retrieve the daily data and tell me the storage on the first day shown",
+      "kind": "action+explain",
+      "steps": [
+        "af",
+        "Retrieve Daily Data"
+      ],
+      "explain": true,
+      "on": "af",
+      "want": {
+        "clicked": "af"
+      },
+      "offline": null
+    },
+    {
+      "say": "tick the average inflow and tell me since when inflow records are available",
+      "kind": "action+explain",
+      "steps": [
+        "id"
+      ],
+      "explain": true,
+      "on": "id",
+      "want": {
+        "clicked": "id"
+      },
+      "offline": null
+    },
+    {
+      "say": "which station is this data for",
+      "kind": "explain",
+      "steps": [],
+      "explain": true,
+      "on": null,
+      "want": {
+        "read": true
+      },
+      "offline": null
+    },
+    {
+      "say": "since what year are reservoir storage records available",
+      "kind": "explain",
+      "steps": [],
+      "explain": true,
+      "on": null,
+      "want": {
+        "read": true
+      },
+      "offline": null
+    },
+    {
+      "say": "which parameters measure air temperature",
+      "kind": "explain",
+      "steps": [],
+      "explain": true,
+      "on": null,
+      "want": {
+        "read": true
+      },
+      "offline": null
+    }
+  ]
+};
+module.exports["airnow"] = {
+  "firstContact": true,
+  "later": true,
+  "url": "https://www.airnow.gov/?city=Denver&state=CO&country=USA",
+  "note": "AirNow (EPA) for Denver, CO: a Location Search, the current AQI and its primary pollutant, 24 Hours / 7 Days / 30 Days trend views, Monitors Near Me and Recent Trends, an AQI Legend, today's and tomorrow's forecast, readings by pollutant and monitor, National Maps with Interactive Map / Fire and Smoke Map, a Show Alerts Popup button and header menus (AQI & Health, Fires, Maps & Data, Education). Readings change through the day.",
+  "prompts": [
+    {
+      "say": "show the air quality for the last 7 days",
+      "kind": "action",
+      "steps": [
+        "7 Days"
+      ],
+      "on": "7 Days",
+      "want": {
+        "clicked": "7 Days"
+      },
+      "offline": null
+    },
+    {
+      "say": "switch the map to the fire and smoke map",
+      "kind": "action",
+      "steps": [
+        "Fire and Smoke Map"
+      ],
+      "on": "Fire and Smoke Map",
+      "want": {
+        "clicked": "Fire and Smoke Map"
+      },
+      "offline": null
+    },
+    {
+      "say": "open the AQI legend",
+      "kind": "action",
+      "steps": [
+        "AQI Legend"
+      ],
+      "on": "AQI Legend",
+      "want": {
+        "clicked": "AQI Legend"
+      },
+      "offline": null
+    },
+    {
+      "say": "show the monitors near me",
+      "kind": "action",
+      "steps": [
+        "Monitors Near Me"
+      ],
+      "on": "Monitors Near Me",
+      "want": {
+        "clicked": "Monitors Near Me"
+      },
+      "offline": null
+    },
+    {
+      "say": "look up the air quality in Seattle",
+      "kind": "action",
+      "steps": [
+        "Location Search"
+      ],
+      "on": "Location Search",
+      "want": {
+        "clicked": "Location Search"
+      },
+      "offline": null
+    },
+    {
+      "say": "show the air quality alerts",
+      "kind": "action",
+      "steps": [
+        "Show Alerts Popup"
+      ],
+      "on": "Show Alerts Popup",
+      "want": {
+        "clicked": "Show Alerts Popup"
+      },
+      "offline": null
+    },
+    {
+      "say": "show the 30 day trend, then open the AQI legend",
+      "kind": "multistep",
+      "steps": [
+        "30 Days",
+        "AQI Legend"
+      ],
+      "on": "30 Days",
+      "want": {
+        "clicked": "30 Days"
+      },
+      "offline": null
+    },
+    {
+      "say": "open national maps and switch to the fire and smoke map",
+      "kind": "multistep",
+      "steps": [
+        "National Maps",
+        "Fire and Smoke Map"
+      ],
+      "on": "National Maps",
+      "want": {
+        "clicked": "National Maps"
+      },
+      "offline": null
+    },
+    {
+      "say": "search for Boise, then show the last 24 hours",
+      "kind": "multistep",
+      "steps": [
+        "Location Search",
+        "24 Hours"
+      ],
+      "on": "Location Search",
+      "want": {
+        "clicked": "Location Search"
+      },
+      "offline": null
+    },
+    {
+      "say": "switch to the fire and smoke map, then back to the interactive map",
+      "kind": "multistep",
+      "steps": [
+        "Fire and Smoke Map",
+        "Interactive Map"
+      ],
+      "on": "Fire and Smoke Map",
+      "want": {
+        "clicked": "Fire and Smoke Map"
+      },
+      "offline": null
+    },
+    {
+      "say": "search for Phoenix and tell me the current AQI there",
+      "kind": "action+explain",
+      "steps": [
+        "Location Search"
+      ],
+      "explain": true,
+      "on": "Location Search",
+      "want": {
+        "clicked": "Location Search"
+      },
+      "offline": null
+    },
+    {
+      "say": "open the AQI legend and tell me which range is unhealthy for sensitive groups",
+      "kind": "action+explain",
+      "steps": [
+        "AQI Legend"
+      ],
+      "explain": true,
+      "on": "AQI Legend",
+      "want": {
+        "clicked": "AQI Legend"
+      },
+      "offline": null
+    },
+    {
+      "say": "what is the air quality in Denver right now",
+      "kind": "explain",
+      "steps": [],
+      "explain": true,
+      "on": null,
+      "want": {
+        "read": true
+      },
+      "offline": null
+    },
+    {
+      "say": "which pollutant is the highest right now",
+      "kind": "explain",
+      "steps": [],
+      "explain": true,
+      "on": null,
+      "want": {
+        "read": true
+      },
+      "offline": null
+    },
+    {
+      "say": "what is the air quality forecast for tomorrow",
+      "kind": "explain",
+      "steps": [],
+      "explain": true,
+      "on": null,
+      "want": {
+        "read": true
+      },
+      "offline": null
+    }
+  ]
+};
