@@ -1,14 +1,14 @@
-/*! web-controls widget 0.4.51 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.52 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 const WebControls = typeof window === "undefined"
   ? {
-    version: "0.4.51",
+    version: "0.4.52",
     mount() {
       throw new Error("web-controls-widget runs in the browser: call mount() from client-side code (useEffect, onMounted, or a \"use client\" component).");
     },
   }
   : (() => {
 if (window.WebControls) return window.WebControls;
-globalThis.WC_WIDGET_VERSION = "0.4.51";
+globalThis.WC_WIDGET_VERSION = "0.4.52";
 const WC_SCRIPT_URL = import.meta.url;
 const WC_LOADERS = {
   loadLib: () => import("./web-llm.js"),
@@ -14431,13 +14431,34 @@ function listChoicesFor(goal, pool) {
 // rotate buttons and scale bar, and opened its keyboard-shortcuts dialog
 // over the page for every request after it.
 const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
+// Verbs that are also what a control is called: "zoom in on the map" is the
+// Zoom in button and "search the site" is Open Search Bar, yet with every
+// verb dropped neither request had a word left that reached its control,
+// and both fell off the list every model chooses from. Weighted above a
+// shared noun, since it names the action itself: on a page of thirty "Map
+// layer" links, "map" ties them all with Zoom in and page order cut it.
+const NAMING_VERB = /^(?:zoom|search|download|sort|group|reset|clear|apply|find)$/;
 function shortlistFor(goal, controls, max = 20) {
-  if (!ABOUT_THE_MAP_VIEW.test(String(goal || ""))) controls = controls.filter((c) => !c.mapChrome);
-  const words = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
+  const all = meaningfulWords(goal);
+  const words = all.filter((w) => !CONTROL_VERB.test(w));
+  const verbs = all.filter((w) => NAMING_VERB.test(w));
+  const typing = carriesAValue(goal);
+  // The map's own buttons are left out unless the request is about the view,
+  // or names one whole: "turn on the hydro layer" is the map's Hydro switch,
+  // while "map" alone does not bring back Map camera controls.
+  if (!ABOUT_THE_MAP_VIEW.test(String(goal || ""))) {
+    const named = (c) => { const own = meaningfulWords(String(c.label || "")); return own.length > 0 && own.every((lw) => words.some((w) => wordMatchesText(w, lw) === "exact")); };
+    controls = controls.filter((c) => !c.mapChrome || named(c));
+  }
   const scored = controls.map((c, i) => {
     const label = String(c.label || "").toLowerCase();
     let n = 0;
     for (const w of words) { const h = wordMatchesText(w, label); if (h === "exact") n += 2; else if (h) n += 1; }
+    for (const w of verbs) if (wordMatchesText(w, label) === "exact") n += 3;
+    // A value to type goes in a box: "type 60601 into the forecast box" is
+    // the ZIP field, which shares one word with the request and lost its
+    // place on the list to a dozen Forecast links sharing the same one.
+    if (typing && takesTyping(c)) n += 1;
     if (!n && alsoCalled(c.label, c).some((a) => words.some((w) => wordMatchesText(w, a)))) n += 1;
     const opts = c.options || [];
     if (opts.length && words.some((w) => opts.some((o) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))) n += 3;
@@ -14843,10 +14864,15 @@ async function sectionsFirst(routeGlobal, wanted) {
 async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
   const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
   if (!inv || !inv.ok || !inv.result) return null;
-  // A larger model is shown more: a 3B reads twenty lines in seconds and
-  // loses its way past that, an 8B on a workstation reads forty as fast.
-  const big = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL)) >= 4000;
-  let shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }).filter((c) => String(c.label || "").length <= 100), big ? 40 : 20);
+  // Every model is shown the same list. A larger one used to be shown forty
+  // controls and sixteen options each where a 3B or 4B saw twenty and eight,
+  // so an 8B chose among twice the look-alikes and lost to the smaller ones
+  // on the same request. The control a request needs is on the twenty in 242
+  // of the bench's 244 steps and on the forty in 243, so the longer list was
+  // buying almost nothing but distractors; and the size was read from a
+  // cached status that could still name the model loaded before a switch.
+  const LIST = 20, OPTIONS = 8;
+  let shortlist = shortlistFor(goal, controlsForModel(inv.result, { max: WHOLE_PAGE }).filter((c) => String(c.label || "").length <= 100), LIST);
   if (!shortlist.length) return null;
   const began = Date.now();
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -14878,11 +14904,11 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // appears once its layer is on was not there to be chosen the first time.
     const again = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
     if (again && again.ok && again.result) {
-      shortlist = shortlistFor(goal, controlsForModel(again.result, { max: WHOLE_PAGE }).filter((c) => String(c.label || "").length <= 100), big ? 40 : 20);
+      shortlist = shortlistFor(goal, controlsForModel(again.result, { max: WHOLE_PAGE }).filter((c) => String(c.label || "").length <= 100), LIST);
       names = globalThis.WC_PLAN_NAMES(shortlist).map(flat);
     }
   }
-  const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, optionsShown: big ? 16 : 8, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
+  const asked = await askModelForStep({ mode: "plan", goal, controls: shortlist, history, optionsShown: OPTIONS, schema: globalThis.WC_PLAN_SCHEMA(shortlist) });
   calls++;
   if (asked && asked.cost) cost = asked.cost;
   const steps = asked && asked.ok && asked.step && Array.isArray(asked.step.steps) ? asked.step.steps : [];
@@ -24732,10 +24758,9 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
 
   async function build(modelId) {
     const api = await webllm();
-    // The same allowance panel-model.js makes: the large models get a
-    // smaller context window, which is what lets them fit beside a page.
-    const chatOpts = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM(modelId) >= 4000)
-      ? { context_window_size: 3072 } : undefined;
+    // As panel-model.js: every model on the window WebLLM ships it with, so
+    // a large one is not left shorter of room than a small one.
+    const chatOpts = undefined;
     // The main thread only when the worker itself could not start - a CSP
     // without blob:, a browser without module workers. A worker that started
     // and then failed to load the model failed for a reason the main thread
