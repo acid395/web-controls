@@ -14599,4 +14599,94 @@ else {
   }
 }
 
+// A City-FIDAP-shaped sidebar: section headers that say open or shut only by
+// what is mounted after them, and layers that say on or off only by turning
+// blue, a beat after the press. Turning a layer off, deselecting it, and
+// opening a section already open all pressed the wrong way.
+{
+  const fidap = () => {
+    const pg = loadPage(`<!doctype html><html><body><div id="app"><ul id="side">
+      <li class="head"><div class="hd" style="cursor:pointer"><span>Infrastructure</span><span class="material-icons-round" aria-hidden="true">expand_less</span></div></li><hr>
+      <li class="head"><div class="hd" style="cursor:pointer"><span>Transportation</span><span class="material-icons-round" aria-hidden="true">expand_less</span></div></li><hr>
+      </ul><p>map</p></div></body></html>`, { url: "http://localhost:3000/lab/dt/3Dmap" });
+    if (!pg) return null;
+    const d = pg.document, w = pg.window;
+    pg.on = new Set();
+    const ITEMS = { Infrastructure: ["Buildings", "Bridges", "Railway Bridge", "Groundwater Wells"], Transportation: ["Road", "Public Transit", "Bicycle"] };
+    // Mounted only while open, with a height only then.
+    const realRect = w.HTMLElement.prototype.getBoundingClientRect;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (/MuiCollapse-root/.test(this.className)) return { left: 0, top: 0, right: 200, bottom: 120, width: 200, height: 120, x: 0, y: 0 };
+      return realRect.call(this);
+    };
+    for (const hd of d.querySelectorAll(".hd")) {
+      hd.onclick = () => {
+        const li = hd.closest("li");
+        const next = li.nextElementSibling;
+        if (next && /MuiCollapse-root/.test(next.className)) { next.remove(); return; }
+        const col = d.createElement("div");
+        col.className = "MuiCollapse-root MuiCollapse-entered";
+        for (const name of ITEMS[hd.textContent.replace("expand_less", "").trim()]) {
+          const ul = d.createElement("ul");
+          ul.innerHTML = `<a href="/lab/dt/3Dmap"><li><div><span>${name}</span></div></li></a>`;
+          const item = ul.querySelector("li");
+          if (pg.on.has(name)) item.style.backgroundColor = "rgb(26, 115, 232)";
+          ul.querySelector("a").addEventListener("click", (e) => e.preventDefault());
+          item.onclick = () => {
+            if (pg.on.has(name)) pg.on.delete(name); else pg.on.add(name);
+            const lit = pg.on.has(name);
+            w.setTimeout(() => { item.style.backgroundColor = lit ? "rgb(26, 115, 232)" : ""; }, 150);
+          };
+          col.appendChild(ul);
+        }
+        li.after(col);
+      };
+    }
+    // React's own root: an empty onclick on the element it renders into.
+    const app = d.getElementById("app");
+    app["__reactContainer$x"] = {};
+    app.onclick = () => {};
+    return pg;
+  };
+  const off = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+  const openNow = (pg, name) => {
+    const hd = [...pg.document.querySelectorAll(".hd")].find((h) => h.textContent.includes(name));
+    const next = hd.closest("li").nextElementSibling;
+    return !!(next && /MuiCollapse-root/.test(next.className));
+  };
+  const run = (says, then) => {
+    const pg = fidap();
+    if (!pg) return;
+    const bg = loadBackground({ page: pg });
+    bg.__model = off;
+    runAsync(async () => {
+      const cards = [];
+      for (const say of says) {
+        cards.push(await bg.__ask({ type: "smartAsk", instruction: say }));
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      then(pg, cards);
+    });
+  };
+  run(["turn on the buildings"], (pg) => check("a layer behind a shut section is turned on", [...pg.on].join(","), "Buildings"));
+  run(["turn on the buildings", "turn off the buildings"], (pg) => check("and off again, nothing else pressed", [...pg.on].join(",") || "none", "none"));
+  run(["turn off the buildings"], (pg, [c]) => {
+    check("a layer already off is not pressed on", [...pg.on].join(",") || "none", "none");
+    ensure("and that is not reported as a failure", !/couldn.t/i.test(String(c && c.display && c.display.title)), c && c.display && c.display.title);
+  });
+  run(["turn on the bridges", "deselect bridges"], (pg) => check("deselect turns a layer off", [...pg.on].join(",") || "none", "none"));
+  run(["turn on the bridges", "turn the bridges off"], (pg) => check("'turn X off' too", [...pg.on].join(",") || "none", "none"));
+  run(["open infrastructure", "open infrastructure"], (pg) => check("a section already open is left open", openNow(pg, "Infrastructure"), true));
+  run(["open infrastructure", "close infrastructure"], (pg) => check("and close shuts it", openNow(pg, "Infrastructure"), false));
+  run(["close infrastructure"], (pg) => check("a shut section asked to close stays shut", openNow(pg, "Infrastructure"), false));
+  {
+    const pg = fidap();
+    if (pg) {
+      const inv = pg.GENERIC.inventory({});
+      ensure("React's root is not a control", !inv.controls.some((c) => c.selector === "#app" || /Infrastructure.*Transportation/.test(c.label)),
+        inv.controls.map((c) => c.label).join(" | "));
+    }
+  }
+}
+
 bodyDone = true;

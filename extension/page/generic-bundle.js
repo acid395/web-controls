@@ -453,6 +453,117 @@
     } catch (e) { /* detached */ }
     return false;
   };
+  // Open or shut, for a header that says neither in its attributes. A
+  // <details>, or an accordion's "uk-open", says so on the item. A Material
+  // UI list header says nothing: what it opens is mounted right after it
+  // and has height only while open. Read as always shut, "open
+  // infrastructure" pressed an open section closed.
+  const expandedOf = (el) => {
+    const a = el.getAttribute && el.getAttribute("aria-expanded");
+    if (a === "true") return true;
+    if (a === "false") return false;
+    const titleLike = /^summary$/i.test(el.tagName || "") || hasExpandIcon(el)
+      || (el.children && el.children.length === 1 && hasExpandIcon(el.firstElementChild))
+      || /accordion-title/i.test(String(el.className || ""))
+      || /^uk-accordion-\d+$/.test(String(el.id || ""));
+    if (!titleLike || !el.closest) return undefined;
+    const holder = el.closest("li, details, .uk-accordion > *");
+    if (!holder) return undefined;
+    if (holder.open || (holder.classList && holder.classList.contains("uk-open"))) return true;
+    const next = holder.nextElementSibling;
+    if (next && next.tagName !== holder.tagName && /collapse/i.test(String(next.className || ""))) {
+      try { return next.getBoundingClientRect().height > 4 && !!String(next.textContent || "").trim(); } catch (e) { return false; }
+    }
+    return false;
+  };
+  // On or off, for an item that shows it only by its look. A layer on
+  // City-FIDAP is a link that turns blue when switched on; nothing in its
+  // attributes changes. Among a run of like items, one drawn differently
+  // from the rest - a filled background, a heavier weight - is the one
+  // that is on, and one drawn like the rest is off. Undefined where there
+  // is no run to compare against.
+  const lookSig = (n) => {
+    const parts = [];
+    for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) {
+      try { const cs = getComputedStyle(x); parts.push(cs.backgroundColor, cs.fontWeight, cs.borderLeftColor); } catch (e) { return ""; }
+    }
+    return parts.join("|");
+  };
+  // Built the same way, tag for tag. A sub-section header among layers -
+  // Public Transit, with its own chevron - is drawn differently because it
+  // is a different thing, not because it is on.
+  const shapeOf = (n) => {
+    const tags = [];
+    for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) tags.push(x.tagName);
+    return tags.join(">");
+  };
+  const litOf = (el) => {
+    // Only what could be a switch: not a native button or field, and not a
+    // link that leaves for another page - a nav list's links all look alike
+    // and are none of them "off". City-FIDAP's layers link to the page
+    // they are on.
+    if (!el || /^(?:BUTTON|INPUT|SELECT|TEXTAREA|OPTION)$/.test(el.tagName)) return undefined;
+    try {
+      const a = el.closest && el.closest("a[href]");
+      if (a) {
+        const href = a.getAttribute("href") || "";
+        const u = new URL(href, location.href);
+        if (!/^(?:#|javascript:)/i.test(href) && !(u.origin === location.origin && u.pathname === location.pathname)) return undefined;
+      }
+    } catch (e) { return undefined; }
+    try {
+      for (let row = el, i = 0; row && row.parentElement && i < 4; row = row.parentElement, i++) {
+        const shape = shapeOf(row);
+        const sibs = [...row.parentElement.children].filter((x) => x.tagName === row.tagName && String(x.textContent || "").trim());
+        const alike = sibs.filter((x) => shapeOf(x) === shape);
+        // Two alike - Road and Bicycle, either side of a sub-section - say
+        // which is on only where exactly one of them is filled in.
+        if (alike.length === 2 && sibs.length >= 3) {
+          const filled = (n) => { for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) { try { const bgc = getComputedStyle(x).backgroundColor; if (bgc && !/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(bgc)) return true; } catch (e) { return false; } } return false; };
+          const f = alike.map(filled);
+          if (f[0] !== f[1]) return filled(row);
+          if (lookSig(alike[0]) === lookSig(alike[1])) return false;
+          return undefined;
+        }
+        if (sibs.length >= 3 && alike.length < 3) return undefined;
+        if (sibs.length < 3) continue;
+        const sigs = sibs.filter((x) => shapeOf(x) === shape).map(lookSig);
+        const counts = new Map();
+        for (const g of sigs) counts.set(g, (counts.get(g) || 0) + 1);
+        const [common, many] = [...counts].sort((a, b) => b[1] - a[1])[0];
+        if (many < 2 || many * 2 < sigs.length) return undefined;
+        return lookSig(row) !== common;
+      }
+    } catch (e) { /* detached */ }
+    return undefined;
+  };
+  // The state the request asks a named thing to be left in: "turn off the
+  // bridges" wants Bridges off, "open infrastructure" wants it open. Read
+  // from the verb nearest before the name, or "on"/"off" right after it.
+  // Null where the request does not name it or says no state - a plain
+  // "click" is a press, whatever it leaves behind.
+  const OFF_SAID = /\b(?:turn(?:ed)?\s+off|switch\s+off|deselect|unselect|uncheck|untick|disable|deactivate|hide|close|collapse|shut)\b/g;
+  const ON_SAID = /\b(?:turn(?:ed)?\s+on|switch\s+on|select|check|tick|enable|activate|show|display|open|expand|reveal)\b/g;
+  // A layer is not opened or closed, a section is not switched off: "close"
+  // is said of a panel, and a link among links is not "already closed".
+  const DOOR_WORDS = /^(?:close|collapse|shut|open|expand|reveal)$/;
+  const askedStateFor = (label, { door = false } = {}) => {
+    const req = currentRequestOf();
+    const name = norm(label || "");
+    if (!req || !name) return null;
+    const text = norm(req);
+    const at = text.indexOf(name);
+    if (at < 0) return null;
+    const after = text.slice(at + name.length, at + name.length + 14);
+    if (/^\s*(?:layers?\s+)?off\b/.test(after)) return false;
+    if (/^\s*(?:layers?\s+)?on\b/.test(after)) return true;
+    const before = text.slice(Math.max(0, at - 48), at);
+    const last = (re) => { let m, i = -1; re.lastIndex = 0; while ((m = re.exec(before))) if (door || !DOOR_WORDS.test(m[0])) i = m.index; return i; };
+    const off = last(OFF_SAID), on = last(ON_SAID);
+    if (off < 0 && on < 0) return null;
+    // True for on, the later verb deciding.
+    return on > off;
+  };
   // Another control's words are not this one's. A bare <select> in a form
   // whose only text is a link beside it took the link's name for its own
   // once option text stopped counting, so "click Puerto Rico/Virgin Islands"
@@ -575,6 +686,20 @@
         ? finder.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
       if (hit && hit !== el && el.contains(hit)) at = hit;
     } catch (e) { /* the control itself, then */ }
+    // Where the centre is covered or not yet in place - a section still
+    // sliding open, its items clipped mid-animation - the press goes to the
+    // words inside, so it still passes through a handler on an inner item.
+    // Sent to the link itself, a layer opened and pressed at once was never
+    // switched on.
+    if (at === el) {
+      let x = el;
+      for (let d = 0; d < 6; d++) {
+        const kids = [...(x.children || [])].filter((k) => String(k.textContent || "").trim());
+        if (kids.length !== 1) break;
+        x = kids[0];
+      }
+      if (x !== el && !/^(?:INPUT|SELECT|TEXTAREA|OPTION)$/.test(x.tagName)) at = x;
+    }
     // The pointer arrives before it presses, as a mouse's does. Menus that
     // open on hover - ifis.iowafloodcenter.org's whole sidebar - never saw a
     // press without one, and opened for a person and not for this.
@@ -680,12 +805,28 @@
   // at all - it says so in aria-checked - so reading .checked took every one
   // as unticked: "check" pressed a ticked box off, and "uncheck" never
   // pressed anything.
+  // And an item that is on only by its look - a City-FIDAP layer - reads as
+  // its look says, so "turn off the bridges" presses Bridges only while
+  // it is on.
   const checkedOf = (el) => (el.tagName !== "INPUT" && el.hasAttribute && el.hasAttribute("aria-checked"))
-    ? el.getAttribute("aria-checked") === "true" : !!el.checked;
+    ? el.getAttribute("aria-checked") === "true"
+    : (el.tagName === "INPUT" || typeof el.checked === "boolean") ? !!el.checked
+    : expandedOf(el) !== undefined ? expandedOf(el) : !!litOf(el);
   const setChecked = (elOrSel, on = true) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`setChecked: not found: ${elOrSel}`);
+    const byLook = el.tagName !== "INPUT" && typeof el.checked !== "boolean" && !(el.hasAttribute && el.hasAttribute("aria-checked"))
+      && (expandedOf(el) !== undefined || litOf(el) !== undefined);
+    if (byLook) {
+      if (checkedOf(el) === !!on) return !!on;
+      realClick(el);
+      // Its look turns a beat after the press, once the page has done it.
+      return (async () => {
+        for (let t = 0; t < 12 && el.isConnected && checkedOf(el) !== !!on; t++) await new Promise((r) => setTimeout(r, 60));
+        return checkedOf(el);
+      })();
+    }
     if (checkedOf(el) !== !!on) realClick(el);
     // Through its label, where pressing the box itself did not take - which
     // is what a person presses, and what some widgets listen to. Only for an
@@ -880,7 +1021,11 @@
     // that opens a whole menu was not a control at all. A hover-only handler
     // counts only on something with no words of its own - an icon - since
     // on text it is far more often a highlight than an action.
-    if (typeof el.onclick === "function" || typeof el.onmousedown === "function") return true;
+    // Not React's own root, though: React sets an empty onclick on the
+    // element it renders into, and on City-FIDAP that made the whole app -
+    // every word of the sidebar run together - a control the agent pressed.
+    const reactRoot = () => Object.keys(el).some((k) => k.startsWith("__reactContainer"));
+    if ((typeof el.onclick === "function" || typeof el.onmousedown === "function") && !reactRoot()) return true;
     // A press listener attached in script, noted as the page set it up
     // (feed-capture.js). Only on something the size of one control: a page
     // listens on its containers and <html> too, and those are not presses.
@@ -1491,6 +1636,10 @@
         try {
           const inner = el.querySelectorAll(TAGS.join(","));
           if (inner.length === 1 && norm(rawLabelOf(inner[0])) === norm(rawLabelOf(el))) wrapsOne = true;
+          // Nor is a region holding several controls of its own one control.
+          // Its name is all of theirs run together, and pressing it presses
+          // whatever happens to be at its middle.
+          else if (inner.length >= 3 && el.getElementsByTagName("*").length > 30) wrapsOne = true;
         } catch (e) { /* exotic markup; keep the container */ }
         if (wrapsOne) continue;
       }
@@ -1507,16 +1656,7 @@
         || hasExpandIcon(el)
         || /accordion-title/i.test(String(el.className || ""))
         || /^uk-accordion-\d+$/.test(String(el.id || ""));
-      let expanded;
-      if (expandedAttr === "true") expanded = true;
-      else if (expandedAttr === "false") expanded = false;
-      else if (looksLikeTitle && el.closest) {
-        const holder = el.closest("li, details, .uk-accordion > *");
-        if (holder) {
-          expanded = !!(holder.open
-            || (holder.classList && holder.classList.contains("uk-open")));
-        }
-      }
+      const expanded = expandedOf(el);
       const rec = {
         kind: role || tag, tag, type: el.type || "", label: lab.slice(0, 80),
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
@@ -3787,6 +3927,13 @@
         : (el.querySelector && el.querySelector("input[type=checkbox]"))
           || (el.closest && el.closest("label, li, [role=row]")
               && el.closest("label, li, [role=row]").querySelector("input[type=checkbox]")));
+      // No box: the press the agent's own click makes, which leaves alone
+      // what is already as asked and waits for a look that turns late.
+      if (!box) {
+        const r = await PLAIN_ACTIONS.click(el || sel);
+        const n = named(el);
+        return { ...n, ...r, at: n.at, wrongOne: n.wrongOne, how: r.how || "click", openedFirst: !!c.revealedBy };
+      }
       const was = box ? !!box.checked : null;
       const hit = realClick(el || sel);
       const now = box ? !!box.checked : null;
@@ -3906,6 +4053,51 @@
     };
   }
 
+  /* Which shut section holds a control called exactly this.
+   *
+   * "Turn on the bicycle" opened Infrastructure first, found Bicycle
+   * Amenities - a fair partial match - and switched it on, while a layer
+   * called just Bicycle sat in Transportation. Each other shut section is
+   * opened, read and shut again, as it was; the first holding the name
+   * whole is said. Nothing else is pressed.
+   */
+  async function findInSections(name, { skip = "" } = {}) {
+    const want = norm(name);
+    if (!want) return null;
+    const wait = async (el, open) => {
+      for (let t = 0; t < 12 && expandedOf(el) !== open; t++) await new Promise((r) => setTimeout(r, 60));
+    };
+    const shutOnes = (except) => disclosures({ limit: 20 }).disclosures
+      .filter((x) => x.section && x.selector !== skip && !except.has(x.selector))
+      .map((d) => ({ d, el: deepQuery(d.selector) }))
+      .filter(({ el }) => el && expandedOf(el) === false);
+    // One level down too: Bus Stops is in Public Transit, in Transportation.
+    // Only sections that opening this one brought up count as inside it.
+    const look = async (depth, tried, only) => {
+      for (const { d, el } of shutOnes(tried).filter((x) => !only || !only.has(x.d.selector))) {
+        tried.add(d.selector);
+        const outside = new Set(shutOnes(new Set()).map((x) => x.d.selector));
+        realClick(el);
+        await wait(el, true);
+        const hit = inventoryNow({}).controls.find((c) => !c.hidden && norm(c.label) === want);
+        let path = hit ? [] : null;
+        if (!hit && depth < 1) {
+          const inner = await look(depth + 1, tried, outside);
+          if (inner) path = inner;
+        }
+        // Where it is, the way in is left open: shut and opened again, a
+        // section still sliding shut swallows the second press, and the
+        // inner one's address no longer names anything.
+        if (path) return [{ selector: d.selector, label: d.label }, ...path];
+        if (expandedOf(el) === true) { realClick(el); await wait(el, false); }
+      }
+      return null;
+    };
+    const path = await look(0, new Set(), null);
+    if (path) await settle({ quietMs: 120, timeoutMs: 1200 });
+    return path ? { door: path[0].selector, label: path[0].label, path, leftOpen: true } : null;
+  }
+
   // Press it, wait, and say what appeared.
   async function openDisclosure(selector) {
     const el = deepQuery(selector);
@@ -3914,7 +4106,8 @@
     // can only shut it: a step planned while a panel was shut ran after an
     // earlier step had opened it, and closed it again.
     const details = el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS" ? el.parentElement : null;
-    if (el.getAttribute("aria-expanded") === "true" || (details && details.open)) {
+    // And a header that says it only by what follows it.
+    if (el.getAttribute("aria-expanded") === "true" || (details && details.open) || expandedOf(el) === true) {
       const n = inventoryNow({ includeHidden: true }).controlCount;
       return { opened: rawLabelOf(el).slice(0, 60) || selector, alreadyOpen: true, controlsBefore: n, controlsAfter: n, appeared: 0 };
     }
@@ -4558,27 +4751,60 @@
         }
         return parts.join("|");
       };
+      // A press the request says is already done is not made. Pressing a
+      // layer that is off, asked to turn it off, switches it on; pressing
+      // an open section, asked to open it, shuts it.
+      const opened = before && was === undefined ? expandedOf(before) : undefined;
+      const lit = before && was === undefined && opened === undefined ? litOf(before) : undefined;
+      // Only where no attribute says it - those the caller weighs already.
+      const known = was !== undefined ? undefined : opened !== undefined ? opened : lit;
+      const asked = before && typeof known === "boolean" ? askedStateFor(rawLabelOf(before), { door: opened !== undefined }) : null;
+      const words = opened !== undefined ? ["shut", "open"] : ["off", "on"];
+      if (asked !== null && known === asked) {
+        const st = words[asked ? 1 : 0];
+        return { clicked: String(before.tagName || "").toLowerCase(), label: rawLabelOf(before) || undefined,
+          control: rawLabelOf(before) || undefined, was: st, now: st, itChanged: false, already: true };
+      }
       const lookWas = was === undefined ? lookOf(before) : "";
       const el = realClick(before || selector);
-      const now = stateOf(before);
-      const lookChanged = was === undefined && before && before.isConnected && lookWas !== lookOf(before);
-      return {
+      const report = (now, lookChanged) => ({
         clicked: String(el.tagName || "").toLowerCase(),
         label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined,
-        ...(lookChanged ? { control: rawLabelOf(before) || undefined, was: "as it was", now: "its look changed", itChanged: true, how: "look" } : {}),
+        ...(opened !== undefined && before.isConnected && expandedOf(before) !== opened
+          ? { control: rawLabelOf(before) || undefined, was: words[+opened], now: words[+!opened], itChanged: true, how: "click", opened: !opened }
+          : lit !== undefined && lookChanged && litOf(before) !== lit
+          ? { control: rawLabelOf(before) || undefined, was: words[+lit], now: words[+!lit], itChanged: true, how: "look" }
+          : lookChanged ? { control: rawLabelOf(before) || undefined, was: "as it was", now: "its look changed", itChanged: true, how: "look" }
+          : {}),
         ...(was === undefined ? {} : {
           control: rawLabelOf(before) || undefined,
           was, now, itChanged: was !== now, how: "click",
           // Said out loud so a caller need not infer it from the attribute.
           ...(isDoor(before) ? { opened: was !== now } : {}),
         }),
-      };
+      });
+      if (was !== undefined || !before) return report(stateOf(before), false);
+      // A look can change a beat after the press: City-FIDAP turns a layer
+      // blue once its data has loaded. Read at once, every layer switched
+      // on or off was reported as not having changed, and the agent went on
+      // to press the next likely layer as well.
+      // An item read as on or off by its look is judged by that alone: a
+      // hover or focus style moving is not the layer switching.
+      const lookMoved = () => before.isConnected && (lit !== undefined ? litOf(before) !== lit : lookOf(before) !== lookWas);
+      const moved = () => !before.isConnected || lookMoved() || (opened !== undefined && expandedOf(before) !== opened);
+      // Only something with a state to watch is waited on; a plain link's
+      // press reports at once, as it always did.
+      if (moved() || (lit === undefined && opened === undefined)) return report(undefined, lookMoved());
+      return (async () => {
+        for (let t = 0, n = opened !== undefined ? 20 : 10; t < n && !moved(); t++) await new Promise((r) => setTimeout(r, 60));
+        return report(undefined, lookMoved());
+      })();
     },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText, add) => setSelect(selector, valueOrText, !!add),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
-    disclosures, openDisclosure,
+    disclosures, openDisclosure, findInSections,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     capturedPoints, findCapturedPoint, openCapturedPoint,
     mcpInstall,
