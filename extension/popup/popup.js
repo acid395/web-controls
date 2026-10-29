@@ -8,9 +8,13 @@ function on(id, event, fn) {
   if (el) el.addEventListener(event, fn);
 }
 
+// The status line stays last, under whatever was just said, the way a chat
+// shows that a reply is still coming.
 function append(node) {
   const box = logEl();
-  box.appendChild(node);
+  const status = document.getElementById("modelStatus");
+  if (status && status.parentNode === box) box.insertBefore(node, status);
+  else box.appendChild(node);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -193,7 +197,7 @@ function logResult(res) {
 // an answer that arrived while the popup was shut has to be here - but a
 // stack of full cards buries the one just asked for.
 function renderEntry(entry, { collapsed = false } = {}) {
-  const body = document.createElement("div");
+  const body = el("div", "reply");
   const into = (node) => body.appendChild(node);
 
   if (entry.status === "running") {
@@ -214,20 +218,20 @@ function renderEntry(entry, { collapsed = false } = {}) {
     into(el("pre", null, JSON.stringify(entry, null, 2)));
   }
 
+  append(el("div", "echo", entry.instruction));
   if (!collapsed) {
-    append(el("div", "echo", `ask: "${entry.instruction}"`));
     append(body);
     return;
   }
 
-  // Collapsed: the question, plus whatever the answer's own headline was.
+  // Collapsed: the question stays as asked, and the answer folds to its own
+  // headline.
   const box = el("details", "past");
   const summary = el("summary", null);
-  summary.appendChild(el("span", "past-q", entry.instruction));
   const gist = entry.status === "running" ? "running"
     : entry.error ? "no match"
     : (entry.display && (entry.display.title || entry.display.subtitle)) || "done";
-  summary.appendChild(el("span", "past-a", String(gist).slice(0, 34)));
+  summary.appendChild(el("span", "past-a", String(gist).slice(0, 60)));
   box.appendChild(summary);
   box.appendChild(body);
   append(box);
@@ -282,8 +286,8 @@ function restoreHistory() {
 
     if (!res.history.length) {
       const empty = el("div", "empty");
-      empty.appendChild(el("div", null, "Nothing asked yet."));
-      empty.appendChild(el("div", null, "Try one of the examples above, or describe what you want in your own words."));
+      empty.appendChild(el("div", null, "What should this page do?"));
+      empty.appendChild(el("div", null, "Ask about it, or tell it what to press, pick or show. The examples below are a start."));
       box.appendChild(empty);
       if (statusText) setStatus(statusText, statusOwner);
       return;
@@ -1076,9 +1080,11 @@ function setStatus(text, owner = "ask") {
   if (!node) {
     node = el("div", "running", "");
     node.id = "modelStatus";
-    const box = logEl();
-    box.insertBefore(node, box.firstChild);
   }
+  // Last in the thread, like a reply being typed.
+  const box = logEl();
+  box.appendChild(node);
+  box.scrollTop = box.scrollHeight;
   node.textContent = text;
 }
 function clearStatus() {
