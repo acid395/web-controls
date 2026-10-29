@@ -1,8 +1,8 @@
-/*! web-controls widget 0.4.50 - ask any page in plain English, answered by a model running on the visitor's own machine. */
+/*! web-controls widget 0.4.51 - ask any page in plain English, answered by a model running on the visitor's own machine. */
 (function () {
 if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
-globalThis.WC_WIDGET_VERSION = "0.4.50";
+globalThis.WC_WIDGET_VERSION = "0.4.51";
 const WC_SCRIPT_URL = (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href;
 const WC_LOADERS = null;
 const WC_NATIVE_FETCH = window.fetch ? window.fetch.bind(window) : undefined;
@@ -1440,6 +1440,117 @@ return (function () {
     } catch (e) { /* detached */ }
     return false;
   };
+  // Open or shut, for a header that says neither in its attributes. A
+  // <details>, or an accordion's "uk-open", says so on the item. A Material
+  // UI list header says nothing: what it opens is mounted right after it
+  // and has height only while open. Read as always shut, "open
+  // infrastructure" pressed an open section closed.
+  const expandedOf = (el) => {
+    const a = el.getAttribute && el.getAttribute("aria-expanded");
+    if (a === "true") return true;
+    if (a === "false") return false;
+    const titleLike = /^summary$/i.test(el.tagName || "") || hasExpandIcon(el)
+      || (el.children && el.children.length === 1 && hasExpandIcon(el.firstElementChild))
+      || /accordion-title/i.test(String(el.className || ""))
+      || /^uk-accordion-\d+$/.test(String(el.id || ""));
+    if (!titleLike || !el.closest) return undefined;
+    const holder = el.closest("li, details, .uk-accordion > *");
+    if (!holder) return undefined;
+    if (holder.open || (holder.classList && holder.classList.contains("uk-open"))) return true;
+    const next = holder.nextElementSibling;
+    if (next && next.tagName !== holder.tagName && /collapse/i.test(String(next.className || ""))) {
+      try { return next.getBoundingClientRect().height > 4 && !!String(next.textContent || "").trim(); } catch (e) { return false; }
+    }
+    return false;
+  };
+  // On or off, for an item that shows it only by its look. A layer on
+  // City-FIDAP is a link that turns blue when switched on; nothing in its
+  // attributes changes. Among a run of like items, one drawn differently
+  // from the rest - a filled background, a heavier weight - is the one
+  // that is on, and one drawn like the rest is off. Undefined where there
+  // is no run to compare against.
+  const lookSig = (n) => {
+    const parts = [];
+    for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) {
+      try { const cs = getComputedStyle(x); parts.push(cs.backgroundColor, cs.fontWeight, cs.borderLeftColor); } catch (e) { return ""; }
+    }
+    return parts.join("|");
+  };
+  // Built the same way, tag for tag. A sub-section header among layers -
+  // Public Transit, with its own chevron - is drawn differently because it
+  // is a different thing, not because it is on.
+  const shapeOf = (n) => {
+    const tags = [];
+    for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) tags.push(x.tagName);
+    return tags.join(">");
+  };
+  const litOf = (el) => {
+    // Only what could be a switch: not a native button or field, and not a
+    // link that leaves for another page - a nav list's links all look alike
+    // and are none of them "off". City-FIDAP's layers link to the page
+    // they are on.
+    if (!el || /^(?:BUTTON|INPUT|SELECT|TEXTAREA|OPTION)$/.test(el.tagName)) return undefined;
+    try {
+      const a = el.closest && el.closest("a[href]");
+      if (a) {
+        const href = a.getAttribute("href") || "";
+        const u = new URL(href, location.href);
+        if (!/^(?:#|javascript:)/i.test(href) && !(u.origin === location.origin && u.pathname === location.pathname)) return undefined;
+      }
+    } catch (e) { return undefined; }
+    try {
+      for (let row = el, i = 0; row && row.parentElement && i < 4; row = row.parentElement, i++) {
+        const shape = shapeOf(row);
+        const sibs = [...row.parentElement.children].filter((x) => x.tagName === row.tagName && String(x.textContent || "").trim());
+        const alike = sibs.filter((x) => shapeOf(x) === shape);
+        // Two alike - Road and Bicycle, either side of a sub-section - say
+        // which is on only where exactly one of them is filled in.
+        if (alike.length === 2 && sibs.length >= 3) {
+          const filled = (n) => { for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) { try { const bgc = getComputedStyle(x).backgroundColor; if (bgc && !/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(bgc)) return true; } catch (e) { return false; } } return false; };
+          const f = alike.map(filled);
+          if (f[0] !== f[1]) return filled(row);
+          if (lookSig(alike[0]) === lookSig(alike[1])) return false;
+          return undefined;
+        }
+        if (sibs.length >= 3 && alike.length < 3) return undefined;
+        if (sibs.length < 3) continue;
+        const sigs = sibs.filter((x) => shapeOf(x) === shape).map(lookSig);
+        const counts = new Map();
+        for (const g of sigs) counts.set(g, (counts.get(g) || 0) + 1);
+        const [common, many] = [...counts].sort((a, b) => b[1] - a[1])[0];
+        if (many < 2 || many * 2 < sigs.length) return undefined;
+        return lookSig(row) !== common;
+      }
+    } catch (e) { /* detached */ }
+    return undefined;
+  };
+  // The state the request asks a named thing to be left in: "turn off the
+  // bridges" wants Bridges off, "open infrastructure" wants it open. Read
+  // from the verb nearest before the name, or "on"/"off" right after it.
+  // Null where the request does not name it or says no state - a plain
+  // "click" is a press, whatever it leaves behind.
+  const OFF_SAID = /\b(?:turn(?:ed)?\s+off|switch\s+off|deselect|unselect|uncheck|untick|disable|deactivate|hide|close|collapse|shut)\b/g;
+  const ON_SAID = /\b(?:turn(?:ed)?\s+on|switch\s+on|select|check|tick|enable|activate|show|display|open|expand|reveal)\b/g;
+  // A layer is not opened or closed, a section is not switched off: "close"
+  // is said of a panel, and a link among links is not "already closed".
+  const DOOR_WORDS = /^(?:close|collapse|shut|open|expand|reveal)$/;
+  const askedStateFor = (label, { door = false } = {}) => {
+    const req = currentRequestOf();
+    const name = norm(label || "");
+    if (!req || !name) return null;
+    const text = norm(req);
+    const at = text.indexOf(name);
+    if (at < 0) return null;
+    const after = text.slice(at + name.length, at + name.length + 14);
+    if (/^\s*(?:layers?\s+)?off\b/.test(after)) return false;
+    if (/^\s*(?:layers?\s+)?on\b/.test(after)) return true;
+    const before = text.slice(Math.max(0, at - 48), at);
+    const last = (re) => { let m, i = -1; re.lastIndex = 0; while ((m = re.exec(before))) if (door || !DOOR_WORDS.test(m[0])) i = m.index; return i; };
+    const off = last(OFF_SAID), on = last(ON_SAID);
+    if (off < 0 && on < 0) return null;
+    // True for on, the later verb deciding.
+    return on > off;
+  };
   // Another control's words are not this one's. A bare <select> in a form
   // whose only text is a link beside it took the link's name for its own
   // once option text stopped counting, so "click Puerto Rico/Virgin Islands"
@@ -1562,6 +1673,20 @@ return (function () {
         ? finder.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
       if (hit && hit !== el && el.contains(hit)) at = hit;
     } catch (e) { /* the control itself, then */ }
+    // Where the centre is covered or not yet in place - a section still
+    // sliding open, its items clipped mid-animation - the press goes to the
+    // words inside, so it still passes through a handler on an inner item.
+    // Sent to the link itself, a layer opened and pressed at once was never
+    // switched on.
+    if (at === el) {
+      let x = el;
+      for (let d = 0; d < 6; d++) {
+        const kids = [...(x.children || [])].filter((k) => String(k.textContent || "").trim());
+        if (kids.length !== 1) break;
+        x = kids[0];
+      }
+      if (x !== el && !/^(?:INPUT|SELECT|TEXTAREA|OPTION)$/.test(x.tagName)) at = x;
+    }
     // The pointer arrives before it presses, as a mouse's does. Menus that
     // open on hover - ifis.iowafloodcenter.org's whole sidebar - never saw a
     // press without one, and opened for a person and not for this.
@@ -1667,12 +1792,28 @@ return (function () {
   // at all - it says so in aria-checked - so reading .checked took every one
   // as unticked: "check" pressed a ticked box off, and "uncheck" never
   // pressed anything.
+  // And an item that is on only by its look - a City-FIDAP layer - reads as
+  // its look says, so "turn off the bridges" presses Bridges only while
+  // it is on.
   const checkedOf = (el) => (el.tagName !== "INPUT" && el.hasAttribute && el.hasAttribute("aria-checked"))
-    ? el.getAttribute("aria-checked") === "true" : !!el.checked;
+    ? el.getAttribute("aria-checked") === "true"
+    : (el.tagName === "INPUT" || typeof el.checked === "boolean") ? !!el.checked
+    : expandedOf(el) !== undefined ? expandedOf(el) : !!litOf(el);
   const setChecked = (elOrSel, on = true) => {
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`setChecked: not found: ${elOrSel}`);
+    const byLook = el.tagName !== "INPUT" && typeof el.checked !== "boolean" && !(el.hasAttribute && el.hasAttribute("aria-checked"))
+      && (expandedOf(el) !== undefined || litOf(el) !== undefined);
+    if (byLook) {
+      if (checkedOf(el) === !!on) return !!on;
+      realClick(el);
+      // Its look turns a beat after the press, once the page has done it.
+      return (async () => {
+        for (let t = 0; t < 12 && el.isConnected && checkedOf(el) !== !!on; t++) await new Promise((r) => setTimeout(r, 60));
+        return checkedOf(el);
+      })();
+    }
     if (checkedOf(el) !== !!on) realClick(el);
     // Through its label, where pressing the box itself did not take - which
     // is what a person presses, and what some widgets listen to. Only for an
@@ -1867,7 +2008,11 @@ return (function () {
     // that opens a whole menu was not a control at all. A hover-only handler
     // counts only on something with no words of its own - an icon - since
     // on text it is far more often a highlight than an action.
-    if (typeof el.onclick === "function" || typeof el.onmousedown === "function") return true;
+    // Not React's own root, though: React sets an empty onclick on the
+    // element it renders into, and on City-FIDAP that made the whole app -
+    // every word of the sidebar run together - a control the agent pressed.
+    const reactRoot = () => Object.keys(el).some((k) => k.startsWith("__reactContainer"));
+    if ((typeof el.onclick === "function" || typeof el.onmousedown === "function") && !reactRoot()) return true;
     // A press listener attached in script, noted as the page set it up
     // (feed-capture.js). Only on something the size of one control: a page
     // listens on its containers and <html> too, and those are not presses.
@@ -2478,6 +2623,10 @@ return (function () {
         try {
           const inner = el.querySelectorAll(TAGS.join(","));
           if (inner.length === 1 && norm(rawLabelOf(inner[0])) === norm(rawLabelOf(el))) wrapsOne = true;
+          // Nor is a region holding several controls of its own one control.
+          // Its name is all of theirs run together, and pressing it presses
+          // whatever happens to be at its middle.
+          else if (inner.length >= 3 && el.getElementsByTagName("*").length > 30) wrapsOne = true;
         } catch (e) { /* exotic markup; keep the container */ }
         if (wrapsOne) continue;
       }
@@ -2494,16 +2643,7 @@ return (function () {
         || hasExpandIcon(el)
         || /accordion-title/i.test(String(el.className || ""))
         || /^uk-accordion-\d+$/.test(String(el.id || ""));
-      let expanded;
-      if (expandedAttr === "true") expanded = true;
-      else if (expandedAttr === "false") expanded = false;
-      else if (looksLikeTitle && el.closest) {
-        const holder = el.closest("li, details, .uk-accordion > *");
-        if (holder) {
-          expanded = !!(holder.open
-            || (holder.classList && holder.classList.contains("uk-open")));
-        }
-      }
+      const expanded = expandedOf(el);
       const rec = {
         kind: role || tag, tag, type: el.type || "", label: lab.slice(0, 80),
         name: el.name || "", id: el.id || "", value: (el.value ?? "").toString().slice(0, 60),
@@ -4774,6 +4914,13 @@ return (function () {
         : (el.querySelector && el.querySelector("input[type=checkbox]"))
           || (el.closest && el.closest("label, li, [role=row]")
               && el.closest("label, li, [role=row]").querySelector("input[type=checkbox]")));
+      // No box: the press the agent's own click makes, which leaves alone
+      // what is already as asked and waits for a look that turns late.
+      if (!box) {
+        const r = await PLAIN_ACTIONS.click(el || sel);
+        const n = named(el);
+        return { ...n, ...r, at: n.at, wrongOne: n.wrongOne, how: r.how || "click", openedFirst: !!c.revealedBy };
+      }
       const was = box ? !!box.checked : null;
       const hit = realClick(el || sel);
       const now = box ? !!box.checked : null;
@@ -4893,6 +5040,51 @@ return (function () {
     };
   }
 
+  /* Which shut section holds a control called exactly this.
+   *
+   * "Turn on the bicycle" opened Infrastructure first, found Bicycle
+   * Amenities - a fair partial match - and switched it on, while a layer
+   * called just Bicycle sat in Transportation. Each other shut section is
+   * opened, read and shut again, as it was; the first holding the name
+   * whole is said. Nothing else is pressed.
+   */
+  async function findInSections(name, { skip = "" } = {}) {
+    const want = norm(name);
+    if (!want) return null;
+    const wait = async (el, open) => {
+      for (let t = 0; t < 12 && expandedOf(el) !== open; t++) await new Promise((r) => setTimeout(r, 60));
+    };
+    const shutOnes = (except) => disclosures({ limit: 20 }).disclosures
+      .filter((x) => x.section && x.selector !== skip && !except.has(x.selector))
+      .map((d) => ({ d, el: deepQuery(d.selector) }))
+      .filter(({ el }) => el && expandedOf(el) === false);
+    // One level down too: Bus Stops is in Public Transit, in Transportation.
+    // Only sections that opening this one brought up count as inside it.
+    const look = async (depth, tried, only) => {
+      for (const { d, el } of shutOnes(tried).filter((x) => !only || !only.has(x.d.selector))) {
+        tried.add(d.selector);
+        const outside = new Set(shutOnes(new Set()).map((x) => x.d.selector));
+        realClick(el);
+        await wait(el, true);
+        const hit = inventoryNow({}).controls.find((c) => !c.hidden && norm(c.label) === want);
+        let path = hit ? [] : null;
+        if (!hit && depth < 1) {
+          const inner = await look(depth + 1, tried, outside);
+          if (inner) path = inner;
+        }
+        // Where it is, the way in is left open: shut and opened again, a
+        // section still sliding shut swallows the second press, and the
+        // inner one's address no longer names anything.
+        if (path) return [{ selector: d.selector, label: d.label }, ...path];
+        if (expandedOf(el) === true) { realClick(el); await wait(el, false); }
+      }
+      return null;
+    };
+    const path = await look(0, new Set(), null);
+    if (path) await settle({ quietMs: 120, timeoutMs: 1200 });
+    return path ? { door: path[0].selector, label: path[0].label, path, leftOpen: true } : null;
+  }
+
   // Press it, wait, and say what appeared.
   async function openDisclosure(selector) {
     const el = deepQuery(selector);
@@ -4901,7 +5093,8 @@ return (function () {
     // can only shut it: a step planned while a panel was shut ran after an
     // earlier step had opened it, and closed it again.
     const details = el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS" ? el.parentElement : null;
-    if (el.getAttribute("aria-expanded") === "true" || (details && details.open)) {
+    // And a header that says it only by what follows it.
+    if (el.getAttribute("aria-expanded") === "true" || (details && details.open) || expandedOf(el) === true) {
       const n = inventoryNow({ includeHidden: true }).controlCount;
       return { opened: rawLabelOf(el).slice(0, 60) || selector, alreadyOpen: true, controlsBefore: n, controlsAfter: n, appeared: 0 };
     }
@@ -5545,27 +5738,60 @@ return (function () {
         }
         return parts.join("|");
       };
+      // A press the request says is already done is not made. Pressing a
+      // layer that is off, asked to turn it off, switches it on; pressing
+      // an open section, asked to open it, shuts it.
+      const opened = before && was === undefined ? expandedOf(before) : undefined;
+      const lit = before && was === undefined && opened === undefined ? litOf(before) : undefined;
+      // Only where no attribute says it - those the caller weighs already.
+      const known = was !== undefined ? undefined : opened !== undefined ? opened : lit;
+      const asked = before && typeof known === "boolean" ? askedStateFor(rawLabelOf(before), { door: opened !== undefined }) : null;
+      const words = opened !== undefined ? ["shut", "open"] : ["off", "on"];
+      if (asked !== null && known === asked) {
+        const st = words[asked ? 1 : 0];
+        return { clicked: String(before.tagName || "").toLowerCase(), label: rawLabelOf(before) || undefined,
+          control: rawLabelOf(before) || undefined, was: st, now: st, itChanged: false, already: true };
+      }
       const lookWas = was === undefined ? lookOf(before) : "";
       const el = realClick(before || selector);
-      const now = stateOf(before);
-      const lookChanged = was === undefined && before && before.isConnected && lookWas !== lookOf(before);
-      return {
+      const report = (now, lookChanged) => ({
         clicked: String(el.tagName || "").toLowerCase(),
         label: String(el.textContent || el.value || "").trim().slice(0, 80) || undefined,
-        ...(lookChanged ? { control: rawLabelOf(before) || undefined, was: "as it was", now: "its look changed", itChanged: true, how: "look" } : {}),
+        ...(opened !== undefined && before.isConnected && expandedOf(before) !== opened
+          ? { control: rawLabelOf(before) || undefined, was: words[+opened], now: words[+!opened], itChanged: true, how: "click", opened: !opened }
+          : lit !== undefined && lookChanged && litOf(before) !== lit
+          ? { control: rawLabelOf(before) || undefined, was: words[+lit], now: words[+!lit], itChanged: true, how: "look" }
+          : lookChanged ? { control: rawLabelOf(before) || undefined, was: "as it was", now: "its look changed", itChanged: true, how: "look" }
+          : {}),
         ...(was === undefined ? {} : {
           control: rawLabelOf(before) || undefined,
           was, now, itChanged: was !== now, how: "click",
           // Said out loud so a caller need not infer it from the attribute.
           ...(isDoor(before) ? { opened: was !== now } : {}),
         }),
-      };
+      });
+      if (was !== undefined || !before) return report(stateOf(before), false);
+      // A look can change a beat after the press: City-FIDAP turns a layer
+      // blue once its data has loaded. Read at once, every layer switched
+      // on or off was reported as not having changed, and the agent went on
+      // to press the next likely layer as well.
+      // An item read as on or off by its look is judged by that alone: a
+      // hover or focus style moving is not the layer switching.
+      const lookMoved = () => before.isConnected && (lit !== undefined ? litOf(before) !== lit : lookOf(before) !== lookWas);
+      const moved = () => !before.isConnected || lookMoved() || (opened !== undefined && expandedOf(before) !== opened);
+      // Only something with a state to watch is waited on; a plain link's
+      // press reports at once, as it always did.
+      if (moved() || (lit === undefined && opened === undefined)) return report(undefined, lookMoved());
+      return (async () => {
+        for (let t = 0, n = opened !== undefined ? 20 : 10; t < n && !moved(); t++) await new Promise((r) => setTimeout(r, 60));
+        return report(undefined, lookMoved());
+      })();
     },
     clickText: (text) => clickByText(text),
     fill: (selector, text) => fill(selector, text),
     selectOption: (selector, valueOrText, add) => setSelect(selector, valueOrText, !!add),
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
-    disclosures, openDisclosure,
+    disclosures, openDisclosure, findInSections,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
     capturedPoints, findCapturedPoint, openCapturedPoint,
     mcpInstall,
@@ -7959,6 +8185,9 @@ async function invokeOnActiveTab(fn, args) {
   }
   const tookMs = Date.now() - sentAt;
   if (tookMs > 2000) debugLog(`[page] ${fn} took ${tookMs}ms`);
+  // What an action reported, beside what it was asked: a press said to have
+  // changed nothing is otherwise only visible as its consequences.
+  if (globalThis.__wcTrace && !READS_ONLY.test(String(fn || ""))) debugLog(`[page] ${fn} -> ${JSON.stringify(result && result.result !== undefined ? result.result : result).slice(0, 600)}`);
   return { ...result, calledOn: route.global }; // which manifest actually ran, for the popup log
 }
 
@@ -10350,7 +10579,16 @@ function plainlyPut(instruction) {
   return t || String(instruction || "").trim();
 }
 
+// "Off" after turning or switching is the verb's, as "on" always is. Kept as
+// a word, "turn off the buildings" asked for a control called both
+// buildings and off, matched nothing, and the layer could never be turned
+// off. Only after one of those verbs: a setting called Off is still named.
+const OFF_PARTICLE = /\b(?:turn|turned|switch|switched|toggle|flip|shut)\b(?:\s+\S+){0,4}?\s+off\b/i;
 function meaningfulWords(text) {
+  const words = meaningfulWordsAll(text);
+  return OFF_PARTICLE.test(String(text || "")) ? words.filter((w) => w !== "off") : words;
+}
+function meaningfulWordsAll(text) {
   return foldAccents(spelledUnits(text))
     .toLowerCase()
     .split(/[^a-z0-9]+/)
@@ -10891,8 +11129,8 @@ function matchOption(control, words) {
 
 // What the instruction wants done to a checkbox. Absent an explicit verb,
 // ticking is the safer reading: someone naming a filter usually wants it on.
-const TURN_ON = /\b(turn on|enable|show|tick|check|add|include|display|select)\b/i;
-const TURN_OFF = /\b(turn off|disable|hide|untick|uncheck|remove|exclude|clear|deselect)\b/i;
+const TURN_ON = /\b(turn on|enable|activate|show|tick|check|add|include|display|select)\b/i;
+const TURN_OFF = /\b(turn off|disable|deactivate|hide|untick|uncheck|remove|exclude|clear|deselect|unselect)\b/i;
 
 function checkboxIntent(instruction) {
   if (TURN_OFF.test(instruction)) return false;
@@ -12513,7 +12751,7 @@ function argsForTool(def, instruction, words) {
 // answering - because the words overlap a control's name. Data-first
 // everywhere buries the main purpose. The verb settles it: "set the parameter
 // to gage height" acts, "gage height in Alaska" answers.
-const CONTROL_VERB = /\b(click|press|select|choose|pick|set|change|switch|toggle|turn|enable|disable|open|close|expand|collapse|show|hide|display|search|look ?up|find|type|enter|download|zoom|group|sort|view|go to|navigate|apply|reset|clear|check|uncheck|tick)\b/i;
+const CONTROL_VERB = /\b(click|press|select|deselect|unselect|choose|pick|set|change|switch|toggle|turn|enable|disable|activate|deactivate|open|close|expand|collapse|show|hide|display|search|look ?up|find|type|enter|download|zoom|group|sort|view|go to|navigate|apply|reset|clear|check|uncheck|tick|untick)\b/i;
 
 /* "Do this and tell me that."
  *
@@ -14553,6 +14791,15 @@ function choiceCard(routeGlobal, goal, out, model) {
  * sections, one at a time, reached the layer. Only what that look finishes;
  * anything else goes on to the model as before.
  */
+// A step's row in words where its control has a state to name: "now on",
+// "already off". "Changed" said nothing about which way a layer went.
+function pressedValue(st) {
+  const named = /^(?:on|off|open|shut)$/;
+  if (st.alreadySo && named.test(String(st.now))) return `already ${st.now}`;
+  if (st.changed && named.test(String(st.now)) && st.was !== st.now) return `now ${st.now}`;
+  return null;
+}
+
 async function sectionsFirst(routeGlobal, wanted) {
   if (!isCommand(wanted) || IS_CONDITIONAL.test(wanted)) return null;
   const inv = await readInventory();
@@ -14575,7 +14822,7 @@ async function sectionsFirst(routeGlobal, wanted) {
       stats: [{ label: "steps", value: String(chased.steps.length) }],
       rows: chased.steps.map((st) => ({
         name: String(st.label || st.did).slice(0, 50),
-        value: st.did === "opened" ? "opened" : st.did === "closed" ? "shut again, it did not hold it" : st.changed ? "changed" : st.alreadySo ? "already so" : "pressed, not confirmed",
+        value: st.did === "opened" ? "opened" : st.did === "closed" ? "shut again, it did not hold it" : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "pressed, not confirmed",
         meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
       })),
       note: "the page's sections were looked through one at a time, so the model was not asked",
@@ -17287,6 +17534,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   let deadEnds = 0;
   let emptyPanel = null;
   let openSection = null;
+  let lookedElsewhere = false;
   const stateCommand = STATE_COMMAND.test(instruction);
 
   for (let step = 0; step < maxSteps; step++) {
@@ -17388,6 +17636,25 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       const fresh = (d) => !actedOn.has(d.selector) && !doorsOpenedThisAsk.has(d.selector) && !pressedByName(d);
       // Then a run of chevron sections, one at a time: City-FIDAP's sidebar
       // names "Weather & Environment", not the Flood Maps inside it.
+      // Where a run of sections hides it, the one holding its name whole
+      // is found first - looked into and shut again - rather than each
+      // opened in turn until the step budget runs out two levels short.
+      const subjectNow = subjectOf(meaningfulWords(instruction));
+      if (!lookedElsewhere && subjectNow.length && listed.some((d) => d.section && fresh(d))) {
+        lookedElsewhere = true;
+        const found = await invokeOnActiveTab("findInSections", [subjectNow.join(" ")]).catch(() => null);
+        const path = (found && found.ok && found.result && found.result.path) || [];
+        if (path.length) {
+          // Left open by the look that found it.
+          for (const p of path) {
+            doorsOpenedThisAsk.add(p.selector);
+            actedOn.add(p.selector);
+            steps.push({ did: "opened", label: p.label, appeared: true });
+          }
+          forgetPageTools();
+          continue;
+        }
+      }
       const door = listed.find((d) => (d.related || d.generic) && fresh(d)) || listed.find((d) => d.section && fresh(d));
       if (!door) break;
       // A section is shut again if it held nothing, related by a word or not:
@@ -17398,6 +17665,10 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       doorsOpenedThisAsk.add(door.selector);
       const opened = await invokeOnActiveTab("openDisclosure", [door.selector]).catch(() => null);
       forgetPageTools();
+      // One that was open already is not this search's to shut again: the
+      // person opened it, and "select buildings" closed Infrastructure for
+      // not holding a second Buildings.
+      if (opened && opened.ok && opened.result && opened.result.alreadyOpen && openSection === door) openSection = null;
       const appeared = (opened && opened.ok && opened.result.appeared) || 0;
       steps.push({ did: "opened", label: door.label, appeared });
       // Opened the very thing that was asked for, and found it empty. On
@@ -17441,6 +17712,27 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     const wantNums = String(instruction).match(/\b\d+\b/g) || [];
     const haveNums = String(target.label || "").match(/\b\d+\b/g) || [];
     if (!figuresAgree(wantNums, haveNums)) break;
+    // A partial name inside a section the search opened, where another shut
+    // section may hold the name whole: "bicycle" is Transportation's
+    // Bicycle, not Infrastructure's Bicycle Amenities. Looked for once.
+    if (openSection && !lookedElsewhere && target.label && subjectWords.length
+        && !wholeNamedAmong(instruction, [{ label: target.label, kind: "a" }])) {
+      lookedElsewhere = true;
+      const phrase = subjectWords.join(" ");
+      const found = await invokeOnActiveTab("findInSections", [phrase, { skip: openSection.selector }]).catch(() => null);
+      const there = found && found.ok && found.result;
+      if (there && there.door) {
+        await runVerified(routeGlobal, { name: "pageClick", args: { selector: openSection.selector } }).catch(() => null);
+        steps.push({ did: "closed", label: openSection.label });
+        openSection = null;
+        const opened = await invokeOnActiveTab("openDisclosure", [there.door]).catch(() => null);
+        forgetPageTools();
+        doorsOpenedThisAsk.add(there.door);
+        actedOn.add(there.door);
+        steps.push({ did: "opened", label: there.label, appeared: (opened && opened.ok && opened.result.appeared) || 0 });
+        continue;
+      }
+    }
     if (target.selector) actedOn.add(target.selector);
     if (target.label) actedKeys.add(controlKey(target));
     const ran = await runVerified(routeGlobal, call);
@@ -17474,7 +17766,7 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       : call.args.on !== undefined ? call.args.on : undefined);
     // A box or radio reports its state as a boolean, a dropdown or a field
     // as the value it holds, so both shapes count.
-    const alreadySo = ran.ok !== false && SETS_STATE && r.itChanged === false
+    const alreadySo = r.already === true || ran.ok !== false && SETS_STATE && r.itChanged === false
       && (r.now === true
         || (askedFor !== undefined && typeof r.now !== "undefined"
           && String(r.now) === String(askedFor)));
@@ -17587,6 +17879,9 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
 // the page overrule the control about the control.
 function didItMove(ran) {
   const r = (ran && ran.result) || {};
+  // Already the way the request wants it, so the press was not made: the
+  // request is met, and nothing else should be pressed looking for it.
+  if (r.already) return true;
   if (typeof r.itChanged === "boolean") return r.itChanged;
   return !!(ran && ran.verified && ran.verified.changed);
 }
@@ -18103,9 +18398,14 @@ async function unifiedTools(routeGlobal, instruction, { acting = false } = {}) {
   // job of following the site, which acts and then reads. It is not an
   // answer on its own.
   const acts = /^(click|choose|toggle|type|search)[A-Z]/;
+  // And the other way: a command does not end in a read. "Turn off the
+  // road" chose readThisPage - road is one letter from read - and reported
+  // that reading changed nothing.
+  const asksToRead = /\b(read|list|tell|say|says|summar\w+)\b/i.test(instruction);
   const fromThisPage = fromPage.all
     .map((t) => ({ ...t, kind: t.kind || "page" }))
-    .filter((t) => acting || !acts.test(t.name));
+    .filter((t) => acting || !acts.test(t.name))
+    .filter((t) => !acting || asksToRead || !/^(?:read|list|page(?:Read|List))(?:[A-Z]|$)/.test(t.name));
 
   return [...fromThisPage, ...data];
 }
@@ -22958,6 +23258,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // left the page for the one before it.
           if (one && /^page(?:Back|Forward)$/.test(one.tool.name) && A_STEP_IN_TIME.test(wanted)) one = null;
           if (one) {
+            if (globalThis.__wcTrace) debugLog(`[one-list] ${one.tool.name} (${one.tool.kind || "?"}) for "${wanted}" acting=${commandLike}`);
             let ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
 
             // A click that landed and changed nothing is usually a door.
@@ -22986,9 +23287,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // its own has not shown that anything was switched on. Only the
             // named control's own before and after can say so, and where
             // there is none the job is not yet proven done.
-            const deadEnd = (rr.itChanged === false)
-              || !!(ran.verified && ran.verified.changed === false)
-              || (stateCommand && typeof rr.itChanged !== "boolean");
+            // Already as asked is not a dead end: nothing was pressed because
+            // nothing needed to be.
+            // And the control's own before and after, where it has one, is
+            // the verdict: a layer that went off -> on is done whatever the
+            // page signature says (see didItMove).
+            const deadEnd = !rr.already && (typeof rr.itChanged === "boolean" ? !rr.itChanged
+              : (!!(ran.verified && ran.verified.changed === false) || stateCommand));
             // Only where an end state was asked for. "Enable flood inundation"
             // wants the layer on, so opening a panel and ticking what is
             // inside is help. "Click 30 day" is one instruction about one
@@ -23010,13 +23315,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       chased.opened.length
                         ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
                         : `${friendlyToolName(one.tool.name)} changed nothing, so it kept going`,
-                      typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                      (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
+                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
                     ].filter(Boolean).join(" \u00b7 "),
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
-                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                      value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
+                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                       meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
                     source: route.global,
@@ -23087,6 +23393,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     if (r.wrongOne) {
                       return `asked for "${r.wrongOne}" but the page gave "${r.control}" - not acted on as named`;
                     }
+                    if (r.already) return `${r.control} was already ${r.now} - nothing to change`;
                     if (typeof r.itChanged === "boolean") {
                       if (r.itChanged) return `${r.control}: ${r.was} \u2192 ${r.now}`;
                       // A click that landed and changed nothing is not the
@@ -23404,6 +23711,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Nor here: "go back one day" is a step on the page, not the page
         // before this one.
         if (manifestCall && /^page(?:Back|Forward)$/.test(manifestCall.name) && A_STEP_IN_TIME.test(wanted)) manifestCall = null;
+        // Nor a read for a command: "road" is a letter from "read", and "turn
+        // on the road" read the page before pressing anything.
+        if (manifestCall && isCommand(wanted) && /^page(?:Read|List)/.test(manifestCall.name)
+            && !/\b(read|list|tell|say|says|summar\w+)\b/i.test(wanted)) manifestCall = null;
         if (manifestCall) {
           // An action that cannot simply be undone is worth a question first.
           // Verification makes most things reversible; a download that has
@@ -23487,13 +23798,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     `${friendlyToolName(manifestCall.name)} could not do it, so this page's own controls were used`,
                     chased.opened.length
                       ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")}` : null,
-                    typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                    (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
+                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
                   ].filter(Boolean).join(" \u00b7 "),
                   stats: [{ label: "steps", value: String(chased.steps.length) }],
                   rows: chased.steps.map((st) => ({
                     name: String(st.label || st.did).slice(0, 50),
-                    value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
-                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                    value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
+                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                     meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                   })),
                   source: route.global,
@@ -23596,8 +23908,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               rows: (chased && chased.steps.length ? chased.steps.map((st) => ({
                 name: String(st.label || st.did).slice(0, 50),
                 value: st.did === "opened"
-                  ? `revealed ${st.appeared}`
-                  : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                  ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened")
+                  : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                 meta: st.did,
                 tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
               })) : rankedChanges(result.verified).map((c) => ({
@@ -23758,13 +24070,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const result = await runVerified(route.global, call);
               const own = (result && result.result) || {};
               steps.push({
-                stateChanged: own.itChanged === true
+                stateChanged: own.itChanged === true || own.already === true
                   || /^page(Check|PickRadio|SelectOption|Fill)$/.test(call.name),
                 call, ok: result.ok !== false, result: result.result, error: result.error,
                 // A step that ran without changing anything is reported, not
                 // hidden: in a sequence it usually means a later step is
                 // about to act on a state that was never reached.
-                changed: result.verified ? result.verified.changed : undefined,
+                // The control's own word first: a layer that turned blue
+                // changed whatever the page signature says.
+                changed: own.already ? false : couldCheck(result) ? didItMove(result) : undefined,
+                already: own.already ? "already " + (own.now || "so") : undefined,
               });
               if (result.ok === false) break;
             }
@@ -23791,13 +24106,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                       chased.opened.length
                         ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
                         : "the first match switched nothing on, so it kept going",
-                      typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                      (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
+                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
                     ].filter(Boolean).join(" \u00b7 "),
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
-                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                      value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
+                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                       meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
                     source: route.global,
@@ -23812,6 +24128,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // dropdown named on one shared word - so the headline claimed the
             // opposite of the rows under it.
             const did = steps.filter((st) => st.ok && st.changed !== false).length;
+            const settled = steps.filter((st) => st.ok && st.already).length;
+            // The verb is not a word the page failed to match.
+            const unmatched = guess.unmatchedWords.filter((w) => !CONTROL_VERB.test(w) && !verbFamily(w) && w !== "off");
             respond({
               ok: !failed,
               plannedBy: "page-match",
@@ -23820,18 +24139,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               unmatchedWords: guess.unmatchedWords.length ? guess.unmatchedWords : undefined,
               display: {
                 title: failed ? "Partly applied"
+                  : did === 0 && settled ? "Already so"
                   : did === 0 ? "Nothing changed"
                   : did > 1 ? `Applied ${did} controls` : "Applied",
-                subtitle: guess.unmatchedWords.length
-                  ? `nothing on this page matched: ${guess.unmatchedWords.join(", ")}`
+                subtitle: unmatched.length
+                  ? `nothing on this page matched: ${unmatched.join(", ")}`
                   : guess.phrase,
                 stats: [],
                 rows: guess.matched.slice(0, steps.length).map((m, i) => {
                   const st = steps[i];
-                  const noop = st && st.ok && st.changed === false;
+                  const noop = st && st.ok && st.changed === false && !st.already;
+                  const was = st && st.result && typeof st.result.now === "string" && st.result.itChanged ? st.result.now : null;
                   return {
                     name: m.label || m.selector,
-                    value: !st || !st.ok ? "failed" : noop ? "no change" : "done",
+                    value: !st || !st.ok ? "failed" : st.already ? st.already : noop ? "no change" : was && /^(?:on|off|open|shut)$/.test(was) ? `now ${was}` : "done",
                     meta: st && !st.ok ? String(st.error || "no reason given").slice(0, 70) : m.covered.join(" "),
                     tone: !st || !st.ok ? "alert" : noop ? "warn" : "ok",
                   };
@@ -23880,13 +24201,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                         ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
                         : "more than one control shared that name, so each was tried",
                       chased.unconfirmed ? "pressed - the page gave no sign it changed, so this could not be checked" : null,
-                      typeof last.now === "boolean" ? `${last.label}: ${last.was} \u2192 ${last.now}` : null,
+                      (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
+                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
                     ].filter(Boolean).join(" \u00b7 "),
                     stats: [{ label: "steps", value: String(chased.steps.length) }],
                     rows: chased.steps.map((st) => ({
                       name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
-                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                      value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
+                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                       meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                     })),
                     source: route.global,
@@ -24030,8 +24352,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 stats: [{ label: "steps", value: String(chased.steps.length) }],
                 rows: chased.steps.map((st) => ({
                   name: String(st.label || st.did).slice(0, 50),
-                  value: st.did === "opened" ? `revealed ${st.appeared}` : st.did === "closed" ? "shut again, it did not hold it"
-                        : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+                  value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
+                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
                   meta: st.did,
                   tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
                 })),
