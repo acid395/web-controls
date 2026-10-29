@@ -244,22 +244,15 @@ async function whenIdle({ waitMs = 5000 } = {}) {
   return inFlight === 0;
 }
 
-// A shorter context, where the weights are already large.
+// Every model on the context window WebLLM ships it with (4096).
 //
-// The 8B is 5001MB of weights and, separately, a key-value cache sized by
-// the context window: thirty-two layers, eight key-value heads, 128 wide,
-// two bytes a number, twice over for keys and values - about 128KB a token,
-// so 4096 tokens is another half a gigabyte. That is half a gigabyte of the
-// scarcest thing on the machine, held for a window nothing here fills: the
-// prompt is a few hundred tokens once the shortlist has narrowed the page,
-// and twenty-five hundred at its very worst.
-//
-// Only for the large ones. A 1.5B's cache is small enough that trimming it
-// buys nothing and could truncate a long page for no reason.
-const LARGE_CONTEXT = 3072;
-function chatOptsFor(id) {
-  const mb = globalThis.WC_MODEL_VRAM ? globalThis.WC_MODEL_VRAM(id) : 0;
-  return mb >= 4000 ? { context_window_size: LARGE_CONTEXT } : undefined;
+// The large ones were cut to 3072 to save the 8B about 130MB of key-value
+// cache. A plan prompt fits in that with room to spare, but a step prompt
+// over a whole page with its text read out runs to about 2,500 tokens, and
+// the reply has to fit in what is left - so the 8B alone could be cut off
+// mid-answer on a request the 3B and 4B finished.
+function chatOptsFor() {
+  return undefined;
 }
 
 function buildEngine(id, onProgress) {

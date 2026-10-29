@@ -3585,6 +3585,37 @@ section("the model chooses from the page's controls");
   }
 }
 
+// What every model chooses from. A verb that is a control's name keeps its
+// control on the list, a map switch named whole is offered, a value to type
+// brings its box, and the plan list is the same length whatever the model.
+{
+  const many = Array.from({ length: 30 }, (_, i) => `<a href="#m${i}">Map layer ${i}</a>`).join("");
+  const page = loadPage(`<!doctype html><html><body>${many}
+    <a href="#f1">Forecast Maps</a><a href="#f2">Forecast Models</a><a href="#f3">Local forecast</a><a href="#f4">Forecast Discussion</a>
+    <label>Enter Your City, ST or ZIP Code <input id="zip" type="text"></label>
+    <button id="osb">Open Search Bar</button>
+    <div class="leaflet-container"><div class="leaflet-control-zoom"><a class="leaflet-control-zoom-in" href="#" role="button" title="Zoom in">+</a></div>
+      <div class="leaflet-control-layers"><label><input type="checkbox"> Hydro</label><label><input type="checkbox"> Places</label></div></div>
+    </body></html>`, { url: "https://maps.example.gov/" });
+  if (page) {
+    const inv = page.GENERIC.inventory({ includeHidden: true });
+    const bgm = loadBackground({ page });
+    const vm = require("vm");
+    const offered = (goal, n = 20) => vm.runInContext(`shortlistFor(${JSON.stringify(goal)}, controlsForModel(${JSON.stringify(inv)}, { max: 400 }), ${n}).map((c) => c.label)`, bgm);
+    ensure("'zoom in on the map' keeps Zoom in among thirty map links", offered("zoom in on the map").includes("Zoom in"), offered("zoom in on the map"));
+    ensure("'search the site' keeps the search button", offered("search the site for snow drought").includes("Open Search Bar"), offered("search the site for snow drought"));
+    const hydro = inv.controls.find((c) => c.label === "Hydro");
+    if (hydro && hydro.mapChrome) {
+      ensure("a map switch named whole is offered", offered("turn on the hydro layer on the map").includes("Hydro"), offered("turn on the hydro layer on the map"));
+      ensure("but one only partly named is not", !offered("turn on the hydro layer on the map").includes("Places"), offered("turn on the hydro layer on the map"));
+    }
+    ensure("a value to type brings its box", offered("type 60601 into the forecast box", 6).some((l) => /ZIP Code/.test(l)), offered("type 60601 into the forecast box", 6));
+  }
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "background.js"), "utf8");
+  const plan = src.slice(src.indexOf("async function planWithModel"), src.indexOf("async function planWithModel") + 3000);
+  ensure("every model size is shown the same plan list", !/WC_MODEL_VRAM/.test(plan) && /const LIST = 20, OPTIONS = 8;/.test(plan));
+}
+
 // Menus whose items exist only once opened (City-FIDAP's Material UI
 // collapses), beside a map region and Google's own buttons. A request naming
 // an item word for word must reach it; the model must be shown items behind

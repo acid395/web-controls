@@ -28,6 +28,10 @@ async function engineFor(modelId, onProgress) {
   if (enginePromise) await release();
   engineModel = modelId;
   const { CreateMLCEngine } = await import("../offscreen/vendor/web-llm.js");
+  // Every model on the window WebLLM ships it with (4096). The large ones
+  // were cut to 3072 to save about 130MB, which left an 8B alone short of
+  // room for a long step prompt and its reply - a smaller model answered
+  // what the 8B was cut off in the middle of.
   enginePromise = CreateMLCEngine(modelId, {
     // The fraction as well as the words. WebLLM reports both and only the
     // words were passed on, so the panel could say "loading" and never how
@@ -40,8 +44,7 @@ async function engineFor(modelId, onProgress) {
       };
       if (onProgress) onProgress(lastProgress.text, lastProgress.fraction);
     },
-  }, (globalThis.WC_MODEL_VRAM && WC_MODEL_VRAM(modelId) >= 4000)
-    ? { context_window_size: 3072 } : undefined)
+  })
     .then((e) => { engineReady = true; return e; })
     .catch((err) => { enginePromise = null; engineReady = false; engineModel = null; throw err; });
   return enginePromise;

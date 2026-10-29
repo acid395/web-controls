@@ -117,10 +117,9 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
 
   async function build(modelId) {
     const api = await webllm();
-    // The same allowance panel-model.js makes: the large models get a
-    // smaller context window, which is what lets them fit beside a page.
-    const chatOpts = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM(modelId) >= 4000)
-      ? { context_window_size: 3072 } : undefined;
+    // As panel-model.js: every model on the window WebLLM ships it with, so
+    // a large one is not left shorter of room than a small one.
+    const chatOpts = undefined;
     // The main thread only when the worker itself could not start - a CSP
     // without blob:, a browser without module workers. A worker that started
     // and then failed to load the model failed for a reason the main thread
