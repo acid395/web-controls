@@ -13,7 +13,7 @@ Everything comes from this GitHub repository. Nothing is on the npm registry.
 **One script tag, no install.** jsDelivr serves the release straight from GitHub:
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/acid395/web-controls@widget-v0.4.51/dist/web-controls-widget.js"
+<script src="https://cdn.jsdelivr.net/gh/acid395/web-controls@widget-v0.4.52/dist/web-controls-widget.js"
         data-title="Ask this page"></script>
 ```
 
@@ -24,7 +24,7 @@ Everything comes from this GitHub repository. Nothing is on the npm registry.
 A fixed release:
 
 ```sh
-npm install github:acid395/web-controls#widget-v0.4.51
+npm install github:acid395/web-controls#widget-v0.4.52
 ```
 
 Always the latest build:
