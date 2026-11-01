@@ -874,7 +874,7 @@ else {
       /click any data/.test((line || {}).textContent || ""), (line || {}).textContent);
     flush();
     ensure("and the running ask is drawn, not filtered out",
-      /still running/.test(logText()), logText().slice(0, 160));
+      /working\.\.\./.test(logText()), logText().slice(0, 160));
 
     // A status line that is not about an ask survives a redraw. The speed
     // test writes no history entry, so "nothing is running" is true for the
@@ -11418,27 +11418,6 @@ check("present-tense questions are untouched", hist("gage height in Alaska"),
 // A span with no unit named defaults rather than failing.
 check("history with no span defaults", sb.historySpan("gage height history for the bighorn river"), 30);
 check("and now is still now", sb.historySpan("gage height in Alaska"), null);
-
-section("the popup's suggestions must actually work");
-// Chips are offered as examples, so one that does nothing is a bad first
-// impression - and "show discharge" was exactly that until this check caught
-// it. The list is read from popup.js so the two cannot drift apart.
-(function () {
-  const fsMod = require("fs"), pathMod = require("path");
-  const js = fsMod.readFileSync(pathMod.join(__dirname, "..", "popup", "popup.js"), "utf8");
-  const block = js.slice(js.indexOf("const EXAMPLES"), js.indexOf("function renderChips"));
-  const examples = eval("(" + block.slice(block.indexOf("{"), block.lastIndexOf("}") + 1) + ")");
-  for (const [route, list] of Object.entries(examples)) {
-    const unmatched = list.filter((q) => {
-      if (/what can i|read this page/i.test(q)) return false; // handled before planning
-      if (sb.planDataTool(q, { global: route })) return false;
-      if (sb.planManifestTool(q, route)) return false;
-      if (route === "USGS" && sb.planTool(q)) return false;
-      return true;
-    });
-    ensure(`${route}: every suggested example resolves`, unmatched.length === 0, unmatched);
-  }
-})();
 
 // "graph discharge" tied siteGraphParameter against siteListGraphParameters -
 // one sets, one lists - and naming a parameter settles which.

@@ -89,6 +89,7 @@
   details.past > summary::before { content: "\25B8"; color: var(--faint); font-size: 9px; }
   details.past[open] > summary::before { content: "\25BE"; }
   details.past > summary:hover .past-a { color: var(--ink); }
+  details.past[open] > summary .past-a { visibility: hidden; }
   .past-a { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   details.past > div { padding: 0 6px 6px; }
   details.past .card { box-shadow: none; }
@@ -158,20 +159,20 @@
   .row.alert .row-value { color: var(--alert); }
   .row.warn  .row-value { color: var(--warn); }
   .row.ok    .row-value { color: var(--ok); }
-  .card-acts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 11px; }
+  .card-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 10px; }
   button.act {
     padding: 4px 11px; cursor: pointer; border-radius: 999px;
     border: 1px solid var(--line); background: var(--bg);
     color: var(--muted); font: 11px/1.4 inherit;
   }
   button.act:hover { color: var(--ink); border-color: var(--accent); }
-  .card-foot {
-    padding: 8px 14px; color: var(--faint);
-    font-size: 10px; display: flex; justify-content: space-between; gap: 10px;
-  }
-  details.raw { margin: 0; border: none; padding: 0; }
-  details.raw > summary { font-size: 10px; color: var(--faint); padding: 6px 14px; cursor: pointer; }
-  .card pre { margin: 0 8px 8px; border-radius: 12px; background: var(--bg); }
+  .card-foot { padding: 6px 2px; color: var(--muted); font-size: 10.5px; white-space: pre-wrap; }
+  details.raw { margin: 0; border: none; padding: 0; align-self: center; }
+  details.raw[open] { flex-basis: 100%; }
+  details.raw > summary { font-size: 10.5px; color: var(--faint); padding: 2px 4px; cursor: pointer; list-style: none; }
+  details.raw > summary::-webkit-details-marker { display: none; }
+  details.raw > summary:hover { color: var(--ink); }
+  .card pre { margin: 0; border-radius: 12px; background: var(--bg); max-height: 240px; overflow: auto; }
   pre {
     margin: 0; padding: 8px 11px; background: var(--sunken); color: var(--ink);
     font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -179,14 +180,7 @@
   }
 
   /* ---- composer, at the bottom where a chat keeps it ---- */
-  .ask { padding: 8px 12px 10px; background: var(--bg); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .chip {
-    padding: 5px 11px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--bg);
-    color: var(--muted); font: 11.5px/1.3 inherit; transition: border-color .15s, color .15s;
-  }
-  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .ask { padding: 10px 12px 6px; background: var(--bg); border-top: 1px solid var(--line-soft); }
   .ask-row {
     display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 15px;
     border: 1px solid var(--line); border-radius: 24px; background: var(--panel);
@@ -211,11 +205,10 @@
   button.go:hover { filter: brightness(1.08); }
   button.go:active { transform: scale(.94); }
 
-  /* Always shown. This row was hidden until the capabilities check reported a
-     problem, which is the one moment that check is least likely to answer -
-     so the only control that fixes an un-enabled site was invisible exactly
-     when it was needed. */
-  .enable-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  /* Shown when the page is not enabled, or when the check has not answered
+     after a moment - see describeRoute - and gone once it works. */
+  .enable-row { margin-top: 8px; display: none; flex-wrap: wrap; gap: 6px; }
+  .enable-row.show { display: flex; }
   .enable-row > .hint { flex-basis: 100%; margin: 2px 0 0; }
   .enable-row > .hint:empty { display: none; }
   button.secondary {
@@ -227,27 +220,17 @@
 
   .logbar {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 0 14px 8px; background: var(--bg);
+    padding: 0 14px 6px; background: var(--bg);
   }
   .logbar .hint { margin: 0; font-size: 10px; color: var(--faint); }
   button.linky {
-    padding: 2px 9px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--bg);
-    color: var(--muted); font: 10.5px/1.4 inherit;
+    padding: 2px 4px; border: none; background: none; cursor: pointer;
+    color: var(--faint); font: 10.5px/1.4 inherit;
   }
-  button.linky:hover { color: var(--ink); border-color: var(--faint); }
+  button.linky:hover { color: var(--ink); }
 
   /* ---- debug ---- */
-  details.tools { border-top: 1px solid var(--line-soft); }
-  details.tools > summary {
-    padding: 9px 12px; cursor: pointer; font-size: 11.5px; color: var(--muted);
-    list-style: none; user-select: none;
-  }
-  details.tools > summary::-webkit-details-marker { display: none; }
-  details.tools > summary::before { content: "\25B8 "; color: var(--faint); }
-  details.tools[open] > summary::before { content: "\25BE "; }
-  details.tools > summary:hover { color: var(--ink); }
-  .tools-body { padding: 0 12px 12px; }
+  .tools-body { padding: 10px 12px 12px; border-top: 1px solid var(--line-soft); max-height: 45vh; overflow: auto; }
   .tool-group { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line-soft); }
   .tool-group:first-child { padding-top: 0; margin-top: 0; border-top: none; }
   h2 { font-size: 11.5px; font-weight: 600; margin: 0 0 3px; }
@@ -332,7 +315,6 @@
   <div id="log"></div>
 
   <div class="ask">
-    <div class="chips" id="chips"></div>
     <div class="ask-row">
       <input id="smartInstruction" placeholder="Ask about this page, or tell it what to do..." autofocus>
       <button id="smartAsk" class="go" title="Ask" aria-label="Ask"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg></button>
@@ -345,56 +327,30 @@
   </div>
 
   <div class="logbar">
-    <span class="hint">kept if the panel closes &middot; type <code>diagnose</code> to check this install</span>
-    <span class="hint" id="buildTag" style="margin-left:auto;opacity:.6"></span>
-    <button id="clearLog" class="linky">clear</button>
+    <button id="toggleTools" class="linky" type="button">debug</button>
+    <span class="hint" id="buildTag" style="margin-left:auto"></span>
+    <button id="clearLog" class="linky" type="button">clear</button>
   </div>
 
-  <details class="tools">
-    <summary>Debug tools</summary>
+  <div class="tools" id="tools" hidden>
     <div class="tools-body">
 
       <div class="tool-group">
         <h2>Local model</h2>
         <div class="hint">
-          A local model, which needs WebGPU and saturates it while running.
-          The default is Llama 3.1 8B - about 5GB on first load, and worth it
-          for anything with several steps in it. A machine that cannot hold it
-          falls back to Qwen2.5 1.5B on its own and says so below. Everything
-          else here works without a model at all.
-          The picker is at the top of the panel, beside what it is doing.
-          Prefix any question with <code>model:</code> to put it to the model
-          directly, type <code>use 1b</code>, <code>use 3b</code>,
-          <code>use 7b</code>, <code>use 8b</code> or <code>use 9b</code> to
-          change which one plans, and <code>speed test</code> to measure what
-          this machine can actually manage.
+          Type <code>diagnose</code> to check this install, <code>speed test</code>
+          to time the model, or start a question with <code>model:</code> to
+          put it to the model directly.
         </div>
         <label class="switch">
           <input type="checkbox" id="localModelEnabled">
           <span>Enable the local model for Ask</span>
         </label>
-        <div class="hint">
-          Which model plans. Every step of an instruction is one turn of it,
-          so this is most of what waiting for an instruction is, and it is
-          also most of what it costs the machine - the 3B took Chrome down
-          on a GPU that could not hold it beside a heavy page. A smaller one
-          answers sooner and picks the wrong control more often.
-        </div>
-        <!-- The picker lives at the top of the panel now, beside the state
-             line, because that is where somebody goes to find out what is
-             happening. Two of them would be two ids and one would silently
-             never be reached. -->
       </div>
 
       <div class="tool-group">
         <h2>Compare the planners</h2>
-        <div class="hint">
-          Reworded asks for controls this page actually has, put to both
-          planners. Neither acts - each only chooses - so it is safe to run
-          on a live page and gives the same answer twice. The question it
-          settles: does the model reach controls the keyword scorer cannot,
-          and what does that cost per decision.
-        </div>
+        <div class="hint">Both planners choose for the same asks; neither acts.</div>
         <button id="runBenchmark">Score both planners on this page</button>
       </div>
 
@@ -408,7 +364,7 @@
       </div>
 
     </div>
-  </details>
+  </div>
 
   <script src="../lib/models.js"></script>
   <script src="../lib/step-prompt.js"></script>

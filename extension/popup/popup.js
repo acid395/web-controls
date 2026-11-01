@@ -59,12 +59,25 @@ function ago(iso) {
 function buildCard(display, raw) {
   const card = el("div", "card");
 
+  // Bookkeeping - where it was decided, token counts, how long - is for
+  // debugging, so it goes in the fold at the bottom rather than in a row of
+  // boxes on every card. How long it took rides beside "3m ago".
+  const META = /^(?:decided in|prompt|reply|steps|took)$/;
+  const stats = (display.stats || []).filter((s) => !META.test(s.label));
+  const took = (display.stats || []).find((s) => s.label === "took");
+  // An answer card's title is the answer cut short, printed right above the
+  // answer in full.
+  const stem = String(display.title || "").replace(/(?:\.\.\.|\u2026)$/, "").trim();
+  const echoes = display.answer && stem && String(display.answer).startsWith(stem);
+
   const head = el("div", "card-head");
-  head.appendChild(el("div", "card-title", display.title));
+  if (!echoes) head.appendChild(el("div", "card-title", display.title));
   // Without this an old collapsed result looks exactly as current as a new
   // one, which is the mistake this whole project keeps guarding against.
-  if (raw && raw.at) head.appendChild(el("div", "card-when", ago(raw.at)));
-  if (display.subtitle) head.appendChild(el("div", "card-sub", display.subtitle));
+  if (raw && raw.at) {
+    head.appendChild(el("div", "card-when", ago(raw.at) + (took ? ` \u00b7 ${took.value}` : "")));
+  }
+  if (display.subtitle && !echoes && display.subtitle !== display.title) head.appendChild(el("div", "card-sub", display.subtitle));
   card.appendChild(head);
 
   // The answer in full, where there is one. A reading is prose - three
@@ -73,15 +86,15 @@ function buildCard(display, raw) {
   // and getting back half a sentence is the feature not working.
   if (display.answer) card.appendChild(el("div", "answer", display.answer));
 
-  if (display.stats && display.stats.length) {
-    const stats = el("div", "stats");
-    for (const s of display.stats) {
-      const box = el("div", "stat");
-      box.appendChild(el("div", "stat-label", s.label));
-      box.appendChild(el("div", "stat-value", s.value));
-      stats.appendChild(box);
+  if (stats.length) {
+    const box = el("div", "stats");
+    for (const s of stats) {
+      const one = el("div", "stat");
+      one.appendChild(el("div", "stat-label", s.label));
+      one.appendChild(el("div", "stat-value", s.value));
+      box.appendChild(one);
     }
-    card.appendChild(stats);
+    card.appendChild(box);
   }
 
   // Explains an absent stats row rather than leaving it silently missing.
@@ -114,23 +127,23 @@ function buildCard(display, raw) {
     card.appendChild(box);
   }
 
-  if (display.rows && display.rows.length) {
+  // "read the page - got its values" under an answer says only that it read
+  // the page, which the answer already shows.
+  const shown = (display.rows || []).filter((r) => !(display.answer && r.name === "read the page"));
+  if (shown.length) {
     const rows = el("div", "rows");
-    for (const r of display.rows) {
+    for (const r of shown) {
       const row = el("div", "row" + (r.tone ? " " + r.tone : ""));
       const name = el("div", "row-name", r.name);
-      if (r.meta) name.appendChild(el("span", "row-meta", r.meta));
+      // Why a step was skipped or changed nothing is worth reading; why one
+      // that worked was chosen is debugging, and is in the fold below.
+      if (r.meta && !/^(?:done|changed)$/.test(String(r.value))) name.appendChild(el("span", "row-meta", r.meta));
       row.appendChild(name);
       row.appendChild(el("div", "row-value", r.value));
       rows.appendChild(row);
     }
     card.appendChild(rows);
   }
-
-  const foot = el("div", "card-foot");
-  foot.appendChild(el("span", null, display.note || ""));
-  foot.appendChild(el("span", null, display.source || ""));
-  card.appendChild(foot);
 
   // Undo is possible only because verification records the previous value of
   // everything it changed - it existed as a tool and was never reachable.
@@ -158,13 +171,19 @@ function buildCard(display, raw) {
     );
   });
   acts.appendChild(copy);
-  card.appendChild(acts);
 
-  // The exact JSON stays one click away - this is still a debugging tool.
+  // How it was decided, and the exact JSON, one click away - this is still
+  // a debugging tool, but not one every card has to read out.
   const details = el("details", "raw");
-  details.appendChild(el("summary", null, "raw response"));
+  details.appendChild(el("summary", null, "details"));
+  const how = [display.note, display.source]
+    .concat((display.stats || []).filter((s) => META.test(s.label)).map((s) => `${s.label}: ${s.value}`))
+    .concat((display.rows || []).filter((r) => r.meta).map((r) => `${r.name}: ${r.meta}`))
+    .filter(Boolean);
+  if (how.length) details.appendChild(el("div", "card-foot", how.join("\n")));
   details.appendChild(el("pre", null, JSON.stringify(raw, null, 2)));
-  card.appendChild(details);
+  acts.appendChild(details);
+  card.appendChild(acts);
 
   return card;
 }
@@ -201,7 +220,7 @@ function renderEntry(entry, { collapsed = false } = {}) {
   const into = (node) => body.appendChild(node);
 
   if (entry.status === "running") {
-    into(el("div", "running", "still running - this stays here if you close the popup"));
+    into(el("div", "running", "working..."));
     const stop = el("button", "cancel-ask", "Cancel");
     stop.type = "button";
     stop.addEventListener("click", () => {
@@ -287,7 +306,7 @@ function restoreHistory() {
     if (!res.history.length) {
       const empty = el("div", "empty");
       empty.appendChild(el("div", null, "What should this page do?"));
-      empty.appendChild(el("div", null, "Ask about it, or tell it what to press, pick or show. The examples below are a start."));
+      empty.appendChild(el("div", null, "Ask about it, or tell it what to press, pick or show."));
       box.appendChild(empty);
       if (statusText) setStatus(statusText, statusOwner);
       return;
@@ -330,6 +349,11 @@ if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addList
 });
 
 document.addEventListener("DOMContentLoaded", restoreHistory);
+
+on("toggleTools", "click", () => {
+  const box = document.getElementById("tools");
+  box.hidden = !box.hidden;
+});
 
 on("clearLog", "click", () => {
   chrome.runtime.sendMessage({ type: "clearHistory" }, () => {
@@ -422,55 +446,11 @@ on("enableAll", "click", () => {
 });
 
 /* ---------------------------------------------------------------------------
- * The header badge and the example chips.
+ * The header badge.
  *
- * Both are functional rather than decorative. The badge answers the first
- * question anyone has - does this thing even work on the page I'm looking at,
- * and what does it know about it - which previously required opening Debug
- * tools and reading a wall of text. The chips replace the paragraph that used
- * to explain what to type, and are drawn from the route's real tools, so they
- * cannot suggest something this page cannot do.
+ * It answers the first question anyone has - does this thing even work on
+ * the page I'm looking at, and what does it know about it.
  */
-const EXAMPLES = {
-  USGS: ["select Alaska", "set the parameter to gage height", "group by county", "gage height in Alaska"],
-  SITE: ["graph discharge", "set the time span to 30 days", "view tabular data"],
-  NOAA: ["zoom in", "open the layers panel", "set the basemap to satellite", "is there flooding in Idaho"],
-  FCP: ["toggle the legend", "set the basemap to terrain", "zoom out"],
-  GENERIC: ["read this page", "what can I do here", "gage height in Alaska", "weather in Chicago"],
-};
-
-function renderChips(route) {
-  const box = document.getElementById("chips");
-  box.textContent = "";
-  const add = (text, { run = true, title = "" } = {}) => {
-    const chip = el("button", "chip", text);
-    if (title) chip.title = title;
-    chip.addEventListener("click", () => {
-      const field = document.getElementById("smartInstruction");
-      field.value = text;
-      field.focus();
-      // A chip that fills the box but does not send it is for the ones you
-      // are meant to finish typing.
-      if (run) document.getElementById("smartAsk").click();
-      else field.setSelectionRange(field.value.length, field.value.length);
-    });
-    box.appendChild(chip);
-  };
-
-  for (const text of (EXAMPLES[route] || EXAMPLES.GENERIC).slice(0, 4)) add(text);
-  add("diagnose", { title: "check this install end to end" });
-  add("webmcp", { title: "the tools an agent can call on this page" });
-
-  // The model prefix only exists as text typed into the box, which made it
-  // unfindable: it was mentioned once, inside a collapsed panel. Offered here
-  // when the model is on, and left unsent so the question can be finished.
-  chrome.storage.local.get("localModelEnabled", ({ localModelEnabled }) => {
-    if (localModelEnabled === true) {
-      add("model: ", { run: false, title: "put the next question straight to the local model" });
-    }
-  });
-}
-
 function describeRoute() {
   // The enable buttons live behind this check, and the check is exactly what
   // fails when a site is not enabled - or when the worker is still waking, or
@@ -500,7 +480,6 @@ function describeRoute() {
       // enable button is worth showing at all.
       text.textContent = "not enabled here";
       document.getElementById("enableRow").classList.add("show");
-      renderChips("GENERIC");
       return;
     }
     // The page could not be read at all. Reporting a count here would be
@@ -510,15 +489,15 @@ function describeRoute() {
       text.textContent = /not enabled/i.test(res.pageBlocked)
         ? "not enabled here" : "can't read this page";
       document.getElementById("enableRow").classList.add("show");
-      renderChips(res.route);
       return;
     }
+    // Working, so the way to enable it is not needed and goes away.
+    document.getElementById("enableRow").classList.remove("show");
     const named = res.route !== "GENERIC";
     pill.classList.add(named ? "live" : "generic");
     text.textContent = named
       ? `${res.route} · ${res.tools.length} tools`
       : `any site · ${res.pageControls} controls`;
-    renderChips(res.route);
   });
 }
 
@@ -1342,7 +1321,9 @@ if (modelChoice) {
   for (const m of (globalThis.WC_MODELS || [])) {
     const o = document.createElement("option");
     o.value = m.id;
-    o.textContent = `${m.name} - ${WC_MODEL_SIZE(m)}, ${m.note}`;
+    // Name and size in the box; what it is for on hover.
+    o.textContent = `${m.name} - ${WC_MODEL_SIZE(m)}`;
+    o.title = m.note;
     modelChoice.appendChild(o);
   }
   chrome.storage.local.get("llmModelId", ({ llmModelId }) => {
