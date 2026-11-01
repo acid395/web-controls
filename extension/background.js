@@ -2784,6 +2784,52 @@ function plainlyPut(instruction) {
   return t || String(instruction || "").trim();
 }
 
+/* Everyday ways of asking for something on, off, open or shut, put the
+ * plain way before anything reads them. On City-FIDAP "get rid of the
+ * bridges", "remove the police stations", "I want to see the police
+ * stations", "put the stream gauges on the map", "school off" and "minimize
+ * infrastructure" all came back "nothing matched": none of them carried a
+ * verb the agent knew, so nothing on the page was ever tried - and "take
+ * the stream gauges off the map" was looked up as a USGS gauge.
+ */
+const SAID_PLAINLY = [
+  [/^(?:get\s+rid\s+of|take\s+away|stop\s+showing|do\s+not\s+show|don'?t\s+show|no\s+more)\s+(.+)$/i, "turn off $1"],
+  [/^take\s+(.+?)\s+off(?:\s+(?:of\s+)?(?:the\s+)?(?:map|screen|page|view))?$/i, "turn off $1"],
+  [/^remove\s+(.+?)\s+from\s+(?:the\s+)?(?:map|screen|page|view)$/i, "turn off $1"],
+  [/^(?:i\s+(?:want|would\s+like|'d\s+like|need|wanna)\s+(?:to\s+)?see|let\s+me\s+see|see|bring\s+up|pull\s+up)\s+(.+)$/i, "show $1"],
+  [/^(?:put|add|place)\s+(.+?)\s+(?:on|to|onto)\s+(?:the\s+)?(?:map|screen|page|view)$/i, "turn on $1"],
+  [/^show\s+(?:me\s+|us\s+)?where\s+(.+?)\s+(?:are|is)(?:\s+located)?$/i, "show $1"],
+  [/^(?:minimi[sz]e|fold\s+up)\s+(.+)$/i, "collapse $1"],
+  [/^(?:maximi[sz]e|unfold)\s+(.+)$/i, "expand $1"],
+];
+// A phrasal verb's own "on" or "off": "log off", "sign on", "drop off".
+const PHRASAL_LEAD = /^(?:log|sign|drop|kick|back|take|put|set|carry|go|come|cut|pass|hold|write|lay|jump|hop|try|call|top|tip|bring|let|dim|cool|ease|level|pay|rip|round|sell|wear|work|play|show|turn|switch|check|move|get|keep|hang|head|start|log)\b/i;
+// Which of these the request needs the page's names for: a bare "add" or
+// "remove" is a layer only where the page has no Add or Remove of its own,
+// and "lights off" is the control's name where one is called that.
+function needsNamesToRestate(text) {
+  const t = plainlyPut(text);
+  return /^(?:add|remove)\s/i.test(t) || /\s(?:on|off)$/i.test(t) || bareName(t);
+}
+// A control's name and nothing else - "buildings" - is a press of it, where
+// the page has one called exactly that. Short, no verb, not a question.
+function bareName(t) {
+  const words = String(t || "").trim().split(/\s+/);
+  return words.length >= 1 && words.length <= 4 && !CONTROL_VERB.test(t) && !QUESTION_LED.test(t) && !/[?]/.test(t);
+}
+function restateRequest(text, labels = []) {
+  let t = plainlyPut(text);
+  for (const [re, to] of SAID_PLAINLY) if (re.test(t)) { t = t.replace(re, to); break; }
+  const flatT = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const m = t.match(/^(add|remove)\s+(.+)$/i);
+  if (m && !labels.some((l) => new RegExp(`\\b${m[1]}\\b`, "i").test(l))) t = `${/^add$/i.test(m[1]) ? "turn on" : "turn off"} ${m[2]}`;
+  const st = t.match(/^((?:the\s+)?[a-z][a-z0-9&' -]{1,40}?)\s+(on|off)$/i);
+  if (st && !CONTROL_VERB.test(st[1]) && !PHRASAL_LEAD.test(st[1]) && st[1].trim().split(/\s+/).length <= 5
+    && !labels.some((l) => flatT(l) === flatT(t))) t = `turn ${st[2].toLowerCase()} ${st[1]}`;
+  if (bareName(t) && flatT(t) && labels.some((l) => flatT(l) === flatT(t).replace(/^the\s+/, ""))) t = `click ${t}`;
+  return t;
+}
+
 // "Off" after turning or switching is the verb's, as "on" always is. Kept as
 // a word, "turn off the buildings" asked for a control called both
 // buildings and off, matched nothing, and the layer could never be turned
@@ -3194,8 +3240,15 @@ function wordMatchesText(rawWord, rawText) {
   // "days" - so it tied with "1 day", which won on document order. Someone
   // typing "30 day" and someone typing "30 days" mean the same thing, and
   // these sites write spans both ways on the same page.
-  const other = word.endsWith("s") ? word.slice(0, -1) : `${word}s`;
-  if (other.length > 2) {
+  // And the -ies and -es plurals: "turn on care facility" against Care
+  // Facilities matched nothing at all.
+  const others = [word.endsWith("s") ? word.slice(0, -1) : `${word}s`];
+  if (/[^aeiou]y$/.test(word)) others.push(`${word.slice(0, -1)}ies`);
+  if (/ies$/.test(word)) others.push(`${word.slice(0, -3)}y`);
+  if (/(?:s|x|z|ch|sh)$/.test(word)) others.push(`${word}es`);
+  if (/(?:s|x|z|ch|sh)es$/.test(word)) others.push(word.slice(0, -2));
+  for (const other of others) {
+    if (other.length <= 2) continue;
     const esc = other.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`\\b${esc}\\b`).test(text)) return "exact";
   }
@@ -5522,6 +5575,18 @@ function splitIntoSteps(instruction) {
 function sharedVerbOfTwo(part) {
   const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|open|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove|check|tick|uncheck|untick|select|choose|pick)(?:\s+me)?)\s+(the\s+[a-z][a-z' -]{1,40}?)\s*,?\s+and\s+(the\s+[a-z][a-z' -]{1,40}?)\s*$/i);
   return m ? [`${m[1]} ${m[2]}`, `${m[1]} ${m[3]}`] : [part];
+}
+// The same without "the": "turn on weather forecast and flood maps". Loose
+// enough to cut a name with "and" in it, so the caller splits on it only
+// where no control on the page is called "weather forecast and flood maps".
+// A list as well: "turn on buildings, bridges and railway bridge" turned on
+// two of the three and said it could not.
+function sharedVerbLoose(part) {
+  const m = String(part).match(/^\s*((?:please\s+)?(?:show|display|turn\s+on|switch\s+on|enable|add|hide|turn\s+off|switch\s+off|disable|remove|check|tick|uncheck|untick|select|deselect)(?:\s+me)?)\s+(.+?)\s*,?\s+and\s+((?:the\s+)?[a-z][a-z' -]{1,40}?)\s*$/i);
+  if (!m) return null;
+  const items = [...m[2].split(/\s*,\s*/), m[3]].map((x) => x.trim()).filter(Boolean);
+  if (items.length > 8 || items.some((x) => !/^(?:the\s+)?[a-z][a-z' -]{1,40}$/i.test(x) || x.split(/\s+/).length > 5)) return null;
+  return { parts: items.map((x) => `${m[1]} ${x}`), joined: `${m[2]} and ${m[3]}` };
 }
 /* "And click search" finishes a typed box, and stays with it. After a list
  * choice it is a step of its own: "choose the south platte division and
@@ -9757,8 +9822,11 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
   // new selector, and "turn on flood maps" pressed Flood Maps twice - which
   // on a layer is on, then off.
   const actedKeys = new Set();
+  // Less what kind of thing it is: "add the groundwater wells layer" turned
+  // Groundwater Wells on and then went looking through every other section
+  // for the "layer" still unaccounted for.
   const subjectOf = (words) => words.filter((w) =>
-    w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w));
+    w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w) && !/^(?:layers?|overlays?|button|checkbox)$/.test(w));
 
   let remaining = subjectOf(meaningfulWords(instruction));
   let lastCount = -1;
@@ -12215,7 +12283,12 @@ function setToPlan(routeGlobal, clause, all) {
   // on screen. The model path has always done this; the page's own path
   // did not, so a plain choice waited on the model.
   const bare = String(clause).replace(CLAUSE_LEAD, "").replace(/^\s*(?:the|a|an)\s+/i, "").trim();
-  if (bare && bare.length >= 2 && !/\s(?:to|as|for|in|on)\s/i.test(bare)) {
+  // Unless a button or tab on the page is called exactly that: "click 4 of
+  // 5" is the slideshow's fourth dot, and read as an option it chose a
+  // national monument from the forest list.
+  const flatB = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const pressNamed = bare && all.some((c) => !c.disabled && !(c.options || []).length && flatB(c.label) === flatB(bare));
+  if (bare && bare.length >= 2 && !pressNamed && !/\s(?:to|as|for|in|on)\s/i.test(bare)) {
     const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, bare));
     if (holders.length === 1) { const o = optionNamed(holders[0], bare); return { control: holders[0], option: o, label: `${holders[0].label}: ${o.text || o.value}` }; }
     // "The arkansas water division": the option named by part of it ("2 -
@@ -13494,14 +13567,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (startTab && startTab.id) thisAsk.tabId = startTab.id;
       // The page reader is told what is being asked, so it can leave out
       // what cannot be the answer (setRequest in the reader).
-      await invokeOnActiveTab("setRequest", [String(msg.instruction || "")]).catch(() => null);
-      forgetPageTools();
       // The whole sentence is what was asked and what the card shows; the
       // paths below see only the action half, and the question is answered
       // once that half has responded.
       const askedAs = String(msg.instruction || "");
       const thenAsk = /^\s*(?:model|baseline):/i.test(askedAs) ? null : actThenAsk(askedAs);
       if (thenAsk) msg = { ...msg, instruction: thenAsk.act };
+      // Said another way, put plainly: what the paths below and the page
+      // read. The card keeps the words as they were said.
+      if (!/^\s*(?:model|baseline):/i.test(askedAs)) {
+        const said = String(msg.instruction || "");
+        let labels = [];
+        if (needsNamesToRestate(said)) {
+          const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+          labels = ((inv && inv.ok && inv.result && inv.result.controls) || []).map((c) => String(c.label || ""));
+        }
+        const plain = restateRequest(said, labels);
+        if (plain !== plainlyPut(said)) { debugLog(`[restate] "${said}" -> "${plain}"`); msg = { ...msg, instruction: plain }; }
+      }
+      await invokeOnActiveTab("setRequest", [String(msg.instruction || "")]).catch(() => null);
+      forgetPageTools();
 
       // Every answer carries a card. "Enable snow depth" came back as the
       // bare word "done" and nothing else - no title, no rows, no reason -
@@ -15065,7 +15150,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // destroy the instruction rather than sequence it. So a bare "and"
           // separates steps only where a verb follows it, which is what makes
           // the second half an instruction rather than the rest of a name.
-          const parts = splitIntoSteps(msg.instruction);
+          let parts = splitIntoSteps(msg.instruction);
+          const loose = parts.length === 1 ? sharedVerbLoose(parts[0]) : null;
+          if (loose || parts.length > 1) {
+            const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
+            const labels = ((inv && inv.ok && inv.result && inv.result.controls) || []).map((c) => c.label);
+            const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\bthe\b/g, " ").replace(/\s+/g, " ").trim();
+            // A verb and one control's whole name is one step, whatever is in
+            // the name: "click Yosemite: Then and Now" was cut at "then" and
+            // pressed a link called Yosemite.
+            const rest = flatL(String(msg.instruction || "").replace(/^\s*(?:please\s+)?(?:click|press|tap|open|select|choose|pick|show|view|go\s+to)\s+(?:on\s+)?/i, ""));
+            if (parts.length > 1 && rest && labels.some((l) => flatL(l) === rest)) parts = [String(msg.instruction)];
+            else if (loose && !labels.some((l) => flatL(l).includes(flatL(loose.joined)))) parts = loose.parts;
+          }
           // Eight, not four. A five-part instruction fell out of the sequence
           // and was handled as one command, which on the page tested pressed
           // Reset - a step from the middle of the sentence, chosen alone.
@@ -16496,7 +16593,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // A command that matched no control, but asked about something these
         // sources know: better to answer than to fail. "show the discharge in
         // Idaho" on a page with no such control is still a fair question.
-        if (commandLike && dataCall && !dataCall.needsState) {
+        // Unless the page has a control of that very name behind a shut
+        // section: "turn on the stream gauges" on City-FIDAP is the Stream
+        // Gauges layer under Weather & Environment, and it was answered with
+        // a USGS search for a gauge called "stream gauges". The way to it is
+        // left open, and the pursuit below presses it.
+        const behind = commandLike && dataCall && !dataCall.needsState && !forceModel
+          ? await (async () => {
+            const subject = meaningfulWords(wantedOnly).filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w)
+              && !/^(?:layers?|overlays?|button|checkbox)$/.test(w)).join(" ");
+            const found = subject ? await invokeOnActiveTab("findInSections", [subject]).catch(() => null) : null;
+            return !!(found && found.ok && found.result && found.result.door);
+          })() : false;
+        if (behind) forgetPageTools();
+        if (commandLike && dataCall && !dataCall.needsState && !behind) {
           const result = await executeToolCall(route.global, dataCall);
           respond({ ...result, plannedBy: "fast-path", toolCall: dataCall, note: "no control matched, so this was answered from data" });
           return;

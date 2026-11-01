@@ -3585,6 +3585,28 @@ section("the model chooses from the page's controls");
   }
 }
 
+// A name with "then" in it is one step, and a button named "4 of 5" is not
+// an option of the list beside it.
+{
+  const page = loadPage(`<!doctype html><html><body><nav><a href="#y">Yosemite</a><a href="#t">Yosemite: Then and Now</a></nav>
+    <label for="f">Select a Forest</label><select id="f"><option value="">-- Select One --</option><option>Angeles National Forest</option><option>Area 4 of 5 Monument</option></select>
+    <div role="tablist"><button role="tab" aria-label="1 of 5">1</button><button role="tab" aria-label="4 of 5">4</button></div></body></html>`, { url: "https://www.example.gov/" });
+  if (page) {
+    const pressed = [];
+    page.document.addEventListener("click", (e) => pressed.push(e.target.getAttribute("aria-label") || e.target.textContent), true);
+    const bg = loadBackground({ page });
+    bg.__model = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "click Yosemite: Then and Now" });
+      check("a name with 'then' in it is pressed whole", pressed[0], "Yosemite: Then and Now");
+      pressed.length = 0;
+      await bg.__ask({ type: "smartAsk", instruction: "click 4 of 5" });
+      check("a tab named '4 of 5' is pressed", pressed[0], "4 of 5");
+      check("and the list beside it left alone", page.document.getElementById("f").value, "");
+    });
+  }
+}
+
 // What every model chooses from. A verb that is a control's name keeps its
 // control on the list, a map switch named whole is offered, a value to type
 // brings its box, and the plan list is the same length whatever the model.
@@ -3610,6 +3632,18 @@ section("the model chooses from the page's controls");
       ensure("but one only partly named is not", !offered("turn on the hydro layer on the map").includes("Places"), offered("turn on the hydro layer on the map"));
     }
     ensure("a value to type brings its box", offered("type 60601 into the forecast box", 6).some((l) => /ZIP Code/.test(l)), offered("type 60601 into the forecast box", 6));
+  }
+  {
+    const bgw = loadBackground();
+    for (const [w, t] of [["facility", "Care Facilities"], ["facilities", "care facility"], ["box", "Boxes"], ["day", "7 days"]]) {
+      ensure(`'${w}' names '${t}'`, bgw.wordMatchesText(w, t.toLowerCase()) === "exact", bgw.wordMatchesText(w, t.toLowerCase()));
+    }
+    const rs = (q, labels) => bgw.restateRequest(q, labels || []);
+    check("'take X off the map' is turning it off", rs("take the stream gauges off the map"), "turn off the stream gauges");
+    check("'school off' is turning it off", rs("school off"), "turn off school");
+    check("but a control called that is pressed by its name", rs("lights off", ["Lights off"]), "click lights off");
+    check("and a phrasal verb is not a layer", rs("log off"), "log off");
+    check("'remove' stays where the page has a Remove", rs("remove filter", ["Remove filter"]), "click remove filter");
   }
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "background.js"), "utf8");
   const plan = src.slice(src.indexOf("async function planWithModel"), src.indexOf("async function planWithModel") + 3000);
@@ -14710,6 +14744,21 @@ else {
   run(["open infrastructure", "open infrastructure"], (pg) => check("a section already open is left open", openNow(pg, "Infrastructure"), true));
   run(["open infrastructure", "close infrastructure"], (pg) => check("and close shuts it", openNow(pg, "Infrastructure"), false));
   run(["close infrastructure"], (pg) => check("a shut section asked to close stays shut", openNow(pg, "Infrastructure"), false));
+  // Said the way people say it.
+  run(["show the bridges", "get rid of the bridges"], (pg) => check("'get rid of' turns a layer off", [...pg.on].join(",") || "none", "none"));
+  run(["remove the buildings"], (pg) => check("'remove' a layer that is off leaves it off", [...pg.on].join(",") || "none", "none"));
+  run(["show the buildings", "buildings off"], (pg) => check("'X off' with no verb", [...pg.on].join(",") || "none", "none"));
+  run(["I want to see the bridges"], (pg) => check("'I want to see' turns it on", [...pg.on].join(","), "Bridges"));
+  run(["add the groundwater wells layer"], (pg, [c]) => {
+    check("'add the X layer' turns it on", [...pg.on].join(","), "Groundwater Wells");
+    ensure("and says so", !/did not work|couldn.t/i.test(String(c && c.display && c.display.title)), c && c.display && c.display.title);
+  });
+  run(["put the bicycle on the map"], (pg) => check("'put X on the map'", [...pg.on].join(","), "Bicycle"));
+  run(["turn on buildings and bridges", "turn off buildings and bridges"], (pg) => check("two layers on and off in one request", [...pg.on].join(",") || "none", "none"));
+  run(["turn on buildings and bridges", "turn on railway bridge", "turn off groundwater wells"], (pg) =>
+    check("three of four on, the fourth left off", [...pg.on].sort().join(","), "Bridges,Buildings,Railway Bridge"));
+  run(["turn on buildings, bridges and railway bridge"], (pg) => check("a list of three, all on", [...pg.on].sort().join(","), "Bridges,Buildings,Railway Bridge"));
+  run(["open infrastructure", "minimize infrastructure"], (pg) => check("'minimize' shuts a section", openNow(pg, "Infrastructure"), false));
   {
     const pg = fidap();
     if (pg) {

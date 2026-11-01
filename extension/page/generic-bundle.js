@@ -516,10 +516,10 @@
         const shape = shapeOf(row);
         const sibs = [...row.parentElement.children].filter((x) => x.tagName === row.tagName && String(x.textContent || "").trim());
         const alike = sibs.filter((x) => shapeOf(x) === shape);
+        const filled = (n) => { for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) { try { const bgc = getComputedStyle(x).backgroundColor; if (bgc && !/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(bgc)) return true; } catch (e) { return false; } } return false; };
         // Two alike - Road and Bicycle, either side of a sub-section - say
         // which is on only where exactly one of them is filled in.
         if (alike.length === 2 && sibs.length >= 3) {
-          const filled = (n) => { for (let x = n, d = 0; x && d < 4; x = x.firstElementChild, d++) { try { const bgc = getComputedStyle(x).backgroundColor; if (bgc && !/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(bgc)) return true; } catch (e) { return false; } } return false; };
           const f = alike.map(filled);
           if (f[0] !== f[1]) return filled(row);
           if (lookSig(alike[0]) === lookSig(alike[1])) return false;
@@ -530,8 +530,17 @@
         const sigs = sibs.filter((x) => shapeOf(x) === shape).map(lookSig);
         const counts = new Map();
         for (const g of sigs) counts.set(g, (counts.get(g) || 0) + 1);
+        // Two looks, one of them filled in: the filled one is on, however
+        // many share it. Read as "the usual look is off", two layers of four
+        // switched on tied with the two left off, and both read as off -
+        // so "turn off weather forecast and flood maps" pressed neither.
+        if (counts.size === 2) {
+          const reps = [...counts.keys()].map((g) => alike.find((x) => lookSig(x) === g));
+          const f = reps.map(filled);
+          if (f[0] !== f[1]) return filled(row);
+        }
         const [common, many] = [...counts].sort((a, b) => b[1] - a[1])[0];
-        if (many < 2 || many * 2 < sigs.length) return undefined;
+        if (many < 2 || many * 2 <= sigs.length) return undefined;
         return lookSig(row) !== common;
       }
     } catch (e) { /* detached */ }
@@ -1521,9 +1530,16 @@
   }
   const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fullscreen|scale|keyboard|shortcuts?|street\s*view|satellite|terrain|compass|north|map\s+type|move\s+(?:the\s+)?map|re-?cent(?:er|re))\b/i;
   const PART_OF_THE_PAGE = /^(?:region|main|application|document|group|presentation|figure|article|navigation|banner|contentinfo|complementary)$/;
+  // A map's own control is offered when the request is about the view, or
+  // names it whole: "check hydro" is the Leaflet Hydro overlay.
+  const namesWhole = (label, request) => {
+    const said = ` ${norm(request)} `;
+    const own = norm(label).split(" ").filter((w) => w.length > 1);
+    return own.length > 0 && own.every((w) => said.includes(` ${w} `));
+  };
   const offeredNow = (c) => currentRequestOf() === null
     || (!PART_OF_THE_PAGE.test(String(c.kind || "").toLowerCase())
-      && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequestOf())));
+      && (!c.mapChrome || ABOUT_THE_MAP_VIEW.test(currentRequestOf()) || namesWhole(c.label, currentRequestOf())));
   // What a menu holds, by the menu's name, where the reader has looked inside.
   function menuItems(label) {
     const want = norm(label);
@@ -4062,7 +4078,11 @@
    * whole is said. Nothing else is pressed.
    */
   async function findInSections(name, { skip = "" } = {}) {
-    const want = norm(name);
+    // "The groundwater wells layer" is Groundwater Wells: a word for what
+    // kind of thing it is, said or written, is not part of its name.
+    const KIND = /\b(?:layers?|overlays?|button|checkbox)\b/g;
+    const bare = (t) => norm(t).replace(KIND, " ").replace(/\s+/g, " ").trim();
+    const want = bare(name);
     if (!want) return null;
     const wait = async (el, open) => {
       for (let t = 0; t < 12 && expandedOf(el) !== open; t++) await new Promise((r) => setTimeout(r, 60));
@@ -4079,7 +4099,7 @@
         const outside = new Set(shutOnes(new Set()).map((x) => x.d.selector));
         realClick(el);
         await wait(el, true);
-        const hit = inventoryNow({}).controls.find((c) => !c.hidden && norm(c.label) === want);
+        const hit = inventoryNow({}).controls.find((c) => !c.hidden && bare(c.label) === want);
         let path = hit ? [] : null;
         if (!hit && depth < 1) {
           const inner = await look(depth + 1, tried, outside);
