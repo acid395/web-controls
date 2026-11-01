@@ -716,5 +716,116 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"which pollutant is the highest right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
    {"say":"what is the air quality forecast for tomorrow","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null}
   ]
+ },
+ "nwd": {
+  "firstContact": true,
+  "url": "https://dashboard.waterdata.usgs.gov/app/nwd/en/",
+  "note": "USGS National Water Dashboard: a national map of streamgages coloured by streamflow percentile. Header buttons Overview, Layers, Legend, Customize, Tools. Layers holds groups that open (USGS Monitoring Locations, Weather Conditions - Hurricanes, Alerts, Radar, Recent Precipitation, Snow, Cloud Cover, Temperature, Drought - Hydrology - Rivers, Watersheds, Aquifers - and Base Map with Topographic, Imagery, USGS Topo, Streets, Light, Dark), each layer with a generic 'Add or remove this layer from the map' checkbox, plus Clear Layers. The Legend is open on load and explains the streamflow colours (normal is the 25th-75th percentile) and the radar (from the Iowa Environmental Mesonet). Find a place box, zoom buttons, English/Spanish language buttons.",
+  "prompts": [
+   {"say":"open the layers panel","kind":"action","steps":["Layers"],"on":"Layers","want":{"clicked":"Layers"},"offline":null},
+   {"say":"switch the base map to satellite imagery","kind":"action","steps":["Layers","Base Map","Imagery"],"on":"Imagery","want":{"clicked":"Imagery"},"offline":null},
+   {"say":"turn on the weather radar","kind":"action","steps":["Layers","Weather Conditions","Radar"],"on":"Radar","want":{"clicked":"Radar"},"offline":null},
+   {"say":"show me the drought conditions on the map","kind":"action","steps":["Layers","Weather Conditions","Drought"],"on":"Drought","want":{"clicked":"Drought"},"offline":null},
+   {"say":"find Denver on the map","kind":"action","steps":["Find a place"],"on":"Find a place","want":{"clicked":"Find a place"},"offline":null},
+   {"say":"take every layer off the map","kind":"action","steps":["Layers","Clear Layers"],"on":"Clear Layers","want":{"clicked":"Clear Layers"},"offline":null},
+   {"say":"switch the dashboard to Spanish","kind":"action","steps":["Spanish (Español)"],"on":"Spanish (Español)","want":{"clicked":"Spanish (Español)"},"offline":null},
+   {"say":"what percentile range counts as normal streamflow","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"where does the radar data come from","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what does this dashboard show","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"open the layers and tell me how many streamflow sites are on the map","kind":"action+explain","steps":["Layers","USGS Monitoring Locations"],"explain":true,"on":"USGS Monitoring Locations","want":{"clicked":"USGS Monitoring Locations","read":true},"offline":null},
+   {"say":"open the tools and tell me which display settings I can change","kind":"action+explain","steps":["Tools"],"explain":true,"on":"Tools","want":{"clicked":"Tools","read":true},"offline":null},
+   {"say":"switch to the dark base map, then zoom in twice","kind":"multistep","steps":["Dark","Zoom in","Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":null},
+   {"say":"turn on the rivers layer and the watersheds layer","kind":"multistep","steps":["Hydrology","Rivers","Watersheds"],"on":"Watersheds","want":{"clicked":"Watersheds"},"offline":null},
+   {"say":"open the legend, then close it","kind":"multistep","steps":["Legend","Close"],"on":"Close","want":{"clicked":"Close"},"offline":null}
+  ]
+ },
+ "streamstats": {
+  "firstContact": true,
+  "url": "https://streamstats.usgs.gov/ss/",
+  "note": "USGS StreamStats: a map app for basin delineation and streamflow statistics. Left panel steps Select a State / Region (enabled at zoom level 8 or more), Identify a Study Area, Select Scenarios, Build a Report, with a Find a place box and Help. Layers card on the map: Base Maps (opens), National Layers (on), NID Regulation Points, NHDPlus V2 Flowlines, FEMA Flood Map (FIRM) checkboxes. An Exploration Tools button, zoom in/out, a readout of zoom level (4 on load), scale and lat/lon. Header links Information Portal, Batch Processor, Report, About, Help.",
+  "prompts": [
+   {"say":"turn on the FEMA flood map layer","kind":"action","steps":["FEMA Flood Map (FIRM)"],"on":"FEMA Flood Map (FIRM)","want":{"clicked":"FEMA Flood Map (FIRM)"},"offline":null},
+   {"say":"show the dams that regulate flow","kind":"action","steps":["NID Regulation Points"],"on":"NID Regulation Points","want":{"clicked":"NID Regulation Points"},"offline":null},
+   {"say":"show the stream flowlines","kind":"action","steps":["NHDPlus V2 Flowlines"],"on":"NHDPlus V2 Flowlines","want":{"clicked":"NHDPlus V2 Flowlines"},"offline":null},
+   {"say":"hide the national layers","kind":"action","steps":["National Layers"],"on":"National Layers","want":{"clicked":"National Layers"},"offline":null},
+   {"say":"search for Boise, Idaho","kind":"action","steps":["Find a place"],"on":"Find a place","want":{"clicked":"Find a place"},"offline":null},
+   {"say":"open the exploration tools","kind":"action","steps":["Exploration Tools"],"on":"Exploration Tools","want":{"clicked":"Exploration Tools"},"offline":null},
+   {"say":"open the base map choices","kind":"action","steps":["Base Maps"],"on":"Base Maps","want":{"clicked":"Base Maps"},"offline":null},
+   {"say":"open the batch processor","kind":"action","steps":["Batch Processor"],"on":"Batch Processor","want":{"clicked":"Batch Processor"},"offline":null},
+   {"say":"what do I need to do before I can pick a state","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what are the steps to get a StreamStats report","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what zoom level is the map at right now","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"open About and tell me what StreamStats is for","kind":"action+explain","steps":["About"],"explain":true,"on":"About","want":{"clicked":"About","read":true},"offline":null},
+   {"say":"open the help and tell me what step 1 asks me to do","kind":"action+explain","steps":["Help"],"explain":true,"on":"Help","want":{"clicked":"Help","read":true},"offline":null},
+   {"say":"turn on the FEMA flood map and the dam regulation points","kind":"multistep","steps":["FEMA Flood Map (FIRM)","NID Regulation Points"],"on":"NID Regulation Points","want":{"clicked":"NID Regulation Points"},"offline":null},
+   {"say":"zoom in twice, then turn on the flowlines","kind":"multistep","steps":["Zoom in","Zoom in","NHDPlus V2 Flowlines"],"on":"NHDPlus V2 Flowlines","want":{"clicked":"NHDPlus V2 Flowlines"},"offline":null}
+  ]
+ },
+ "slr": {
+  "firstContact": true,
+  "url": "https://coast.noaa.gov/slr/",
+  "dismiss": ["GET STARTED"],
+  "note": "NOAA Sea Level Rise Viewer. Opens on a splash with GET STARTED (pressed first by the bench). Then a map with a water-level slider from MHHW to 10 ft, side tabs Sea Level Rise, Local Scenarios, Mapping Confidence, Marsh Migration, High Tide Flooding; header buttons Zoom to Region, Select Map, Toggle Layer Opacity, Legend Toggle, Share; a Location Search box; region links (Louisiana, San Francisco Bay, CA, New Jersey, Texas...); NOS Major / Moderate / Minor flood threshold radios. The panel text says water levels are relative to Mean Higher High Water and that green areas are low-lying, hydrologically unconnected areas that may also flood.",
+  "prompts": [
+   {"say":"show the high tide flooding layer","kind":"action","steps":["High Tide Flooding"],"on":"High Tide Flooding","want":{"clicked":"High Tide Flooding"},"offline":null},
+   {"say":"where could marshes move as the sea rises","kind":"action","steps":["Marsh Migration"],"on":"Marsh Migration","want":{"clicked":"Marsh Migration"},"offline":null},
+   {"say":"show how confident the mapping is","kind":"action","steps":["Mapping Confidence"],"on":"Mapping Confidence","want":{"clicked":"Mapping Confidence"},"offline":null},
+   {"say":"compare local sea level rise scenarios","kind":"action","steps":["Local Scenarios"],"on":"Local Scenarios","want":{"clicked":"Local Scenarios"},"offline":null},
+   {"say":"zoom to the Louisiana coast","kind":"action","steps":["Louisiana"],"on":"Louisiana","want":{"clicked":"Louisiana"},"offline":null},
+   {"say":"search for Miami Beach","kind":"action","steps":["Location Search"],"on":"Location Search","want":{"clicked":"Location Search"},"offline":null},
+   {"say":"open the legend","kind":"action","steps":["Legend Toggle"],"on":"Legend Toggle","want":{"clicked":"Legend Toggle"},"offline":null},
+   {"say":"change the base map","kind":"action","steps":["Select Map"],"on":"Select Map","want":{"clicked":"Select Map"},"offline":null},
+   {"say":"set the flood threshold to major","kind":"action","steps":["NOS Major"],"on":"NOS Major","want":{"clicked":"NOS Major"},"offline":null},
+   {"say":"what does the green area on the map mean","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what are the water levels measured relative to","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what is the highest water level the slider goes up to","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"switch to marsh migration and tell me what it shows","kind":"action+explain","steps":["Marsh Migration"],"explain":true,"on":"Marsh Migration","want":{"clicked":"Marsh Migration","read":true},"offline":null},
+   {"say":"zoom to the San Francisco Bay, then show the high tide flooding","kind":"multistep","steps":["San Francisco Bay, CA","High Tide Flooding"],"on":"High Tide Flooding","want":{"clicked":"High Tide Flooding"},"offline":null},
+   {"say":"open the legend, then toggle the layer opacity","kind":"multistep","steps":["Legend Toggle","Toggle Layer Opacity"],"on":"Toggle Layer Opacity","want":{"clicked":"Toggle Layer Opacity"},"offline":null}
+  ]
+ },
+ "cdec": {
+  "firstContact": true,
+  "url": "https://cdec.water.ca.gov/dynamicapp/staSearch",
+  "note": "California Data Exchange Center (DWR) station search: a form where each criterion has an '(And)' checkbox to include it - Station ID/Name box, Sensor Type and Collection Type lists, Duration radios (Any Duration, Event, Hourly, Daily, Monthly), Status radios (Any status, Active stations only, Discontinued stations only), longitude/latitude and elevation ranges (example 120.25, 39.75, 500 feet), Nearby City box, River Basin, Hydrologic Area and County lists, Operator list, Display Sorted By (Station ID, Station Name, River Basin, County) and a Search For CDEC Stations button. The page says to click Search only once. Top menu Home, Query Tools, Precipitation, River Forecast, River Stages, Reservoirs, Snow, Stations, Weather.",
+  "prompts": [
+   {"say":"only show active stations","kind":"action","steps":["Active stations only"],"on":"Active stations only","want":{"clicked":"Active stations only"},"offline":null},
+   {"say":"list stations in Sacramento county","kind":"action","steps":["(And) County:"],"on":"(And) County:","want":{"clicked":"(And) County:"},"offline":null},
+   {"say":"look for stations on the American River","kind":"action","steps":["basin"],"on":"basin","want":{"clicked":"basin"},"offline":null},
+   {"say":"find station FOL","kind":"action","steps":["Station ID/Name:"],"on":"Station ID/Name:","want":{"clicked":"Station ID/Name:"},"offline":null},
+   {"say":"I only want stations that report every day","kind":"action","steps":["Daily"],"on":"Daily","want":{"clicked":"Daily"},"offline":null},
+   {"say":"sort the results by county","kind":"action","steps":["Display Sorted By"],"on":"Display Sorted By","want":{"clicked":"Display Sorted By"},"offline":null},
+   {"say":"look for stations near Redding","kind":"action","steps":["(And) Nearby City:"],"on":"(And) Nearby City:","want":{"clicked":"(And) Nearby City:"},"offline":null},
+   {"say":"limit it to the north coast hydrologic area","kind":"action","steps":["hydro"],"on":"hydro","want":{"clicked":"hydro"},"offline":null},
+   {"say":"what can I search stations by","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how many times should I click the search button","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what format does the longitude take","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"open the snow page and tell me what it shows","kind":"action+explain","steps":["Snow"],"explain":true,"on":"Snow","want":{"clicked":"Snow","read":true},"offline":null},
+   {"say":"choose Sacramento county, active stations only, and search","kind":"multistep","steps":["(And) County:","Active stations only","Search For CDEC Stations"],"later":true,"on":"(And) County:","want":{"clicked":"(And) County:"},"offline":null},
+   {"say":"find daily stations in the American River basin sorted by station name","kind":"multistep","steps":["Daily","basin","Display Sorted By"],"later":true,"on":"Daily","want":{"clicked":"Daily"},"offline":null},
+   {"say":"set the elevation from 1000 to 5000 feet and search","kind":"multistep","steps":[">= And <= (example: 500 feet)","Search For CDEC Stations"],"later":true,"on":">= And <= (example: 500 feet)","want":{"clicked":">= And <= (example: 500 feet)"},"offline":null}
+  ]
+ },
+ "usaspending": {
+  "firstContact": true,
+  "url": "https://www.usaspending.gov/search",
+  "note": "USAspending.gov Advanced Search: View By Prime Awards and Transactions / Subawards, Download and Share; a Filter sidebar (close X, Submit, Reset filters) with Filter by Keyword (box + Add), and filters that open - Recipient, Award ID, Time Period (open on load: Fiscal years / Custom dates tabs, FY 2027 to FY 2008 buttons, Show New Awards Only, and 'a 12-month span from October 1 to September 30'), Location, Agency, Award Type, Recipient Type, Award Description, Award Amount, NAICS, PSC and more. The right side suggests filters for common questions (state funding: Time Period and Location) and has Glossary, About the Data and Data Dictionary buttons. Its rotating example cards change on every load.",
+  "prompts": [
+   {"say":"only show fiscal year 2025","kind":"action","steps":["FY 2025"],"on":"FY 2025","want":{"clicked":"FY 2025"},"offline":null},
+   {"say":"search for awards about wildfire","kind":"action","steps":["Search using keywords...","Add"],"on":"Add","want":{"clicked":"Add"},"offline":null},
+   {"say":"switch to subawards","kind":"action","steps":["Subawards"],"on":"Subawards","want":{"clicked":"Subawards"},"offline":null},
+   {"say":"open the location filter","kind":"action","steps":["Location"],"on":"Location","want":{"clicked":"Location"},"offline":null},
+   {"say":"use custom dates instead of fiscal years","kind":"action","steps":["Show Custom dates"],"on":"Show Custom dates","want":{"clicked":"Show Custom dates"},"offline":null},
+   {"say":"only show new awards","kind":"action","steps":["Show New Awards Only"],"on":"Show New Awards Only","want":{"clicked":"Show New Awards Only"},"offline":null},
+   {"say":"clear all the filters","kind":"action","steps":["Reset filters"],"on":"Reset filters","want":{"clicked":"Reset filters"},"offline":null},
+   {"say":"hide the filter sidebar","kind":"action","steps":["Close"],"on":"Close","want":{"clicked":"Close"},"offline":null},
+   {"say":"open the glossary","kind":"action","steps":["Glossary"],"on":"Glossary","want":{"clicked":"Glossary"},"offline":null},
+   {"say":"what is a fiscal year on this site","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which filters would I use to find how much funding my state got","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what can I do on this page","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"open the award type filter and tell me what kinds of awards I can choose","kind":"action+explain","steps":["Award Type"],"explain":true,"on":"Award Type","want":{"clicked":"Award Type","read":true},"offline":null},
+   {"say":"add the keyword drought, pick fiscal year 2024, and submit","kind":"multistep","steps":["Search using keywords...","Add","FY 2024","Submit"],"on":"Submit","want":{"clicked":"Submit"},"offline":null},
+   {"say":"show only grants from fiscal year 2026","kind":"multistep","steps":["Award Type","Grants","FY 2026"],"on":"FY 2026","want":{"clicked":"FY 2026"},"offline":null}
+  ]
  }
 };

@@ -452,3 +452,85 @@ action+explain  open the AQI legend and tell me which range is unhealthy for sen
 explain         what is the air quality in Denver right now
 explain         which pollutant is the highest right now
 explain         what is the air quality forecast for tomorrow
+
+ROUND 13 - written 2026-10-31 from the rendered pages (NWD with the Layers panel open as well as on load; Sea Level Rise Viewer past its splash; CDEC station search; USAspending advanced search), before any run.
+nwd  https://dashboard.waterdata.usgs.gov/app/nwd/en/
+action          open the layers panel
+action          switch the base map to satellite imagery
+action          turn on the weather radar
+action          show me the drought conditions on the map
+action          find Denver on the map
+action          take every layer off the map
+action          switch the dashboard to Spanish
+explain         what percentile range counts as normal streamflow
+explain         where does the radar data come from
+explain         what does this dashboard show
+action+explain  open the layers and tell me how many streamflow sites are on the map
+action+explain  open the tools and tell me which display settings I can change
+multistep       switch to the dark base map, then zoom in twice
+multistep       turn on the rivers layer and the watersheds layer
+multistep       open the legend, then close it
+streamstats  https://streamstats.usgs.gov/ss/
+action          turn on the FEMA flood map layer
+action          show the dams that regulate flow
+action          show the stream flowlines
+action          hide the national layers
+action          search for Boise, Idaho
+action          open the exploration tools
+action          open the base map choices
+action          open the batch processor
+explain         what do I need to do before I can pick a state
+explain         what are the steps to get a StreamStats report
+explain         what zoom level is the map at right now
+action+explain  open About and tell me what StreamStats is for
+action+explain  open the help and tell me what step 1 asks me to do
+multistep       turn on the FEMA flood map and the dam regulation points
+multistep       zoom in twice, then turn on the flowlines
+slr  https://coast.noaa.gov/slr/
+action          show the high tide flooding layer
+action          where could marshes move as the sea rises
+action          show how confident the mapping is
+action          compare local sea level rise scenarios
+action          zoom to the Louisiana coast
+action          search for Miami Beach
+action          open the legend
+action          change the base map
+action          set the flood threshold to major
+explain         what does the green area on the map mean
+explain         what are the water levels measured relative to
+explain         what is the highest water level the slider goes up to
+action+explain  switch to marsh migration and tell me what it shows
+multistep       zoom to the San Francisco Bay, then show the high tide flooding
+multistep       open the legend, then toggle the layer opacity
+cdec  https://cdec.water.ca.gov/dynamicapp/staSearch
+action          only show active stations
+action          list stations in Sacramento county
+action          look for stations on the American River
+action          find station FOL
+action          I only want stations that report every day
+action          sort the results by county
+action          look for stations near Redding
+action          limit it to the north coast hydrologic area
+explain         what can I search stations by
+explain         how many times should I click the search button
+explain         what format does the longitude take
+action+explain  open the snow page and tell me what it shows
+multistep       choose Sacramento county, active stations only, and search
+multistep       find daily stations in the American River basin sorted by station name
+multistep       set the elevation from 1000 to 5000 feet and search
+usaspending  https://www.usaspending.gov/search
+action          only show fiscal year 2025
+action          search for awards about wildfire
+action          switch to subawards
+action          open the location filter
+action          use custom dates instead of fiscal years
+action          only show new awards
+action          clear all the filters
+action          hide the filter sidebar
+action          open the glossary
+explain         what is a fiscal year on this site
+explain         which filters would I use to find how much funding my state got
+explain         what can I do on this page
+action+explain  open the award type filter and tell me what kinds of awards I can choose
+multistep       add the keyword drought, pick fiscal year 2024, and submit
+multistep       show only grants from fiscal year 2026
