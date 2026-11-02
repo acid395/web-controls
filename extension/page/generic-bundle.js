@@ -674,8 +674,17 @@
   // onChange from that click's default action.
   const realClick = (elOrSel) => {
     pageTouched();
-    const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
+    let el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el) throw new Error(`realClick: not found: ${elOrSel}`);
+    // A styled box is pressed where it is drawn: its label. StreamStats'
+    // layers are <label ng-click=toggle><input hidden></label>, and a click
+    // sent to the hidden input was cancelled by the map and the box snapped
+    // back - after the label's handler had already switched the layer. The
+    // fallback then pressed the label and switched it straight back off.
+    if (el.tagName === "INPUT" && /^(?:checkbox|radio)$/i.test(el.type || "") && !isVisible(el)) {
+      const label = (el.labels && el.labels[0]) || (el.closest && el.closest("label"));
+      if (label && isVisible(label)) el = label;
+    }
     // Guarded so a click is testable outside a real browser: jsdom has no
     // scrollIntoView, and without this every click threw there rather than
     // being exercised.
@@ -836,14 +845,14 @@
         return checkedOf(el);
       })();
     }
-    if (checkedOf(el) !== !!on) realClick(el);
+    const hit = checkedOf(el) !== !!on ? realClick(el) : el;
     // Through its label, where pressing the box itself did not take - which
     // is what a person presses, and what some widgets listen to. Only for an
     // actual box: called on a <label>, which has no checked state of its
     // own, the first press ticked the box and this pressed the label again
     // and unticked it.
     const isBox = el.tagName === "INPUT" && /^(checkbox|radio)$/i.test(el.type || "");
-    if (isBox && !!el.checked !== !!on) {
+    if (isBox && hit === el && !!el.checked !== !!on) {
       const label = (el.labels && el.labels[0]) || (el.closest && el.closest("label"));
       if (label) realClick(label);
     }
@@ -1022,6 +1031,10 @@
   // when available and skipped otherwise rather than relied on.
   const hasJsHandler = (el) => {
     if (el.hasAttribute("onclick")) return true;
+    // A handler a framework leaves written in the markup: AngularJS keeps
+    // ng-click on the element, Alpine its @click. StreamStats' "Base Maps"
+    // and "Exploration Tools" are <div ng-click> and were not controls.
+    if (el.hasAttribute("ng-click") || el.hasAttribute("data-ng-click") || el.hasAttribute("x-on:click") || el.hasAttribute("@click")) return true;
     const p = reactProps(el);
     if (p && (p.onClick || p.onChange || p.onInput)) return true;
     // Assigned in script rather than written in the markup - el.onclick =
@@ -1620,7 +1633,10 @@
       // read, never offered as the thing to press.
       if (!isRealControl && !weak) {
         try {
-          if (el.querySelectorAll("a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem]").length >= 2) weak = true;
+          // Those shown: a launcher holding its own closed panel is pressed to
+          // open it, whatever buttons wait inside.
+          if ([...el.querySelectorAll("a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem]")]
+            .filter((x) => isVisible(x)).length >= 2) weak = true;
         } catch (e) { /* as it was */ }
       }
       let nestedDuplicate = false;
@@ -1655,12 +1671,27 @@
           // Nor is a region holding several controls of its own one control.
           // Its name is all of theirs run together, and pressing it presses
           // whatever happens to be at its middle.
-          else if (inner.length >= 3 && el.getElementsByTagName("*").length > 30) wrapsOne = true;
+          // Counted as shown: a collapsed launcher - StreamStats' Exploration
+          // Tools, an icon holding its own hidden tool panel - is the door to
+          // those controls, not a region of them.
+          else if (inner.length >= 3 && el.getElementsByTagName("*").length > 30
+            && [...inner].filter((x) => isVisible(x) || (/^(?:checkbox|radio)$/.test(String(x.type || ""))
+              && x.labels && x.labels[0] && isVisible(x.labels[0]))).length >= 3) wrapsOne = true;
         } catch (e) { /* exotic markup; keep the container */ }
-        if (wrapsOne) continue;
+        // Not taken, so it hides nothing inside it as a copy of itself.
+        if (wrapsOne) { seen.delete(el); continue; }
       }
 
-      const lab = rawLabelOf(el);
+      let lab = rawLabelOf(el);
+      // A collapsed launcher - an icon holding its own hidden panel - reads
+      // as every word of that panel run together: StreamStats' Exploration
+      // Tools came out "× Exploration Tools General Measure Tool...". Shown
+      // nothing of its own, it is named by its panel's heading.
+      if (!TAGS.includes(tag) && !el.getAttribute("aria-label") && typeof el.innerText === "string" && !el.innerText.trim()) {
+        const h = el.querySelector("h1, h2, h3, h4, h5, h6, [role=heading]");
+        const said = h && String(h.textContent || "").replace(/\s+/g, " ").trim();
+        if (said && said.length <= 40) lab = said;
+      }
       // Does this thing open a panel, and is that panel already open? An
       // accordion titled "Flood Inundation" matches the words better than the
       // checkbox inside it ever will - it carries both of them, where the
@@ -1735,7 +1766,10 @@
         // A map library's own buttons - zoom, rotate, camera, keyboard
         // shortcuts, the scale bar - rather than the site's. Offered only
         // when a request is about moving the map itself.
+        // Not a box to type in: a place search sitting in the map's corner -
+        // the National Water Dashboard's "Find a place" - is the site's own.
         mapChrome: (() => {
+          if (el.matches && el.matches(TYPED_INTO)) return undefined;
           try { return el.closest(".gm-style, .gmnoprint, .gm-control-active, .leaflet-control-container, .maplibregl-ctrl, .mapboxgl-ctrl, .ol-control, .esri-ui, .cesium-viewer-toolbar") ? true : undefined; }
           catch (e) { return undefined; }
         })(),

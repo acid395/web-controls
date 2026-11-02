@@ -14748,4 +14748,44 @@ else {
   }
 }
 
+section("StreamStats and the National Water Dashboard, round 13");
+{
+  // A styled layer box: the label toggles the layer, and a click sent to the
+  // hidden input is cancelled by the map around it, so the box snaps back.
+  const pg = loadPage(`<!doctype html><html><body><div id="map">
+    <label id="L" class="chx"><input type="checkbox" id="c" style="display:none"><span>FEMA Flood Map (FIRM)</span></label>
+    <div id="bm" ng-click="vm.open = !vm.open"><label><span> Base Maps </span></label></div>
+    <div class="leaflet-control-container"><div class="leaflet-control"><input class="gc-input" placeholder="Find a place"></div>
+      <a class="leaflet-control-zoom-in" href="#" role="button" title="Zoom in">+</a></div>
+    </div></body></html>`, { url: "https://streamstats.example.gov/ss/" });
+  // Checked live on StreamStats, where the label's handler toggles the
+  // layer: a click sent to the hidden input left it off, one on the label
+  // turned it on. So the first press lands on the label, not the input.
+  const firstAt = [];
+  pg.document.getElementById("L").addEventListener("click", (e) => firstAt.push(e.target.id || e.target.tagName));
+  pg.WC.realClick(pg.document.getElementById("c"));
+  check("a styled box is pressed where it is drawn", firstAt[0], "SPAN");
+  const inv = pg.GENERIC.inventory({});
+  ensure("a <div ng-click> is a control", inv.controls.some((c) => /Base Maps/.test(c.label)),
+    inv.controls.map((c) => c.label).join(" | "));
+  const place = inv.controls.find((c) => /Find a place/.test(c.label));
+  ensure("a place box in the map's corner is not map chrome", place && !place.mapChrome, place);
+  const zoom = inv.controls.find((c) => /Zoom in/.test(c.label));
+  ensure("the zoom button still is", zoom && zoom.mapChrome, zoom);
+
+  const vmm = require("vm");
+  const feed = vmm.runInContext(`planManifestTool("what do I need to do before I can pick a state", "GENERIC")`, sb);
+  ensure("'need' is not 'feed'", !feed || feed.name !== "pageFeed", feed);
+  check("'take every layer off' may press Clear Layers",
+    vmm.runInContext(`undoesUnasked("take every layer off the map", { label: "Clear Layers" })`, sb), false);
+  check("'turn off all layers' may too",
+    vmm.runInContext(`undoesUnasked("turn off all layers", { label: "Clear Layers" })`, sb), false);
+  check("but turning one layer off may not",
+    vmm.runInContext(`undoesUnasked("turn off the radar", { label: "Clear Layers" })`, sb), true);
+  const budget = vmm.runInContext(`askModelBudgetMs("show the dams that regulate flow")`, sb);
+  ensure("one request's model time is bounded", budget > 0 && budget <= 150000, budget);
+  ensure("and a chain's, with more for its parts but still bounded",
+    vmm.runInContext(`askModelBudgetMs("turn on the radar, then zoom in twice, then open the legend")`, sb) <= 300000);
+}
+
 bodyDone = true;

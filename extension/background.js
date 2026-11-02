@@ -4892,6 +4892,14 @@ function needsRealSelector(def) {
   return ["selector", "group", "url"].some((k) => Boolean(props[k]) && required.includes(k));
 }
 
+// A near-miss on a short word is usually another word: "need" is a letter
+// from "feed", and "what do I need to do before I can pick a state" fetched a
+// captured data feed. A typo keeps its first letter - "zom" for zoom - so a
+// short word's near-miss counts only from a word that starts the same way.
+function shortFuzzyFair(w, text) {
+  if (w.length > 4) return true;
+  return String(text).toLowerCase().split(/[^a-z0-9]+/).some((t) => t && t[0] === w[0] && wordMatchesText(w, t));
+}
 function scoreManifestTool(def, words, instruction) {
   const { fromName, description, enums } = toolVocabulary(def);
   const text = instruction.toLowerCase();
@@ -4903,9 +4911,10 @@ function scoreManifestTool(def, words, instruction) {
   for (const w of nameWords) {
     const hit = nameWordHit(w, text);
     if (hit === "exact") score += 3;
-    else if (hit === "fuzzy") score += 2.25;
+    else if (hit === "fuzzy" && shortFuzzyFair(w, text)) score += 2.25;
   }
-  if (nameWords.length && nameWords.every((w) => nameWordHit(w, text))) score += 4;
+  const hits = (w) => { const h = nameWordHit(w, text); return h === "exact" || (h === "fuzzy" && shortFuzzyFair(w, text)); };
+  if (nameWords.length && nameWords.every(hits)) score += 4;
 
   // An enumerated value appearing verbatim all but names the tool -
   // "satellite" belongs to exactly one.
@@ -5138,9 +5147,14 @@ async function answerAfterActing(res, ask) {
       catch (e) { return "Done"; } })(),
     subtitle: "", stats: [], rows: [], note: "", source: "this page",
   };
+  // Said on the card itself, as a row: the note is folded away now, and a
+  // card that did the first half and quietly dropped the question read as
+  // the question having been forgotten.
   const note = (text) => {
     if (!card) return;
     card.note = card.note ? `${card.note} - ${text}` : text;
+    card.rows = [...(card.rows || []), { name: "then read the page", value: "not answered",
+      meta: text.replace(/^the action (?:ran|did not work)[;,]?\s*/i, "").slice(0, 90), tone: "warn" }];
   };
   if (res.ok === false) {
     if (card) out.display = card;
@@ -6349,7 +6363,19 @@ async function panelIsOpen() {
 
 async function askModelForStep(payload) {
   const askedAt = Date.now();
-  try { return await askModelForStepInner(payload); }
+  const left = askModelTimeLeft();
+  if (left < 4000) {
+    debugLog("[model] this request's model time is spent - not asked");
+    return { ok: false, timedOut: true, error: "the model did not answer in time" };
+  }
+  try {
+    if (!Number.isFinite(left)) return await askModelForStepInner(payload);
+    let timer = null;
+    const out = await Promise.race([askModelForStepInner({ ...payload, timeCapMs: left }),
+      new Promise((r) => { timer = setTimeout(() => r({ ok: false, timedOut: true, error: "the model did not answer in time" }), left); })]);
+    clearTimeout(timer);
+    return out;
+  }
   finally { debugLog(`[model] ${(payload && payload.mode) || "step"} call took ${Date.now() - askedAt}ms`); }
 }
 async function askModelForStepInner(payload) {
@@ -6386,7 +6412,7 @@ async function askModelForStepInner(payload) {
         target: "panel", type: "panelStep", prompt, schema: payload.schema || null,
         logprobs: !!payload.logprobs, maxTokens: payload.maxTokens || null,
         model: useId,
-        timeoutMs: turnBudgetFor(useId),
+        timeoutMs: Math.min(turnBudgetFor(useId), payload.timeCapMs || Infinity),
       }));
       if (said && said.ok) {
         // Parsed here. The caller reads .step, and handing back raw text
@@ -6623,7 +6649,27 @@ function slowDecisionHint(ms, gpu) {
 
 function turnBudgetFor(modelId) {
   const mb = (globalThis.WC_MODEL_VRAM && globalThis.WC_MODEL_VRAM(modelId)) || 0;
-  return mb >= 3000 ? 180000 : mb >= 2000 ? 90000 : 45000;
+  return mb >= 5000 ? 180000 : mb >= 3000 ? 120000 : mb >= 2000 ? 90000 : 45000;
+}
+
+/* What one request may spend on the model, all told.
+ *
+ * Each stage had its own allowance - a choice, then a plan, then a run of
+ * up to three turn budgets - so a request the model could not settle went
+ * through all of them: two StreamStats asks took 542 and 543 seconds on a
+ * Qwen3 4B, three times its 180-second turn, and ended with nothing. One
+ * allowance for the whole request, sized from what a turn has actually
+ * cost here, plus some for each further part of a chain; when it is spent
+ * the model is not asked again and the request ends on what it has.
+ */
+function askModelBudgetMs(instruction) {
+  const parts = Math.max(1, splitIntoSteps(String(instruction || "")).length);
+  const first = lastTurnMs ? Math.min(150000, Math.max(60000, lastTurnMs * 4)) : 150000;
+  const more = Math.max(45000, lastTurnMs * 2);
+  return Math.min(300000, first + (parts - 1) * more);
+}
+function askModelTimeLeft() {
+  return activeAsk && activeAsk.modelBy ? activeAsk.modelBy - Date.now() : Infinity;
 }
 function turnBudgetMs() {
   return turnBudgetFor((modelStatusCache.value && modelStatusCache.value.model) || WC_DEFAULT_MODEL);
@@ -6766,7 +6812,11 @@ function askedToLeaveFor(goal, c) {
 // "Reset all filters and selections" and wiped the radar and dates the
 // steps before it had set.
 const UNDOES = /\b(?:reset|clear|delete|remove|erase|discard|cancel|log\s*out|sign\s*out)\b/i;
-function undoesUnasked(goal, c) { return UNDOES.test(String(c.label || "")) && !UNDOES.test(goal); }
+// Asking for everything gone is asking to clear, in whatever words: "take
+// every layer off the map" was refused Clear Layers on the National Water
+// Dashboard for not saying "clear".
+const ASKS_TO_CLEAR = /\b(?:get\s+rid\s+of|start\s+(?:over|again)|wipe)\b|\b(?:all|every|everything)\b[^.?!]{0,40}\b(?:off|away|gone|hidden)\b|\b(?:turn|switch|take|hide|uncheck|untick|disable)\s+(?:off\s+|away\s+)?(?:all|every|everything)\b/i;
+function undoesUnasked(goal, c) { return UNDOES.test(String(c.label || "")) && !UNDOES.test(goal) && !ASKS_TO_CLEAR.test(goal); }
 // A link to another page of the same site - a path, or an app's #/route.
 // "#section" and tabs stay on the page.
 function navigatesAway(c) {
@@ -12798,6 +12848,9 @@ async function searchClause(routeGlobal, clause) {
   const sinv = await readInventory();
   const all = (sinv.ok && sinv.result && sinv.result.controls) || [];
   let { query: words, where } = parts;
+  // Where it is to be found is not what is searched for: "find Denver on
+  // the map" typed "Denver on the map" into the place box.
+  words = String(words).replace(/\s+(?:on|in)\s+(?:the|this)\s+(?:map|page|site)\s*$/i, "").trim() || words;
   // The box named without "the": "search radar sites for new orleans" is the
   // Search Radar Sites box and the words new orleans - and all of it was
   // typed in. Where everything before "for" is in a text box's name, it
@@ -13560,7 +13613,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const askId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       recordAsk(askId, msg.instruction, { status: "running" });
       const thisAsk = { id: askId, cancelled: false, done: false, wakers: [], instruction: String(msg.instruction || ""), sendResponse,
-        respond: (r) => respond(r) };
+        respond: (r) => respond(r), modelBy: Date.now() + askModelBudgetMs(msg.instruction) };
       activeAsk = thisAsk;
       liveAsks.set(askId, thisAsk);
       const [startTab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
@@ -13760,7 +13813,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // The model was there and got nowhere, so this is the baseline
           // answering. Worth saying outright: the two are meant to be
           // compared, and an unlabelled answer counts for neither.
-          !modelSkipped && modelTried && !/^(?:model|plan|page-data)$/.test(res.plannedBy)
+          !modelSkipped && modelTried && !/^(?:model|plan|choice|page-data)$/.test(res.plannedBy)
             ? `${modelUsed ? modelName(modelUsed) : "the local model"} planned nothing here,`
               + " so this is the keyword baseline"
               + (modelSaid ? ` - it replied: ${String(modelSaid).slice(0, 120)}` : "")
@@ -13771,7 +13824,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The route alone was the source on every card the model did not
         // plan, so a run that asked a model and threw its answer away looked
         // identical to one where no model existed.
-        if (display && modelTried && modelUsed && !/^(?:model|plan|page-data)$/.test(res.plannedBy)) {
+        if (display && modelTried && modelUsed && !/^(?:model|plan|choice|page-data)$/.test(res.plannedBy)) {
           display.source = `${display.source || route.global} - asked ${modelName(modelUsed)}`;
         }
         debugLog(`[smartAsk] "${msg.instruction}" ->`, res);
@@ -15414,7 +15467,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // page happens to have fetched would be a worse answer dressed up as
         // a more local one.
         const onMap = wanted.match(/^\s*(?:click|open|show|find|go\s+to|select|zoom\s+to|point\s+at)?\s*(.{2,60}?)\s*(?:on|in)\s+(?:the|this)\s+map\s*$/i);
-        if (onMap) {
+        // Finding a place, where the page has a box for finding places, is
+        // what that box is for: "find Denver on the map" went to a gauge
+        // called Denver Fed Center on the National Water Dashboard, which
+        // has a "Find a place" box.
+        const placeBox = onMap && /^\s*(?:find|go\s+to|zoom\s+to|search\s+for)\b/i.test(wanted)
+          && await invokeOnActiveTab("inventory", [{}]).then((r) => ((r.ok && r.result && r.result.controls) || [])
+            .some((c) => !c.hidden && /^(?:search|text|)$/i.test(String(c.type || "")) && /^(?:input|searchbox|combobox)$/i.test(String(c.kind || ""))
+              && /\b(?:place|address|location|city|geocod\w*|go\s+to)\b/i.test(`${c.label || ""} ${c.hint || ""}`))).catch(() => false);
+        if (onMap && !placeBox) {
           const point = await invokeOnActiveTab("openCapturedPoint", [onMap[1].trim()])
             .catch(() => ({ ok: false }));
           const p = point.ok && point.result;
