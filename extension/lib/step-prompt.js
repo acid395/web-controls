@@ -53,8 +53,13 @@ function buildStepPrompt({ goal, controls = [], history = [], observation, note,
     // forty-seven were in there, so "select wyoming" had no reason to pick
     // it. More of them, and the count either way, so a list is recognisable
     // as the place a value lives even when the value itself is not shown.
+    // The options the request names first, as the plan prompt does: CDEC's
+    // County list showed Alameda to Colusa, and "Sacramento county" had no
+    // reason to think SACRAMENTO was in it.
     const all = c.options || [];
-    const shown = all.slice(0, 8).map((o) => String(o.text || o.value).slice(0, 14));
+    const gw = new Set(String(goal || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+    const named = all.filter((o) => String(o.text || o.value || "").toLowerCase().split(/[^a-z0-9]+/).some((w) => gw.has(w)));
+    const shown = [...named, ...all.filter((o) => !named.includes(o))].slice(0, 8).map((o) => String(o.text || o.value).slice(0, 14));
     const opts = all.length
       ? ` [${shown.join("|")}${all.length > shown.length ? ` +${all.length - shown.length} more` : ""}]`
       : "";

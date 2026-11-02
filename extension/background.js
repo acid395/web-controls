@@ -2965,11 +2965,22 @@ const NAMED_SOURCE = /^\s*(?:according\s+to|based\s+on|per)\s+[^,?]{1,80},\s*/i;
 // regions can I view separate drought maps for" clicked Regions instead of
 // listing them. "What can I do here" stays a request about doing.
 // "What sectors can I choose from" is the same question as "which".
-const WHICH_CAN_I = /^\s*(?:please\s+)?(?:which|what)\s+\w+(?:\s+\w+)?\s+(?:can|could)\s+i\b/i;
+// Round 13 went further: "what can I search stations by", "which filters
+// would I use to find how much funding my state got" and "what can I do on
+// this page" all have their answers on the page, and a 4B shown controls
+// for them pressed Search, typed into the keyword box and searched "Award
+// Data". So any which/what question with an "I" in it reads first; a
+// reading that finds nothing still falls through to the controls.
+const WHICH_CAN_I = /^\s*(?:please\s+)?(?:which|what)(?:\s+\w+){0,3}?\s+(?:can|could|would|should|do)\s+i\b/i;
+// A count or an amount is read, whoever is doing the clicking: "how many
+// times should I click the search button" is answered on CDEC's page - once.
+const HOW_MUCH = /^\s*(?:please\s+)?how\s+(?:many|much|often|long)\b/i;
 const ASKING_TO_READ = {
   test: (s) => {
     const t = String(s || "").replace(NAMED_SOURCE, "");
-    return (!ASKING_WHAT_I_DO.test(t) || WHICH_CAN_I.test(t))
+    // Bare "what can I do here" is about this tool, and gets its card.
+    if (/^\s*what\s+can\s+i\s+do(?:\s+here)?\s*\??\s*$/i.test(t)) return false;
+    return (!ASKING_WHAT_I_DO.test(t) || WHICH_CAN_I.test(t) || HOW_MUCH.test(t))
       && (ASKING_TO_READ_PLAINLY.test(t) || A_QUESTION.test(t));
   },
 };
@@ -5100,11 +5111,15 @@ function answerTextOf(step, raw = "") {
   if (text && !text.includes("{")) return text.slice(0, 600);
   if (text) {
     // An answer cut off mid-sentence - the reply ran out before its quote closed.
-    const cut = text.match(/"(?:answer|explanation|summary|response|text)"\s*:\s*"([^"]{8,})$/i);
-    if (cut) return cut[1].trim().slice(0, 600);
-    const pairs = [...text.matchAll(/"([^"]{1,80})"\s*:\s*(?:"([^"]{1,300})"|(-?\d+(?:[.,]\d+)*))/g)]
+    // Escapes are part of the string. Read as the end of it, "an image of
+    // \"Snow Course\"" came back from CDEC as "The page shows an image of \".
+    const unescape = (t) => String(t || "").replace(/\\(["\\/])/g, "$1").replace(/\\n/g, " ").replace(/\\$/, "").trim();
+    const cut = text.match(/"(?:answer|explanation|summary|response|text)"\s*:\s*"((?:[^"\\]|\\.){8,}?)\\?$/i);
+    // A few words and a dangling quote is not an answer, cut short or not.
+    if (cut) { const t = unescape(cut[1]).replace(/\s*["\u201c]$/, ""); if (t.split(/\s+/).length >= 8) return t.slice(0, 600); }
+    const pairs = [...text.matchAll(/"([^"]{1,80})"\s*:\s*(?:"((?:[^"\\]|\\.){1,300})"|(-?\d+(?:[.,]\d+)*))/g)]
       .filter((m) => !/^(?:do|name|n|on|why|reason)$/i.test(m[1]))
-      .map((m) => (/^(?:answer|explanation|summary|response|text)$/i.test(m[1]) ? (m[2] || m[3]) : `${m[1]}: ${m[2] || m[3]}`));
+      .map((m) => (/^(?:answer|explanation|summary|response|text)$/i.test(m[1]) ? unescape(m[2] || m[3]) : `${m[1]}: ${unescape(m[2] || m[3])}`));
     if (pairs.length) return pairs.join("; ").slice(0, 600);
   }
   return usable(s.why) || usable(s.reason) || "";
@@ -5578,7 +5593,21 @@ function splitIntoSteps(instruction) {
     // the middle, where only the clause it belongs to can see it.
     .map((t) => plainlyPut(t.trim())).filter(Boolean)
     .flatMap(searchPressOfItsOwn)
-    .flatMap(sharedVerbOfTwo);
+    .flatMap(sharedVerbOfTwo)
+    .flatMap((part, i, parts) => (parts.length > 1 ? sharedVerbList(part) : [part]));
+}
+/* A list under one verb, in a request of several steps: "choose Sacramento
+ * county, active stations only, and search" was two steps, the first of
+ * them "choose Sacramento county, active stations only" - one control was
+ * set and the other never. Only where each item after the first is more
+ * than one word, so "zoom to Denver, Colorado" stays a place.
+ */
+function sharedVerbList(part) {
+  const m = String(part).match(/^\s*((?:please\s+)?(?:choose|select|pick|set|check|tick|turn\s+on|switch\s+on|enable|show|hide|turn\s+off|switch\s+off|uncheck|untick)(?:\s+me)?)\s+(.+)$/i);
+  if (!m || !/,/.test(m[2])) return [part];
+  const items = m[2].split(/\s*,\s*(?:and\s+)?/).map((x) => x.trim()).filter(Boolean);
+  if (items.length < 2 || items.length > 6 || items.slice(1).some((x) => x.split(/\s+/).length < 2 || x.split(/\s+/).length > 6)) return [part];
+  return items.map((x) => `${m[1]} ${x}`);
 }
 /* One verb, two things: "show the train route and the railway crossings" is
  * two layers to show, and as one step the second was never reached - the
@@ -5607,9 +5636,10 @@ function sharedVerbLoose(part) {
  * click search" chose the division and never pressed Search.
  */
 function searchPressOfItsOwn(part) {
-  const m = String(part).match(/^(.*\S)\s*(?:,\s*(?:and\s+)?|\s+and\s+)((?:press|click|hit|tap)\s+(?:the\s+)?search(?:\s+button)?)\s*(?:,\s*(?:and\s+)?(.+))?$/i);
+  // A bare "submit" too: "pick fiscal year 2024, and submit" was one step.
+  const m = String(part).match(/^(.*\S)\s*(?:,\s*(?:and\s+)?|\s+and\s+)((?:press|click|hit|tap)\s+(?:the\s+)?(?:search|submit)(?:\s+button)?|submit|apply(?:\s+(?:the\s+)?filters?)?)\s*(?:,\s*(?:and\s+)?(.+))?$/i);
   if (!m || /^\s*(?:please\s+)?(?:type|enter|fill|put|write|search|find|look\s*up|lookup|query)\b/i.test(m[1])) return [part];
-  return [m[1].trim(), m[2].trim(), ...(m[3] ? [m[3].trim()] : [])];
+  return [m[1].replace(/\s*,\s*$/, "").trim(), m[2].trim(), ...(m[3] ? [m[3].trim()] : [])];
 }
 
 // "The second location", "the last one": an ordinal says which row of a
@@ -6300,6 +6330,11 @@ function rankByWords(goal, controls) {
       const t = String(o.text || o.value || "");
       if (t && words.some((w) => wordMatchesText(w, t) === "exact")) { score += 2; break; }
     }
+    // Named whole beats named in part, and another page is where a request
+    // goes only when it asks to go: see shortlistFor.
+    const own = meaningfulWords(label);
+    if (score > 0 && own.length && own.length <= 4 && own.every((lw) => words.some((w) => wordMatchesText(w, lw) === "exact"))) score += 4;
+    if (score > 0 && navigatesAway(c) && !GOES_SOMEWHERE.test(String(goal || ""))) score -= 2;
     return { control: c, score };
   }).sort((a, b) => b.score - a.score);
   return scored[0] && scored[0].score > 0 ? scored : null;
@@ -6617,9 +6652,29 @@ function controlsForModel(inv, { max = OFFER_MAX } = {}) {
     if (seen.has(key)) continue;                     // the same thing twice over
     seen.add(key);
     kept.push(c);
+    // A folded run's member the request names, offered as itself: "fiscal
+    // year 2025" is FY 2025 of the FY buttons folded under FY 2027.
+    for (const m of namedMembers(goal, c)) { if (kept.length < max) kept.push(m); }
     if (kept.length >= max) break;
   }
   return kept;
+}
+function namedMembers(goal, c) {
+  const labels = c.memberLabels || [];
+  if (!labels.length || !goal) return [];
+  const g = ` ${String(goal).toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  const out = [];
+  labels.forEach((l, i) => {
+    if (i === 0 || !c.members || !c.members[i]) return;
+    // What sets it apart from the one folded over it, said in the request.
+    const own = String(l).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ");
+    const head = String(labels[0]).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ");
+    const apart = own.filter((w) => !head.includes(w) && (w.length > 2 || /\d/.test(w)));
+    if (apart.length && apart.every((w) => g.includes(` ${w} `))) {
+      out.push({ ...c, label: l, selector: c.members[i], count: 1, members: undefined, memberLabels: undefined });
+    }
+  });
+  return out.slice(0, 3);
 }
 
 // The same scaling on this side. The agent's own clock has to allow at least
@@ -6745,6 +6800,7 @@ const ABOUT_THE_MAP_VIEW = /\b(?:zoom|rotate|tilt|pan|camera|full\s*screen|fulls
 // shared noun, since it names the action itself: on a page of thirty "Map
 // layer" links, "map" ties them all with Zoom in and page order cut it.
 const NAMING_VERB = /^(?:zoom|search|download|sort|group|reset|clear|apply|find)$/;
+const GOES_SOMEWHERE = /\b(?:go|open|visit|navigate|take\s+me|follow|link|page|jump|switch\s+to)\b/i;
 function shortlistFor(goal, controls, max = 20) {
   const all = meaningfulWords(goal);
   const words = all.filter((w) => !CONTROL_VERB.test(w));
@@ -6770,6 +6826,16 @@ function shortlistFor(goal, controls, max = 20) {
     const opts = c.options || [];
     if (opts.length && words.some((w) => opts.some((o) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))) n += 3;
     if (c.hidden) n -= 0.5;
+    // Named whole beats named in part. CDEC's menu carries "Daily Data
+    // Single Station - Daily data query" and "Hourly Stations - Hourly Active
+    // Stations, updated daily", and each shared two words with "find daily
+    // stations..." - so the menu filled the list and the form's own Daily
+    // radio, one word and all of it asked for, was not on it.
+    const own = meaningfulWords(label);
+    if (n > 0 && own.length && own.length <= 4 && own.every((lw) => all.some((w) => wordMatchesText(w, lw) === "exact"))) n += 3;
+    // And a link to another page is where the request goes only when it
+    // asks to go somewhere.
+    if (n > 0 && navigatesAway(c) && !GOES_SOMEWHERE.test(String(goal || ""))) n -= 1;
     return { c, i, n };
   });
   const top = scored.filter((x) => x.n > 0).sort((a, b) => b.n - a.n || a.i - b.i).slice(0, max);
@@ -7965,7 +8031,17 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // csv" never saw it.
       const wholeHere = wholeNameIn(goal, controls) || (wide.length > controls.length ? wholeNameIn(goal, wide) : null);
       const bySection = wholeHere ? null : sectionQualifierIn(goal, controls);
-      const whole = wholeHere || (bySection && bySection.c);
+      let whole = wholeHere || (bySection && bySection.c);
+      // A box that is only a list's include switch is not what a value for
+      // that list asks for: "list stations in Sacramento county" is the
+      // County list's SACRAMENTO, and CDEC's "(And) County" box, every word
+      // of its name in the request, was ticked instead.
+      if (whole && /^(?:checkbox|radio)$/.test(String(whole.type || "").toLowerCase())) {
+        const spoken = optionSpokenIn(goal, wide);
+        const listName = spoken ? String(spoken.control.label || "").toLowerCase() : "";
+        const own = meaningfulWords(String(whole.label || "")).filter((w) => w.length > 2);
+        if (spoken && own.length && own.every((w) => wordMatchesText(w, listName) === "exact")) whole = null;
+      }
       if (whole) {
         if (whole.hidden && whole.revealedBy) {
           await invokeOnActiveTab("openDisclosure", [whole.revealedBy]).catch(() => null);
@@ -8025,6 +8101,19 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       }
     }
 
+    // Named whole, and greyed out. USAspending's Show New Awards Only is
+    // disabled until a time period is chosen; it is not offered, so "only
+    // show new awards" sent a 4B to press a Dropdown Toggle Button instead.
+    // Saying so is the answer - pressing something else is not.
+    if (!history.length && !ASKING_TO_READ.test(goal) && !IS_CONDITIONAL.test(goal)) {
+      const asked = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w) && !verbFamily(w) && !KIND_WORDS.has(w));
+      const whole = (c) => { const own = meaningfulWords(String(c.label || "")).filter((w) => w.length > 2 && !CONTROL_VERB.test(w));
+        return own.length >= 2 && own.length <= 6 && own.every((w) => asked.some((g) => wordMatchesText(g, w) === "exact")); };
+      const greyed = ((inv.result && inv.result.controls) || []).filter((c) => c.disabled && !c.hidden && whole(c));
+      if (greyed.length === 1 && !wide.some((c) => !c.disabled && whole(c))) {
+        return giveUp(`"${greyed[0].label}" is greyed out on this page - it usually needs another choice made first`);
+      }
+    }
     const thoughtAt = Date.now();
     // A question whose page has already been read is a reading, not a
     // decision. Sending the controls as well cost about fourteen hundred
@@ -12340,7 +12429,6 @@ function setToPlan(routeGlobal, clause, all) {
   const pressNamed = bare && all.some((c) => !c.disabled && !(c.options || []).length && flatB(c.label) === flatB(bare));
   if (bare && bare.length >= 2 && !pressNamed && !/\s(?:to|as|for|in|on)\s/i.test(bare)) {
     const holders = all.filter((c) => !c.disabled && !c.hidden && (c.options || []).length && optionNamed(c, bare));
-    if (holders.length === 1) { const o = optionNamed(holders[0], bare); return { control: holders[0], option: o, label: `${holders[0].label}: ${o.text || o.value}` }; }
     // "The arkansas water division": the option named by part of it ("2 -
     // Arkansas") in the list named by the rest (Water Division). One only.
     const bw = listWords(bare);
@@ -12356,7 +12444,12 @@ function setToPlan(routeGlobal, clause, all) {
         if (rest.length && rest.every((w) => lw.some((l) => wordMatchesText(w, l) || wordMatchesText(l, w)))) byParts.push({ c, o });
       }
     }
+    // The list named by the rest before a list holding the whole phrase:
+    // "choose Sacramento county" is the County list's SACRAMENTO, while
+    // CDEC's Operator list also holds a "Sacramento County" - the county's
+    // own agency, which nobody asking for a county meant.
     if (byParts.length === 1) return { control: byParts[0].c, option: byParts[0].o, label: `${byParts[0].c.label}: ${byParts[0].o.text || byParts[0].o.value}` };
+    if (holders.length === 1) { const o = optionNamed(holders[0], bare); return { control: holders[0], option: o, label: `${holders[0].label}: ${o.text || o.value}` }; }
   }
   return null;
 }
@@ -12468,14 +12561,22 @@ function optionSpokenIn(clause, all) {
       if (placeholderOption(o)) continue;
       const words = meaningfulWords(o.text || o.value).map(fold);
       if (!words.length || words.join("").length < 3 || words.every((w) => CONTROL_VERB.test(w))) continue;
-      if (words.every((w) => said.has(w))) hits.push({ c, o, n: words.length });
+      if (!words.every((w) => said.has(w))) continue;
+      // The list's own name said as well counts for it: "Sacramento county"
+      // is the County list's SACRAMENTO, not the Operator list's
+      // "Sacramento County" - each accounts for both words, and a person
+      // naming a list by its name is choosing from that one.
+      const named = meaningfulWords(String(c.label || "")).map(fold)
+        .filter((w) => w.length > 2 && said.has(w) && !words.includes(w)).length;
+      hits.push({ c, o, n: words.length + named, named });
     }
   }
   if (!hits.length) return null;
   // The fullest name said wins where one sits inside another: "500 year"
   // over a bare "year"; two equally full are a choice, and left alone.
   const most = Math.max(...hits.map((h) => h.n));
-  const top = hits.filter((h) => h.n === most);
+  let top = hits.filter((h) => h.n === most);
+  if (top.length > 1 && top.filter((h) => h.named).length === 1) top = top.filter((h) => h.named);
   if (top.length !== 1) return null;
   const { c, o } = top[0];
   return { control: c, option: o, label: `${c.label}: ${o.text || o.value}` };
@@ -12666,7 +12767,40 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
   return null;
 }
 
+/* "Zoom to the San Francisco Bay" on a map with a place box and no control
+ * or list option of that name is a search for the place. The Sea Level
+ * Rise Viewer's region list holds states, not bays; a 4B pressed Zoom to
+ * Region and stopped there. A place the page names - a region in its list,
+ * a link called it - is still the page's own.
+ */
+const GOTO_PLACE = /^\s*(?:please\s+)?(?:zoom|fly|pan|go|navigate|move|jump|take\s+me)\s+(?:in\s+)?to\s+(?:the\s+)?(.{2,60}?)\s*$/i;
+function placeSearchFor(clause, all) {
+  const m = String(clause || "").match(GOTO_PLACE);
+  if (!m) return null;
+  const place = m[1].replace(/\s+(?:on|in)\s+(?:the|this)\s+(?:map|page|site)\s*$/i, "").trim();
+  if (/\b(?:page|tab|section|top|bottom|region|level|extent|home|start|menu|panel|layer|settings?|next|previous|step|result)\b/i.test(place)) return null;
+  const box = (all || []).find((c) => !c.hidden && !c.readOnly && !c.disabled
+    && (TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase()))
+    && /\b(?:location|address|city|place|town|zip|geocod\w*|go\s*to)\b/i.test(`${c.label || ""} ${c.placeholder || ""}`));
+  if (!box) return null;
+  if (optionSpokenIn(place, all) || wholeNameIn(place, (all || []).filter((c) => !c.hidden))) return null;
+  return { box, place };
+}
+
 async function certainClausePlan(routeGlobal, clause) {
+  {
+    const inv0 = await readInventory();
+    const goto = placeSearchFor(clause, (inv0.ok && inv0.result && inv0.result.controls) || []);
+    if (goto) {
+      return {
+        label: `search "${goto.place.slice(0, 30)}"`,
+        run: async () => {
+          const did = await searchClause(routeGlobal, `search ${goto.box.label} for ${goto.place}`);
+          return did ? { changed: true } : null;
+        },
+      };
+    }
+  }
   const asSearch = String(clause || "").match(SEARCH_CLAUSE);
   if (asSearch && asSearch[1].trim()) {
     const sinv = await readInventory();
@@ -12863,6 +12997,27 @@ async function searchClause(routeGlobal, clause) {
       where = m[1]; words = m[2].trim();
     }
   }
+  // A form, not a search. "find daily stations in the American River basin
+  // sorted by station name" names three of CDEC's own criteria - the Daily
+  // radio, the River Basin list, the sort - and was typed whole into the
+  // header's site search. Where the request names two or more of the page's
+  // choosers, it is filling in the form, and that is not this path's.
+  const choosers = all.filter((c) => !c.hidden && /^(?:select|checkbox|radio)$/.test(String(c.type || c.kind || "").toLowerCase())
+    && meaningfulWords(c.label).length && meaningfulWords(c.label).every((w) => w.length > 2 && wordMatchesText(w, String(clause).toLowerCase()) === "exact"));
+  if (new Set(choosers.map((c) => String(c.label).toLowerCase())).size >= 2) return null;
+  // The field the request starts with. "find station FOL" on a page with a
+  // Station ID/Name box and a site search in the header went to the site
+  // search; the first word names the field and the rest is what goes in it.
+  if (!where) {
+    const qw = String(words).trim().split(/\s+/);
+    const field = qw.length >= 2 && qw.length <= 4 && all.find((c) => !c.hidden && TEXT_INPUT_KINDS.has(String(c.type || c.kind || "").toLowerCase())
+      && !/\bsearch\b/i.test(String(c.label || "")) && qw[0].length > 3
+      && wordMatchesText(qw[0].toLowerCase(), String(c.label || "").toLowerCase()) === "exact");
+    if (field) { where = field.label; words = qw.slice(1).join(" "); }
+  }
+  // What it is about, not what it is: "search for awards about wildfire" on
+  // a site of awards searched "awards about wildfire".
+  words = String(words).replace(/^(?:\S+\s+){1,2}?(?:about|regarding|concerning|mentioning|related\s+to)\s+(\S.*)$/i, "$1").trim() || words;
   const box = findSearchBox(all, where);
   if (!box) return null;
   // A box for places takes the place. "Look up the air quality in Seattle"
@@ -14044,9 +14199,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // It cost forty-five seconds and a wrong press before: the model was
         // offered typing and pressing and nothing that meant searching, so
         // it pressed a link called Public Health.
-        const askedSearch = SEARCH_CLAUSE.test(String(wanted));
+        let askedSearch = SEARCH_CLAUSE.test(String(wanted));
+        let searchSaid = wanted;
+        if (!askedSearch && !forceBaseline && !forceModel && !conditional && splitIntoSteps(wanted).length === 1) {
+          const inv0 = await readInventory();
+          const goto = placeSearchFor(wanted, (inv0.ok && inv0.result && inv0.result.controls) || []);
+          if (goto) { searchSaid = `search ${goto.box.label} for ${goto.place}`; askedSearch = true; }
+        }
         if (askedSearch && !forceBaseline && !forceModel && !conditional && splitIntoSteps(wanted).length === 1) {
-          const did = await searchClause(route.global, wanted).catch(() => null);
+          const did = await searchClause(route.global, searchSaid).catch(() => null);
           if (did) {
             respond({
               ok: true, plannedBy: "exact-match", verified: did.verified,
@@ -15179,7 +15340,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // them below if nothing on the page turned out to match.
         // "What can I do here" is neither a command nor a data question, and
         // would otherwise be matched against control labels word by word.
-        if (/\bwhat can (i|you)\b|\bwhat( is|'s)? (possible|available|supported)\b|\bhelp\b|\bwhat do you do\b|\bcapabilities\b/i.test(wanted)) {
+        // About this tool, not about the page: "what can I search stations by"
+        // is a question about CDEC's form, and was answered with a list of
+        // WebMCP tools.
+        if (/\bwhat can you\b|^\s*what can i do(?:\s+here)?\s*\??\s*$|\bwhat( is|'s)? (possible|available|supported)\b|\bhelp\b|\bwhat do you do\b|\bcapabilities\b/i.test(wanted)) {
           respond(await buildCapabilities());
           return;
         }

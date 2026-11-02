@@ -81,6 +81,12 @@
       search: ["search", "find", "look up", "lookup", "locate"],
       settings: ["settings", "options", "preferences", "configure"],
       layers: ["layer", "layers", "overlay", "overlays"],
+      // How often something reports, which a form calls by one word: CDEC's
+      // Duration radios are Hourly, Daily, Monthly, and "stations that
+      // report every day" reached none of them.
+      everyHour: ["hourly", "every hour", "each hour", "per hour", "once an hour"],
+      everyDay: ["daily", "every day", "each day", "per day", "once a day"],
+      everyMonth: ["monthly", "every month", "each month", "per month", "once a month"],
     },
 
     // ISO-8601 durations, which is what a lot of federal sites use as the

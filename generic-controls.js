@@ -166,6 +166,7 @@
       // county list was "Geographic Area -- or -- -- or --".
       let outside = clean(clean(rowText(el)).replace(/[-\u2013\u2014]+\s*(?:or|and)\s*[-\u2013\u2014]+/gi, " ").replace(/(?:^|\s)[-\u2013\u2014|:]+(?=\s|$)/g, " "));
       if (!/[a-z0-9]/i.test(outside.replace(/\b(?:or|and)\b/gi, ""))) outside = "";
+      if (!outside || saysNothing(outside)) outside = tableRowLabel(el) || outside;
       // Three lists in one row - year, month, day under "Start Date:" - read
       // as three "Start Date:". What a list holds says which it is: its
       // placeholder first ("Select a County ..."), then its options' shape.
@@ -197,7 +198,12 @@
     // name for it (see `hint` on the record), not as the name.
     const own = clean(shortText(el));
     if (/[a-z0-9]/i.test(own) && own.length <= 80) return own;
-    return clean(el.placeholder || el.title || (el.alt || "") || rowText(el)
+    // "(And)" beside a box, ">= And <=" between two: a row's words that
+    // name nothing, so the table's caption for the row does.
+    const around = rowText(el);
+    const caption = saysNothing(around) ? tableRowLabel(el) : "";
+    const inRow = caption ? (/^(?:checkbox|radio)$/i.test(el.type || "") && around ? `${around} ${caption}` : caption) : around;
+    return clean(el.placeholder || el.title || (el.alt || "") || inRow
       || (/^(?:INPUT|TEXTAREA)$/.test(el.tagName) ? headingAbove(el) : "") || el.name || own || "")
       || iconName(el) || controlsName(el) || coversName(el) || besideName(el) || hrefName(el);
   };
@@ -362,6 +368,59 @@
     } catch (e) { /* the code alone, then */ }
     return t;
   };
+  /* A form laid out as a table: the caption in one cell, the control in the
+   * next. CDEC's station search is a row per criterion - "(And) [box]" |
+   * "River Basin:" | [list] - and the caption is often a link to the
+   * glossary, which the row walk skips as a control. So the lists were named
+   * by their author's shorthand - "basin", "hydro", "collect" - the include
+   * boxes were all "(And)", and the elevation pair was "(example: 500 feet)".
+   * The model could not choose a River Basin it was never shown.
+   *
+   * The nearest cell before it that holds no form control; a box in the
+   * first cell takes the one after. A caption cell of several lines
+   * ("Longitude:<br>Latitude:") is read line for line against the control's
+   * own cell, and two boxes on one line are a range: "from" and "to".
+   */
+  const lineOf = (cell, el) => {
+    let line = 0;
+    for (const b of cell.querySelectorAll("br")) if (b.compareDocumentPosition(el) & 4) line++;
+    return line;
+  };
+  const tableRowLabel = (el) => {
+    try {
+      const cell = el.closest && el.closest("td, th");
+      if (!cell || !cell.parentElement || cell.parentElement.tagName !== "TR") return "";
+      const box = /^(?:checkbox|radio)$/i.test(el.type || "");
+      const captionOf = (c) => {
+        if (!c || c.querySelector("input, select, textarea, button")) return null;
+        const lines = c.innerHTML.split(/<br\s*\/?>/i).map((h) => {
+          const d = c.ownerDocument.createElement("div"); d.innerHTML = h;
+          return String(d.textContent || "").replace(/[\s ]+/g, " ").replace(/[:*]+\s*$/, "").trim();
+        }).filter((t) => /[a-z]{2}/i.test(t));
+        return lines.length && lines.every((t) => t.length <= 40) ? lines : null;
+      };
+      let lines = null;
+      for (let c = cell.previousElementSibling; c && !lines; c = c.previousElementSibling) {
+        if (c.querySelector("input, select, textarea, button")) break;
+        lines = captionOf(c);
+      }
+      if (!lines && box) lines = captionOf(cell.nextElementSibling);
+      if (!lines) return "";
+      let name = lines.length > 1 ? (lines[lineOf(cell, el)] || "") : lines[0];
+      if (!name) return "";
+      // A range: two typing boxes on the same line of the same cell.
+      if (el.tagName === "INPUT" && !box) {
+        const mine = lineOf(cell, el);
+        const pair = [...cell.querySelectorAll("input")]
+          .filter((i) => !/^(?:checkbox|radio|hidden|submit|button|reset|image)$/i.test(i.type || "") && lineOf(cell, i) === mine);
+        if (pair.length === 2) name = `${name} ${pair[0] === el ? "from" : "to"}`;
+      }
+      return name;
+    } catch (e) { return ""; }
+  };
+  // Words that name nothing on their own: a joiner, a comparison, an example.
+  const saysNothing = (t) => !/[a-z]{2}/i.test(String(t || "")
+    .replace(/\([^)]*\)/g, " ").replace(/\b(?:and|or|example|e\.g)\b/gi, " "));
   const rowText = (el) => {
     if (!el || !/^(input|select|textarea)$/i.test(el.tagName || "")) return "";
     const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -1981,7 +2040,12 @@
       // A site-wide search's button does not stand for its namesakes: ECHO's
       // header Search and its form's Search fold together, and "click
       // search" means the form's.
-      const r = rows.length > 1 && rows[0].inSiteSearch ? (rows.find((x) => !x.inSiteSearch) || rows[0]) : rows[0];
+      let r = rows.length > 1 && rows[0].inSiteSearch ? (rows.find((x) => !x.inSiteSearch) || rows[0]) : rows[0];
+      // A typeahead's hint is a read-only copy laid over the real box, and
+      // comes first: the Sea Level Rise Viewer's Location Search folded to
+      // the copy, and a search that will not type into a read-only box
+      // found no search box at all.
+      if (r.readOnly && rows.some((x) => !x.readOnly)) r = rows.find((x) => !x.readOnly);
       const { _sig, ...rest } = r;
       const group = { ...rest, count: rows.length };
       // The other rows' selectors, in page order. Folding twenty "View
@@ -1991,6 +2055,10 @@
       // fold. The model never sees these (the prompt prints labels), so
       // they cost it nothing; they are here for an ordinal in a request.
       if (rows.length > 1) group.members = rows.slice(0, 100).map((x) => x.selector);
+      // And what each is called, where the names differ: USAspending's FY
+      // 2027 ... FY 2008 buttons fold into one "FY 2027", and "only show
+      // fiscal year 2025" had nothing named FY 2025 to choose.
+      if (rows.length > 1 && new Set(rows.map((x) => x.label)).size > 1) group.memberLabels = rows.slice(0, 100).map((x) => x.label);
       return group;
     });
 

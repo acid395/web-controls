@@ -9277,7 +9277,8 @@ check("but a unit word with no number before it is left alone", sb.wordMatchesTe
   check("and 500 years too", pick("show the 500 years flood"), "Flood Risk: 500yr");
   check("a step naming no option names none", pick("show the flood damage"), null);
   const two = [...all, { kind: "select", type: "select-one", label: "Rain", selector: "#r", options: [{ text: "500yr", value: "x" }] }];
-  check("one option in two lists is a choice, left alone", sb.optionSpokenIn("switch to the 500 year flood", two), null);
+  check("one option in two lists is a choice, left alone", sb.optionSpokenIn("switch to 500 year", two), null);
+  check("unless the request names one of the lists", (sb.optionSpokenIn("switch to the 500 year flood", two) || {}).label, "Flood Risk: 500yr");
 }
 // Not a licence for short words to collide.
 check("but a short word does not grow an s into a match",
@@ -14786,6 +14787,90 @@ section("StreamStats and the National Water Dashboard, round 13");
   ensure("one request's model time is bounded", budget > 0 && budget <= 150000, budget);
   ensure("and a chain's, with more for its parts but still bounded",
     vmm.runInContext(`askModelBudgetMs("turn on the radar, then zoom in twice, then open the legend")`, sb) <= 300000);
+}
+
+section("Sea Level Rise, CDEC and USAspending, round 13");
+{
+  // CDEC's station search: a row per criterion, the caption in its own cell
+  // (often a glossary link), an include box in the first cell.
+  const pg = loadPage(`<!doctype html><html><body><form><table>
+    <tr><td align="right"> (And) <input type="checkbox" name="basin_chk"></td>
+      <td><a href="/glossary.html">River Basin</a>:</td>
+      <td><select name="basin"><option>NONE SPECIFIED</option><option>AMERICAN RIVER</option></select></td></tr>
+    <tr><td align="right"> (And) <input type="checkbox" name="loc_chk"></td>
+      <td>Longitude:<br>Latitude:</td>
+      <td> &gt;=<input size="8" name="lon1"> And &lt;=<input size="8" name="lon2"> (example: 120.25)
+        <br>&gt;=<input size="8" name="lat1"> And &lt;=<input size="8" name="lat2"> (example: 39.75)</td></tr>
+    <tr><td align="right"> (And) <input type="checkbox" name="elev_chk"></td>
+      <td>Elevation:</td>
+      <td> &gt;=<input size="8" name="elev1"> And &lt;=<input size="8" name="elev2"> (example: 500 feet)</td></tr>
+    </table></form>
+    <span><input type="text" class="tt-hint" readonly tabindex="-1" aria-label="Location Search"><input type="text" id="q" aria-label="Location Search" placeholder="Enter an address or city"></span>
+    </body></html>`, { url: "https://cdec.example.gov/dynamicapp/staSearch" });
+  const inv = pg.GENERIC.inventory({ includeHidden: true });
+  const byName = (n) => inv.controls.find((c) => c.name === n);
+  check("a list is named by its row's caption, not its shorthand", (byName("basin") || {}).label, "River Basin");
+  check("an include box by the criterion it includes", (byName("basin_chk") || {}).label, "(And) River Basin");
+  check("a range's first box is 'from'", (byName("elev1") || {}).label, "Elevation from");
+  check("and its second 'to'", (byName("elev2") || {}).label, "Elevation to");
+  check("a caption of two lines names each line's boxes", (byName("lat2") || {}).label, "Latitude to");
+  const hint = inv.controls.filter((c) => /Location Search/.test(c.label));
+  ensure("a typeahead's read-only hint does not stand for the box", hint.length && hint.every((c) => !c.readOnly), hint);
+
+  const vmm = require("vm");
+  const run = (x) => vmm.runInContext(x, sb);
+  check("a serial list under one verb is a step each",
+    JSON.stringify(run(`splitIntoSteps("choose Sacramento county, active stations only, and search")`)),
+    JSON.stringify(["choose Sacramento county", "choose active stations only", "search"]));
+  check("a bare submit after a pick is its own step",
+    JSON.stringify(run(`splitIntoSteps("add the keyword drought, pick fiscal year 2024, and submit")`)),
+    JSON.stringify(["add the keyword drought", "pick fiscal year 2024", "submit"]));
+  check("a place with a comma stays one",
+    run(`splitIntoSteps("zoom to Denver, Colorado, and show the radar")`)[0], "zoom to Denver, Colorado");
+  for (const q of ["what can I search stations by", "how many times should I click the search button",
+    "which filters would I use to find how much funding my state got", "what can I do on this page"]) {
+    check(`"${q}" is read first`, run(`ASKING_TO_READ.test(${JSON.stringify(q)})`), true);
+  }
+  check("a command is still not", run(`ASKING_TO_READ.test("click the search button")`), false);
+  check("an escaped quote is part of a cut-off answer",
+    run(`answerTextOf(null, ${JSON.stringify(String.raw`{"answer":"The page shows an image of \"Snow Course\" readings for the stations`)})`),
+    'The page shows an image of "Snow Course" readings for the stations');
+  check("and a few words before a dangling quote are no answer",
+    run(`answerTextOf(null, ${JSON.stringify(String.raw`{"answer":"The page shows an image of \"`)})`), "");
+
+  const lists = [
+    { kind: "select", type: "select-one", label: "(And) County:", selector: "#county",
+      options: [{ text: "NONE SPECIFIED", value: "NONE SPECIFIED" }, { text: "SACRAMENTO", value: "SACRAMENTO" }] },
+    { kind: "select", type: "select-one", label: "(And) Operator ID/Name:", selector: "#op",
+      options: [{ text: ".Not Selected", value: "0" }, { text: "Sacramento County", value: "SCO" }] },
+  ];
+  check("a value goes to the list the request names",
+    run(`(setToPlan(null, "choose Sacramento county", ${JSON.stringify(lists)}) || {}).label`), "(And) County:: SACRAMENTO");
+  check("by option too", run(`(optionSpokenIn("choose Sacramento county", ${JSON.stringify(lists)}) || {}).label`), "(And) County:: SACRAMENTO");
+
+  const fy = { kind: "button", type: "button", label: "FY 2027", selector: "#fy27", count: 3,
+    members: ["#fy27", "#fy26", "#fy25"], memberLabels: ["FY 2027", "FY 2026", "FY 2025"] };
+  check("a folded run's member the request names is offered as itself",
+    run(`namedMembers("only show fiscal year 2025", ${JSON.stringify(fy)}).map((c) => c.label + " " + c.selector).join()`), "FY 2025 #fy25");
+
+  const form = [
+    { kind: "a", label: "Daily Data Single Station Daily data query", goesTo: "/dynamicapp/QueryDaily" },
+    { kind: "a", label: "Daily Stations Daily Active Stations, updated daily", goesTo: "/reportapp/DailyStations" },
+    { kind: "input", type: "radio", label: "Daily", selector: "#d" },
+  ];
+  const top = run(`rankByWords("find daily stations", ${JSON.stringify(form)})[0].control.label`);
+  check("a control named whole outranks menu links that share its words", top, "Daily");
+
+  const slr = [
+    { kind: "input", type: "search", label: "Location Search", placeholder: "Enter an address or city", selector: "#q" },
+    { kind: "select", type: "select-one", label: "Select a State", selector: "#s", options: [{ text: "California", value: "3" }, { text: "Louisiana", value: "12" }] },
+  ];
+  check("'zoom to' a place the page does not name is a search for it",
+    run(`(placeSearchFor("zoom to the San Francisco Bay", ${JSON.stringify(slr)}) || {}).place`), "San Francisco Bay");
+  check("'every day' means what a Daily choice means",
+    run(`[...conceptsInPhrase("stations that report every day")].some((g) => conceptsInPhrase("Daily").has(g))`), true);
+  check("a place in the page's own list is not",
+    run(`placeSearchFor("zoom to the Louisiana coast", ${JSON.stringify(slr)})`), null);
 }
 
 bodyDone = true;
