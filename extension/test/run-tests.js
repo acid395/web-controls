@@ -14873,4 +14873,166 @@ section("Sea Level Rise, CDEC and USAspending, round 13");
     run(`placeSearchFor("zoom to the Louisiana coast", ${JSON.stringify(slr)})`), null);
 }
 
+section("FIRMS, Climate Explorer and InciWeb, round 14");
+{
+  const vmm = require("vm");
+  const run = (x) => vmm.runInContext(x, sb);
+  // The browser's back is a page, not the word "back".
+  for (const q of ["how far back does the 24 hour view go", "change the background to Streets", "go back one day", "switch back to the drought map"]) {
+    check(`"${q}" is not a request to leave the page`, run(`GO_BACK_A_PAGE.test(${JSON.stringify(q)})`), false);
+  }
+  for (const q of ["go back", "take me back to the previous page", "press the back button"]) {
+    check(`"${q}" is`, run(`GO_BACK_A_PAGE.test(${JSON.stringify(q)})`), true);
+  }
+  check("a period said last is a candidate step of its own",
+    JSON.stringify(run(`periodOfItsOwn("show heating degree days by month")`)), JSON.stringify({ rest: "show heating degree days", names: ["monthly"] }));
+  check("an order by a period is not", run(`periodOfItsOwn("sort the results by year")`), null);
+  check("a which-can-I question with a possessive is read first",
+    run(`ASKING_TO_READ.test("which satellites' fire data can I show on this map")`), true);
+  check("a possessive leaves no stray word", JSON.stringify(run(`meaningfulWords("only show today's fires")`)), JSON.stringify(["only", "today", "fires"]));
+  check("'look at' is 'show'", run(`restateRequest("look at cooling degree days")`), "show cooling degree days");
+
+  const dlg = [{ kind: "div", label: "OK, I Understand", selector: "#ok", inDialog: true }, { kind: "a", label: "Disclaimer", selector: "#d", goesTo: "https://x.gov/d" }];
+  check("a dialog that wants agreeing to is closed by its agreement",
+    run(`(setToPlan(null, "close the disclaimer popup", ${JSON.stringify(dlg)}) || {}).label`), "close (OK, I Understand)");
+
+  const mapCtl = [
+    { kind: "div", label: "Map Filter", selector: "#mapFilter" },
+    { kind: "div", label: "Reset map zoom and position", selector: "#reset" },
+    { kind: "button", type: "button", label: "Zoom in", selector: "#zin" },
+  ];
+  // Live, the reset button was a pointer-cursor guess, which left Map Filter
+  // the one control meaning a map.
+  const mapLive = [{ kind: "div", label: "Map Filter", selector: "#mapFilter" }, { kind: "div", label: "Reset map zoom and position", selector: "#reset", confidence: "low" }];
+  ensure("a verb that names controls goes with the meaning: 'reset the map' is not Map Filter",
+    run(`namedByClause(${JSON.stringify(mapLive)}, "reset the map").named.every((c) => c.label !== "Map Filter")`), "");
+  check("a name said with its small words outranks one sharing more of them",
+    run(`planGenericTool("zoom in on the map", { controls: ${JSON.stringify(mapCtl)} }).calls[0].args.selector`), "#zin");
+
+  const incidents = { kind: "select", type: "select-one", label: "Search incidents and states", selector: "#inc",
+    options: [{ text: "Search incidents and states", value: "" }, { text: "2026 Red Flag Fire - ORXXF", value: "1" },
+      { text: "2026 Talbot Fire - CATNF", value: "2" }, { text: "2026 Moonshine Fire - WYWYS", value: "3" }] };
+  check("a long name is not chosen on some of its words", run(`planGenericTool("turn on red flag warnings", { controls: ${JSON.stringify([incidents])} })`), null);
+  check("one named in full still is", run(`planGenericTool("find the Talbot Fire", { controls: ${JSON.stringify([incidents])} }).calls[0].args.value`), "2");
+  ensure("a name asked after is read out of a list's options",
+    run(`listChoicesFor("is there a fire called Moonshine on this site", ${JSON.stringify([incidents])}).lines.join(" | ")`).includes("2026 Moonshine Fire - WYWYS"), "");
+
+  const firms = [
+    ...["Global Fire Map", "US & Canada Fire Map", "Active Fire Data", "Fire Alerts", "Fires / Hotspots", "What does a fire detection mean"].map((l, i) => ({ kind: "a", label: l, selector: `#f${i}`, goesTo: `/x${i}/` })),
+    { kind: "div", label: "MODIS (Aqua & Terra) [1km]", selector: "#modis" },
+    { kind: "li", label: "Aqua MODIS/Aqua Corrected Reflectance (true color)", selector: "#aqua" },
+    { kind: "li", label: "Terra MODIS/Terra Corrected Reflectance (true color)", selector: "#terra" },
+  ];
+  const mp = run(`planGenericTool("turn off the MODIS fires", { controls: ${JSON.stringify(firms)} })`) || {};
+  check("on a tie, the word few controls carry decides", ((mp.ambiguous || [])[0] || {}).selector, "#modis");
+}
+{
+  // InciWeb's map toggles: a gear and a funnel that say what they hold only
+  // in a tooltip, and whose boxes exist once pressed.
+  const pg = loadPage(`<!doctype html><html><body><div id="map">
+    <div id="mapMenu" title="Settings - change map background"><i class="fa fa-cog"></i>Map Settings</div>
+    <div id="mapFilter"><i class="fa fa-filter"></i>Map Filter</div>
+    <div id="reset">Reset map zoom and position</div></div></body></html>`, { url: "https://incidents.example.gov/" });
+  if (!pg) skip("toggles looked inside", "jsdom not installed");
+  else {
+    const d = pg.document, w = pg.window;
+    const real = w.HTMLElement.prototype.getBoundingClientRect;
+    w.HTMLElement.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, right: 40, bottom: 40, width: 40, height: 40, x: 0, y: 0 }; };
+    const pressed = [];
+    const panel = (id, html) => () => {
+      pressed.push(id);
+      const open = d.getElementById(`${id}-panel`);
+      if (open) { open.remove(); return; }
+      const nav = d.createElement("nav"); nav.id = `${id}-panel`; nav.innerHTML = html; d.body.appendChild(nav);
+    };
+    d.getElementById("mapMenu").onclick = panel("mapMenu", `<a href="#" onclick="return false">Aerial</a><a href="#" onclick="return false">Roads</a>`);
+    d.getElementById("mapFilter").onclick = panel("mapFilter", `<label><input type="checkbox" checked> Wildfire</label><label><input type="checkbox" checked> Prescribed Fire</label>`);
+    d.getElementById("reset").onclick = () => pressed.push("reset");
+    runAsync(async () => {
+      await pg.GENERIC.peekClosed({});
+      const inv = pg.GENERIC.inventory({ includeHidden: true });
+      const behind = inv.controls.filter((c) => c.revealedBy).map((c) => c.label).sort().join(", ");
+      check("a toggle named for what it holds is looked inside", behind, "Aerial, Prescribed Fire, Roads, Wildfire");
+      ensure("and left shut again", !d.getElementById("mapMenu-panel") && !d.getElementById("mapFilter-panel"), pressed);
+      ensure("nothing else is pressed by looking", !pressed.includes("reset"), pressed);
+      w.HTMLElement.prototype.getBoundingClientRect = real;
+    });
+  }
+}
+{
+  // A menu marked closed is the room, not the door.
+  const pg = loadPage(`<!doctype html><html><body>
+    <nav id="menu" aria-expanded="false" aria-label="Settings menu"><a href="#a">Aerial</a><a href="#r">Roads</a></nav>
+    <button aria-expanded="false">Layers</button></body></html>`, { url: "https://incidents.example.gov/" });
+  if (pg) {
+    const labels = pg.GENERIC.disclosures({ match: "only show wildfires" }).disclosures.map((x) => x.label);
+    ensure("a list of links is not a door to press", !labels.some((l) => /Settings menu|Aerial/.test(l)) && labels.includes("Layers"), labels);
+  }
+}
+{
+  // A chart's legend beside it, and a wrapper around two switches.
+  const pg = loadPage(`<!doctype html><html><body>
+    <svg><text>1960</text><text>2080</text></svg>
+    <div id="legend-wrapper"><div class="btn">Observations</div><div class="btn">Modeled History</div><div class="btn">Lower Emissions</div></div>
+    </body></html>`, { url: "https://climate.example.gov/graphs" });
+  if (pg) {
+    const r = pg.GENERIC.readPage();
+    check("a legend outside the chart is read", JSON.stringify((r.chart || {}).legends), JSON.stringify([["Observations", "Modeled History", "Lower Emissions"]]));
+    ensure("and handed to the reader", String(sb.summariseForModel(r)).includes("legend: Observations | Modeled History | Lower Emissions"), sb.summariseForModel(r));
+  }
+}
+{
+  // CDEC: the form's own search, not the site's, after the form is filled.
+  const pg = loadPage(`<!doctype html><html><body>
+    <header><form id="local_form" role="search" onsubmit="return false"><input type="text" aria-label="Search this site:"><button type="submit">Search</button></form></header>
+    <form id="f" onsubmit="return false"><label><input type="checkbox" id="act"> Active stations only</label>
+    <input type="submit" id="go" value="Search For CDEC Stations"></form></body></html>`, { url: "https://cdec.example.gov/dynamicapp/staSearch" });
+  if (pg) {
+    const hit = [];
+    for (const el of pg.document.querySelectorAll("button, input[type=submit]")) el.addEventListener("click", () => hit.push(el.id || el.textContent));
+    const bg = loadBackground({ page: pg });
+    bg.__model = (m) => (m.type === "llmStatus" ? { ready: false } : undefined);
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "tick active stations only and search" });
+      check("a bare search after the form presses the form's button", hit.join(","), "go");
+    });
+  }
+}
+{
+  // A plan that sets a list nobody named, to a value nobody said, after the
+  // part asked for: FIRMS's timeline set to WEEK on "switch to time based".
+  const page = loadPage(`<!doctype html><html><body>
+    <div id="simple" onclick="">Simple</div><div id="time" onclick="">Time Based</div>
+    <label for="tl">timeline</label><select id="tl"><option>1 day</option><option>WEEK</option></select>
+    </body></html>`, { url: "https://fires.example.gov/map/" });
+  if (page) {
+    const bg = loadBackground({ page });
+    bg.__plans = true;
+    bg.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type !== "llmStep") return undefined;
+      if (m.mode === "plan") {
+        const named = (re) => (m.controls.find((c) => re.test(String(c.label))) || {}).label;
+        return { ok: true, step: { steps: [{ name: named(/time based/i), do: "click" }, { name: named(/timeline/i), do: "select", value: "WEEK" }] } };
+      }
+      return { ok: true, step: { do: "finish", answer: "" } };
+    };
+    runAsync(async () => {
+      await bg.__ask({ type: "smartAsk", instruction: "switch the fire layer to time based" });
+      check("a value nobody said is not set once the asked part is done", page.document.getElementById("tl").value, "1 day");
+    });
+  }
+}
+{
+  // Climate Explorer's "Annual Monthly": a clickable wrapper around two
+  // label switches is their container, not a third switch.
+  const pg = loadPage(`<!doctype html><html><body>
+    <div id="time-wrapper" onclick=""><label id="a"><input type="radio" name="t" style="display:none"> Annual</label><label id="m"><input type="radio" name="t" style="display:none"> Monthly</label></div>
+    </body></html>`, { url: "https://climate.example.gov/graphs" });
+  if (pg) {
+    const offered = sb.controlsForModel(pg.GENERIC.inventory({ includeHidden: true }), { max: 50 }).map((c) => c.label);
+    ensure("a wrapper around two switches is not offered as one", !offered.includes("Annual Monthly") && offered.includes("Monthly"), offered);
+  }
+}
+
 bodyDone = true;

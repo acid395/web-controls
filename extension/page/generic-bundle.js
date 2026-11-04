@@ -1474,9 +1474,29 @@
   async function peekClosed({ max = 8 } = {}) {
     if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = kept.behindUrl = location.href; }
     const inv = inventoryNow({ includeHidden: true });
-    const doors = inv.controls.filter((c) => c.sectionHead && c.expanded !== true && !c.hidden && !c.disabled
+    const closedDoor = (c) => c.expanded !== true && !c.hidden && !c.disabled
       && !behindDoors.has(c.selector) && !inv.controls.some((x) => x.revealedBy === c.selector)
-      && !(c.goesTo && !/^#|^javascript:/i.test(String(c.goesTo)))).slice(0, max);
+      && !(c.goesTo && !/^#|^javascript:/i.test(String(c.goesTo)));
+    // And a panel's own toggle, which says what it holds but not that it is
+    // closed: InciWeb's map has a gear "Settings - change map background and
+    // toggle additional layers" and a funnel "Filter - control incident types
+    // displayed on map", and their boxes exist only once one is pressed.
+    // A button or a plain element only, never a field, list or link.
+    const PANEL_WORDS = /^(?:map\s+)?(?:settings|filters?|layers|options|tools|preferences|basemaps?)\b|\b(?:settings|filters?|layers|basemaps?)\s*$/i;
+    const toggles = inv.controls.filter((c) => !c.sectionHead && closedDoor(c) && !c.goesTo
+      && /^(?:button|div|span|li|i)$/.test(String(c.kind || "").toLowerCase()) && String(c.type || "").toLowerCase() !== "submit"
+      && (PANEL_WORDS.test(String(c.label || "").trim()) || PANEL_WORDS.test(String(c.hint || "").split(/\s+-\s+/)[0].trim()))
+      && !/\b(?:reset|clear|apply|remove|delete|close|save|submit)\b/i.test(String(c.label || "")))
+      // One look per toggle, at the toggle itself: the gear, its wrapper and
+      // its screen-reader text are one thing. Not the wrapper - pressed again
+      // to shut it, its middle was by then a menu item, and the basemap
+      // changed - and not text a person cannot see.
+      .map((c) => ({ c, el: deepQuery(c.selector) }))
+      .filter(({ el }) => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width >= 4 && r.height >= 4; })
+      .filter(({ el }, i, all) => !all.some((o) => o.el !== el && el.contains(o.el)))
+      .map(({ c }) => c)
+      .slice(0, 3).map((c) => ({ ...c, toggleOnly: true }));
+    const doors = [...inv.controls.filter((c) => c.sectionHead && closedDoor(c)), ...toggles].slice(0, max);
     const peeked = [];
     const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     const trace = (m) => { if (window.__wcTrace) console.log(`[peek] ${m}`); };
@@ -1520,7 +1540,8 @@
       // controls and has no aria-expanded, and was left open on the page.
       const flipped = (el.getAttribute && el.getAttribute("aria-expanded") === "true")
         || !!(details && !detailsWasOpen && details.open);
-      if (found.length || flipped) {
+      // A toggle is pressed back whatever it showed: a look is not a press.
+      if (found.length || flipped || door.toggleOnly) {
         const again = deepQuery(door.selector) || el;
         realClick(again);
         await pause(250);
@@ -1694,7 +1715,9 @@
         try {
           // Those shown: a launcher holding its own closed panel is pressed to
           // open it, whatever buttons wait inside.
-          if ([...el.querySelectorAll("a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem]")]
+          // Labels too: Climate Explorer's "Annual Monthly" is a clickable
+          // div around two labels over hidden radios, and a 4B pressed it.
+          if ([...el.querySelectorAll("a[href], button, input, select, textarea, label, [role=button], [role=link], [role=tab], [role=menuitem]")]
             .filter((x) => isVisible(x)).length >= 2) weak = true;
         } catch (e) { /* as it was */ }
       }
@@ -2681,8 +2704,19 @@
         });
       }
     }
+    // A chart's legend often sits outside its SVG, as buttons: "what are the
+    // four series shown on the chart" was answered from the axis numbers,
+    // with Observations, Modeled History, Lower and Higher Emissions in a
+    // wrapper beside it.
+    const legends = [];
+    for (const el of deepQueryAll("[id*=legend], [class*=legend], [id*=Legend], [class*=Legend]")) {
+      if (legends.length >= 3 || !readableIn(el) || legends.some((l) => l.el.contains(el))) continue;
+      const items = [...el.children].map((k) => textOf(k).replace(/\s+/g, " ").trim()).filter((t) => t && t.length <= 40);
+      if (items.length >= 2 && items.length <= 12) legends.push({ el, items });
+    }
     return {
       svgCharts: labelled,
+      legends: legends.map((l) => l.items),
       canvasCount: deepQueryAll("canvas").filter(isVisible).length,
     };
   }
@@ -4139,6 +4173,10 @@
       // these data types" on the pressed list twice for a control that was
       // never behind it. Whatever it hides is on the page now; look there.
       if (expanded === "true") continue;
+      // A menu is the room, not the door, whatever its aria says. InciWeb's
+      // basemap list is a nav marked expanded="false"; pressed as a door, its
+      // middle was "Aerial, labeled", and the filter list's was a box.
+      if (el.querySelectorAll && el.querySelectorAll("a[href], button, input, select, textarea, [role=menuitem], [role=option]").length >= 2) continue;
       const accordion = isAccordion(el);
       const section = iconHeads.includes(el);
       const says = expanded === "false" || (el.getAttribute && el.getAttribute("aria-haspopup"))

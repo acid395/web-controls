@@ -2796,7 +2796,7 @@ const SAID_PLAINLY = [
   [/^(?:get\s+rid\s+of|take\s+away|stop\s+showing|do\s+not\s+show|don'?t\s+show|no\s+more)\s+(.+)$/i, "turn off $1"],
   [/^take\s+(.+?)\s+off(?:\s+(?:of\s+)?(?:the\s+)?(?:map|screen|page|view))?$/i, "turn off $1"],
   [/^remove\s+(.+?)\s+from\s+(?:the\s+)?(?:map|screen|page|view)$/i, "turn off $1"],
-  [/^(?:i\s+(?:want|would\s+like|'d\s+like|need|wanna)\s+(?:to\s+)?see|let\s+me\s+see|see|bring\s+up|pull\s+up)\s+(.+)$/i, "show $1"],
+  [/^(?:i\s+(?:want|would\s+like|'d\s+like|need|wanna)\s+(?:to\s+)?see|let\s+me\s+see|see|bring\s+up|pull\s+up|look\s+at|have\s+a\s+look\s+at)\s+(.+)$/i, "show $1"],
   [/^(?:put|add|place)\s+(.+?)\s+(?:on|to|onto)\s+(?:the\s+)?(?:map|screen|page|view)$/i, "turn on $1"],
   [/^show\s+(?:me\s+|us\s+)?where\s+(.+?)\s+(?:are|is)(?:\s+located)?$/i, "show $1"],
   [/^(?:minimi[sz]e|fold\s+up)\s+(.+)$/i, "collapse $1"],
@@ -2842,6 +2842,9 @@ function meaningfulWords(text) {
 function meaningfulWordsAll(text) {
   return foldAccents(spelledUnits(text))
     .toLowerCase()
+    // A possessive is the word: "today's fires" left a word "s" over, which
+    // matched nothing and sank the press of "today".
+    .replace(/([a-z])['’]s\b/g, "$1")
     .split(/[^a-z0-9]+/)
     // A lone digit is a word. Dropping anything shorter than two characters
     // turned "7-day anomaly" into "day anomaly", which matched a Current Data
@@ -2971,7 +2974,7 @@ const NAMED_SOURCE = /^\s*(?:according\s+to|based\s+on|per)\s+[^,?]{1,80},\s*/i;
 // for them pressed Search, typed into the keyword box and searched "Award
 // Data". So any which/what question with an "I" in it reads first; a
 // reading that finds nothing still falls through to the controls.
-const WHICH_CAN_I = /^\s*(?:please\s+)?(?:which|what)(?:\s+\w+){0,3}?\s+(?:can|could|would|should|do)\s+i\b/i;
+const WHICH_CAN_I = /^\s*(?:please\s+)?(?:which|what)(?:\s+[\w'’-]+){0,3}?\s+(?:can|could|would|should|do)\s+i\b/i;
 // A count or an amount is read, whoever is doing the clicking: "how many
 // times should I click the search button" is answered on CDEC's page - once.
 const HOW_MUCH = /^\s*(?:please\s+)?how\s+(?:many|much|often|long)\b/i;
@@ -2985,6 +2988,13 @@ const ASKING_TO_READ = {
   },
 };
 
+// A name of two words or more, small ones included, said as it is written.
+function saidWordForWord(label, said) {
+  const flatOf = (t) => ` ${foldAccents(String(t || "")).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  const own = flatOf(label);
+  const n = own.trim().split(" ").length;
+  return n >= 2 && n > meaningfulWords(String(label || "")).length && flatOf(said).includes(own);
+}
 function scoreControl(control, words, phrase, opts = {}) {
   const label = foldAccents(control.label || "").toLowerCase();
   if (!label) return 0;
@@ -3000,6 +3010,10 @@ function scoreControl(control, words, phrase, opts = {}) {
     else if (hit === "fuzzy") score += 1.5; // below exact, never instead of it
   }
   if (label === phrase) score += 10;
+  // A name said word for word, small words and all: "zoom in on the map"
+  // names Zoom in, and with "in" dropped it lost to "Reset map zoom and
+  // position" on the two words "zoom" and "map".
+  if (opts.said && saidWordForWord(control.label, opts.said)) score += 10;
   // The domain's words for the same thing, as whole phrases. The loop above
   // asks word by word and multi-word synonyms cannot answer it, so "show me
   // the water level" scored nothing against "Gage height, feet" and "where
@@ -3646,9 +3660,17 @@ function planGenericTool(instruction, inventory) {
       .filter((c) => !used.has(c.selector) && !contradictsFigure(c))
       .map((c) => ({ control: c,
         score: scoreControl(c, remaining, remaining.join(" "),
-          { wantsText, wantsState: STATE_COMMAND.test(instruction) }) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score);
+          { wantsText, wantsState: STATE_COMMAND.test(instruction), said: remaining.length === allWords.length ? instruction : null }) }))
+      .filter((x) => x.score > 0);
+    // Level on score, the rarer word wins: "turn off the MODIS fires" tied
+    // the MODIS row on "modis" with every Fire link on FIRMS on "fires", and
+    // document order put the site's header first - a word half the page
+    // carries says less about which control than one a few carry.
+    // Only a word common across the page counts against a control: between
+    // "flood" on two and "inundation" on three, neither says more.
+    const carrying = new Map(remaining.map((w) => { const n = controls.filter((c) => wordMatchesText(w, String(c.label || "").toLowerCase())).length; return [w, n >= 5 ? n : 0]; }));
+    const rarity = (c) => Math.min(...wordsCoveredBy(c, remaining).map((w) => carrying.get(w) || 0), Infinity);
+    scored.sort((a, b) => b.score - a.score || rarity(a.control) - rarity(b.control));
     // Several ways to reach one page are one candidate. The same headline
     // appears six times on nasa.gov - a carousel, a latest-news list, a
     // featured block - all leading to the same article, and as separate
@@ -3821,13 +3843,18 @@ function planGenericTool(instruction, inventory) {
       // select reads "Topographic Satellite Dark Light" and the word
       // "basemap" appears nowhere on it.
       viaOption: !!(best.control.options || best.control.childOptions)
-        && /^page(SelectOption|Click)$/.test(call.name) });
+        && /^page(SelectOption|Click)$/.test(call.name),
+      optionWords: call.name === "pageSelectOption"
+        ? meaningfulWords(String(((best.control.options || []).find((o) => String(o.value || o.text) === String(call.args.value)) || {}).text || "")).length : 0 });
     if (follow) {
       calls.push(follow);
       matched.push({ label: `submit ${best.control.label || "search"}`, selector: best.control.selector, covered: [] });
     }
     used.add(best.control.selector);
     remaining = remaining.filter((w) => !covered.includes(w));
+    // What kind of thing, or where, after a name said whole: "zoom in on the
+    // map" is Zoom in, not Zoom in and then a map.
+    if (calls.length === 1 && saidWordForWord(best.control.label, instruction) && remaining.every((w) => KIND_WORDS.has(w))) remaining = [];
   }
 
   // "look up 13206000" names no control - a site number shares no words with
@@ -3887,6 +3914,12 @@ function planGenericTool(instruction, inventory) {
   const namedAnOption = matched.some((m) => m.viaOption);
   if (missedSubject.length
       && missedSubject.length >= coveredSubject + (namedAnOption ? 1 : 0)) return null;
+  // A long name chosen from a list on some of its words: "turn on red flag
+  // warnings" picked an incident with "Red Flag" in it from InciWeb's list of
+  // 286 and left for its page, while the Red Flag Warnings box sat behind the
+  // map's settings. A short option keeps its spare word ("set the basemap to
+  // satellite"); a long one is taken only with nothing of the request over.
+  if (missedSubject.length && matched.some((m) => m.optionWords >= 3)) return null;
 
   return { calls, matched, unmatchedWords: remaining, phrase };
 }
@@ -5631,6 +5664,19 @@ function sharedVerbLoose(part) {
   if (items.length > 8 || items.some((x) => !/^(?:the\s+)?[a-z][a-z' -]{1,40}$/i.test(x) || x.split(/\s+/).length > 5)) return null;
   return { parts: items.map((x) => `${m[1]} ${x}`), joined: `${m[2]} and ${m[3]}` };
 }
+/* A period said at the end: "show heating degree days by month" chose the
+ * measure and never pressed Monthly. Only a candidate - the caller splits
+ * where the page has a control by that period's name - and never for an
+ * order, so "sort the results by year" stays one step.
+ */
+const PERIOD_NAMES = { day: ["daily"], week: ["weekly"], month: ["monthly"], year: ["annual", "yearly", "annually"], hour: ["hourly"] };
+function periodOfItsOwn(part) {
+  const m = String(part).match(/^(.*\S)\s+(?:by|per|each|every)\s+(?:the\s+)?(day|week|month|year|hour)\s*$/i)
+    || String(part).match(/^(.*\S)\s+(daily|weekly|monthly|yearly|annually|hourly)\s*$/i);
+  if (!m || /^\s*(?:please\s+)?(?:sort|order|group|rank)\b/i.test(m[1])) return null;
+  const unit = { daily: "day", weekly: "week", monthly: "month", yearly: "year", annually: "year", hourly: "hour" }[m[2].toLowerCase()] || m[2].toLowerCase();
+  return { rest: m[1].trim(), names: PERIOD_NAMES[unit] };
+}
 /* "And click search" finishes a typed box, and stays with it. After a list
  * choice it is a step of its own: "choose the south platte division and
  * click search" chose the division and never pressed Search.
@@ -5935,10 +5981,15 @@ function namedByClause(all, clause) {
   // is not treated as carrying something unread.
   const ACTION_CONCEPTS = new Set(["download", "search"]);
   const wanted = new Set([...asked].filter((g) => !ACTION_CONCEPTS.has(g)));
+  // A verb that is itself what controls are called goes with the meaning:
+  // "reset the map" meant "map" alone to this, and pressed Map Filter as the
+  // one control meaning a map, beside "Reset map zoom and position".
+  const verbsNamed = meaningfulWords(said).filter((w) => NAMING_VERB.test(w) && !ACTION_CONCEPTS.has(w));
   if (wanted.size && !spare.length) {
     const byMeaning = all.filter((c) => {
       if (c.disabled || c.confidence === "low" || c.opensPanel) return false;
       if (!String(c.label || "").trim()) return false;
+      if (verbsNamed.some((v) => !wordMatchesText(v, String(c.label).toLowerCase()))) return false;
       const has = conceptsInPhrase(c.label);
       if (!has.size) return false;
       // Every concept the request named, and no more. A label meaning one
@@ -6764,6 +6815,20 @@ function listChoicesFor(goal, pool) {
     lines.push(`${String(c.label).slice(0, 40)}: ${opts.slice(0, 12).join(", ")}${opts.length > 12 ? `, and ${opts.length - 12} more` : ""}`);
     listed.push({ line: lines[lines.length - 1], hits, opts, hidden: !!c.hidden });
   }
+  // A name the question asks after, among a list's options: "is there a fire
+  // called Moonshine" is answered by "2026 Moonshine Fire - WYWYS" in the
+  // incident list, which the page's prose never repeats. Only a word that
+  // picks out a few options - "fire" is in hundreds of them.
+  for (const c of pool) {
+    if (c.fromMenu || (c.options || []).length < 2 || lines.length >= 6 || lines.some((l) => l.startsWith(`${String(c.label).slice(0, 40)}:`))) continue;
+    const opts = c.options.filter((o) => !placeholderOption(o)).map((o) => String(o.text || o.value).trim()).filter(Boolean);
+    const found = new Set();
+    for (const w of qWords) {
+      const m = opts.filter((o) => wordMatchesText(w, o.toLowerCase()) === "exact");
+      if (m.length && m.length <= 3) m.forEach((o) => found.add(o));
+    }
+    if (found.size) lines.push(`${String(c.label).slice(0, 40)} includes: ${[...found].join(", ")}`);
+  }
   // "What can be turned on here" is the switches, which no dropdown lists.
   if (!listed.length && /\b(?:turn(?:ed)?\s+on|enabled?|toggled?|switch(?:ed)?\s+on|activated?|checked)\b/i.test(goal)) {
     const names = pool.filter((x) => !x.hidden && /checkbox|switch/i.test(`${x.type || ""} ${x.kind || ""} ${x.role || ""}`))
@@ -7431,9 +7496,15 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     // Where the plan holds the control named completely, a step on anything
     // not named completely is extra: "open the explore wqp sites menu" opened
     // it and then followed two links inside it, each sharing "wqp".
+    // A value nobody said, once the parts asked for are done, is invented:
+    // "switch the fire layer to time based" did that, then set the timeline
+    // list to WEEK.
+    const valueUnsaid = (act === "select" || act === "type") && st.value != null && String(st.value).trim()
+      && !flat(String(st.value)).split(" ").filter((v) => v.length > 1).some((v) => goalWordsP.some((g) => wordMatchesText(v, g) || wordMatchesText(g, v)));
     if ((namesNothingOf(goal, target, st.value) && (navigatesAway(target) || doneSoFar >= evident
           || (namedInView && !target.hidden && (target.expanded === false || target.sectionHead || target.opensPanel))))
-        || (namesWhole && wholeNamedAmong(goal, [target]) !== target)) {
+        || (namesWhole && wholeNamedAmong(goal, [target]) !== target)
+        || (valueUnsaid && doneSoFar >= evident)) {
       history.push({ did: `${act} "${String(target.label).slice(0, 40)}"`, ok: true, changed: false, skipped: true,
         outcome: "left alone - the request names nothing of it" });
       continue;
@@ -9927,6 +9998,7 @@ function summariseForModel(read) {
     const labels = (c.labels || []).filter(Boolean).slice(0, 16);
     if (labels.length && !points.length) bits.push(`chart labels: ${labels.join(" | ")}`.slice(0, 300));
   }
+  for (const items of ((read.chart && read.chart.legends) || []).slice(0, 2)) bits.push(`legend: ${items.join(" | ")}`.slice(0, 200));
   // The page's own words, where it yielded no structured data at all. Judged
   // before the note is added, not after: the note is an explanation of the
   // emptiness rather than a filling of it, and counting it as content meant
@@ -11955,6 +12027,9 @@ function sectionQualifierIn(clause, controls) {
 // the page's back arrow beside the date was the step asked for.
 const A_STEP_IN_TIME =
   /\b(?:back|backward|backwards|forward|forwards|ahead|earlier|later)\s+(?:by\s+)?(?:a|an|one|1)\s+(?:day|week|month|year|hour)\b|\b(?:a|an|one|1)\s+(?:day|week|month|year|hour)\s+(?:back|backward|backwards|forward|forwards|ahead|earlier|later)\b|\b(?:go|step|move|jump|skip|advance)\s+(?:back\s+|forward\s+|ahead\s+)?(?:to\s+)?(?:the\s+)?(?:previous|next|prior|following)\s+(?:day|week|month|year|hour)\b|\b(?:next|following)\s+day\b/i;
+// A request to go back or forward a page, not the word "back" inside one.
+const GO_BACK_A_PAGE =
+  /^\s*(?:please\s+)?(?:(?:go|take\s+me|navigate|head|get|step|move)\s+)?(?:back|forward)(?:\s+(?:a|one)\s+page)?(?:\s+to\s+(?:the\s+)?(?:previous|last|prior|next)\s+page)?\s*[.!]?\s*$|\b(?:go|take\s+me|navigate|head|return)\s+(?:back\s+)?to\s+(?:the\s+)?(?:previous|last|prior)\s+page\b|\b(?:browser'?s?\s+)?(?:back|forward)\s+button\b/i;
 const A_MOMENT_NOT_A_SPAN =
   /\bthis\s+(?:week|month|year)(?:'s|s)?\b|\btoday'?s?\b|\blatest\b|\b(?:from|with|since|against|than|versus|vs\.?|to|as)\s+(?:the\s+)?(?:last|previous|prior)\s+(?:week|month|year)\b|\b(?:a|one|two|\d+)\s+(?:weeks?|months?|years?)\s+ago\b|\bthis\s+time\s+last\b|\bsame\s+(?:span|period|time|window|dates?)\b/i;
 
@@ -12300,7 +12375,12 @@ async function runRange(routeGlobal, { rest, from, to }) {
 // "Close the intro", "dismiss the popup": the close button of the dialog
 // that is open. One inside a dialog over one elsewhere - the sidebar has a
 // close icon of its own - and one only.
-const CLOSE_DIALOG = /^\s*(?:please\s+)?(?:close|dismiss|exit|hide|get\s+rid\s+of)\s+(?:the\s+|this\s+|that\s+)?(?:intro(?:duction)?|pop-?up|dialog(?:ue)?|modal|welcome(?:\s+(?:screen|message|pop-?up|box))?|banner|splash(?:\s+screen)?|overlay|notice|message|window|box|disclaimer|info(?:rmation)?(?:\s+box)?)\s*$/i;
+const DIALOG_NOUN = "(?:intro(?:duction)?|pop-?up|dialog(?:ue)?|modal|welcome(?:\\s+(?:screen|message|pop-?up|box))?|banner|splash(?:\\s+screen)?|overlay|notice|message|window|box|disclaimer|warning|info(?:rmation)?(?:\\s+box)?)";
+// Two of them too: "close the disclaimer popup".
+const CLOSE_DIALOG = new RegExp(`^\\s*(?:please\\s+)?(?:close|dismiss|exit|hide|get\\s+rid\\s+of|accept)\\s+(?:the\\s+|this\\s+|that\\s+)?${DIALOG_NOUN}(?:\\s+${DIALOG_NOUN})?\\s*$`, "i");
+// What a dialog that wants agreeing to is closed with: FIRMS's disclaimer has
+// no x, only "OK, I Understand".
+const ACKNOWLEDGE = /^\s*(?:ok(?:ay)?|got\s+it|i\s+understand|i\s+agree|agree|accept|continue|ok,?\s+i\s+(?:understand|agree|accept))\b[\s.!]*$/i;
 // "Go to the next page of the table": a pager's own control, named for the
 // page it goes to - "Next page", "Go to the next page" - or, where it is the
 // only one, a bare "Next". Asked of a 3B, Colorado's grid got "More pages",
@@ -12341,7 +12421,9 @@ function setToPlan(routeGlobal, clause, all) {
   if (CLOSE_DIALOG.test(String(clause))) {
     const closers = all.filter((c) => !c.hidden && !c.disabled && CLOSE_GLYPH.test(String(c.label || "")));
     const inDlg = closers.filter((c) => c.inDialog);
-    const pick = inDlg.length === 1 ? inDlg[0] : closers.length === 1 ? closers[0] : null;
+    const agree = all.filter((c) => !c.hidden && !c.disabled && c.inDialog && ACKNOWLEDGE.test(String(c.label || "")));
+    const pick = inDlg.length === 1 ? inDlg[0] : closers.length === 1 ? closers[0]
+      : !inDlg.length && agree.length === 1 ? agree[0] : null;
     if (pick) return { control: pick, press: "click", label: `close (${pick.label})` };
   }
   const range = String(clause).match(RANGE_IN);
@@ -12797,6 +12879,26 @@ async function certainClausePlan(routeGlobal, clause) {
         run: async () => {
           const did = await searchClause(routeGlobal, `search ${goto.box.label} for ${goto.place}`);
           return did ? { changed: true } : null;
+        },
+      };
+    }
+  }
+  // A bare "search" or "submit" presses the page's own form, not the site's
+  // search: "choose Sacramento county, active stations only, and search"
+  // pressed CDEC's header Search, with nothing in its box, beside "Search
+  // For CDEC Stations".
+  const bare = String(clause || "").match(/^\s*(?:and\s+|then\s+)?(?:(?:click|press|hit|tap)\s+)?(?:the\s+)?(search|submit)(?:\s+button)?\s*$/i);
+  if (bare) {
+    const binv = await readInventory();
+    const all = (binv.ok && binv.result && binv.result.controls) || [];
+    const own = all.filter((c) => !c.hidden && !c.disabled && !c.inSiteSearch
+      && /^(?:button|submit)$/i.test(String(c.type || c.kind || "")) && new RegExp(`\\b${bare[1]}`, "i").test(String(c.label || "")));
+    if (all.some((c) => c.inSiteSearch) && new Set(own.map((c) => String(c.label).toLowerCase())).size === 1) {
+      return {
+        label: own[0].label,
+        run: async () => {
+          const ran = await runVerified(routeGlobal, { name: "pageClick", args: { selector: own[0].selector } });
+          return ran && ran.ok !== false ? { changed: didItMove(ran) } : null;
         },
       };
     }
@@ -15369,7 +15471,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // the second half an instruction rather than the rest of a name.
           let parts = splitIntoSteps(msg.instruction);
           const loose = parts.length === 1 ? sharedVerbLoose(parts[0]) : null;
-          if (loose || parts.length > 1) {
+          const period = parts.length === 1 && !loose ? periodOfItsOwn(parts[0]) : null;
+          if (loose || period || parts.length > 1) {
             const inv = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
             const labels = ((inv && inv.ok && inv.result && inv.result.controls) || []).map((c) => c.label);
             const flatL = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\bthe\b/g, " ").replace(/\s+/g, " ").trim();
@@ -15379,6 +15482,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const rest = flatL(String(msg.instruction || "").replace(/^\s*(?:please\s+)?(?:click|press|tap|open|select|choose|pick|show|view|go\s+to)\s+(?:on\s+)?/i, ""));
             if (parts.length > 1 && rest && labels.some((l) => flatL(l) === rest)) parts = [String(msg.instruction)];
             else if (loose && !labels.some((l) => flatL(l).includes(flatL(loose.joined)))) parts = loose.parts;
+            else if (period) {
+              // The page names the period itself, and nothing is called the whole phrase.
+              const named = labels.find((l) => period.names.includes(flatL(l)));
+              if (named && !labels.some((l) => flatL(l) === flatL(parts[0]))) parts = [period.rest, `show ${named}`];
+            }
           }
           // Eight, not four. A five-part instruction fell out of the sequence
           // and was handled as one command, which on the page tested pressed
@@ -15808,8 +15916,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           let one = confidentPick(
             await unifiedTools(route.global, wanted, { acting: commandLike }), wanted);
           // The browser's back is not a day back: "go back one day" on NOHRSC
-          // left the page for the one before it.
-          if (one && /^page(?:Back|Forward)$/.test(one.tool.name) && A_STEP_IN_TIME.test(wanted)) one = null;
+          // left the page for the one before it. Nor is it any "back" at all:
+          // "how far back does the 24 hour view go" and "change the background
+          // to Streets" both left FIRMS for the page before it. Only a request
+          // to go back a page uses it.
+          if (one && /^page(?:Back|Forward)$/.test(one.tool.name)
+              && (A_STEP_IN_TIME.test(wanted) || !GO_BACK_A_PAGE.test(wanted))) one = null;
           if (one) {
             if (globalThis.__wcTrace) debugLog(`[one-list] ${one.tool.name} (${one.tool.kind || "?"}) for "${wanted}" acting=${commandLike}`);
             let ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
@@ -16261,9 +16373,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             cameFromPage = true;
           }
         }
-        // Nor here: "go back one day" is a step on the page, not the page
-        // before this one.
-        if (manifestCall && /^page(?:Back|Forward)$/.test(manifestCall.name) && A_STEP_IN_TIME.test(wanted)) manifestCall = null;
+        // Nor here: "go back one day" is a step on the page, and "how far back"
+        // is not a page at all.
+        if (manifestCall && /^page(?:Back|Forward)$/.test(manifestCall.name)
+            && (A_STEP_IN_TIME.test(wanted) || !GO_BACK_A_PAGE.test(wanted))) manifestCall = null;
         // Nor a read for a command: "road" is a letter from "read", and "turn
         // on the road" read the page before pressing anything.
         if (manifestCall && isCommand(wanted) && /^page(?:Read|List)/.test(manifestCall.name)
