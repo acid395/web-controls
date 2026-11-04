@@ -534,3 +534,51 @@ explain         what can I do on this page
 action+explain  open the award type filter and tell me what kinds of awards I can choose
 multistep       add the keyword drought, pick fiscal year 2024, and submit
 multistep       show only grants from fiscal year 2026
+firms  https://firms.modaps.eosdis.nasa.gov/map/
+action          close the disclaimer popup
+action          show fires from the last 7 days
+action          only show today's fires
+action          switch the fire layer to time based
+action          turn off the MODIS fires
+action          change the background to Streets
+action          turn on the NOAA-20 true color imagery
+action          set the timeline to 2 weeks
+action          open the measure tool
+explain         what do the red squares on the map mean
+explain         which satellites' fire data can I show on this map
+explain         how far back does the 24 hour view go
+action+explain  open the overlays section and tell me which overlays I can turn on
+multistep       show the last 7 days of fires and switch the background to Topographic
+multistep       turn off Landsat and MODIS so only VIIRS fires show
+climexp  https://crt-climate-explorer.nemac.org/climate_graphs/?county=Maricopa+County&city=Phoenix,%20AZ&fips=04013&lat=33.4483771&lon=-112.0740373&nav=climate_graphs
+action          show the monthly view
+action          switch to the map view
+action          show total precipitation instead
+action          show days over 100 degrees
+action          hide the higher emissions projection
+action          open the downloads menu
+action          look at cooling degree days
+action          go to the high tide flooding page
+action          open the stations list
+explain         what are the four series shown on the chart
+explain         what does lower emissions mean here
+explain         what years does this graph cover
+action+explain  click About and tell me what this graph shows
+multistep       switch to Houston and show dry days
+multistep       show heating degree days by month
+inciweb  https://inciweb.wildfire.gov/
+action          open the map settings
+action          switch the map to aerial
+action          turn on red flag warnings
+action          hide prescribed fires on the map
+action          show the legend
+action          zoom in on the map
+action          reset the map
+action          find the Talbot Fire
+action          open the glossary of fire terms
+explain         is there a fire called Moonshine on this site
+explain         what can I change in the map settings
+explain         how do I see the incidents as a list instead of a map
+action+explain  open the map filter and tell me which incident types I can show
+multistep       only show wildfires
+multistep       turn on red flag warnings and switch to the roads map

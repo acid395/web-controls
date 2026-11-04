@@ -827,5 +827,71 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"add the keyword drought, pick fiscal year 2024, and submit","kind":"multistep","steps":["Search using keywords...","Add","FY 2024","Submit"],"on":"Submit","want":{"clicked":"Submit"},"offline":null},
    {"say":"show only grants from fiscal year 2026","kind":"multistep","steps":["Award Type","Grants","FY 2026"],"on":"FY 2026","want":{"clicked":"FY 2026"},"offline":null}
   ]
+ },
+ "firms": {
+  "firstContact": true,
+  "url": "https://firms.modaps.eosdis.nasa.gov/map/",
+  "note": "NASA FIRMS global fire map. A disclaimer ('OK, I Understand') covers it on load. The BASIC MODE panel on the right has TODAY / 24HRS / 7DAYS buttons and a calendar (24HRS = from yesterday 00:00 UTC to present); Fires / Hotspots with Simple / Time Based tabs and boxes for Landsat [30m], VIIRS (S-NPP, NOAA-20 & NOAA-21) [375m] and MODIS (Aqua & Terra) [1km]; Overlays (1/5, collapsed); Dynamic Imagery (VIIRS NOAA-20, NOAA-21, S-NPP, MODIS/Aqua, MODIS/Terra Corrected Reflectance (true color)); Static Backgrounds (Blue Marble, Firefly, Streets, Topographic). Bottom toolbar MEASURE, LOCATION, LAYERS, TIMELINE, CAPTURE, SHARE, HELP, VIEW MODE; a timeline range list (1 day to 31 days, WEEK, 2 WEEKS...). Disclaimer text: red squares are satellite-derived thermal anomalies.",
+  "prompts": [
+   {"say":"close the disclaimer popup","kind":"action","steps":["OK, I Understand"],"on":"OK, I Understand","want":{"clicked":"OK, I Understand"},"offline":null},
+   {"say":"show fires from the last 7 days","kind":"action","steps":["7days"],"on":"7days","want":{"clicked":"7days"},"offline":null},
+   {"say":"only show today's fires","kind":"action","steps":["today"],"on":"today","want":{"clicked":"today"},"offline":null},
+   {"say":"switch the fire layer to time based","kind":"action","steps":["Time Based"],"on":"Time Based","want":{"clicked":"Time Based"},"offline":null},
+   {"say":"turn off the MODIS fires","kind":"action","steps":["MODIS (Aqua & Terra) [1km]"],"on":"MODIS (Aqua & Terra) [1km]","want":{"clicked":"MODIS (Aqua & Terra) [1km]"},"offline":null},
+   {"say":"change the background to Streets","kind":"action","steps":["Streets"],"on":"Streets","want":{"clicked":"Streets"},"offline":null},
+   {"say":"turn on the NOAA-20 true color imagery","kind":"action","steps":["VIIRS NOAA-20 Corrected Reflectance (true color)"],"on":"VIIRS NOAA-20 Corrected Reflectance (true color)","want":{"clicked":"VIIRS NOAA-20 Corrected Reflectance (true color)"},"offline":null},
+   {"say":"set the timeline to 2 weeks","kind":"action","steps":["timeline DR"],"on":"timeline DR","want":{"clicked":"timeline DR"},"offline":null},
+   {"say":"open the measure tool","kind":"action","steps":["MEASURE"],"on":"MEASURE","want":{"clicked":"MEASURE"},"offline":null},
+   {"say":"what do the red squares on the map mean","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which satellites' fire data can I show on this map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how far back does the 24 hour view go","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"open the overlays section and tell me which overlays I can turn on","kind":"action+explain","steps":["Overlays (1/5)"],"explain":true,"on":"Overlays (1/5)","want":{"clicked":"Overlays (1/5)","read":true},"offline":null},
+   {"say":"show the last 7 days of fires and switch the background to Topographic","kind":"multistep","steps":["7days","Topographic"],"on":"Topographic","want":{"clicked":"Topographic"},"offline":null},
+   {"say":"turn off Landsat and MODIS so only VIIRS fires show","kind":"multistep","steps":["Landsat [30m]","MODIS (Aqua & Terra) [1km]"],"on":"MODIS (Aqua & Terra) [1km]","want":{"clicked":"MODIS (Aqua & Terra) [1km]"},"offline":null}
+  ]
+ },
+ "climexp": {
+  "firstContact": true,
+  "url": "https://crt-climate-explorer.nemac.org/climate_graphs/?county=Maricopa+County&city=Phoenix,%20AZ&fips=04013&lat=33.4483771&lon=-112.0740373&nav=climate_graphs",
+  "note": "The Climate Explorer (NEMAC / NOAA Climate Resilience Toolkit), Climate Graphs for Maricopa County (Phoenix, AZ). A city box ('Enter county or city name', typeahead), a Stations list, a measure menu (Average Daily Maximum Temperature (°F) and 36 more: days over/under thresholds such as 'Days w/ maximum temp > 100°F', Total precipitation, Dry Days, Heating / Cooling / Growing Degree Days...), Graph / Map, Annual / Monthly, Downloads (Chart image (.png), Observations, Modeled History and Projections (.csv)) and About. Legend buttons toggle Observations, Modeled History, Lower Emissions and Higher Emissions; the chart runs 1950-2100. Bottom tabs Cards Home, Climate Maps, Climate Graphs, Historical Weather Data, Historical Thresholds, High-Tide Flooding, Take Action.",
+  "prompts": [
+   {"say":"show the monthly view","kind":"action","steps":["Monthly"],"on":"Monthly","want":{"clicked":"Monthly"},"offline":null},
+   {"say":"switch to the map view","kind":"action","steps":["Map"],"on":"Map","want":{"clicked":"Map"},"offline":null},
+   {"say":"show total precipitation instead","kind":"action","steps":["Total precipitation"],"on":"Total precipitation","want":{"clicked":"Total precipitation"},"offline":null},
+   {"say":"show days over 100 degrees","kind":"action","steps":["Days w/ maximum temp > 100°F"],"on":"Days w/ maximum temp > 100°F","want":{"clicked":"Days w/ maximum temp > 100°F"},"offline":null},
+   {"say":"hide the higher emissions projection","kind":"action","steps":["Higher Emissions"],"on":"Higher Emissions","want":{"clicked":"Higher Emissions"},"offline":null},
+   {"say":"open the downloads menu","kind":"action","steps":["Downloads"],"on":"Downloads","want":{"clicked":"Downloads"},"offline":null},
+   {"say":"look at cooling degree days","kind":"action","steps":["Cooling Degree Days"],"on":"Cooling Degree Days","want":{"clicked":"Cooling Degree Days"},"offline":null},
+   {"say":"go to the high tide flooding page","kind":"action","steps":["High-Tide Flooding"],"on":"High-Tide Flooding","want":{"clicked":"High-Tide Flooding"},"offline":null},
+   {"say":"open the stations list","kind":"action","steps":["Stations"],"on":"Stations","want":{"clicked":"Stations"},"offline":null},
+   {"say":"what are the four series shown on the chart","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what does lower emissions mean here","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what years does this graph cover","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"click About and tell me what this graph shows","kind":"action+explain","steps":["About"],"explain":true,"on":"About","want":{"clicked":"About","read":true},"offline":null},
+   {"say":"switch to Houston and show dry days","kind":"multistep","steps":["Enter county or city name","Dry Days"],"on":"Dry Days","want":{"clicked":"Dry Days"},"offline":null},
+   {"say":"show heating degree days by month","kind":"multistep","steps":["Heating Degree Days","Monthly"],"on":"Monthly","want":{"clicked":"Monthly"},"offline":null}
+  ]
+ },
+ "inciweb": {
+  "firstContact": true,
+  "url": "https://inciweb.wildfire.gov/",
+  "note": "InciWeb incident map (wildfires, prescribed fires, BAER). Header 'Search incidents and states' list (286 incidents, e.g. 2026 Talbot Fire - CATNF, 2026 Moonshine Fire - WYWYS); menu Home, Incident Table View, Links, Terminology, About, Help, Feeds. Map icons down the left: zoom in/out, Map Settings (gear: Background Map Topographic / Aerial / Aerial, labeled / Roads, Reference Layers: Red Flag Warnings box), Map Filter (funnel: Wildfire, Prescribed Fire, Burned Area Response, Other boxes, all on), Zoom to your location, Reset map zoom and position; Show Legend at the bottom. The settings and filter contents exist only once their icon is clicked.",
+  "prompts": [
+   {"say":"open the map settings","kind":"action","steps":["Map Settings"],"on":"Map Settings","want":{"clicked":"Map Settings"},"offline":null},
+   {"say":"switch the map to aerial","kind":"action","steps":["Map Settings","Aerial"],"on":"Aerial","want":{"clicked":"Aerial"},"offline":null},
+   {"say":"turn on red flag warnings","kind":"action","steps":["Map Settings","Red Flag Warnings"],"on":"Red Flag Warnings","want":{"clicked":"Red Flag Warnings"},"offline":null},
+   {"say":"hide prescribed fires on the map","kind":"action","steps":["Map Filter","Prescribed Fire"],"on":"Prescribed Fire","want":{"clicked":"Prescribed Fire"},"offline":null},
+   {"say":"show the legend","kind":"action","steps":["Show Legend"],"on":"Show Legend","want":{"clicked":"Show Legend"},"offline":null},
+   {"say":"zoom in on the map","kind":"action","steps":["Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":null},
+   {"say":"reset the map","kind":"action","steps":["Reset map zoom and position"],"on":"Reset map zoom and position","want":{"clicked":"Reset map zoom and position"},"offline":null},
+   {"say":"find the Talbot Fire","kind":"action","steps":["Search incidents and states"],"on":"Search incidents and states","want":{"clicked":"Search incidents and states"},"offline":null},
+   {"say":"open the glossary of fire terms","kind":"action","steps":["Terminology"],"on":"Terminology","want":{"clicked":"Terminology"},"offline":null},
+   {"say":"is there a fire called Moonshine on this site","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"what can I change in the map settings","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"how do I see the incidents as a list instead of a map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"open the map filter and tell me which incident types I can show","kind":"action+explain","steps":["Map Filter"],"explain":true,"on":"Map Filter","want":{"clicked":"Map Filter","read":true},"offline":null},
+   {"say":"only show wildfires","kind":"multistep","steps":["Map Filter","Prescribed Fire","Burned Area Response","Other"],"on":"Other","want":{"clicked":"Other"},"offline":null},
+   {"say":"turn on red flag warnings and switch to the roads map","kind":"multistep","steps":["Map Settings","Red Flag Warnings","Roads"],"on":"Roads","want":{"clicked":"Roads"},"offline":null}
+  ]
  }
 };
