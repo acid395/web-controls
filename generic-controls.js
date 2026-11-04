@@ -2157,10 +2157,6 @@
    * recording every image and analytics beacon would be noise, and holding
    * whole response bodies for a long-lived page would be a memory leak.
    * ========================================================================== */
-  const FEED_URL_RE = /(\/api\/|\/rest\/|\/ogcapi\/|nwis|nwps|waterservices|waterdata|gridpoints|geoserver|\bwfs\b|\bwms\b|query\?|\.json(\?|$)|\.geojson(\?|$)|\.csv(\?|$)|observations|forecast|gauges?\/)/i;
-  const FEED_LIMIT = 40;          // most recent N requests
-  const FEED_BODY_CAP = 200000;   // characters kept per response
-
   // Everything captured so far. `parsed` is the decoded JSON where the body
   // was JSON, since that is the part worth reading.
   function capturedFeeds({ includeBodies = false } = {}) {

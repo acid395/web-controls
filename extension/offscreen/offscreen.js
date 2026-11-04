@@ -293,6 +293,17 @@ function getEngine(onProgress) {
   return enginePromise;
 }
 
+// The engine for a request, with its download reported to the panel - or
+// the reason this machine cannot run one.
+function readyEngine() {
+  if (!("gpu" in navigator)) {
+    return Promise.reject(new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU"));
+  }
+  return getEngine((report) => {
+    chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "offscreen") return; // not for us, e.g. content-script traffic relayed elsewhere
 
@@ -344,12 +355,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmPing") {
     (async () => {
       try {
-        if (!("gpu" in navigator)) {
-          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
-        }
-        const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
-        });
+        const engine = await readyEngine();
         const reply = await engine.chat.completions.create({
           messages: [{ role: "user", content: msg.prompt || "Say hello in exactly five words." }],
         });
@@ -488,12 +494,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmPick") {
     (async () => {
       try {
-        if (!("gpu" in navigator)) {
-          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
-        }
-        const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
-        });
+        const engine = await readyEngine();
         const numbered = (msg.tools || [])
           .map((t, i) => `${i + 1}. ${t.name}${t.gist ? " - " + t.gist : ""}`).join("\n");
         const prompt = [
@@ -550,12 +551,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmStep") {
     (async () => {
       try {
-        if (!("gpu" in navigator)) {
-          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
-        }
-        const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
-        });
+        const engine = await readyEngine();
         // The same two prompts the panel is given. A question asked here
         // would otherwise still get the operating prompt, so which window
         // answered would change the kind of answer.
@@ -644,12 +640,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmPlanJson") {
     (async () => {
       try {
-        if (!("gpu" in navigator)) {
-          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
-        }
-        const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
-        });
+        const engine = await readyEngine();
 
         // Compact: every token of schema is prefill time on a small model,
         // and prefill is what made the 8B path unusable.
@@ -710,12 +701,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "llmPlan") {
     (async () => {
       try {
-        if (!("gpu" in navigator)) {
-          throw new Error("navigator.gpu is undefined - this browser/machine doesn't expose WebGPU");
-        }
-        const engine = await getEngine((report) => {
-          chrome.runtime.sendMessage({ type: "llmProgress", text: report.text, fraction: report.progress });
-        });
+        const engine = await readyEngine();
         // background.js optionally supplies context (env-vocab synonyms,
         // and for GENERIC-route asks, the live inventory() output) - this is
         // what lets the model pick a real selector on a page it's never

@@ -3619,6 +3619,23 @@ function figuresAgree(asked, have) {
   return asked.map(Number).some((x) => n.includes(x));
 }
 
+// Text to put somewhere and a search box to put it in: typed there, and
+// submitted where the box wants it.
+function searchBoxPlan(controls, allWords, instruction, phrase) {
+  const box = carriesText(instruction) && findSearchBox(controls);
+  const call = box && toolCallFor(box, allWords, instruction);
+  if (!call) return null;
+  const submitAfter = call.thenSubmit;
+  delete call.thenSubmit;
+  const calls = [call];
+  const matched = [{ label: box.label, selector: box.selector, covered: allWords }];
+  if (submitAfter) {
+    calls.push({ name: "pageSubmit", args: { selector: box.selector } });
+    matched.push({ label: `submit ${box.label || "search"}`, selector: box.selector, covered: [] });
+  }
+  return { calls, matched, unmatchedWords: [], phrase };
+}
+
 function planGenericTool(instruction, inventory) {
   const controls = (inventory && inventory.controls) || [];
   if (!controls.length) return null;
@@ -3769,22 +3786,8 @@ function planGenericTool(instruction, inventory) {
         // a query: "click Search" means press the button of that name, and
         // routing it to the box filled nothing into nothing and reported a
         // search on five of seventeen sites tested.
-        const searching = carriesText(instruction);
-        const box = searching && findSearchBox(controls);
-        if (box) {
-          const call = toolCallFor(box, allWords, instruction);
-          if (call) {
-            const submitAfter = call.thenSubmit;
-            delete call.thenSubmit;
-            const calls = [call];
-            const matched = [{ label: box.label, selector: box.selector, covered: allWords }];
-            if (submitAfter) {
-              calls.push({ name: "pageSubmit", args: { selector: box.selector } });
-              matched.push({ label: `submit ${box.label || "search"}`, selector: box.selector, covered: [] });
-            }
-            return { calls, matched, unmatchedWords: [], phrase };
-          }
-        }
+        const typed = searchBoxPlan(controls, allWords, instruction, phrase);
+        if (typed) return typed;
         return {
           // Each candidate carries the call it would make, so picking one is
           // a click rather than a retyped instruction.
@@ -3861,27 +3864,7 @@ function planGenericTool(instruction, inventory) {
   // "Search station" - but the intent is plain. When the instruction asks to
   // search and the page has somewhere to type, that is the control meant,
   // even though scoring found nothing.
-  if (!calls.length) {
-    const searching = carriesText(instruction);
-    if (searching) {
-      const box = findSearchBox(controls);
-      if (box) {
-        const call = toolCallFor(box, allWords, instruction);
-        if (call) {
-          const submitAfter = call.thenSubmit;
-          delete call.thenSubmit;
-          const calls = [call];
-          const matched = [{ label: box.label, selector: box.selector, covered: allWords }];
-          if (submitAfter) {
-            calls.push({ name: "pageSubmit", args: { selector: box.selector } });
-            matched.push({ label: `submit ${box.label || "search"}`, selector: box.selector, covered: [] });
-          }
-          return { calls, matched, unmatchedWords: [], phrase };
-        }
-      }
-    }
-    return null;
-  }
+  if (!calls.length) return searchBoxPlan(controls, allWords, instruction, phrase);
   // A plan that leaves the distinguishing word behind is not a plan.
   // "Click snow depth" matched a nav link called National Snow Analysis on
   // the word "snow", reported "nothing on this page matched: depth", and
@@ -7272,6 +7255,32 @@ function pressedValue(st) {
   return null;
 }
 
+// The card for a request reached by trying the page's controls in turn.
+// Each caller says first how it came to be trying.
+function pursuedReply(chased, leads, source) {
+  const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
+  const last = acted[acted.length - 1] || {};
+  return {
+    ok: true, plannedBy: "pursued", steps: chased.steps,
+    display: {
+      title: String(last.label || "Done").slice(0, 60),
+      subtitle: [
+        ...leads,
+        (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
+          : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
+      ].filter(Boolean).join(" \u00b7 "),
+      stats: [{ label: "steps", value: String(chased.steps.length) }],
+      rows: chased.steps.map((st) => ({
+        name: String(st.label || st.did).slice(0, 50),
+        value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
+          : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
+        meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
+      })),
+      source,
+    },
+  };
+}
+
 async function sectionsFirst(routeGlobal, wanted) {
   if (!isCommand(wanted) || IS_CONDITIONAL.test(wanted)) return null;
   const inv = await readInventory();
@@ -8259,7 +8268,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         s.answer = String(said);
       }
     }
-    if (readingOnly && (act !== "finish" || !String(s.answer || "").trim()) && !readFellThrough) {
+    // A reading that answered nothing, or said the page does not answer it.
+    if (readingOnly && !readFellThrough && (act !== "finish" || !String(s.answer || "").trim() || admitsNoAnswer(s.answer))) {
       readFellThrough = true;
       history.push({ did: "read the page", outcome: "it does not answer this here" });
       note = "This page does not answer the question. Choose the control that leads to"
@@ -8277,13 +8287,6 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     }
     note = null;
 
-    if (act === "finish" && readingOnly && admitsNoAnswer(s.answer) && !readFellThrough) {
-      readFellThrough = true;
-      history.push({ did: "read the page", outcome: "it does not answer this here" });
-      note = "This page does not answer the question. Choose the control that leads to"
-        + " the page that does.";
-      continue;
-    }
     if (act === "finish") {
       // Not "done" with the thing asked for on screen and never pressed:
       // "open transportation and show the bus route" ended at Bus Routes.
@@ -12030,6 +12033,9 @@ const A_STEP_IN_TIME =
 // A request to go back or forward a page, not the word "back" inside one.
 const GO_BACK_A_PAGE =
   /^\s*(?:please\s+)?(?:(?:go|take\s+me|navigate|head|get|step|move)\s+)?(?:back|forward)(?:\s+(?:a|one)\s+page)?(?:\s+to\s+(?:the\s+)?(?:previous|last|prior|next)\s+page)?\s*[.!]?\s*$|\b(?:go|take\s+me|navigate|head|return)\s+(?:back\s+)?to\s+(?:the\s+)?(?:previous|last|prior)\s+page\b|\b(?:browser'?s?\s+)?(?:back|forward)\s+button\b/i;
+// The browser's back or forward for a request that did not ask to change page.
+const backNotAsked = (tool, request) => /^page(?:Back|Forward)$/.test(String(tool))
+  && (A_STEP_IN_TIME.test(request) || !GO_BACK_A_PAGE.test(request));
 const A_MOMENT_NOT_A_SPAN =
   /\bthis\s+(?:week|month|year)(?:'s|s)?\b|\btoday'?s?\b|\blatest\b|\b(?:from|with|since|against|than|versus|vs\.?|to|as)\s+(?:the\s+)?(?:last|previous|prior)\s+(?:week|month|year)\b|\b(?:a|one|two|\d+)\s+(?:weeks?|months?|years?)\s+ago\b|\bthis\s+time\s+last\b|\bsame\s+(?:span|period|time|window|dates?)\b/i;
 
@@ -15920,8 +15926,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // "how far back does the 24 hour view go" and "change the background
           // to Streets" both left FIRMS for the page before it. Only a request
           // to go back a page uses it.
-          if (one && /^page(?:Back|Forward)$/.test(one.tool.name)
-              && (A_STEP_IN_TIME.test(wanted) || !GO_BACK_A_PAGE.test(wanted))) one = null;
+          if (one && backNotAsked(one.tool.name, wanted)) one = null;
           if (one) {
             if (globalThis.__wcTrace) debugLog(`[one-list] ${one.tool.name} (${one.tool.kind || "?"}) for "${wanted}" acting=${commandLike}`);
             let ran = await runVerified(route.global, { name: one.tool.name, args: one.args });
@@ -15970,29 +15975,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const chased = await pursueGoal(route.global, wanted,
                 { avoid: [rr.at] }).catch(() => null);
               if (chased && chased.done) {
-                const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
-                const last = acted[acted.length - 1] || {};
-                respond({
-                  ok: true, plannedBy: "pursued", steps: chased.steps,
-                  display: {
-                    title: String(last.label || "Done").slice(0, 60),
-                    subtitle: [
-                      chased.opened.length
-                        ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
-                        : `${friendlyToolName(one.tool.name)} changed nothing, so it kept going`,
-                      (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
-                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
-                    ].filter(Boolean).join(" \u00b7 "),
-                    stats: [{ label: "steps", value: String(chased.steps.length) }],
-                    rows: chased.steps.map((st) => ({
-                      name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
-                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
-                      meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
-                    })),
-                    source: route.global,
-                  },
-                });
+                respond(pursuedReply(chased, [
+                  chased.opened.length
+                    ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                    : `${friendlyToolName(one.tool.name)} changed nothing, so it kept going`,
+                ], route.global));
                 return;
               }
             }
@@ -16375,8 +16362,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         // Nor here: "go back one day" is a step on the page, and "how far back"
         // is not a page at all.
-        if (manifestCall && /^page(?:Back|Forward)$/.test(manifestCall.name)
-            && (A_STEP_IN_TIME.test(wanted) || !GO_BACK_A_PAGE.test(wanted))) manifestCall = null;
+        if (manifestCall && backNotAsked(manifestCall.name, wanted)) manifestCall = null;
         // Nor a read for a command: "road" is a letter from "read", and "turn
         // on the road" read the page before pressing anything.
         if (manifestCall && isCommand(wanted) && /^page(?:Read|List)/.test(manifestCall.name)
@@ -16454,29 +16440,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               && !usedInstead && commandLike && !forceModel) {
             chased = await pursueGoal(route.global, wanted).catch(() => null);
             if (chased && chased.done) {
-              const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
-              const last = acted[acted.length - 1] || {};
-              respond({
-                ok: true, plannedBy: "pursued", steps: chased.steps,
-                display: {
-                  title: String(last.label || "Done").slice(0, 60),
-                  subtitle: [
-                    `${friendlyToolName(manifestCall.name)} could not do it, so this page's own controls were used`,
-                    chased.opened.length
-                      ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")}` : null,
-                    (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
-                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
-                  ].filter(Boolean).join(" \u00b7 "),
-                  stats: [{ label: "steps", value: String(chased.steps.length) }],
-                  rows: chased.steps.map((st) => ({
-                    name: String(st.label || st.did).slice(0, 50),
-                    value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
-                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
-                    meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
-                  })),
-                  source: route.global,
-                },
-              });
+              respond(pursuedReply(chased, [
+                `${friendlyToolName(manifestCall.name)} could not do it, so this page's own controls were used`,
+                chased.opened.length
+                  ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")}` : null,
+              ], route.global));
               return;
             }
           }
@@ -16762,29 +16730,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const chased = await pursueGoal(route.global, wanted,
                 { avoid: guess.matched.map((m) => m.selector) }).catch(() => null);
               if (chased && chased.done) {
-                const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
-                const last = acted[acted.length - 1] || {};
-                respond({
-                  ok: true, plannedBy: "pursued", steps: chased.steps,
-                  display: {
-                    title: String(last.label || "Done").slice(0, 60),
-                    subtitle: [
-                      chased.opened.length
-                        ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
-                        : "the first match switched nothing on, so it kept going",
-                      (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
-                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
-                    ].filter(Boolean).join(" \u00b7 "),
-                    stats: [{ label: "steps", value: String(chased.steps.length) }],
-                    rows: chased.steps.map((st) => ({
-                      name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
-                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
-                      meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
-                    })),
-                    source: route.global,
-                  },
-                });
+                respond(pursuedReply(chased, [
+                  chased.opened.length
+                    ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                    : "the first match switched nothing on, so it kept going",
+                ], route.global));
                 return;
               }
             }
@@ -16856,30 +16806,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 pressedLooking = chased.steps.filter((st) => st.did !== "closed" && !shut.has(st.label) && (st.did === "opened" || st.changed)).map((st) => st.label).filter(Boolean);
               }
               if (chased && chased.done) {
-                const acted = chased.steps.filter((st) => !/^(?:opened|closed)$/.test(st.did));
-                const last = acted[acted.length - 1] || {};
-                respond({
-                  ok: true, plannedBy: "pursued", steps: chased.steps,
-                  display: {
-                    title: String(last.label || "Done").slice(0, 60),
-                    subtitle: [
-                      chased.opened.length
-                        ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
-                        : "more than one control shared that name, so each was tried",
-                      chased.unconfirmed ? "pressed - the page gave no sign it changed, so this could not be checked" : null,
-                      (typeof last.now === "boolean" || /^(?:on|off|open|shut)$/.test(String(last.now))) && last.was !== last.now ? `${last.label}: ${last.was} \u2192 ${last.now}`
-                        : last.alreadySo && /^(?:on|off|open|shut)$/.test(String(last.now)) ? `${last.label} was already ${last.now}` : null,
-                    ].filter(Boolean).join(" \u00b7 "),
-                    stats: [{ label: "steps", value: String(chased.steps.length) }],
-                    rows: chased.steps.map((st) => ({
-                      name: String(st.label || st.did).slice(0, 50),
-                      value: st.did === "opened" ? (st.appeared > 0 && st.appeared !== true ? `revealed ${st.appeared}` : "opened") : st.did === "closed" ? "shut again, it did not hold it"
-                        : pressedValue(st) ? pressedValue(st) : st.changed ? "changed" : st.alreadySo ? "already so" : "no change",
-                      meta: st.did, tone: st.did === "opened" || st.changed || st.alreadySo ? "ok" : "warn",
-                    })),
-                    source: route.global,
-                  },
-                });
+                respond(pursuedReply(chased, [
+                  chased.opened.length
+                    ? `opened ${chased.opened.map((o) => `"${o}"`).join(", then ")} to reach it`
+                    : "more than one control shared that name, so each was tried",
+                  chased.unconfirmed ? "pressed - the page gave no sign it changed, so this could not be checked" : null,
+                ], route.global));
                 return;
               }
             }
