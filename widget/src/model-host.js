@@ -59,7 +59,8 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     } catch (e) { /* a frozen crypto: the load reports why it failed */ }
   }
   let lib = null;
-  const webllm = () => lib || (lib = loadLib());
+  // A failed import is not kept: "Load model" can be pressed again.
+  const webllm = () => lib || (lib = Promise.resolve().then(loadLib).catch((e) => { lib = null; throw e; }));
 
   let enginePromise = null;
   let engineReady = false;
@@ -140,7 +141,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     engineModel = modelId;
     engineReady = false;
     lastError = null;
-    enginePromise = (async () => {
+    const p = (async () => {
       // Two copies of the weights on one card is what made the extension
       // crawl, so the old one goes before the new one comes.
       if (previous) {
@@ -148,13 +149,19 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
       }
       return build(modelId);
     })()
-      .then((e) => { engineReady = true; return e; })
+      // Only while this is still the load being waited for: a model switched
+      // away from mid-load must not mark its successor ready, or on failing
+      // wipe the successor's state and have it built twice.
+      .then((e) => { if (enginePromise === p) engineReady = true; return e; })
       .catch((err) => {
-        enginePromise = null; engineReady = false; engineModel = null;
-        lastError = String((err && err.message) || err);
+        if (enginePromise === p) {
+          enginePromise = null; engineReady = false; engineModel = null;
+          lastError = String((err && err.message) || err);
+        }
         throw err;
       });
-    return enginePromise;
+    enginePromise = p;
+    return p;
   }
 
   async function release() {
@@ -179,9 +186,15 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     // 350ms after, on the same engine straight after an interrupt.
     // A schema keeps a plan inside its list of controls; a model that
     // cannot take one is asked again without it.
+    // The retry wraps the whole read: a schema the engine cannot compile
+    // fails inside the stream, not at create().
     const gather = async (withSchema = schema) => {
+      try { return await gatherOnce(withSchema); }
+      catch (e) { if (withSchema) return gatherOnce(null); throw e; }
+    };
+    const gatherOnce = async (withSchema) => {
       const chunks = await engine.chat.completions.create({
-        messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+        messages: [{ role: "user", content: /qwen3/i.test(modelId) ? `${prompt}\n/no_think` : prompt }],
         // Read at 1 for a choice: at 0 every distribution is one certain token.
         temperature: logprobs ? 1 : 0,
         max_tokens: maxTokens || (withSchema ? 320 : 192),
@@ -190,8 +203,7 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
         ...(logprobs ? { logprobs: true, top_logprobs: 5 } : {}),
         stream: true,
         stream_options: { include_usage: true },
-      }).catch((e) => { if (withSchema) return null; throw e; });
-      if (!chunks) return gather(null);
+      });
       let content = "";
       let usage = null;
       const lps = [];

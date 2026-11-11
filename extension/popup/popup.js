@@ -256,7 +256,6 @@ function renderEntry(entry, { collapsed = false } = {}) {
   append(box);
 }
 
-let renderedIds = new Set();
 // What is on screen right now, as id -> status. renderedIds alone could not
 // answer "has this changed?", only "have I ever seen it", and a running ask
 // becoming a finished one is exactly a change worth redrawing for.
@@ -298,7 +297,6 @@ function restoreHistory() {
     if (chrome.runtime.lastError || !res || !res.ok) return;
     const box = logEl();
     box.textContent = "";
-    renderedIds = new Set();
     drawnAt = new Map();
     recallList = res.history.map((h) => h.instruction).filter(Boolean).reverse();
     recallAt = -1;
@@ -315,7 +313,6 @@ function restoreHistory() {
     res.history.forEach((entry, i) => {
       renderEntry(entry, { collapsed: i !== last });
       drawnAt.set(entry.id, entry.status);
-      if (entry.status !== "running") renderedIds.add(entry.id);
     });
     // Put the running line back. It is written synchronously by the click
     // handler and this callback lands a few milliseconds later, so clearing
@@ -358,7 +355,6 @@ on("toggleTools", "click", () => {
 on("clearLog", "click", () => {
   chrome.runtime.sendMessage({ type: "clearHistory" }, () => {
     logEl().textContent = "";
-    renderedIds = new Set();
     drawnAt = new Map();
   });
 });
@@ -707,10 +703,15 @@ async function runSpeedTest() {
     chrome.runtime.sendMessage({ type: "llmRelease" }, () => { void chrome.runtime.lastError; resolve(); });
   });
   setStatus(`speed test: now the same thing here, with the other copy unloaded...`, "test");
+  // The engine the panel already holds, not a second copy of it: measuring
+  // "here" with two models on one card measured the crowding, not the card.
   let here = null;
   try {
-    const mod = await import("./panel-bench.js");
-    here = await mod.benchHere(chosen, (t) => setStatus(`speed test: ${t}`, "test"));
+    const mod = await panelModelModule();
+    const began = Date.now();
+    const out = await mod.step(chosen, "Reply with the single word: ready",
+      { timeoutMs: 90000, maxTokens: 12 }, (t) => setStatus(`speed test: ${t}`, "test"));
+    here = { ms: Date.now() - began, decodePerS: out.cost && out.cost.decodePerS };
   } catch (e) {
     here = { error: String((e && e.message) || e) };
   }
@@ -1075,8 +1076,16 @@ function clearStatus() {
 
 if (chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "llmProgress") {
-    const done = /ready|finish|completed loading|using |smallest there is/i.test(msg.text);
     const ms = document.getElementById("modelState");
+    const text = String(msg.text || "");
+    // "already been disposed" is not "ready", and a warm-load that failed
+    // or found no WebGPU is not loading.
+    if (/^(?:warm-load failed|no WebGPU)/i.test(text)) {
+      hideLoading();
+      if (ms) { ms.className = "modelstate warn"; ms.textContent = text; }
+      return;
+    }
+    const done = /\b(?:ready|finish|completed loading|using |smallest there is)/i.test(text);
     if (done) {
       showReady(msg.model || (modelChoice && modelChoice.value));
     } else {

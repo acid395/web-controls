@@ -450,6 +450,37 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     let err = null;
     try { await host.step("m", "hi", { timeoutMs: 30 }); } catch (e) { err = e; }
     check("a decision that times out is stopped, not left running", interrupted && /timed out/.test(String(err)));
+
+    // Switching models while one is loading: the abandoned load must not
+    // mark its successor ready, nor on failing wipe the successor's state.
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    {
+      const made = [];
+      const api = { CreateMLCEngine: async (id) => { made.push(id); await sleep(id === "A" ? 30 : 150); if (id === "A") throw new Error("A out of memory"); return { id, unload() {} }; } };
+      const h = box.createModelHost({ loadLib: async () => api, useWorker: false });
+      h.load("A"); await sleep(5); h.load("B");
+      await sleep(60);
+      const mid = h.status();
+      check("a model abandoned mid-load does not speak for the next one", !mid.ready && mid.loading && mid.model === "B", JSON.stringify(mid));
+      await waitFor(h);
+      await h.step("B", "hi").catch(() => {});
+      check("and the next one is built once", made.filter((m) => m === "B").length, 1);
+    }
+    {
+      let attempts = 0;
+      const h = box.createModelHost({ loadLib: async () => { if (++attempts === 1) throw new Error("Failed to fetch web-llm.js"); return { CreateMLCEngine: async (id) => ({ id, unload() {} }) }; }, useWorker: false });
+      h.load("m"); await waitFor(h);
+      h.load("m"); await waitFor(h);
+      check("a failed library fetch can be tried again", h.status().ready, true);
+    }
+    {
+      const engine = { chat: { completions: { create: async (req) => req.response_format
+        ? (async function* () { throw new Error("grammar compile failed"); })()
+        : (async function* () { yield { choices: [{ delta: { content: "fine" } }] }; })() } } };
+      const h = box.createModelHost({ loadLib: async () => ({ CreateMLCEngine: async () => engine }), useWorker: false });
+      const out = await h.step("m", "hi", { schema: { type: "object" } }).catch((e) => ({ text: `threw: ${e.message}` }));
+      check("a schema the engine cannot compile is retried without it", out.text, "fine");
+    }
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

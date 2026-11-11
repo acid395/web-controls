@@ -607,7 +607,13 @@ function planDataTool(instruction, route) {
     || /\bprobability of precip\w*\b|\bchance of (rain|precip\w*|showers|storms)\b|\bwill it (rain|snow)\b|\bforecast\b/i.test(text)
     || (bareTemperature && !WATER_ROUTES.has(routeGlobal));
 
-  const city = findCityInText(text);
+  let city = findCityInText(text);
+  // "the Columbia River" is not in Columbia, SC: a city name that begins a
+  // waterbody's name does not say which state to search.
+  if (city) {
+    const esc = String(city.matched).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${esc}\\s+(?:river|creek|lake|bay|slough|fork|bayou|reservoir|brook|run)\\b`, "i").test(text)) city = null;
+  }
   const namedState = findStateInText(text);
   // "Kansas City" is in Missouri, not Kansas, and "Oklahoma City" is its own
   // place - when the city name contains the state name, the longer match is
@@ -708,7 +714,9 @@ function planDataTool(instruction, route) {
       cityMatched: city && city.matched,
     });
     const place = (city && city.city) || placeHint;
-    const when = forecastWhen(text);
+    let when = forecastWhen(text);
+    // "Is the humidity high" asks about humidity, not the day's high.
+    if (/^(?:high|low)(?::|$)/.test(when || "") && /\bhumidity\b|\bdew ?point\b|\bwind\b|\bpressure\b/i.test(text)) when = findDayInText(text);
     return {
       name: when ? "weatherForecast" : "weatherConditions",
       args: { state: state.code, ...(place ? { place } : {}), ...(when ? { when } : {}) },
@@ -1394,16 +1402,7 @@ function fuzzyMatchedText(text, phrase) {
 }
 
 function fuzzyPhraseInText(text, phrase) {
-  const allowed = allowedTypos(phrase);
-  if (!allowed) return false;
-  const tokens = (text || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const words = phrase.split(/\s+/);
-  for (let i = 0; i + words.length <= tokens.length; i++) {
-    const window = tokens.slice(i, i + words.length).join(" ");
-    if (Math.abs(window.length - phrase.length) > allowed) continue;
-    if (editDistance(window, phrase) <= allowed) return true;
-  }
-  return false;
+  return fuzzyMatchedText(text, phrase) !== null;
 }
 
 // People ask about cities, not states ("precipitation in Cleveland"), but
@@ -1482,6 +1481,11 @@ const NOT_A_PLACE = new Set([
   "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
   "today", "yesterday", "tomorrow",
+  // One typo from a place and a word of their own: "the boat landing" is
+  // not Lansing, "riverine flooding" is not Riverside, Indian Creek is not
+  // in Indiana.
+  "landing", "billing", "riverine", "settle", "province", "handler", "modest",
+  "savanna", "montane", "indian", "indians", "florid",
 ]);
 
 const MONTH_NUM = {
@@ -1554,7 +1558,7 @@ function findCityInText(text) {
 // Two-letter codes that are also ordinary English words. These only count as
 // a state when the writer capitalized them, otherwise "precipitation in
 // Fremont" matches Indiana and "rain or snow" matches Oregon.
-const AMBIGUOUS_STATE_CODES = new Set(["in", "or", "me", "hi", "ok", "de", "la", "pa", "ma", "mo", "oh", "id", "co"]);
+const AMBIGUOUS_STATE_CODES = new Set(["in", "or", "me", "hi", "ok", "de", "la", "pa", "ma", "mo", "oh", "id", "co", "mt", "ne"]);
 
 function findStateInText(text) {
   const raw = text || "";
@@ -1580,7 +1584,8 @@ function findStateInText(text) {
   // Last resort, same reasoning as parameters: "Alaskak" shouldn't silently
   // lose the state and turn a question into a page action.
   for (const name of names) {
-    if (fuzzyPhraseInText(lower, name)) return { name, code: US_STATES[name], matched: name, corrected: name };
+    const hit = fuzzyMatchedText(lower, name);
+    if (hit && !NOT_A_PLACE.has(hit)) return { name, code: US_STATES[name], matched: name, corrected: name };
   }
   return null;
 }
@@ -1678,8 +1683,10 @@ async function usgsCurrentConditions({ state, parameter, nameContains }) {
   // Accept a raw USGS code, an ENV_VOCAB canonical name (what planDataTool
   // hands over), or free text containing a synonym - a canonical key is not
   // listed among its own synonyms, so it needs its own check.
+  const byCode = Object.entries(USGS_PARAM_CODES).find(([, c]) => c === String(parameter || ""));
   const known = USGS_PARAM_CODES[parameter]
     ? { canonical: parameter, code: USGS_PARAM_CODES[parameter] }
+    : byCode ? { canonical: byCode[0], code: byCode[1] }
     : findParameterInText(parameter) || {};
   const paramCode = /^\d{5}$/.test(parameter || "") ? parameter : known.code;
   if (!paramCode) {
@@ -2327,12 +2334,15 @@ async function nwsForecast({ state, place, when }) {
 
   // A week: the daytime highs, which is what "weekly average" means to a
   // person. Labelled as a forecast average, not a historical one.
-  const days = periods.filter((p) => p.isDaytime).slice(0, when === "weekend" ? 7 : 7);
+  const days = when === "weekend"
+    ? periods.filter((p) => p.isDaytime && /saturday|sunday/i.test(p.name))
+    : periods.filter((p) => p.isDaytime).slice(0, 7);
+  if (!days.length) throw new Error(`NWS's forecast reaches ${periods[periods.length - 1].name}, which doesn't include the weekend`);
   const temps = days.map((p) => p.temperature).filter((n) => Number.isFinite(n));
   const avg = temps.length ? Math.round(temps.reduce((a, b) => a + b, 0) / temps.length) : null;
   const unit = (days[0] && days[0].temperatureUnit) || "F";
   return {
-    place: label, when: "week",
+    place: label, when: when === "weekend" ? "weekend" : "week",
     averageHigh: avg, high: temps.length ? Math.max(...temps) : null, low: temps.length ? Math.min(...temps) : null,
     days: days.map((p) => ({ name: p.name, temperature: p.temperature, forecast: p.shortForecast })),
     locatedBy: located.basis,
@@ -2817,8 +2827,12 @@ function bareName(t) {
   const words = String(t || "").trim().split(/\s+/);
   return words.length >= 1 && words.length <= 4 && !CONTROL_VERB.test(t) && !QUESTION_LED.test(t) && !/[?]/.test(t);
 }
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, fifteen: 15, twenty: 20, thirty: 30 };
 function restateRequest(text, labels = []) {
   let t = plainlyPut(text);
+  // "Back one day" names the button written "Back 1 Day".
+  t = t.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|thirty)\s+(day|days|hour|hours|hr|hrs|week|weeks|month|months|year|years|minute|minutes|min|second|seconds|step|steps|page|pages)\b/gi,
+    (m, n, u) => `${NUMBER_WORDS[n.toLowerCase()]} ${u}`);
   for (const [re, to] of SAID_PLAINLY) if (re.test(t)) { t = t.replace(re, to); break; }
   const flatT = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const m = t.match(/^(add|remove)\s+(.+)$/i);
@@ -2993,7 +3007,10 @@ function saidWordForWord(label, said) {
   const flatOf = (t) => ` ${foldAccents(String(t || "")).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
   const own = flatOf(label);
   const n = own.trim().split(" ").length;
-  return n >= 2 && n > meaningfulWords(String(label || "")).length && flatOf(said).includes(own);
+  // Said with its small words, or three words and more in order: "back 1
+  // day" names Back 1 Day over the Day list. Two plain words are not enough
+  // - "flood inundation" is the panel's title and the layer's name both.
+  return n >= 2 && (n > meaningfulWords(String(label || "")).length || n >= 3) && flatOf(said).includes(own);
 }
 function scoreControl(control, words, phrase, opts = {}) {
   const label = foldAccents(control.label || "").toLowerCase();
@@ -3004,10 +3021,29 @@ function scoreControl(control, words, phrase, opts = {}) {
   if (String(control.type || "").toLowerCase() === "hidden") return 0;
   let score = 0;
   if (phrase && label.includes(phrase)) score += 10 + phrase.length / 10;
+  // The trailing "(Step 1 of 3 Location Parameters)" is where a control is,
+  // not what it is: "go to the next step" tied every control in the step
+  // with the Next button.
+  const own = label.replace(/\s*\([^()]*\)\s*$/, "") || label;
+  let ownHits = 0;
   for (const w of words) {
-    const hit = wordMatchesText(w, label);
-    if (hit === "exact") score += 2;
-    else if (hit === "fuzzy") score += 1.5; // below exact, never instead of it
+    const hit = wordMatchesText(w, own) || wordMatchesText(w, label);
+    const inName = own === label || !!wordMatchesText(w, own);
+    if (hit && inName) ownHits++;
+    if (hit === "exact") score += inName ? 2 : 1;
+    else if (hit === "fuzzy") score += inName ? 1.5 : 0.75; // below exact, never instead of it
+  }
+  // A one-word name that is itself in the request: "use UTC time" names the
+  // UTC radio, not its neighbour "User (UTC-08:00)" nor a Sort list with a
+  // Time option.
+  // Only where the rest of the request is the control's own group ("time"
+  // is the timeZone group): a word left over for another control to cover
+  // keeps the tie, as before.
+  const oneWord = own.trim();
+  if (oneWord.length >= 3 && !/[\s]/.test(oneWord) && !CONTROL_VERB.test(oneWord) && words.includes(oneWord)) {
+    const groupName = String(control.name || "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+    const others = words.filter((w) => w !== oneWord && !CONTROL_VERB.test(w) && !verbFamily(w) && !/^(?:use|go)$/.test(w));
+    if (others.every((w) => wordMatchesText(w, groupName))) score += 4;
   }
   if (label === phrase) score += 10;
   // A name said word for word, small words and all: "zoom in on the map"
@@ -3096,7 +3132,9 @@ function scoreControl(control, words, phrase, opts = {}) {
   // button the instruction actually named.
   const kind = String(control.kind || "").toLowerCase();
   const type = String(control.type || "").toLowerCase();
-  if (score > 0 && (type === "checkbox" || type === "radio" || kind === "checkbox"
+  // Only for a control named by its own words: a list matched by nothing
+  // but its "(Step 1 of 3)" context is not what was asked to be switched.
+  if (score > 0 && ownHits > 0 && (type === "checkbox" || type === "radio" || kind === "checkbox"
       || kind === "select" || (control.options && control.options.length))) {
     score += 3;
   }
@@ -3248,6 +3286,11 @@ function conceptsInPhrase(text) {
   return found;
 }
 
+const PERIOD_FORMS = [
+  ["hour", "hours", "hr", "hrs", "hourly"], ["minute", "minutes", "min", "mins"], ["second", "seconds", "sec", "secs"],
+  ["day", "days", "daily"], ["week", "weeks", "wk", "wks", "weekly"], ["month", "months", "mo", "mos", "monthly"],
+  ["year", "years", "yr", "yrs", "yearly", "annual", "annually"],
+];
 function wordMatchesText(rawWord, rawText) {
   const word = foldAccents(spelledUnits(rawWord)).toLowerCase();
   const text = foldAccents(spelledUnits(rawText)).toLowerCase();
@@ -3268,6 +3311,16 @@ function wordMatchesText(rawWord, rawText) {
   // And the -ies and -es plurals: "turn on care facility" against Care
   // Facilities matched nothing at all.
   const others = [word.endsWith("s") ? word.slice(0, -1) : `${word}s`];
+  // "Hourly" is "1 hr", "daily" is "Day": a period's forms are one word.
+  // An abbreviation only after a number - "min temperature" is a minimum.
+  const family = PERIOD_FORMS.find((f) => f.includes(word));
+  if (family) {
+    for (const f of family) {
+      if (f === word) continue;
+      if (f.length <= 3 && f !== "day") { if (new RegExp(`\\d\\s*${f}s?\\b`).test(text)) return "exact"; continue; }
+      others.push(f);
+    }
+  }
   if (/[^aeiou]y$/.test(word)) others.push(`${word.slice(0, -1)}ies`);
   if (/ies$/.test(word)) others.push(`${word.slice(0, -3)}y`);
   if (/(?:s|x|z|ch|sh)$/.test(word)) others.push(`${word}es`);
@@ -3339,7 +3392,10 @@ function wordsCoveredBy(control, words) {
   const label = foldAccents(control.label || "").toLowerCase();
   const optionText = [...(control.options || []), ...(control.childOptions || [])]
     .map((o) => foldAccents(o.text || o.value || "").toLowerCase()).join(" ");
-  const hay = `${label} ${optionText}`;
+  // A control's own name attribute too: "time" in "use UTC time" is the
+  // timeZone group the UTC radio belongs to, not a second control.
+  const groupName = String(control.name || "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+  const hay = `${label} ${optionText} ${groupName}`;
   const hit = words.filter((w) => wordMatchesText(w, hay));
   // A control matched only by the instruction's verb has not been matched.
   // "Enable snow depth" clicked a control literally labelled "Enabled" -
@@ -3857,7 +3913,9 @@ function planGenericTool(instruction, inventory) {
     remaining = remaining.filter((w) => !covered.includes(w));
     // What kind of thing, or where, after a name said whole: "zoom in on the
     // map" is Zoom in, not Zoom in and then a map.
-    if (calls.length === 1 && saidWordForWord(best.control.label, instruction) && remaining.every((w) => KIND_WORDS.has(w))) remaining = [];
+    // Or after the one word that said which: "show hourly data" is 1 hr.
+    if (calls.length === 1 && remaining.every((w) => KIND_WORDS.has(w))
+      && (saidWordForWord(best.control.label, instruction) || covered.some((w) => !KIND_WORDS.has(w)))) remaining = [];
   }
 
   // "look up 13206000" names no control - a site number shares no words with
@@ -4271,7 +4329,7 @@ function computeOver(fn, values) {
 // extreme over that is meaningful; adding them together is not - it produced
 // a statewide reservoir "total" of 219,891,203 acre-ft by summing eight
 // snapshots of the same 26.8 million.
-const TIME_LABEL = /^(today|yesterday|tomorrow|now|current)\b|\b\d+\s*(day|week|month|year)s?\s*ago\b|^\w{3,9}\s+\d{1,2}(,\s*\d{4})?$/i;
+const TIME_LABEL = /^(today|yesterday|tomorrow|now|current)\b|\b\d+\s*(day|week|month|year)s?\s*ago\b|^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(,\s*\d{4})?$|^(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i;
 function looksLikeTimeSeries(labels) {
   const named = labels.filter((l) => String(l).trim());
   if (named.length < 3) return false;
@@ -4572,8 +4630,9 @@ function findInTables(pageData, { wants, place, day }) {
     if (!distinctive.length) return text.includes(place.toLowerCase());
     if (!distinctive.every((w) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(text))) return false;
     if (!generic) return true;
-    // river | riv | r, immediately after the name.
-    return new RegExp(`\\b${generic[0]}[a-z]*\\b`).test(text);
+    // river | riv | r, immediately after the name. Not "any word starting
+    // with r": that let SMITH RD stand in for Smith River.
+    return new RegExp(`\\b(?:${generic}|${generic.slice(0, 3)}|${generic[0]})\\b`).test(text);
   };
   for (const table of pageData.tables || []) {
     const columns = table.columns || [];
@@ -4685,14 +4744,16 @@ function findByOwnWords(pageData, instruction, place) {
       const rest = words.filter((w) => !namesColumn.includes(w));
       if (!rest.length) continue;
 
+      // A place named in the question must not be contradicted by the row:
+      // where some row carries the place, only those rows can answer.
+      const carriesPlace = (r) => placeWords.some((w) => w.length > 2 && wordMatchesText(w, String(r[0] || "").toLowerCase()));
+      const placeRows = placeWords.length ? (table.rows || []).filter(carriesPlace) : [];
       for (const row of table.rows || []) {
         const label = String(row[0] || "");
         if (!label) continue;
         const lower = label.toLowerCase();
         if (!rest.some((w) => wordMatchesText(w, lower))) continue;
-        // A place named in the question must not be contradicted by the row.
-        if (placeWords.length && !placeWords.some((w) => w.length > 2 && wordMatchesText(w, lower))
-          && !rest.some((w) => wordMatchesText(w, lower))) continue;
+        if (placeRows.length && !placeRows.includes(row)) continue;
         if (cellNumber(row[col]) === null) continue;
         return [{ label: `${label} \u00b7 ${columns[col]}`, value: String(row[col]), fromTable: true }];
       }
@@ -5343,6 +5404,9 @@ function isCommand(instruction) {
   // "Filter to arizona", "limit results to idaho": asking for a filter is
   // asking for something done, not a question about Arizona.
   if (/^\s*(?:please\s+)?(?:filter|limit|narrow|restrict|only\s+show)\b/i.test(instruction || "")) return true;
+  // "Go back one day", "use UTC time": led by a verb that names no control
+  // but asks for something done all the same.
+  if (/^\s*(?:please\s+)?(?:go|use)\b/i.test(instruction || "")) return true;
   // "Define a custom base period from 1991 to 2020" sets two boxes.
   if (RANGE_IN.test(instruction || "")) return true;
   // A verb with a typo in it is still a verb. "clcik 30 days" was not
@@ -5572,7 +5636,7 @@ const ACTION_SYNONYMS = new Map(Object.entries({
 // A bare "and" only separates where a verb follows it, because the first half
 // of "click forecasts and outlooks and click key messages" is the name of a
 // control.
-const STEP_VERBS = "retrieve|fetch|query|click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load|reset|clear|remove|delete|build|start|stop|pause|discard|export|save|upload|add|rename|submit|cancel|confirm|refresh|reload|generate|compute|calculate|draw|activate|deactivate|rotate|tilt|pan|name|rename";
+const STEP_VERBS = "retrieve|fetch|query|click|press|tap|select|choose|pick|enable|disable|set|show|hide|open|close|search|find|look\\s*up|type|enter|toggle|turn|switch|go|zoom|download|read|plot|graph|chart|tick|untick|uncheck|check|put|change|make|play|view|display|expand|collapse|filter|sort|move|bring|pull|run|navigate|apply|load|reset|clear|remove|delete|build|start|stop|pause|discard|export|save|upload|add|rename|submit|cancel|confirm|refresh|reload|generate|compute|calculate|draw|activate|deactivate|rotate|tilt|pan|name";
 // "and press go", "and hit enter", "and get the forecast" finish the step
 // before them - the Go of a jump menu, the submit of a typed box - and as a
 // step of their own they went looking for a Go button on the page the first
@@ -6623,8 +6687,12 @@ function sameSpan(a, b) {
 // Two words of its name in the request, so a stray "page" does not bring
 // every pager back.
 function furnitureAskedFor(goal, c) {
-  const want = meaningfulWords(goal).filter((w) => w.length > 2 && !CONTROL_VERB.test(w));
-  return meaningfulWords(String(c.label || "")).filter((w) => w.length > 2 && want.includes(w)).length >= 2;
+  const said = meaningfulWords(goal);
+  const want = said.filter((w) => w.length > 2 && !CONTROL_VERB.test(w));
+  const own = meaningfulWords(String(c.label || ""));
+  // A short label said whole - "click 2024" on a row of year buttons.
+  if (own.length && own.every((w) => said.includes(w))) return true;
+  return own.filter((w) => w.length > 2 && want.includes(w)).length >= 2;
 }
 
 function isSiteFurniture(c) {
@@ -6819,7 +6887,7 @@ function listChoicesFor(goal, pool) {
     const uniq = [...new Set(names)];
     if (uniq.length) {
       lines.push(`Can be turned on: ${uniq.slice(0, 12).join(", ")}${uniq.length > 12 ? `, and ${uniq.length - 12} more` : ""}`);
-      listed.push({ line: lines[0], hits: 1, opts: uniq, hidden: false });
+      listed.push({ line: lines[lines.length - 1], hits: 1, opts: uniq, hidden: false });
     }
   }
   let direct = null;
@@ -6959,7 +7027,7 @@ const PLACEHOLDER = /^\s*(?:OPTION|TEXT|WORDS|NAME|VALUE)\s*$/;
  * are one thing, the link.
  */
 // Words that say what kind of thing, not which: "the buildings layer".
-const KIND_WORDS = new Set(["layer", "layers", "section", "sections", "panel", "tab", "page", "item", "option", "list", "overlay", "button", "link", "menu", "data", "map", "view"]);
+const KIND_WORDS = new Set(["layer", "layers", "section", "sections", "panel", "tab", "page", "item", "option", "list", "overlay", "button", "link", "menu", "data", "map", "view", "step", "steps"]);
 function wholeNamedAmong(goal, controls) {
   const g = String(goal).toLowerCase();
   // A condition or a puzzle is not a name: "if the legend is hidden then
@@ -7161,10 +7229,7 @@ async function chooseAndAct(routeGlobal, goal, { rounds = 3 } = {}) {
       history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, ok: true, changed: false, skipped: true, outcome: "it would leave the page or undo what was set, which the request did not ask for" });
       break;
     }
-    if (target.hidden && target.revealedBy) {
-      await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
-      forgetPageTools();
-    }
+    await revealFirst(target);
     const kind = String(target.type || target.kind || "").toLowerCase();
     let call;
     let picked = null;
@@ -7453,10 +7518,7 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     const now = await invokeOnActiveTab("inventory", [{ includeHidden: true }]).catch(() => null);
     const cs = (now && now.ok && now.result && now.result.controls) || [];
     const target = cs.find((c) => c.selector === planned.selector) || cs.find((c) => flat(c.label) === flat(planned.label)) || planned;
-    if (target.hidden && target.revealedBy) {
-      await invokeOnActiveTab("openDisclosure", [target.revealedBy]).catch(() => null);
-      forgetPageTools();
-    }
+    await revealFirst(target);
     if (undoesUnasked(goal, target)) {
       history.push({ did: `"${String(target.label).slice(0, 40)}" left alone`, ok: true, changed: false, skipped: true,
         outcome: "it would undo what was set, and the request did not ask for that" });
@@ -7639,10 +7701,6 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
   // it acts on it the first time, and a second explanation is a second
   // multi-second turn buying the same chance again.
   let strikes = 0;
-  // A control the model insisted on that the request never named. Carried
-  // out, and said plainly rather than refused - see the note at the link
-  // check below.
-  let followedUnnamed = null;
   const correct = (message) => { note = message; return ++strikes <= 1; };
   // What it actually replied, kept. Every card that said "the local model
   // planned nothing here" threw this away, so there was no way to tell a
@@ -7747,15 +7805,13 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
     // Which turn, and what it just did. The panel showed "still running" and
     // nothing else for the length of the whole run, so a minute of work was
     // indistinguishable from a hang.
-    try {
-      const secs = Math.round((Date.now() - began) / 1000);
-      chrome.runtime.sendMessage({
-        type: "agentProgress",
-        text: history.length
-          ? `step ${history.length + 1} of ${maxSteps}, ${secs}s - last: ${history[history.length - 1].did}`
-          : `step 1 of ${maxSteps} - reading the page`,
-      });
-    } catch (e) { /* nobody listening; the run continues */ }
+    const secs = Math.round((Date.now() - began) / 1000);
+    tellPanel({
+      type: "agentProgress",
+      text: history.length
+        ? `step ${history.length + 1} of ${maxSteps}, ${secs}s - last: ${history[history.length - 1].did}`
+        : `step 1 of ${maxSteps} - reading the page`,
+    });
 
     const priorDidNothing = history.length
       && history[history.length - 1].did !== "read the page"
@@ -8056,10 +8112,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       const hasState = one && (typeof one.expanded === "boolean"
         || /^(?:show|hide|expand|collapse|open|close)\b/i.test(String(one.label || "")));
       if (one && !hasState && !TEXT_INPUT_KINDS.has(String(one.type || "").toLowerCase())) {
-        if (one.hidden && one.revealedBy) {
-          await invokeOnActiveTab("openDisclosure", [one.revealedBy]).catch(() => null);
-          forgetPageTools();
-        }
+        await revealFirst(one);
         const isSw = /^(checkbox|radio)$/.test(String(one.type || "").toLowerCase());
         let ran = null;
         for (let i = 0; i < (isSw ? 1 : times); i++) {
@@ -8123,10 +8176,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         if (spoken && own.length && own.every((w) => wordMatchesText(w, listName) === "exact")) whole = null;
       }
       if (whole) {
-        if (whole.hidden && whole.revealedBy) {
-          await invokeOnActiveTab("openDisclosure", [whole.revealedBy]).catch(() => null);
-          forgetPageTools();
-        }
+        await revealFirst(whole);
         const isSw = /^(checkbox|radio)$/.test(String(whole.type || "").toLowerCase());
         const ran = await runVerified(routeGlobal, isSw
           ? { name: "pageCheck", args: { selector: whole.selector, on: !/\b(?:uncheck|untick|turn\s+off|disable|hide)\b/i.test(goal) } }
@@ -8331,10 +8381,7 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         return { ok: true, answer: null, history, steps: history.length, repeated: true,
           tookMs: Date.now() - began, said: lastSaid };
       }
-      if (box.hidden && box.revealedBy) {
-        await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
-        forgetPageTools();
-      }
+      await revealFirst(box);
       const filled = await runVerified(routeGlobal,
         { name: "pageFill", args: { selector: box.selector, text: words } });
       const sent = filled.ok === false ? filled
@@ -8700,7 +8747,8 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
         }
       }
     }
-    if (!target && Number.isInteger(Number(s.n))) target = controls[Number(s.n)];
+    // Number(null) and Number("") are 0, which quietly picked controls[0].
+    if (!target && /^\d+$/.test(String(s.n ?? "").trim())) target = controls[Number(s.n)];
     if (!target) {
       const asked = wantedName ? `"${String(s.name || s.label || s.control).slice(0, 40)}"`
         : `control ${s.n}`;
@@ -9170,7 +9218,6 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       // - "some steps acted on controls your words did not name", with the
       // step naming which. Nothing further is needed here: what was missing
       // was permission to act, not a way to describe it.
-      followedUnnamed = String(target.label || "").slice(0, 40);
     }
 
     // Naming an option is asking for it to be chosen, whatever verb came
@@ -10043,7 +10090,6 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
     w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w) && !/^(?:layers?|overlays?|button|checkbox)$/.test(w));
 
   let remaining = subjectOf(meaningfulWords(instruction));
-  let lastCount = -1;
   let deadEnds = 0;
   let emptyPanel = null;
   let openSection = null;
@@ -10073,7 +10119,6 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
       // A step through time is not a window of it: "go to the previous day"
       // pressed an animation's One Day for sharing the word day.
       && !(A_STEP_IN_TIME.test(instruction) && setsATimeWindow(String(c.label || "").replace(/\s*\([^()]*\)\s*$/, ""))));
-    const countNow = all.length;
 
 
     const plan = planGenericTool(instruction, { ...inv.result, controls });
@@ -10317,7 +10362,6 @@ async function pursueGoal(routeGlobal, instruction, { maxSteps = 4, avoid = [] }
         || (ambiguousPick ? subjectOf(meaningfulWords(ambiguousPick.label || "")) : [])) || [])
       : []);
     remaining = remaining.filter((w) => !coveredNow.has(w));
-    lastCount = countNow;
 
     // Opening a panel changes the page and accounts for the words, because
     // the panel is named after what is inside it - so the loop declared the
@@ -10503,6 +10547,9 @@ function pressNameKey(name) {
 
 async function runVerified(routeGlobal, toolCall) {
   if (askCancelled()) return { ok: false, error: "cancelled" };
+  // Recorded once the press has gone through: a press that failed (the
+  // control not drawn yet) must not make the retry "already pressed".
+  let pressKeys = null;
   // One press per control per request. A second press of a toggle is its
   // undo: on City-FIDAP the section sweep pressed Electric Power Plants,
   // could not see the layer change, and choice pressed it again - on, then
@@ -10541,7 +10588,7 @@ async function runVerified(routeGlobal, toolCall) {
     if (!again && keys.some((k) => pressed.has(k))) {
       return { ok: true, result: { alreadyPressed: true, note: "already pressed for this request - a second press would undo it" } };
     }
-    keys.forEach((k) => pressed.add(k));
+    pressKeys = keys;
   }
   forgetInventory();
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
@@ -10608,6 +10655,7 @@ async function runVerified(routeGlobal, toolCall) {
     forgetInventory();
     forgetMeaning();
   }
+  if (pressKeys && result.ok !== false && activeAsk) pressKeys.forEach((k) => activeAsk.pressed.add(k));
   return {
     ...result,
     verified: {
@@ -10615,6 +10663,7 @@ async function runVerified(routeGlobal, toolCall) {
       changeCount: diff.result.changeCount,
       changes: diff.result.changes,
       navigated: diff.result.navigated,
+      viewChanged: diff.result.viewChanged,
       waitedMs: settled.ok ? settled.result.waitedMs : undefined,
     },
   };
@@ -10685,9 +10734,6 @@ function toolsFor(routeGlobal) {
   return [...named, ...generic, ...DATA_TOOLS];
 }
 
-function toOpenAITools(defs) {
-  return defs.map((d) => ({ type: "function", function: { name: d.name, description: d.description, parameters: d.parameters } }));
-}
 
 function findToolDef(route, name) {
   return toolsFor(route).find((d) => d.name === name);
@@ -10879,6 +10925,14 @@ function forgetPageTools(tabId) {
   forgetInventory();
   if (tabId === undefined) TOOLS_CACHE.clear();
   else TOOLS_CACHE.delete(tabId);
+}
+
+// A control behind a closed panel: open the panel first, and the page's
+// tools are read again because the panel changed them.
+async function revealFirst(c) {
+  if (!c || !c.hidden || !c.revealedBy) return;
+  await invokeOnActiveTab("openDisclosure", [c.revealedBy]).catch(() => null);
+  forgetPageTools();
 }
 
 async function cachedPageTools(tabId, url) {
@@ -11233,6 +11287,13 @@ function keepAlive() {
   return () => clearInterval(id);
 }
 
+// Progress for the panel, if one is open. With the panel shut Chrome rejects
+// the send ("Receiving end does not exist"), and that is nobody's problem.
+function tellPanel(message) {
+  try { Promise.resolve(chrome.runtime.sendMessage(message)).catch(() => {}); }
+  catch (e) { /* nobody listening */ }
+}
+
 /* ---------------------------------------------------------------------------
  * Ask history.
  *
@@ -11257,26 +11318,38 @@ const HISTORY_KEY = "askHistory";
 // the start of what they had just run and reasonably thought it had been
 // cut off. A whole run has to fit.
 const HISTORY_LIMIT = 60;
-closeInterruptedAsks();
 
 // A fresh worker, or a fresh page for the widget, has no request running.
 // An entry still marked running died with the one before - the worker was
 // restarted under it - and would otherwise say "still running" forever.
-async function closeInterruptedAsks() {
-  try {
-    const h = await readHistory();
-    let changed = false;
-    for (const e of h) {
-      if (e.status !== "running") continue;
-      e.status = "error";
-      e.plannedBy = "interrupted";
-      e.error = "interrupted";
-      e.display = { title: "Interrupted", subtitle: "it stopped before finishing - ask again", stats: [], rows: [], source: "this page" };
-      changed = true;
-    }
-    if (changed) await chrome.storage.local.set({ [HISTORY_KEY]: h });
-  } catch (e) { /* history is a convenience */ }
+// History is read, changed and written back with an await in between, and
+// its callers do not wait for each other: an ask starting while the last
+// one was being closed lost one of the two writes. One queue, every writer.
+let historyQueue = Promise.resolve();
+function withHistory(fn) {
+  const p = historyQueue.then(fn);
+  historyQueue = p.catch(() => {});
+  return p;
 }
+
+function closeInterruptedAsks() {
+  return withHistory(async () => {
+    try {
+      const h = await readHistory();
+      let changed = false;
+      for (const e of h) {
+        if (e.status !== "running") continue;
+        e.status = "error";
+        e.plannedBy = "interrupted";
+        e.error = "interrupted";
+        e.display = { title: "Interrupted", subtitle: "it stopped before finishing - ask again", stats: [], rows: [], source: "this page" };
+        changed = true;
+      }
+      if (changed) await chrome.storage.local.set({ [HISTORY_KEY]: h });
+    } catch (e) { /* history is a convenience */ }
+  });
+}
+closeInterruptedAsks();
 
 async function readHistory() {
   const got = await chrome.storage.local.get(HISTORY_KEY);
@@ -11301,20 +11374,22 @@ function historyEntry(id, instruction, patch) {
   };
 }
 
-async function recordAsk(id, instruction, patch) {
-  try {
-    const history = await readHistory();
-    const existing = history.findIndex((h) => h.id === id);
-    const entry = historyEntry(id, instruction, patch);
-    if (existing !== -1) entry.at = history[existing].at; // keep when it was asked
-    if (existing !== -1) history[existing] = entry;
-    else history.push(entry);
-    while (history.length > HISTORY_LIMIT) history.shift();
-    await chrome.storage.local.set({ [HISTORY_KEY]: history });
-  } catch (e) {
-    // History is a convenience; never let it break the answer itself.
-    console.log("[history] could not record:", String((e && e.message) || e));
-  }
+function recordAsk(id, instruction, patch) {
+  return withHistory(async () => {
+    try {
+      const history = await readHistory();
+      const existing = history.findIndex((h) => h.id === id);
+      const entry = historyEntry(id, instruction, patch);
+      if (existing !== -1) entry.at = history[existing].at; // keep when it was asked
+      if (existing !== -1) history[existing] = entry;
+      else history.push(entry);
+      while (history.length > HISTORY_LIMIT) history.shift();
+      await chrome.storage.local.set({ [HISTORY_KEY]: history });
+    } catch (e) {
+      // History is a convenience; never let it break the answer itself.
+      console.log("[history] could not record:", String((e && e.message) || e));
+    }
+  });
 }
 
 /* ---------------------------------------------------------------------------
@@ -11930,7 +12005,7 @@ function wholeNameIn(clause, controls) {
   const carriesValue = /\d/.test(String(clause));
   // A lone word that every interface has names nothing in particular. "open
   // the data and maps menu" contains Menu, the mobile menu button.
-  const GENERIC_ONE = /^(?:menu|menus|page|site|home|close|more|back|next|go|submit|ok|cancel|search|map|maps|data|list|view|panel|tab|link|button|here|link)$/;
+  const GENERIC_ONE = /^(?:menu|menus|page|site|home|close|more|back|next|go|submit|ok|cancel|search|map|maps|data|list|view|panel|tab|link|button|here)$/;
   const pressable = (c) => {
     const kind = String(c.kind || "").toLowerCase();
     const type = String(c.type || "").toLowerCase();
@@ -12097,10 +12172,7 @@ function zipBoxFor(text, controls) {
 }
 
 async function fillZipAndSend(routeGlobal, box, zip) {
-  if (box.hidden && box.revealedBy) {
-    await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
-    forgetPageTools();
-  }
+  await revealFirst(box);
   const fromUrl = await currentTabUrl();
   const filled = await runVerified(routeGlobal, { name: "pageFill", args: { selector: box.selector, text: zip } });
   if (!filled || filled.ok === false) return filled || { ok: false, error: "could not type into the box" };
@@ -12713,16 +12785,17 @@ function dateGroupPlan(clause, all) {
     g.year && pick(g.year, (t) => t === String(date.year)),
     date.month && g.month && pick(g.month, (t, v) => t === MONTHS[date.month - 1] || t === MONTHS[date.month - 1].slice(0, 3) || t === String(date.month) || v === String(date.month)),
     date.day && g.day && pick(g.day, (t) => t === String(date.day) || t === String(date.day).padStart(2, "0")),
-  ].filter(Boolean);
-  return parts.length >= 2 ? parts : null;
+  ];
+  // Every part asked for has to be on offer: a year the list lacks must not
+  // quietly become "month and day set", reported as the date.
+  const found = parts.filter(Boolean);
+  const asked = [g.year, date.month && g.month, date.day && g.day].filter(Boolean).length;
+  return found.length >= 2 && found.length === asked ? found : null;
 }
 
 async function runSetToPlan(routeGlobal, setTo) {
         if (setTo.range) return runRange(routeGlobal, setTo.range);
-        if (setTo.control.hidden && setTo.control.revealedBy) {
-          await invokeOnActiveTab("openDisclosure", [setTo.control.revealedBy]).catch(() => null);
-          forgetPageTools();
-        }
+        await revealFirst(setTo.control);
         if (setTo.press) {
           const ran = await runVerified(routeGlobal, setTo.press === "check"
             ? { name: "pageCheck", args: { selector: setTo.control.selector, on: true } }
@@ -12935,10 +13008,7 @@ async function certainClausePlan(routeGlobal, clause) {
     return {
       label: span.label,
       run: async () => {
-        if (span.hidden && span.revealedBy) {
-          await invokeOnActiveTab("openDisclosure", [span.revealedBy]).catch(() => null);
-          forgetPageTools();
-        }
+        await revealFirst(span);
         const isSw = /^(checkbox|radio)$/.test(String(span.type || "").toLowerCase());
         const ran = await runVerified(routeGlobal, isSw
           ? { name: "pageCheck", args: { selector: span.selector, on: true } }
@@ -13145,10 +13215,7 @@ async function searchClause(routeGlobal, clause) {
     const rest = qw.slice(k);
     if (k && rest.length <= 2 && /\d/.test(rest.join(" "))) words = rest.join(" ");
   }
-  if (box.hidden && box.revealedBy) {
-    await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
-    forgetPageTools();
-  }
+  await revealFirst(box);
   const fromUrl = await currentTabUrl();
   const filled = await runVerified(routeGlobal,
     { name: "pageFill", args: { selector: box.selector, text: words } });
@@ -13193,10 +13260,7 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
     // and below, where a press that turns out to have opened something is
     // handed back rather than claimed.
     if (TEXT_INPUT_KINDS.has(String(only.type || "").toLowerCase())) return null;
-    if (only.hidden && only.revealedBy) {
-      await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
-      forgetPageTools();
-    }
+    await revealFirst(only);
     const press = await runVerified(routeGlobal,
       { name: "pageClick", args: { selector: only.selector } });
     if (press.ok === false) return null;
@@ -13217,10 +13281,7 @@ async function actOnExactlyNamedClause(routeGlobal, clause) {
     // other half of the same mistake.
     return { ok: true, verified: { changed: moved }, label: only.label, unconfirmed: !moved };
   }
-  if (only.hidden && only.revealedBy) {
-    await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
-    forgetPageTools();
-  }
+  await revealFirst(only);
   const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
     .test(clause);
   const ran = await runVerified(routeGlobal,
@@ -13418,9 +13479,7 @@ async function buildCapabilities() {
   // Descriptions are written for people already, so their first sentence is
   // the most readable summary available.
   const firstSentence = (t) => String(t || "").split(/(?<=\.)\s/)[0];
-  const friendly = (name) => name
-    .replace(/^(usgs|site|noaa|fcp|page)/, "")
-    .replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim();
+  const friendly = friendlyToolName;
 
   return {
     ok: true,
@@ -13596,60 +13655,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.warm) warmModel().catch(() => {});
       sendResponse({ ok: true, model: await chrome.storage.local.get("llmModelId")
         .then((g) => g.llmModelId || null).catch(() => null) });
-    })();
-    return true;
-  }
-
-  if (msg.type === "llmPing") {
-    (async () => {
-      try {
-        await ensureOffscreenDocument();
-        // first call downloads the model (can take a while, real bandwidth
-        // and disk space), subsequent calls reuse the same loaded engine
-        // for as long as the offscreen document stays alive.
-        const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "llmPing", prompt: msg.prompt });
-        sendResponse(result);
-      } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
-      }
-    })();
-    return true;
-  }
-
-  // The real thing: instruction -> WebLLM picks a tool -> it actually runs,
-  // same execution path (invokeOnActiveTab) planTool()'s stub already used.
-  // Only the "which tool" decision changed; everything downstream of that
-  // decision is code already proven working across six sites.
-  if (msg.type === "llmPlan") {
-    (async () => {
-      const stopKeepAlive = keepAlive();
-      try {
-        const [tab] = await askTabQuery();
-        if (!tab || !tab.url) throw new Error("no active tab");
-        const route = routeFor(tab.url);
-        const defs = toolsFor(route.global);
-        const known = await agentTools(route.global, msg.instruction || "");
-        const context = await buildContext(route.global);
-        await ensureOffscreenDocument();
-        const plan = await chrome.runtime.sendMessage({
-          target: "offscreen", type: "llmPlan",
-          instruction: msg.instruction, tools: toOpenAITools(known.all), context,
-        });
-        if (!plan.ok) { sendResponse(plan); return; }
-        if (!plan.toolCall) {
-          // the model answered in plain text instead of picking a tool -
-          // a real, valid outcome, not an error (e.g. the instruction
-          // wasn't actually asking to do anything on the page).
-          sendResponse({ ok: true, modelReply: plan.text, calledOn: route.global });
-          return;
-        }
-        const result = await executeToolCall(route.global, plan.toolCall);
-        sendResponse({ ...result, plannedBy: "webllm", toolCall: plan.toolCall });
-      } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
-      } finally {
-        stopKeepAlive();
-      }
     })();
     return true;
   }
@@ -13852,7 +13857,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       a.done = true;
       recordAsk(a.id, a.instruction, { status: "error", plannedBy: "cancelled", display: cancelled.display, error: "cancelled" });
       try { a.sendResponse(cancelled); } catch (e2) { /* the caller is gone */ }
-      try { chrome.runtime.sendMessage({ type: "agentProgress", done: true }); } catch (e3) { /* nobody listening */ }
+      tellPanel({ type: "agentProgress", done: true });
     }
     sendResponse({ ok: true });
     return false;
@@ -13909,6 +13914,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // which is the least useful thing this can say and indistinguishable
       // from a success. Several paths answer without building a display, and
       // rather than find each one, none of them are allowed to.
+      // Filled in once the tab is known; cardFor and the metrics read them.
+      let tab = null, route = null;
       const cardFor = (res) => {
         const inner = res.display || (res.result && res.result.display);
         if (inner) return inner;
@@ -13927,10 +13934,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               : "it ran, but nothing here says what changed",
           stats: [], rows: [],
           note: res.plannedBy ? `answered by ${res.plannedBy}` : "",
-          // Some paths answer before the route has been worked out, and a
-          // card is not worth a crash.
-          source: (() => { try { return (route && route.global) || "this page"; }
-            catch (e) { return "this page"; } })(),
+          // Some paths answer before the route has been worked out.
+          source: (route && route.global) || "this page",
         };
       };
       // Why an answer did not come from the model, where it did not. A card
@@ -13971,6 +13976,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // to act on, because it does not say which of the paths spent it.
       const askBegan = Date.now();
       let answeredAfter = false;
+      // The "and tell me" half runs after respond() returns; the ask is not
+      // over until it has (cancel must still find it, keep-alive must hold).
+      let afterAnswer = null;
       const respond = (res) => {
         // Cancelled: the "Cancelled" answer is the answer, and whatever the
         // work underneath reports later is not shown over it.
@@ -13978,7 +13986,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (res.cancelled) answeredAfter = true;
         if (thenAsk && !answeredAfter) {
           answeredAfter = true;
-          answerAfterActing(res, thenAsk.ask)
+          afterAnswer = answerAfterActing(res, thenAsk.ask)
             .then((merged) => respond(merged))
             .catch((e) => respond({ ...res,
               error: res.error || `the action ran; reading the page failed: ${(e && e.message) || e}` }));
@@ -14046,8 +14054,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           prefillPerS: (lastTurnCost && lastTurnCost.prefillPerS) ?? null,
           decodePerS: (lastTurnCost && lastTurnCost.decodePerS) ?? null,
           firstTokenS: (lastTurnCost && lastTurnCost.firstTokenS) ?? null,
-          route: (() => { try { return (route && route.global) || null; } catch (e) { return null; } })(),
-          url: (() => { try { return (tab && tab.url) || null; } catch (e) { return null; } })(),
+          route: (route && route.global) || null,
+          url: (tab && tab.url) || null,
           steps: Array.isArray(res.steps) ? res.steps.length : null,
           changed: !!(res.verified && res.verified.changed),
           // What was actually pressed, by name. "ok" alone says something
@@ -14105,14 +14113,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // so an instruction that finished its work on the page could leave
         // "step 2 of 4" sitting there - the panel saying it was still going
         // about something already done.
-        try { chrome.runtime.sendMessage({ type: "agentProgress", done: true }); }
-        catch (e) { /* nobody listening */ }
+        tellPanel({ type: "agentProgress", done: true });
       };
       const stopKeepAlive = keepAlive();
       try {
-        const [tab] = await askTabQuery();
+        [tab] = await askTabQuery();
         if (!tab || !tab.url) throw new Error("no active tab");
-        const route = routeFor(tab.url);
+        route = routeFor(tab.url);
 
         // Data questions come first, and on every route - "what's the gage
         // height in Alaska" is answerable from anywhere, and shouldn't be
@@ -14507,7 +14514,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // matching a fragment, and there a control wearing the whole
             // name is plainly the thing meant.
             const wholeThing = distinct[0] === bareO || distinct[0] === said;
-            if (holders.length === 1 && (wholeThing || !namedExactly)) instantOption = hits[0];
+            // Nor when a word of the request is a control's whole name: "use
+            // UTC time" names the UTC radio, and the Sort list's Time option
+            // is not what was meant.
+            const namedByWord = ((oinv.ok && oinv.result && oinv.result.controls) || []).some((c) => {
+              const l = flatO(c.label);
+              // A switch or a button of that one name - not the list's own
+              // label ("pick the sierra nevada region" names the Region list).
+              const pressable = /^(?:radio|checkbox|button|submit)$/.test(String(c.type || c.kind || "").toLowerCase());
+              return pressable && l && l !== distinct[0] && !/\s/.test(l) && l.length >= 3 && !CONTROL_VERB.test(l) && !c.disabled
+                && c.selector !== hits[0].control.selector && saidWords.includes(l);
+            });
+            if (holders.length === 1 && (wholeThing || !namedExactly) && !namedByWord) instantOption = hits[0];
             // Not when the rest of the request names an option elsewhere:
             // "pick the arkansas water division" set Geographic Location to
             // Water Division, with "2 - Arkansas" in the division list.
@@ -14708,26 +14726,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             (c) => /^(checkbox|radio)$/.test(String(c.type || "").toLowerCase()));
           if (named.length === 1 && everyMatch.length === 1) {
             const only = named[0];
-            const isSw = true;
             const wantsOff = /\b(uncheck|untick|turn\s+off|switch\s+off|disable|deselect|remove|clear|hide)\b/i
               .test(wanted);
-            const call = isSw
-              ? { name: "pageCheck", args: { selector: only.selector, on: !wantsOff } }
-              : { name: "pageClick", args: { selector: only.selector } };
+            const call = { name: "pageCheck", args: { selector: only.selector, on: !wantsOff } };
             const ran = await runVerified(route.global, call);
             const rr = (ran && ran.result) || {};
             const moved = didItMove(ran);
             const wasOn = only.checked === true;
-            const settled = isSw ? (moved || wasOn === !wantsOff) : moved;
+            const settled = moved || wasOn === !wantsOff;
             if (ran.ok !== false && settled && rr.opened !== true) {
               respond({
                 ...ran, ok: true, plannedBy: "exact-match", toolCall: call,
                 display: {
                   title: String(only.label || "").slice(0, 60),
-                  subtitle: isSw
-                    ? (moved ? `${only.label}: ${wasOn} \u2192 ${!wantsOff}`
-                      : `${only.label} was already ${!wantsOff} - nothing to change`)
-                    : "the page changed",
+                  subtitle: moved ? `${only.label}: ${wasOn} \u2192 ${!wantsOff}`
+                    : `${only.label} was already ${!wantsOff} - nothing to change`,
                   stats: [], rows: [{
                     name: String(only.label || "").slice(0, 50),
                     value: moved ? "changed" : "already so", meta: call.name, tone: "ok",
@@ -14780,10 +14793,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 && /\bdays?\b/i.test(String(c.label || "")) && !/\bdate\b/i.test(String(c.label || "")));
             if (boxes.length === 1) {
               const box = boxes[0];
-              if (box.hidden && box.revealedBy) {
-                await invokeOnActiveTab("openDisclosure", [box.revealedBy]).catch(() => null);
-                forgetPageTools();
-              }
+              await revealFirst(box);
               const filled = await runVerified(route.global,
                 { name: "pageFill", args: { selector: box.selector, text: String(askedDays) } });
               const sent = filled && filled.ok !== false
@@ -14810,10 +14820,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // is asking which was meant, and that is a question for the model.
           if (spans.length === 1) {
             const only = spans[0];
-            if (only.hidden && only.revealedBy) {
-              await invokeOnActiveTab("openDisclosure", [only.revealedBy]).catch(() => null);
-              forgetPageTools();
-            }
+            await revealFirst(only);
             const isSw = /^(checkbox|radio)$/.test(String(only.type || "").toLowerCase());
             const call = isSw
               ? { name: "pageCheck", args: { selector: only.selector, on: true } }
@@ -15475,7 +15482,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // destroy the instruction rather than sequence it. So a bare "and"
           // separates steps only where a verb follows it, which is what makes
           // the second half an instruction rather than the rest of a name.
-          let parts = splitIntoSteps(msg.instruction);
+          // Without the model:/baseline: prefix, which is not a step.
+          const asked = String(msg.instruction || "").replace(/^\s*(?:model|baseline):\s*/i, "");
+          let parts = splitIntoSteps(asked);
           const loose = parts.length === 1 ? sharedVerbLoose(parts[0]) : null;
           const period = parts.length === 1 && !loose ? periodOfItsOwn(parts[0]) : null;
           if (loose || period || parts.length > 1) {
@@ -15485,8 +15494,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // A verb and one control's whole name is one step, whatever is in
             // the name: "click Yosemite: Then and Now" was cut at "then" and
             // pressed a link called Yosemite.
-            const rest = flatL(String(msg.instruction || "").replace(/^\s*(?:please\s+)?(?:click|press|tap|open|select|choose|pick|show|view|go\s+to)\s+(?:on\s+)?/i, ""));
-            if (parts.length > 1 && rest && labels.some((l) => flatL(l) === rest)) parts = [String(msg.instruction)];
+            const rest = flatL(asked.replace(/^\s*(?:please\s+)?(?:click|press|tap|open|select|choose|pick|show|view|go\s+to)\s+(?:on\s+)?/i, ""));
+            if (parts.length > 1 && rest && labels.some((l) => flatL(l) === rest)) parts = [asked];
             else if (loose && !labels.some((l) => flatL(l).includes(flatL(loose.joined)))) parts = loose.parts;
             else if (period) {
               // The page names the period itself, and nothing is called the whole phrase.
@@ -16181,16 +16190,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
         }
-        // Well-formed but missing the one thing these APIs require.
-        if (dataCall && dataCall.needsState) {
-          respond({
-            ok: false,
-            needsState: true,
-            error: `Which state is "${dataCall.place}" in? USGS data is looked up per state, and there's no national search by name.`,
-            hint: `try "${dataCall.parameter} in <state> at ${dataCall.place}"`,
-          });
-          return;
-        }
         // The site gets a turn before a national API does. Driving the page
         // in front of you is the point of this extension; answering from an
         // agency is the bonus. "Smith river discharge" on a California water
@@ -16868,7 +16867,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Gauges layer under Weather & Environment, and it was answered with
         // a USGS search for a gauge called "stream gauges". The way to it is
         // left open, and the pursuit below presses it.
-        const behind = commandLike && dataCall && !dataCall.needsState && !forceModel
+        const behind = commandLike && dataCall && !forceModel
           ? await (async () => {
             const subject = meaningfulWords(wantedOnly).filter((w) => w.length > 2 && !verbFamily(w) && !CONTROL_VERB.test(w)
               && !/^(?:layers?|overlays?|button|checkbox)$/.test(w)).join(" ");
@@ -16876,7 +16875,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return !!(found && found.ok && found.result && found.result.door);
           })() : false;
         if (behind) forgetPageTools();
-        if (commandLike && dataCall && !dataCall.needsState && !behind) {
+        if (commandLike && dataCall && !behind) {
           const result = await executeToolCall(route.global, dataCall);
           respond({ ...result, plannedBy: "fast-path", toolCall: dataCall, note: "no control matched, so this was answered from data" });
           return;
@@ -17058,7 +17057,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // waiting for the page bundle to reply" - trading the one reason that
         // says what to do for one that does not.
         const pageUnreadable = inv && inv.ok === false;
-        if ((!status || !status.ready) && !pageUnreadable) {
+        if (pageUnreadable) {
+          respond(explainFailure(wanted, route, inv, { modelOff: true }));
+          return;
+        }
+        if (!status || !status.ready) {
           respond({
             ok: false,
             stillLoading: true,
@@ -17198,6 +17201,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         debugLog("[smartAsk] threw", err && err.stack ? err.stack : err);
         respond({ ok: false, error: String((err && err.message) || err) });
       } finally {
+        if (afterAnswer) await afterAnswer.catch(() => {});
         stopKeepAlive();
         // Its work has wound down: nothing left to stop.
         if (activeAsk === thisAsk) activeAsk = null;

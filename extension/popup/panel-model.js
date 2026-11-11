@@ -23,31 +23,40 @@ let engineModel = null;
 // can show where it is rather than a bare "loading".
 let lastProgress = { text: "", fraction: null };
 
-async function engineFor(modelId, onProgress) {
+// enginePromise is set before anything is awaited: two calls in the same
+// tick (the picker's warm and the worker's panelWarm) each built an engine
+// while the first was still importing the library, and the first was never
+// unloaded - the two copies on one card this file exists to prevent.
+function engineFor(modelId, onProgress) {
   if (enginePromise && engineModel === modelId) return enginePromise;
-  if (enginePromise) await release();
+  const prior = enginePromise ? release() : Promise.resolve();
   engineModel = modelId;
-  const { CreateMLCEngine } = await import("../offscreen/vendor/web-llm.js");
-  // Every model on the window WebLLM ships it with (4096). The large ones
-  // were cut to 3072 to save about 130MB, which left an 8B alone short of
-  // room for a long step prompt and its reply - a smaller model answered
-  // what the 8B was cut off in the middle of.
-  enginePromise = CreateMLCEngine(modelId, {
-    // The fraction as well as the words. WebLLM reports both and only the
-    // words were passed on, so the panel could say "loading" and never how
-    // far along - which on a five gigabyte download is the difference
-    // between waiting and assuming it has hung.
-    initProgressCallback: (r) => {
-      lastProgress = {
-        text: String((r && r.text) || ""),
-        fraction: typeof (r && r.progress) === "number" ? r.progress : null,
-      };
-      if (onProgress) onProgress(lastProgress.text, lastProgress.fraction);
-    },
-  })
-    .then((e) => { engineReady = true; return e; })
-    .catch((err) => { enginePromise = null; engineReady = false; engineModel = null; throw err; });
-  return enginePromise;
+  const p = prior
+    .then(() => import("../offscreen/vendor/web-llm.js"))
+    // Every model on the window WebLLM ships it with (4096). The large ones
+    // were cut to 3072 to save about 130MB, which left an 8B alone short of
+    // room for a long step prompt and its reply - a smaller model answered
+    // what the 8B was cut off in the middle of.
+    .then(({ CreateMLCEngine }) => CreateMLCEngine(modelId, {
+      // The fraction as well as the words. WebLLM reports both and only the
+      // words were passed on, so the panel could say "loading" and never how
+      // far along - which on a five gigabyte download is the difference
+      // between waiting and assuming it has hung.
+      initProgressCallback: (r) => {
+        lastProgress = {
+          text: String((r && r.text) || ""),
+          fraction: typeof (r && r.progress) === "number" ? r.progress : null,
+        };
+        if (onProgress) onProgress(lastProgress.text, lastProgress.fraction);
+      },
+    }))
+    .then((e) => { if (enginePromise === p) engineReady = true; return e; })
+    .catch((err) => {
+      if (enginePromise === p) { enginePromise = null; engineReady = false; engineModel = null; }
+      throw err;
+    });
+  enginePromise = p;
+  return p;
 }
 
 export async function release() {
@@ -95,7 +104,7 @@ export async function step(modelId, prompt, { timeoutMs = 45000, schema = null, 
   // cancelled request stop the model without breaking the next one.
   const create = async (withSchema) => {
     const chunks = await engine.chat.completions.create({
-      messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+      messages: [{ role: "user", content: /qwen3/i.test(modelId) ? `${prompt}\n/no_think` : prompt }],
       // At temperature 0 every distribution is one certain token, so a
       // choice read for its probabilities is read at 1, and its most likely
       // option taken from those probabilities rather than from the sample.

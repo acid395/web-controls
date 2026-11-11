@@ -665,8 +665,10 @@
         const tag = String(c.tagName).toUpperCase();
         if (UNWORDED.test(tag) || (skipControls && isControlish(c))) continue;
         if (isIconGlyph(c)) { glyphs.push(String(c.textContent || "").trim()); continue; }
-        if (tag === "IMG") { out += " " + (c.getAttribute("alt") || "") + " "; continue; }
-        if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); out += " " + ((t && t.textContent) || c.getAttribute("aria-label") || "") + " "; continue; }
+        // Only words: an alt-less picture adding blank space left the name
+        // "non-empty", and the later fallbacks (the file's name) never ran.
+        if (tag === "IMG") { const alt = String(c.getAttribute("alt") || "").trim(); if (alt) out += ` ${alt} `; continue; }
+        if (tag === "SVG" || tag === "svg") { const t = c.querySelector && c.querySelector("title"); const said = String((t && t.textContent) || c.getAttribute("aria-label") || "").trim(); if (said) out += ` ${said} `; continue; }
         out += "\u0001"; walk(c); out += "\u0001";
       }
     };
@@ -809,7 +811,19 @@
     const el0 = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el0) throw new Error(`fill: not found: ${elOrSel}`);
     const el = typingTarget(el0);
+    // A list is chosen from, not typed into: setting .value to text no
+    // option carries left it blank and reported success.
+    if (el.tagName === "SELECT") { setSelect(el, text); return el; }
     el.focus();
+    // A window without the OS's focus gets no focus events from focus():
+    // a box that opens its list on focus stayed shut whenever another
+    // window was in front. The events a focused window would have had.
+    try {
+      if (typeof document.hasFocus === "function" && !document.hasFocus()) {
+        el.dispatchEvent(new FocusEvent("focus"));
+        el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      }
+    } catch (e) { /* then the page saw only the focus itself */ }
     if (el.isContentEditable && !el.matches(TYPED_INTO)) el.textContent = text;
     else {
       text = asFieldDate(el, text);
@@ -824,7 +838,57 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: text.slice(-1) || "a" }));
     el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: text.slice(-1) || "a" }));
+    pickTypedOption(el, text);
     return el;
+  };
+
+  // A box that offers choices as it is typed into has not been set until
+  // one is picked: "Iowa" typed into the Water Quality Portal's State box
+  // left the form reading no state. Once the list shows the option that
+  // says what was typed - the same words, the page's own parenthetical
+  // aside - it is pressed. Only that option: a search box's suggestions
+  // are not what was typed, and are left alone.
+  const pickTypedOption = (el, text) => {
+    const typed = norm(text);
+    if (!typed) return;
+    const listed = (node) => {
+      if (!node || !node.closest) return null;
+      // The list the box or one of its holders points at.
+      for (let n = node, d = 0; n && n.nodeType === 1 && d < 5; n = n.parentElement, d++) {
+        const ids = `${n.getAttribute("aria-controls") || ""} ${n.getAttribute("aria-owns") || ""}`.trim().split(/\s+/).filter(Boolean);
+        const byId = ids.map((id) => document.getElementById(id)).find(Boolean);
+        if (byId) return byId;
+      }
+      const owner = node.closest("[role=combobox]");
+      if (!owner && !node.hasAttribute("aria-autocomplete")) return null;
+      const near = (owner || node).closest("form, fieldset, div, li, td") || document;
+      return near.querySelector("[role=listbox]") || null;
+    };
+    const list = listed(el);
+    if (globalThis.__wcTrace) console.log("[typeahead]", list ? `list ${list.id || list.className}` : "no list", "for", typed);
+    if (!list) return;
+    const plainOf = (o) => norm(String(o.textContent || o.getAttribute("aria-label") || "").replace(/\s*\([^()]*\)\s*$/, ""));
+    let tries = 0;
+    const look = () => {
+      if (!el.isConnected || norm(el.value) !== typed) return;
+      const options = [...list.querySelectorAll("[role=option], li, option")].filter((o) => isVisible(o) && plainOf(o));
+      // The page's own fuller entry over a bare echo of what was typed: a
+      // list that offers "Iowa" above "Iowa (NWIS, STORET)" is offering to
+      // make a new tag first, and the entry with more to say is the real one.
+      const exact = options.filter((o) => plainOf(o) === typed)
+        .sort((a, b) => String(b.textContent || "").trim().length - String(a.textContent || "").trim().length);
+      const one = options.length === 1 && plainOf(options[0]).startsWith(typed) ? options : [];
+      const pick = exact[0] || one[0];
+      if (globalThis.__wcTrace) console.log("[typeahead] try", tries, options.length, "visible:", options.slice(0, 4).map(plainOf).join(" | "), pick ? `-> ${String(pick.textContent || "").trim().slice(0, 40)}` : "");
+      if (pick) { realClick(pick); return; }
+      // A list that opens on a press rather than on focus: pressed once,
+      // and what was typed is offered to it again.
+      if (!options.length && tries === 1) {
+        try { realClick(el); el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text })); } catch (e) { /* then it stays shut */ }
+      }
+      if (++tries < 8) setTimeout(look, 150);
+    };
+    setTimeout(look, 150);
   };
 
   // The list whose Go a choice last pressed, and when.
@@ -832,7 +896,8 @@
     pageTouched();
     const el = typeof elOrSel === "string" ? deepQuery(elOrSel) : elOrSel;
     if (!el || el.tagName !== "SELECT") throw new Error(`setSelect: not a <select>: ${elOrSel}`);
-    if (valueOrText != null) valueOrText = String(valueOrText);
+    if (valueOrText == null || !String(valueOrText).trim()) throw new Error(`setSelect: no value given for ${elOrSel}`);
+    valueOrText = String(valueOrText);
     // Units spelled out on both sides as the last try: a request for the
     // "500 year" option names the one the page wrote "500yr".
     const plain = (t) => norm(String(t || "").replace(UNIT_AFTER_NUMBER, (_, d, u) => `${d} ${UNIT_SHORT[u.toLowerCase()]}`))
@@ -1653,7 +1718,8 @@
   }
   function inventory(opts = {}) {
     const raw = inventoryNow(opts);
-    const out = currentRequestOf() === null ? raw : { ...raw, controls: raw.controls.filter(offeredNow) };
+    const kept = currentRequestOf() === null ? raw.controls : raw.controls.filter(offeredNow);
+    const out = kept === raw.controls ? raw : { ...raw, controls: kept, patternCount: kept.length };
     if (!opts.includeHidden || !behindDoors.size) return out;
     if (behindUrl !== location.href) { behindDoors.clear(); behindUrl = kept.behindUrl = location.href; return out; }
     const have = new Set(out.controls.map(peekKey));
@@ -2089,6 +2155,8 @@
   }
 
   // duck-typed map-instance hunt, same signatures as map-probe.js
+  // The map instance mapInfo last found, for the functions that drive it.
+  let lastMapInstance = null;
   function mapInfo() {
     const domHints = {
       "Leaflet": ".leaflet-container",
@@ -2113,6 +2181,7 @@
       catch (e) { return false; }
     };
     let instanceFoundFor = null;
+    let instanceFound = null;
     let scanned = 0;
     const seen = new Set();
     const scan = (obj, depth) => {
@@ -2121,9 +2190,9 @@
       if (seen.has(obj)) return;
       seen.add(obj);
       for (const sig of instanceSigns) {
-        if (looksLike(obj, sig.keys)) { instanceFoundFor = sig.lib; return; }
+        if (looksLike(obj, sig.keys)) { instanceFoundFor = sig.lib; instanceFound = obj; return; }
       }
-      if (obj instanceof Node || obj instanceof Window) return;
+      if (obj instanceof Node || (depth > 0 && obj instanceof Window)) return;
       let keys = [];
       try { keys = Object.getOwnPropertyNames(obj); } catch (e) { return; }
       for (const k of keys) {
@@ -2135,6 +2204,9 @@
     };
     scan(window, 0);
 
+    // Kept here, not returned: the result crosses the bridge, and a map
+    // object cannot.
+    lastMapInstance = instanceFound;
     return { libraries, domMarkerCount: domMarkers, jsInstanceReachable: instanceFoundFor,
       driveable: domMarkers > 0 ? "dom" : instanceFoundFor ? "js-api" : libraries.length ? "no" : "no-map-found" };
   }
@@ -2848,7 +2920,9 @@
     const out = [];
 
     // DOM markers first: when they exist this is exact and cheap.
-    const domMarkers = deepQueryAll('[class*="marker"], [class*="Marker"], .leaflet-marker-icon, [role="button"][aria-label]')
+    // A labelled button counts only inside a map: a page's hamburger menu
+    // was offered as "a point on this page's map".
+    const domMarkers = deepQueryAll('[class*="marker"], [class*="Marker"], .leaflet-marker-icon, .leaflet-container [role="button"][aria-label], .gm-style [role="button"][aria-label], .mapboxgl-map [role="button"][aria-label], .maplibregl-map [role="button"][aria-label]')
       .filter(isVisible)
       .map((el) => ({
         label: (el.getAttribute("aria-label") || el.getAttribute("title") || textOf(el) || "").slice(0, 120),
@@ -3911,7 +3985,7 @@
       try {
         api.registerTool(def);
         def.declaredBy = "extension";
-        MCP_REGISTRY.push(def);
+        if (!MCP_REGISTRY.some((t) => t.name === def.name)) MCP_REGISTRY.push(def);
         names.push(t.name);
       } catch (e) { /* a duplicate or a rejected schema - skip it, report the rest */ }
     }
@@ -4046,7 +4120,7 @@
         // named control's own state can tell those apart.
         const el = resolve();
         const was = el ? checkedOf(el) : null;
-        const now = setChecked(el || sel, on !== false);
+        const now = await setChecked(el || sel, on !== false);
         return {
           ...named(el),
           was, now, itChanged: was !== null && was !== now,
@@ -4338,8 +4412,8 @@
   // here knows anything about USGS: it looks for records carrying a name and
   // a coordinate pair, whatever a given site happens to call those fields.
   const NAME_KEYS = /^(sitename|name|label|title|station_?nm|monitoringlocationname|camname|placename|stationname|description)$/i;
-  const LAT_KEYS = /^(lat|latitude|y|dec_lat_va)$/i;
-  const LON_KEYS = /^(lon|lng|long|longitude|x|dec_long_va)$/i;
+  const LAT_KEYS = /^(lat|latitude|dec_lat_va)$/i;
+  const LON_KEYS = /^(lon|lng|long|longitude|dec_long_va)$/i;
   const ID_KEYS = /^(sitenumber|siteid|id|site_no|nwisid|gaugeid|code)$/i;
 
   function capturedPoints({ limit = 4000 } = {}) {
@@ -4431,7 +4505,7 @@
     }
     // No element: ask the map itself.
     const info = mapInfo();
-    const map = info.instance || (window.L && window.L.__wcMap) || null;
+    const map = (info.jsInstanceReachable && lastMapInstance) || (window.L && window.L.__wcMap) || null;
     if (map && feature.lat != null && typeof map.setView === "function") {
       map.setView([feature.lat, feature.lon], Math.max(map.getZoom ? map.getZoom() : 8, 10));
       if (typeof map.openPopup === "function" && feature.popup) map.openPopup(feature.popup);
@@ -4448,7 +4522,7 @@
     const point = findCapturedPoint(name);
     if (!point) return { found: false, asked: name };
     const info = mapInfo();
-    const map = info.instance || (window.L && window.L.__wcMap) || null;
+    const map = (info.jsInstanceReachable && lastMapInstance) || (window.L && window.L.__wcMap) || null;
     let moved = false;
     try {
       if (map && typeof map.setView === "function") {
@@ -4518,15 +4592,15 @@
     // Each named point on the map, as its own tool. Same shape as a control:
     // named after itself, no selector in the schema, runner knows how to
     // reach it.
-    let points = [];
-    try { points = (mapFeatures({ limit: 40 }).features || []).filter((f) => f.label); }
-    catch (e) { points = []; }
-    points.slice(0, 20).forEach((f, i) => {
-      const index = (mapFeatures({ limit: 40 }).features || []).indexOf(f);
+    let all = [];
+    try { all = mapFeatures({ limit: 40 }).features || []; } catch (e) { all = []; }
+    // The index is into the list mapFeatureOpen reads, unfiltered.
+    const points = all.map((f, index) => ({ f, index })).filter((x) => x.f.label);
+    points.slice(0, 20).forEach(({ f, index }) => {
       add(toolName(f.label, "open"),
         `${String(f.label).slice(0, 80)} - a point on this page's map`,
         { type: "object", properties: {} },
-        async () => mapFeatureOpen(index === -1 ? i : index));
+        async () => mapFeatureOpen(index));
     });
 
     return { tools: out, fromControls: usable.length, mapPoints: points.length, url: location.href };

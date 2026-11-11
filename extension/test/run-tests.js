@@ -7249,7 +7249,7 @@ for (const b of budgets) {
   const src = require("fs").readFileSync(
     require("path").join(__dirname, "..", "offscreen", "offscreen.js"), "utf8");
   ensure("the engine is built only once the chosen model is known",
-    /enginePromise\s*=\s*chosenModelId\(\)\s*\.then\(/.test(src),
+    /(?:enginePromise|const p)\s*=\s*chosenModelId\(\)\s*\.then\(/.test(src),
     src.slice(src.indexOf("function getEngine"), src.indexOf("function getEngine") + 200));
   ensure("and the choice is a promise, not a callback that may arrive late",
     /function chosenModelId\(\)/.test(src) && /modelChoice\s*=\s*new Promise/.test(src), true);
@@ -15034,5 +15034,269 @@ section("FIRMS, Climate Explorer and InciWeb, round 14");
     ensure("a wrapper around two switches is not offered as one", !offered.includes("Annual Monthly") && offered.includes("Monthly"), offered);
   }
 }
+
+section("sweep of November 2026, round 15");
+const vm15 = require("vm");
+{
+  const run = (x) => vm15.runInContext(x, sb);
+  const smith = { tables: [{ columns: ["Site", "Discharge (cfs)"], rows: [["SMITH RD NR CRESCENT CITY", "12"], ["SMITH R NR CRESCENT CITY", "3400"]] }] };
+  check("a road is not a river", (sb.findInTables(smith, { wants: ["discharge"], place: "smith river", day: null }) || [{}])[0].value, "3400");
+  const lakes = { tables: [{ columns: ["Reservoir", "Percent Full"], rows: [["Lake Livingston", "85"], ["Lake Conroe", "71"]] }] };
+  check("the row for the place asked, not the first row sharing a word",
+    (sb.findByOwnWords(lakes, "how full is lake conroe", "conroe") || [{}])[0].value, "71");
+  check("a year said whole is not furniture", sb.furnitureAskedFor("click 2024", { label: "2024" }), true);
+  check("a stray 'page' still is", sb.furnitureAskedFor("go to the page about floods", { label: "page 3" }), false);
+  const pool = [
+    { kind: "select", label: "Basemap", options: [{ text: "Layers view", value: "lv" }, { text: "Satellite", value: "s" }] },
+    { kind: "input", type: "checkbox", label: "Rivers" }, { kind: "input", type: "checkbox", label: "Roads" },
+  ];
+  check("what can be turned on is the switches, not the first line written",
+    (sb.listChoicesFor("which layers can be turned on", pool) || {}).direct, "Can be turned on: Rivers, Roads");
+  const opt = (xs) => xs.map((x) => ({ text: String(x), value: String(x) }));
+  const dateCtl = [
+    { label: "Start Year", kind: "select", type: "select-one", selector: "#sy", options: opt(["2021", "2022", "2023"]) },
+    { label: "Start Month", kind: "select", type: "select-one", selector: "#sm", options: opt(["January", "February", "March"]) },
+    { label: "Start Day", kind: "select", type: "select-one", selector: "#sd", options: opt(["1", "2", "3"]) },
+  ];
+  check("a date whose year the lists lack is not set as month and day", sb.dateGroupPlan("set the start to january 1 2024", dateCtl), null);
+  check("one they carry is", (sb.dateGroupPlan("set the start to march 2 2023", dateCtl) || []).map((p) => p.label).join(" | "), "Start Year: 2023 | Start Month: March | Start Day: 2");
+  // The data planner: a city that is part of a waterbody's name, a mountain, a creek, a word one typo from a city.
+  const plan = (t) => sb.planDataTool(t, { global: "GENERIC" }) || {};
+  check("the Columbia River is not in Columbia, SC", plan("discharge of the columbia river").args.state, undefined);
+  check("Mt Rainier is not in Montana", plan("weather at mt rainier").args.state, undefined);
+  check("Indian Creek is not in Indiana", plan("gage height at indian creek").args.state, undefined);
+  check("a boat landing is not Lansing", plan("temperature at the boat landing").args.state, undefined);
+  check("Fremont CA still reads its state", plan("gage height in fremont ca").args.state, "ca");
+  check("'is the humidity high' is not the day's high", plan("is the humidity high in phoenix").name, "weatherConditions");
+  ensure("'District 1' is not a date", !run(`TIME_LABEL.test("District 1")`) && run(`TIME_LABEL.test("Sep 14")`) && run(`TIME_LABEL.test("Monday")`), "");
+}
+runAsync(async () => {
+  // The weekend is Saturday and Sunday, not the week.
+  const bgw = loadBackground();
+  const names = ["Thursday", "Thursday Night", "Friday", "Friday Night", "Saturday", "Saturday Night", "Sunday", "Sunday Night", "Monday", "Monday Night"];
+  const periods = names.map((name, i) => ({ name, isDaytime: !/Night/.test(name), temperature: 60 + i, temperatureUnit: "F", shortForecast: "Sunny" }));
+  bgw.fetch = async (url) => ({ ok: true, status: 200, json: async () => /\/points\//.test(url)
+    ? { properties: { forecast: "https://api.weather.gov/gridpoints/X/1,1/forecast" } } : { properties: { periods } } });
+  const r = await bgw.nwsForecast({ state: "id", when: "weekend" });
+  check("the weekend forecast is the weekend", r.days.map((d) => d.name).join(","), "Saturday,Sunday");
+  check("and says so", r.when, "weekend");
+});
+runAsync(async () => {
+  // A raw USGS code is the parameter it stands for: the datum guard holds.
+  const bgc = loadBackground();
+  bgc.fetch = async () => ({ ok: true, status: 200, json: async () => ({ value: { timeSeries: [
+    { sourceInfo: { siteName: "A", siteCode: [{ value: "1" }] }, variable: { variableCode: [{ value: "00065" }], unit: { unitCode: "ft" } }, values: [{ value: [{ value: "0.46", dateTime: "2026-11-10T00:00:00" }] }] },
+    { sourceInfo: { siteName: "B", siteCode: [{ value: "2" }] }, variable: { variableCode: [{ value: "00065" }], unit: { unitCode: "ft" } }, values: [{ value: [{ value: "2004.62", dateTime: "2026-11-10T00:00:00" }] }] },
+  ] } }) });
+  const r = await bgc.usgsCurrentConditions({ state: "ak", parameter: "00065" });
+  check("gage heights at two gauges are not averaged, asked by code", r.range, null);
+});
+runAsync(async () => {
+  // A press that failed is not "already pressed" when it is tried again.
+  const page = loadPage(`<!doctype html><html><body><div id="host"></div></body></html>`, { url: "https://example.gov/" });
+  const sbp = loadBackground({ page });
+  sbp.activeAsk = { id: "t", instruction: "click the late button", pressed: new Set() };
+  const first = await sbp.runVerified("GENERIC", { name: "pageClick", args: { selector: "#late" }, label: "Late button" });
+  const b = page.document.createElement("button"); b.id = "late"; b.textContent = "Late button";
+  let presses = 0; b.addEventListener("click", () => { presses++; page.document.body.appendChild(page.document.createElement("hr")); });
+  page.document.getElementById("host").appendChild(b);
+  const second = await sbp.runVerified("GENERIC", { name: "pageClick", args: { selector: "#late" }, label: "Late button" });
+  check("a press that found nothing is not recorded", first.ok, false);
+  check("so the retry presses", presses, 1);
+  check("and is not refused as a second press", !!(second.result && second.result.alreadyPressed), false);
+  // A view change (a map's hash) reaches the card.
+  const zp = loadPage(`<!doctype html><html><body><a id="z" href="#@=-83,43,5">Zoom in</a></body></html>`, { url: "https://map.example.gov/" });
+  const sbz = loadBackground({ page: zp });
+  const ran = await sbz.runVerified("GENERIC", { name: "pageClick", args: { selector: "#z" }, label: "Zoom in" });
+  ensure("a map view that moved is said to have moved", ran.verified && ran.verified.viewChanged === true, JSON.stringify(ran.verified));
+});
+runAsync(async () => {
+  // Two history writes at once lose neither.
+  const sbh = loadBackground();
+  await new Promise((r) => setTimeout(r, 30));
+  const store = sbh.chrome.storage.local;
+  store.get = (key, cb) => { // a copy, as Chrome hands back
+    const out = JSON.parse(JSON.stringify(store._data));
+    const picked = typeof key === "string" ? (key in out ? { [key]: out[key] } : {}) : out;
+    if (typeof cb === "function") { cb(picked); return undefined; }
+    return Promise.resolve(picked);
+  };
+  await store.set({ askHistory: [{ id: "old", instruction: "earlier", at: "2026-11-10T00:00:00Z", status: "running" }] });
+  await Promise.all([sbh.closeInterruptedAsks(), sbh.recordAsk("new", "click foo", { status: "running" }), sbh.recordAsk("new2", "click bar", { status: "running" })]);
+  const h = await sbh.readHistory();
+  check("the worker's wake-up fix and two new asks all land", h.map((e) => `${e.id}:${e.status}`).join(","), "old:error,new:running,new2:running");
+});
+runAsync(async () => {
+  // A "baseline:" instruction with two clauses is two clauses, not one with a prefix.
+  const page = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body><button id="a">Refresh</button><button id="b">Legend</button></body></html>`, { url: "https://water.noaa.gov/" });
+  const pressed = [];
+  for (const id of ["a", "b"]) page.document.getElementById(id).addEventListener("click", () => { pressed.push(id); page.document.body.appendChild(page.document.createElement("hr")); });
+  const bgb = loadBackground({ page });
+  const r = await bgb.__ask({ type: "smartAsk", instruction: "baseline: click refresh and click legend" });
+  check("a baseline sequence runs both steps", pressed.join(","), "a,b");
+  check("and reports them done", r.ok, true);
+  check("the route is on the card's metrics", r.metrics && r.metrics.route, "NOAA");
+});
+runAsync(async () => {
+  // A page that could not be read says so, model or no model.
+  const page = loadPage(`<!doctype html><html><body><button>Go</button></body></html>`, { url: "https://example.gov/" });
+  const sbu = loadBackground({ page });
+  const real = sbu.invokeOnActiveTab;
+  sbu.invokeOnActiveTab = async (fn, args) => /^(inventory|disclosures|pageTools|readPage)$/.test(fn)
+    ? { ok: false, error: "timed out waiting for the page bundle to reply" } : real(fn, args);
+  sbu.__model = (m) => (m.type === "llmStatus" ? { ready: true, hasGpu: true } : undefined);
+  const r = await sbu.__ask({ type: "smartAsk", instruction: "click the thing that is not here" });
+  ensure("an unreadable page is reported as unreadable, not as the model not answering",
+    !/local model/i.test(String(r.error)) && /read|page/i.test(String(r.error)), r.error);
+});
+runAsync(async () => {
+  // "Act and tell me": the ask is live until the answer half has run.
+  const page = loadPage(`<!doctype html><html><head><title>NWPS</title></head><body><button id="go">Refresh</button><p>Stage: 3.2 ft</p></body></html>`, { url: "https://water.noaa.gov/" });
+  page.document.getElementById("go").addEventListener("click", () => page.document.body.appendChild(page.document.createElement("hr")));
+  const bgt = loadBackground({ page });
+  bgt.__model = (m) => {
+    if (m.type === "llmStatus") return { ready: true, hasGpu: true, model: "x" };
+    if (m.type === "llmStep" && m.mode === "plan") return { ok: true, step: { steps: [] } };
+    if (m.type === "llmStep") return new Promise((res) => setTimeout(() => res({ ok: true, step: { do: "finish", answer: "3.2 ft" } }), 1500));
+    return undefined;
+  };
+  const p = bgt.__ask({ type: "smartAsk", instruction: "click refresh and tell me the stage" });
+  await new Promise((r) => setTimeout(r, 600));
+  check("the ask is still running while the page is read for the answer", vm15.runInContext("liveAsks.size", bgt), 1);
+  await p;
+  await new Promise((r) => setTimeout(r, 50)); // the handler's finally runs after the answer is sent
+  check("and gone when it has answered", vm15.runInContext("liveAsks.size", bgt), 0);
+});
+{
+  // A model reply with "n": null names no control.
+  const page = loadPage(`<!doctype html><html><body><button id="d">Legend</button><a id="g" href="#g">Gage height</a><a id="s" href="#s">Streamflow</a></body></html>`, { url: "https://water.noaa.gov/" });
+  if (page) runAsync(async () => {
+    const pressed = [];
+    for (const id of ["d", "g", "s"]) page.document.getElementById(id).addEventListener("click", () => { pressed.push(id); page.document.body.appendChild(page.document.createElement("hr")); });
+    const bgn = loadBackground({ page });
+    let turns = 0;
+    bgn.__model = (m) => {
+      if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+      if (m.type === "llmStep" && m.mode === "plan") return { ok: true, step: { steps: [] } };
+      if (m.type === "llmStep") return ++turns > 2 ? { ok: true, step: { do: "finish", answer: "" } } : { ok: true, step: { name: "Snow depth", n: null, do: "click" } };
+      return undefined;
+    };
+    await bgn.__ask({ type: "smartAsk", instruction: "model: click snow depth" });
+    check("a control the page lacks, with n: null, is not the first control", pressed.join(","), "");
+  });
+}
+{
+  // The page side.
+  const sel = loadPage(`<!doctype html><html><body><label for="st">State</label>
+    <select id="st"><option value=""></option><option value="AK">Alaska</option><option value="ID" selected>Idaho</option></select></body></html>`, { url: "https://example.gov/" });
+  if (sel) runAsync(async () => {
+    sel.GENERIC.fill("#st", "Alaska");
+    check("filling a list chooses from it", sel.document.getElementById("st").value, "AK");
+    let threw = null;
+    try { await sel.GENERIC.pageToolCall("chooseState", {}); } catch (e) { threw = e.message; }
+    ensure("a choice with nothing to choose is refused, not blanked", /no value/.test(threw || "") && sel.document.getElementById("st").value === "AK", threw);
+  });
+  const nomap = loadPage(`<!doctype html><html><body><div role="button" aria-label="Open navigation menu">☰</div><p>No map here.</p></body></html>`, { url: "https://example.gov/" });
+  if (nomap) check("a hamburger menu is not a map marker", nomap.GENERIC.mapFeatures().count || 0, 0);
+  const leaf = loadPage(`<!doctype html><html><body><div class="leaflet-container"></div></body></html>`, { url: "https://example.gov/" });
+  if (leaf) {
+    leaf.leafletMap = { getCenter() {}, getZoom() {}, eachLayer() {}, setView() {} };
+    check("a map instance on window is found", leaf.GENERIC.mapInfo().jsInstanceReachable, "Leaflet");
+  }
+  const pts = loadPage(`<!doctype html><html><body><div class="leaflet-container"></div></body></html>`, { url: "https://example.gov/" });
+  if (pts) runAsync(async () => {
+    const calls = [];
+    pts.myMap = { getCenter() {}, getZoom() { return 8; }, setView(ll, z) { calls.push(ll); },
+      eachLayer(cb) { cb({ getLatLng: () => ({ lat: 40, lng: -100 }) }); cb({ getLatLng: () => ({ lat: 41, lng: -101 }), getPopup: () => ({ getContent: () => "Site B" }) }); } };
+    const tools = pts.GENERIC.pageTools().tools.filter((t) => t.name.startsWith("open") && /map/.test(t.description)).map((t) => t.name);
+    check("a named point is its own tool", tools.join(","), "openSiteB");
+    const r = await pts.GENERIC.pageToolCall("openSiteB", {}).catch((e) => ({ error: e.message }));
+    check("and opening it goes to that point, not the first one", JSON.stringify(calls[0] || null), "[41,-101]");
+  });
+  const xy = loadPage(`<!doctype html><html><body></body></html>`, { url: "https://example.gov/" });
+  if (xy) {
+    xy.__wcFeedCapture = { installedAt: "now", feeds: [{ url: "https://example.gov/api/series.json", method: "GET", status: 200, contentType: "application/json",
+      body: JSON.stringify({ series: [{ name: "Discharge", x: 1, y: 12.3 }] }), truncated: false, bytes: 1 }] };
+    check("a chart's x and y are not a place", xy.GENERIC.capturedPoints().count, 0);
+  }
+  const byLook = loadPage(`<!doctype html><html><body><ul><li role="checkbox" tabindex="0">Roads</li><li role="checkbox" tabindex="0">Bridges</li><li role="checkbox" tabindex="0">Rail</li></ul></body></html>`, { url: "https://example.gov/" });
+  if (byLook) runAsync(async () => {
+    const r = await byLook.GENERIC.pageToolCall("toggleBridges", { on: true });
+    check("a by-look switch answers with its state, not a promise", typeof r.now, "boolean");
+  });
+  const mcp = loadPage(`<!doctype html><html><body><button id="b">Go</button></body></html>`, { url: "https://example.gov/" });
+  if (mcp) {
+    mcp.GENERIC.mcpInstall();
+    const defs = [{ name: "pageRead", fn: "readPage", argOrder: [] }];
+    mcp.GENERIC.mcpRegister(defs); mcp.GENERIC.mcpRegister(defs);
+    check("a tool published twice is listed once", mcp.__wcMcpRegistry.filter((t) => t.name === "pageRead").length, 1);
+  }
+  const cnt = loadPage(`<!doctype html><html><body><a href="#" title="Zoom in">+</a><a href="#" title="Zoom out">-</a><button>Search</button></body></html>`, { url: "https://example.gov/" });
+  if (cnt) { cnt.GENERIC.setRequest("click search"); const inv = cnt.GENERIC.inventory(); check("the count follows the list it comes with", inv.patternCount, inv.controls.length); }
+  // XHR reused for polling records each response once.
+  const feedSrc = require("fs").readFileSync(require("path").join(__dirname, "..", "page", "feed-capture.js"), "utf8");
+  class FakeXHR {
+    constructor() { this.listeners = []; this.status = 200; this.responseType = ""; }
+    open(m, u) { this.m = m; this.u = u; }
+    addEventListener(t, fn, o) { this.listeners.push([t, fn, o]); }
+    getResponseHeader() { return "application/json"; }
+    send() { this.responseText = `{"n":${this.sendCount = (this.sendCount || 0) + 1}}`; for (const l of this.listeners.slice()) if (l[0] === "load") { l[1].call(this); if (l[2] && l[2].once) this.listeners.splice(this.listeners.indexOf(l), 1); } }
+  }
+  const win = { location: { href: "https://example.gov/app" }, XMLHttpRequest: FakeXHR, TextDecoder, URL };
+  win.window = win; win.self = win;
+  vm15.createContext(win); vm15.runInContext(feedSrc, win);
+  const x = new FakeXHR(); for (let i = 0; i < 3; i++) { x.open("GET", "/api/readings"); x.send(); }
+  check("a request object reused three times records three responses", win.__wcFeedCapture.feeds.length, 3);
+}
+if (globalThis.WC_MODEL_BY_WORDS) check("'use 3.5 4b' is the 3.5", (globalThis.WC_MODEL_BY_WORDS("3.5 4b") || {}).name, "Qwen3.5 4B");
+{
+  // Phrasings from the USGS earthquake map, NOAA Tides and the Water Quality Portal, model off.
+  const plan = (q, controls) => { const p = sb.planGenericTool(sb.restateRequest(q), { controls }); return p && p.calls ? p.calls.map((c) => `${c.name} ${c.args.selector || c.args.value}`).join(" | ") : JSON.stringify(p); };
+  const quake = [
+    { kind: "select", type: "select-one", label: "Sort", selector: "#sort", options: [{ text: "Time", value: "time" }, { text: "Magnitude", value: "magnitude" }] },
+    { kind: "input", type: "radio", name: "timeZone", label: "User (UTC-08:00)", selector: "#tz1" },
+    { kind: "input", type: "radio", name: "timeZone", label: "UTC", selector: "#tz2" },
+    ...[1, 2, 3, 4, 5].map((i) => ({ kind: "button", label: `4.${i} 70 km SW of Nikolski, Alaska 2026-11-10 20:20:59 (UTC-08:00)`, selector: `#ev${i}` })),
+  ];
+  check("'use UTC time' is the UTC radio, not the Time sort nor its neighbour", plan("use UTC time", quake), "pagePickRadio UTC");
+  const tides = [
+    { kind: "select", type: "select-one", label: "day", selector: "#bday", options: [{ text: "1", value: "1" }, { text: "2", value: "2" }] },
+    { kind: "button", type: "submit", label: "Back 1 Day", selector: "#back" },
+    { kind: "button", type: "submit", label: "Forward 1 Day", selector: "#fwd" },
+    { kind: "button", type: "submit", label: "Day", selector: "#daily" },
+    { kind: "button", type: "submit", label: "1 hr", selector: "#hourly" },
+    { kind: "button", type: "submit", label: "Data Only", selector: "#dataonly" },
+    { kind: "button", type: "submit", label: "Show Data Listing", selector: "#listing" },
+    { kind: "a", label: "Data and Products", selector: "#nav1" }, { kind: "a", label: "Data Inventory", selector: "#nav2" }, { kind: "a", label: "Meteorological Data", selector: "#nav3" },
+  ];
+  check("'go back one day' is Back 1 Day", plan("go back one day", tides), "pageClick #back");
+  check("'show hourly data' is 1 hr", plan("show hourly data", tides), "pageClick #hourly");
+  const wqp = [
+    { kind: "button", type: "button", label: "Next", selector: "#next" },
+    ...["Countries", "States", "Counties", "Site Types"].map((n, i) => ({ kind: "select", type: "select-multiple", label: `All ${n} No results found Type to search (Step 1 of 3 Location Parameters)`, selector: `#s${i}`, hidden: true, revealedBy: "#loc" })),
+    { kind: "input", type: "checkbox", label: "NWIS (USGS) (Step 1 of 3 Location Parameters)", selector: "#nwis", hidden: true, revealedBy: "#loc" },
+  ];
+  check("'go to the next step' is Next, not every control in the step", plan("go to the next step", wqp), "pageClick #next");
+  const typeahead = loadPage(`<!doctype html><html><body><label for="st">State</label>
+    <div role="combobox" aria-owns="lb"><input id="st" type="text" aria-autocomplete="list"></div>
+    <ul id="lb" role="listbox"><li role="option" id="o0">Iowa</li><li role="option" id="o1">Idaho (NWIS, STORET)</li><li role="option" id="o2">Iowa (NWIS, STEWARDS, STORET)</li></ul></body></html>`, { url: "https://example.gov/" });
+  if (typeahead) runAsync(async () => {
+    let picked = null;
+    for (const o of typeahead.document.querySelectorAll("[role=option]")) o.addEventListener("click", () => { picked = o.id; });
+    typeahead.GENERIC.fill("#st", "Iowa");
+    await new Promise((r) => setTimeout(r, 400));
+    check("typing into a box with a list picks the page's fuller entry for what was typed, not the bare echo", picked, "o2");
+  });
+  const searchy = loadPage(`<!doctype html><html><body><input id="q" type="search" role="combobox" aria-controls="sug">
+    <ul id="sug" role="listbox"><li role="option" id="s1">boise weather</li><li role="option" id="s2">boise river</li></ul></body></html>`, { url: "https://example.gov/" });
+  if (searchy) runAsync(async () => {
+    let picked = null;
+    for (const o of searchy.document.querySelectorAll("[role=option]")) o.addEventListener("click", () => { picked = o.id; });
+    searchy.GENERIC.fill("#q", "boise");
+    await new Promise((r) => setTimeout(r, 400));
+    check("but a search box's suggestions are not what was typed, and are left alone", picked, null);
+  });
+}
+
 
 bodyDone = true;

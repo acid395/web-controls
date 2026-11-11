@@ -1,7 +1,7 @@
 /* bench-prompts.js - the prompt set, frozen, so a live run and an offline
  * one are the same experiment.
  *
- * 270 prompts, 7 sites, 38.57142857142857 each, hand-written against the controls
+ * Hand-written against the controls
  * and data each page really carries. Two kinds of thing and their
  * combinations: an action that visibly changes the page, a question
  * answered from the page's data, an action followed by an explanation,

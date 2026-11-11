@@ -115,14 +115,17 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   };
   let lastUrl = location.href;
   const checkUrl = () => { if (location.href !== lastUrl) { lastUrl = location.href; announce(); } };
+  const undo = [];
   for (const name of ["pushState", "replaceState"]) {
     const original = history[name];
     if (typeof original !== "function") continue;
-    history[name] = function (...args) {
+    const wrapped = function (...args) {
       const out = original.apply(this, args);
       try { checkUrl(); } catch (e) { /* never break the app's router */ }
       return out;
     };
+    history[name] = wrapped;
+    undo.push(() => { if (history[name] === wrapped) history[name] = original; });
   }
   // Mounted from a module before the document finished parsing: a wait
   // that began then hears when it has.
@@ -136,6 +139,14 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   }
   window.addEventListener("popstate", checkUrl);
   window.addEventListener("hashchange", checkUrl);
+  // Unmounted: the router wrappers and listeners go too, or every
+  // mount/unmount left another in the chain.
+  const dispose = () => {
+    undo.forEach((fn) => fn());
+    window.removeEventListener("popstate", checkUrl);
+    window.removeEventListener("hashchange", checkUrl);
+    updatedListeners.clear(); changeListeners.clear(); messageHandlers.length = 0;
+  };
 
   // Calls on the page. Results are copied the way the extension's bridge
   // copies them on their way through postMessage, so background.js never
@@ -289,5 +300,5 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     });
   }
 
-  return { chrome, send, storage: storageLocal };
+  return { chrome, send, storage: storageLocal, dispose };
 }

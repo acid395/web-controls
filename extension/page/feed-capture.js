@@ -126,13 +126,15 @@
       return open.call(this, method, url, ...rest);
     };
     XHR.prototype.send = function (...args) {
+      // Once per send: a request object reused for polling gained a listener
+      // each time and recorded every response over again.
       this.addEventListener("load", () => {
         try {
           const type = this.getResponseHeader && this.getResponseHeader("content-type");
           const text = typeof this.responseText === "string" ? this.responseText : null;
           record(this.__wcUrl, this.__wcMethod, this.status, text, type);
         } catch (e) { /* responseType blob/arraybuffer has no responseText */ }
-      });
+      }, { once: true });
       return send.apply(this, args);
     };
   }

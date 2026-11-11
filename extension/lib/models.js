@@ -52,7 +52,7 @@ globalThis.WC_MODELS = [
     id: "Qwen3.5-4B-q4f16_1-MLC",
     name: "Qwen3.5 4B",
     vramMB: 3868,
-    aliases: ["qwen354b", "35-4b"],
+    aliases: ["qwen354b", "354b"],
     note: "newer 4B; a little larger",
   },
   {

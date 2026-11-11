@@ -131,6 +131,7 @@ function mount(userOptions = {}) {
     unmount: () => {
       ui.destroy();
       modelHost.release();
+      shim.dispose();
       if (mounted === api) mounted = null;
     },
   };

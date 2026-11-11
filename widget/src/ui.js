@@ -414,6 +414,7 @@ function createWidgetUI({ send, modelHost, storage, options }) {
         .concat((display.stats || []).map((x) => `${x.label}: ${x.value}`))
         .concat((display.rows || []).map((r) => [r.name, r.value, r.meta].filter(Boolean).join("  ")))
         .filter(Boolean);
+      if (!navigator.clipboard) { copy.textContent = "Couldn't copy"; return; }
       navigator.clipboard.writeText(lines.join("\n")).then(
         () => { copy.textContent = "Copied"; setTimeout(() => { copy.textContent = "Copy"; }, 1200); },
         () => { copy.textContent = "Couldn't copy"; });

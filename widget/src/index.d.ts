@@ -12,7 +12,7 @@ export interface WidgetOptions {
   theme?: "auto" | "light" | "dark";
   /** Any CSS color, for the launcher and the accents. */
   accent?: string;
-  /** The model a first-time visitor gets. Default "Llama-3.2-3B-Instruct-q4f16_1-MLC". */
+  /** The model a first-time visitor gets. Default "Qwen3-4B-q4f16_1-MLC". */
   model?: string;
   /** What the panel's model picker offers. */
   models?: string[];
@@ -63,6 +63,8 @@ export interface ModelStatus {
   where: string | null;
   error: string | null;
   hasGpu: boolean;
+  /** What the browser said about the GPU, when it could be asked. */
+  gpu: unknown;
 }
 
 export interface Widget {
@@ -74,6 +76,8 @@ export interface Widget {
   ask(instruction: string): Promise<AskResult>;
   /** Starts the model download. Progress shows in the panel. */
   loadModel(): Promise<void>;
+  /** Stops the request in progress, as the Stop button does. */
+  cancel(): Promise<unknown>;
   /** Picks a model, remembered for this site; swapped in now if one is loaded. */
   setModel(id: string): Promise<void>;
   modelStatus(): ModelStatus;

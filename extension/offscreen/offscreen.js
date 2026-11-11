@@ -164,10 +164,6 @@ let engineReady = false; // a Promise can't be asked "are you resolved yet?" dir
 // the whole document and takes everything with it. Holding a model while the
 // browser is open is what every other WebLLM application does; disposing it
 // underneath somebody is not.
-let idleTimer = null;
-function touchEngine() {
-  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-}
 
 // Meaning, as distinct from judgment.
 //
@@ -251,10 +247,6 @@ async function whenIdle({ waitMs = 5000 } = {}) {
 // over a whole page with its text read out runs to about 2,500 tokens, and
 // the reply has to fit in what is left - so the 8B alone could be cut off
 // mid-answer on a request the 3B and 4B finished.
-function chatOptsFor() {
-  return undefined;
-}
-
 function buildEngine(id, onProgress) {
   return CreateMLCEngine(id, {
     initProgressCallback: (report) => {
@@ -264,16 +256,15 @@ function buildEngine(id, onProgress) {
       lastProgress = String((report && report.text) || "").slice(0, 120);
       if (onProgress) onProgress(report);
     },
-  }, chatOptsFor(id));
+  });
 }
 
 function getEngine(onProgress) {
-  touchEngine();
   if (!enginePromise) {
     // The choice first, then the engine. Building one before knowing which
     // model was asked for is how the wrong weights get two gigabytes of
     // download and every decision after it.
-    enginePromise = chosenModelId()
+    const p = chosenModelId()
       .then((id) => buildEngine(id, onProgress).catch((err) => {
         // Said, not worked around. Switching models on somebody's behalf is
         // what all of this used to do, and between the ladder, the
@@ -284,11 +275,12 @@ function getEngine(onProgress) {
           + ` - ${String((err && err.message) || err).slice(0, 120)}`;
         throw err;
       }))
-      .then((engine) => {
-        engineReady = true;
-        return engine;
-      })
-      .catch((err) => { enginePromise = null; engineReady = false; throw err; });
+      // Only while this is still the engine being waited for: a load that
+      // was replaced by "use <other model>" must not mark the new one ready
+      // or, failing, throw its state away.
+      .then((engine) => { if (enginePromise === p) engineReady = true; return engine; })
+      .catch((err) => { if (enginePromise === p) { enginePromise = null; engineReady = false; } throw err; });
+    enginePromise = p;
   }
   return enginePromise;
 }
@@ -352,20 +344,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === "llmPing") {
-    (async () => {
-      try {
-        const engine = await readyEngine();
-        const reply = await engine.chat.completions.create({
-          messages: [{ role: "user", content: msg.prompt || "Say hello in exactly five words." }],
-        });
-        sendResponse({ ok: true, text: reply.choices[0].message.content });
-      } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
-      }
-    })();
-    return true; // async response
-  }
 
   // Vectors for a list of short strings. Everything else about ranking -
   // what to compare, what counts as close, what to do when nothing is -
@@ -397,11 +375,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     })();
     return true;
-  }
-
-  if (msg.type === "llmEmbedStatus") {
-    sendResponse({ ready: embedReady, started: !!embedPromise, hasGpu: "gpu" in navigator });
-    return;
   }
 
   // Switch model, in place.
@@ -445,7 +418,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       lastProgress = old
         ? `waiting for the previous model to finish loading, then switching to ${WC_MODEL_NAME(want)}`
         : null;
-      enginePromise = (async () => {
+      const p = (async () => {
         try {
           const e = await old;
           // Waits for generations, not for loads. A load in progress is not
@@ -459,8 +432,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           lastProgress = String((r && r.text) || "").slice(0, 120);
           chrome.runtime.sendMessage({ type: "llmProgress", text: r.text, fraction: r.progress }).catch(() => {});
         });
-      })().then((e) => { engineReady = true; return e; })
-        .catch((err) => { enginePromise = null; engineReady = false; throw err; });
+      })().then((e) => { if (enginePromise === p) engineReady = true; return e; })
+        .catch((err) => { if (enginePromise === p) { enginePromise = null; engineReady = false; } throw err; });
+      enginePromise = p;
       enginePromise.catch(() => { /* reported through llmStatus */ });
       sendResponse({ ok: true, model: MODEL_ID, waitingForPrevious: !!old });
     })();
@@ -511,7 +485,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const started = Date.now();
         const reply = await Promise.race([
           engine.chat.completions.create({
-            messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+            messages: [{ role: "user", content: /qwen3/i.test(String(MODEL_ID || "")) ? `${prompt}\n/no_think` : prompt }],
             temperature: 0,
             max_tokens: 4,   // a number, and nothing else
           }),
@@ -571,7 +545,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const INFERENCE_TIMEOUT_MS = inferenceTimeoutMs();
         const reply = await whileBusy(() => Promise.race([
           engine.chat.completions.create({
-            messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+            messages: [{ role: "user", content: /qwen3/i.test(String(MODEL_ID || "")) ? `${prompt}\n/no_think` : prompt }],
             temperature: msg.logprobs ? 1 : 0,
             // A decision is `{"n":14,"do":"check","on":true}` - about twenty
             // tokens, and that is what it costs: this is a ceiling, not a
@@ -672,7 +646,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const INFERENCE_TIMEOUT_MS = 120000;
         const reply = await Promise.race([
           engine.chat.completions.create({
-            messages: [{ role: "user", content: /qwen3/i.test(String(engineModel || "")) ? `${prompt}\n/no_think` : prompt }],
+            messages: [{ role: "user", content: /qwen3/i.test(String(MODEL_ID || "")) ? `${prompt}\n/no_think` : prompt }],
             temperature: 0,      // picking a tool is not a creative task
             max_tokens: 96,      // a routing decision is one small JSON object
           }),
@@ -698,60 +672,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === "llmPlan") {
-    (async () => {
-      try {
-        const engine = await readyEngine();
-        // background.js optionally supplies context (env-vocab synonyms,
-        // and for GENERIC-route asks, the live inventory() output) - this is
-        // what lets the model pick a real selector on a page it's never
-        // seen, rather than guessing one blind. It can't go in a system
-        // message: WebLLM 0.2.85 rejects any custom system prompt outright
-        // once `tools` is set ("cannot specify customized system prompt"),
-        // confirmed live - Hermes-2-Pro's tool-calling mode installs its own
-        // fixed system prompt instead. So it's folded into the one user
-        // message instead.
-        const content = msg.context ? `${msg.context}\n\n${msg.instruction}` : msg.instruction;
-        const messages = [{ role: "user", content }];
-        // llmProgress only fires during model *loading*, so a slow-but-
-        // working inference call (realistically seconds on an 8B model over
-        // WebGPU) looks identical to a hang in the popup otherwise.
-        chrome.runtime.sendMessage({ type: "llmGenerating" });
-        // Without a bound here, a genuinely stuck request and a merely slow
-        // one look identical from the popup's side - both just say
-        // "thinking" forever, with no way to tell them apart or recover
-        // short of reloading the extension. 120s is generous for even a
-        // slow-GPU 8B model on a real turn; if it's not back by then,
-        // something is actually wrong, not just slow.
-        const INFERENCE_TIMEOUT_MS = 120000;
-        const reply = await Promise.race([
-          engine.chat.completions.create({ messages, tools: msg.tools, tool_choice: "auto" }),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s - the model may be stuck, or this hardware is too slow for local WebGPU inference on an 8B model`)), INFERENCE_TIMEOUT_MS)
-          ),
-        ]);
-        const choice = reply.choices[0].message;
-        const call = choice.tool_calls && choice.tool_calls[0];
-        if (!call) {
-          // valid outcome, not an error: the model decided no tool applied
-          // and just answered in plain text instead.
-          sendResponse({ ok: true, toolCall: null, text: choice.content });
-          return;
-        }
-        let args;
-        try {
-          args = JSON.parse(call.function.arguments);
-        } catch (e) {
-          sendResponse({ ok: false, error: `model's arguments weren't valid JSON: ${call.function.arguments}` });
-          return;
-        }
-        sendResponse({ ok: true, toolCall: { name: call.function.name, args } });
-      } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
-      }
-    })();
-    return true; // async response
-  }
 
   // Fire-and-forget: background.js sends this as soon as the browser
   // starts, well before anyone opens the popup, so getEngine()'s promise is
