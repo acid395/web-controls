@@ -12853,6 +12853,37 @@ async function alreadyAsAsked(clause, label) {
   return wantShown ? "already open, so left as it was" : "already hidden, so left as it was";
 }
 
+/* "Select Hoover Dam on the map", "search for hoover dam and select it in
+ * the map". A thing on the map, chosen: its marker where the marker can be
+ * pressed, its row where the page selects from a list beside the map, or
+ * the map moved to it (selectOnMap in the page bundle). Only choosing verbs:
+ * "show the bridges on the map" turns on a layer, and "find Denver on the
+ * map" is the place box's. "It", or "the dam" after a search, is what was
+ * searched for - tried after the words themselves, so "open the legend on
+ * the map" is still the legend wherever there is one.
+ */
+const ON_MAP_CLAUSE = /^\s*(?:please\s+)?(?:then\s+)?(?:select|click(?:\s+on)?|open(?:\s+up)?|choose|pick|press|tap|highlight)\s+(.{1,60}?)\s+(?:on|in)\s+(?:the|this)\s+map\s*$/i;
+const REFERS_BACK = /^(?:it|that|this|that one|this one|the (?:one|same one|result|first result|top result|dam|site|station|gauge|gage|sensor|well|point|marker|pin|location|place|reservoir|lake|river|stream|feature|facility|building))$/i;
+// alone: a request of one clause, where a point that cannot be pressed is
+// better answered by the map-point card further on, with its coordinates.
+async function selectOnMapStep(clause, lastSearch, { alone = false } = {}) {
+  const m = String(clause || "").match(ON_MAP_CLAUSE);
+  if (!m) return null;
+  const said = m[1].trim();
+  const searchedFor = lastSearch && lastSearch.words ? String(lastSearch.words).trim() : "";
+  const back = REFERS_BACK.test(said);
+  if (back && !searchedFor) return null;
+  const names = back ? [said, searchedFor] : [said];
+  // Results drawn by a search just run take a moment to arrive.
+  for (let look = 0; look < (searchedFor ? 5 : 1); look++) {
+    if (look) await new Promise((r) => setTimeout(r, 1500));
+    const r = await invokeOnActiveTab("selectOnMap", [names]).catch(() => null);
+    const p = r && r.ok && r.result;
+    if (p && p.found) return alone && !p.pressed ? null : p;
+  }
+  return null;
+}
+
 async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = true, lateLooks = 0, narrow = false } = {}) {
   // Narrow: only what nothing else on the single-instruction path does - the
   // first of a run, a list or box named with its value. The rest of that
@@ -12866,6 +12897,18 @@ async function resolveStep(routeGlobal, clause, { lastSearch = null, exact = tru
     kind, changed: changed || !!confirmed, unconfirmed: !!unconfirmed && !confirmed,
     did: confirmed ? `${label}, then ${confirmed.label}` : label, outcome, confirmed: !!confirmed,
   });
+  const onMap = await selectOnMapStep(clause, lastSearch, { alone: narrow }).catch(() => null);
+  if (onMap) {
+    const others = onMap.alsoNamed > 0 ? ` (${onMap.alsoNamed} more share the name - this is the one the page lists first)` : "";
+    const how = onMap.via === "list" ? "selected from the page's list beside the map"
+      : onMap.via === "marker" ? "its marker on the map, pressed"
+      : onMap.movedMap ? "the map moved to it - this map gives no way to press it"
+      : "found in the map's data, but this map gives no way to select or move to it";
+    const name = String(onMap.name || clause);
+    const detail = String(onMap.detail || "").replace(name, "").trim();
+    const label = `${name}${onMap.via === "list" && detail && onMap.alsoNamed > 0 ? ` - ${detail.slice(0, 80)}` : ""}`;
+    return done("map", label, onMap.pressed ? !!onMap.changed : !!onMap.movedMap, `${how}${others}`, !!onMap.pressed && !onMap.changed, null);
+  }
   const found = narrow ? null : await pickSearchResult(routeGlobal, clause, lastSearch).catch(() => null);
   if (found) return done("pick", found.control.label, true, "the one the search turned up", false, await confirmAfter());
   if (!narrow) await awaitNamedListReady(clause).catch(() => null);

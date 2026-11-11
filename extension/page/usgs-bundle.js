@@ -413,16 +413,19 @@ if (window.__wcPageBridge) {
     id: n.id || undefined,
     href: n.href || undefined,
   });
-  const postable = (v) => {
+  // Bounded: an object holding a live app graph (an Angular component, say)
+  // would otherwise be walked key by key with nothing to stop it.
+  const postable = (v, depth = 0) => {
     if (v == null || typeof v !== "object") return v;
     if (typeof Node !== "undefined" && v instanceof Node) return describeNode(v);
     try {
       if (typeof structuredClone === "function") structuredClone(v);
       return v;
     } catch (e) {
-      if (Array.isArray(v)) return v.map(postable);
+      if (depth >= 6) return String(v);
+      if (Array.isArray(v)) return v.map((x) => postable(x, depth + 1));
       const out = {};
-      for (const k of Object.keys(v)) { try { out[k] = postable(v[k]); } catch (e2) { out[k] = String(v[k]); } }
+      for (const k of Object.keys(v)) { try { out[k] = postable(v[k], depth + 1); } catch (e2) { out[k] = String(v[k]); } }
       return out;
     }
   };

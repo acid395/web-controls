@@ -15298,5 +15298,57 @@ if (globalThis.WC_MODEL_BY_WORDS) check("'use 3.5 4b' is the 3.5", (globalThis.W
   });
 }
 
+section("choosing a thing on the map");
+// "Search for hoover dam and select it in the map" on the National Inventory
+// of Dams: its results are inert circles on a Leaflet map, and a dam is
+// opened from its row in the list beside it. Four dams are called Hoover
+// Dam; the page lists the Bureau of Reclamation's first, and the search box
+// echoes "hoover dam" above the list.
+{
+  const nid = loadPage(`<!doctype html><html><body>
+    <div class="filters"><div class="chip">hoover dam</div><div class="chip">Applied</div></div>
+    <div class="list">
+      <div class="row" id="r1"><span class="dam-name">Hoover Dam</span><div>Owner Name: BUREAU OF RECLAMATION</div></div>
+      <div class="row" id="r2"><span class="dam-name">Hoover Dam</span><div>Owner Name: City of Columbus</div></div>
+      <div class="row" id="r3"><span class="dam-name">Little Hoover Dam</span><div>Owner Name: J SMITH</div></div>
+    </div>
+    <div class="leaflet-container" id="map" style="width:400px;height:300px"></div></body></html>`, { url: "https://nid.example.gov/#/" });
+  if (!nid) skip("choosing a thing on the map", "jsdom not installed");
+  else {
+    nid.window.__wcFeedCapture = { installedAt: Date.now(), feeds: [{ url: "https://nid.example.gov/api/query?sy=hoover", method: "GET", status: 200,
+      contentType: "application/json", bytes: 600, body: JSON.stringify([
+        { id: "519577", name: "Hoover Dam", latitude: "40.108", longitude: "-82.881", ownerNames: "City of Columbus" },
+        { id: "501329", name: "Little Hoover Dam", latitude: "30.507", longitude: "-88.667", ownerNames: "J SMITH" },
+        { id: "514870", name: "Hoover Dam", latitude: "36.016", longitude: "-114.737", ownerNames: "BUREAU OF RECLAMATION" },
+      ]) }] };
+    let pressed = [];
+    for (const el of nid.document.querySelectorAll(".row, .chip")) el.addEventListener("click", () => pressed.push(el.id || el.textContent));
+    const bgm = loadBackground({ page: nid });
+    runAsync(async () => {
+      const p = await nid.GENERIC.selectOnMap(["Hoover Dam"]);
+      check("a name four dams share opens the row the page lists first", pressed[0], "r1");
+      check("from the list beside the map", p && p.via, "list");
+      check("and the record behind it is the one that row describes", p && p.id, "514870");
+      ensure("and says another shares the name", p && p.alsoNamed === 1, p);
+      ensure("never the search box's echo of what was typed", !pressed.includes("hoover dam"), pressed);
+      pressed = [];
+      await nid.GENERIC.selectOnMap(["little hoover dam"]);
+      check("a longer name is its own row", pressed[0], "r3");
+      pressed = [];
+      const step = await bgm.selectOnMapStep("select it in the map", { words: "hoover dam" });
+      ensure("'it' after a search is what was searched for", step && step.found && pressed[0] === "r1", { step, pressed });
+      pressed = [];
+      const sensor = await bgm.selectOnMapStep("select the sensor in the map", { words: "hoover dam" });
+      ensure("so is 'the sensor'", sensor && sensor.found && pressed[0] === "r1", { sensor, pressed });
+      pressed = [];
+      check("'it' with nothing searched is not guessed", await bgm.selectOnMapStep("select it on the map", null), null);
+      check("'show the bridges on the map' is a layer, not a choice", await bgm.selectOnMapStep("show the bridges on the map", null), null);
+      check("'find Denver on the map' is the place box's", await bgm.selectOnMapStep("find Denver on the map", null), null);
+      check("and nothing was pressed by those", pressed.length, 0);
+      check("a name nobody has is not found", (await nid.GENERIC.selectOnMap(["Grand Coulee Dam"])).found, false);
+    });
+  }
+}
+
 
 bodyDone = true;

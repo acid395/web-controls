@@ -4416,25 +4416,36 @@
   const LON_KEYS = /^(lon|lng|long|longitude|dec_long_va)$/i;
   const ID_KEYS = /^(sitenumber|siteid|id|site_no|nwisid|gaugeid|code)$/i;
 
-  function capturedPoints({ limit = 4000 } = {}) {
+  // detail: each point also carries which feed it came from and the record's
+  // other short text values (an owner, a county), which is what tells apart
+  // four dams all called Hoover Dam.
+  function capturedPoints({ limit = 4000, detail = false } = {}) {
     const out = [];
     const seen = new Set();
+    let feedAt = 0;
     const consider = (o) => {
       if (!o || typeof o !== "object" || Array.isArray(o)) return;
       let name = null, lat = null, lon = null, ident = null;
+      const values = [];
       for (const [k, v] of Object.entries(o)) {
         if (v === null || typeof v === "object") continue;
         if (name === null && NAME_KEYS.test(k) && String(v).trim().length > 2) name = String(v).trim();
         else if (lat === null && LAT_KEYS.test(k) && isFinite(Number(v))) lat = Number(v);
         else if (lon === null && LON_KEYS.test(k) && isFinite(Number(v))) lon = Number(v);
         else if (ident === null && ID_KEYS.test(k)) ident = String(v);
+        else if (detail && typeof v === "string" && values.length < 12) {
+          const t = v.trim();
+          if (t.length >= 4 && t.length <= 60 && /[a-z]{3}/i.test(t)) values.push(t);
+        }
       }
       if (!name || lat === null || lon === null) return;
       if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
       const key = `${name}|${lat}|${lon}`;
       if (seen.has(key)) return;
       seen.add(key);
-      out.push({ name: name.slice(0, 90), lat, lon, id: ident || undefined });
+      const point = { name: name.slice(0, 90), lat, lon, id: ident || undefined };
+      if (detail) { point.feed = feedAt; point.values = values; }
+      out.push(point);
     };
     const walk = (node, depth) => {
       if (out.length >= limit || depth > 6 || !node || typeof node !== "object") return;
@@ -4463,10 +4474,13 @@
         if (seen.has(key)) continue;
         seen.add(key);
         const id = window.match(/"(?:siteNumber|site_no|siteId|nwisId|id)"\s*:\s*"?([A-Za-z0-9_-]{3,24})"?/i);
-        out.push({ name: name.slice(0, 90), lat: la, lon: lo, id: id ? id[1] : undefined });
+        const point = { name: name.slice(0, 90), lat: la, lon: lo, id: id ? id[1] : undefined };
+        if (detail) { point.feed = feedAt; point.values = []; }
+        out.push(point);
       }
     };
     for (const feed of (capturedFeeds({ includeBodies: true }).feeds || [])) {
+      feedAt += 1;
       const body = feed.body;
       if (typeof body === "string") {
         let parsed = null;
@@ -4521,20 +4535,183 @@
   function openCapturedPoint(name) {
     const point = findCapturedPoint(name);
     if (!point) return { found: false, asked: name };
+    return { found: true, ...point, movedMap: moveMapTo(point) };
+  }
+  function moveMapTo(point) {
     const info = mapInfo();
     const map = (info.jsInstanceReachable && lastMapInstance) || (window.L && window.L.__wcMap) || null;
-    let moved = false;
     try {
+      // An instance found but never shown ("Set map center and zoom first")
+      // throws here, and is not the map on the screen.
       if (map && typeof map.setView === "function") {
         map.setView([point.lat, point.lon], Math.max(map.getZoom ? map.getZoom() : 8, 10));
-        moved = true;
+        return true;
       } else if (map && typeof map.flyTo === "function") {
-        map.flyTo({ center: [point.lon, point.lat], zoom: 10 }); moved = true;
+        map.flyTo({ center: [point.lon, point.lat], zoom: 10 }); return true;
       } else if (map && typeof map.setCenter === "function") {
-        map.setCenter([point.lon, point.lat]); moved = true;
+        map.setCenter([point.lon, point.lat]); return true;
       }
     } catch (e) { /* a map that will not move is still a point worth reporting */ }
-    return { found: true, ...point, movedMap: moved };
+    return false;
+  }
+
+  /* "Select Hoover Dam on the map" - the thing itself, chosen the way the page
+   * lets a person choose it. In order:
+   *   1. a marker that carries the name (a labelled element);
+   *   2. a marker that does not, paired with its record in the page's own map
+   *      data by where it sits - kept only where every record lands on a
+   *      marker, and pressed only if the press visibly does something;
+   *   3. the page's own listing of it - a results row called that - which is
+   *      how a list-and-map page selects (the National Inventory of Dams
+   *      draws its results as inert circles and opens a dam from its row);
+   *   4. otherwise the map is moved to the point, as openCapturedPoint did.
+   * `names` are tried in order: what was said, then what the search before
+   * it was for ("search for hoover dam and select it on the map").
+   */
+  const flatName = (t) => norm(String(t || "")).replace(/[^a-z0-9]+/g, " ").trim();
+  // Exact name first, then every word said, shortest first: "Hoover Dam" over
+  // "Gladys Meador Hoover Dam", and both over nothing.
+  const nameRank = (said, text) => {
+    const s = flatName(said), t = flatName(text);
+    if (!s || !t) return 0;
+    if (t === s) return 3;
+    const words = s.split(" ").filter((w) => w.length > 1);
+    if (words.length && words.every((w) => (` ${t} `).includes(` ${w} `))) return 2;
+    return 0;
+  };
+  // What a press that did something leaves behind: a new address, a popup
+  // or dialog, or a handful of new elements. Not the page's text - a map's
+  // coordinate readout changes that whenever the pointer passes over it.
+  const mapPressSignal = () => ({ href: location.href,
+    popups: document.querySelectorAll(".leaflet-popup, .mapboxgl-popup, .maplibregl-popup, .ol-popup, .esri-popup__main-container, .gm-style-iw, [role=dialog]").length,
+    elements: document.getElementsByTagName("*").length });
+  const pressDidSomething = (a, b) => a.href !== b.href || a.popups !== b.popups || Math.abs(a.elements - b.elements) >= 5;
+  const pressAtCentre = (el) => {
+    const r = el.getBoundingClientRect();
+    const o = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, view: window };
+    for (const [Ctor, type] of [[PointerEvent, "pointerover"], [MouseEvent, "mouseover"], [PointerEvent, "pointerdown"], [MouseEvent, "mousedown"],
+      [PointerEvent, "pointerup"], [MouseEvent, "mouseup"], [MouseEvent, "click"]]) el.dispatchEvent(new Ctor(type, o));
+  };
+  // Unlabelled markers matched to records by position. The map's projection
+  // is not known, so both usual ones are tried; a fit is accepted only where
+  // the two axes agree on the scale and every record lands on a marker.
+  function pairMarkers(points, markers) {
+    if (points.length < 2 || points.length !== markers.length) return null;
+    const centres = markers.map((el) => { const r = el.getBoundingClientRect(); return { el, x: r.left + r.width / 2, y: r.top + r.height / 2, size: Math.max(r.width, r.height) }; });
+    const rad = (d) => d * Math.PI / 180;
+    const projections = [(lat) => Math.log(Math.tan(Math.PI / 4 + rad(Math.max(-85, Math.min(85, lat))) / 2)), (lat) => rad(lat)];
+    for (const proj of projections) {
+      const P = points.map((p) => ({ x: rad(p.lon), y: proj(p.lat) }));
+      const span = (arr, k) => Math.max(...arr.map((v) => v[k])) - Math.min(...arr.map((v) => v[k]));
+      const sx = span(P, "x") > 1e-6 ? span(centres, "x") / span(P, "x") : null;
+      const sy = span(P, "y") > 1e-6 ? span(centres, "y") / span(P, "y") : null;
+      const s = sx || sy;
+      if (!s || (sx && sy && Math.abs(sx - sy) / Math.max(sx, sy) > 0.05)) continue;
+      const ax = Math.min(...centres.map((c) => c.x)) - s * Math.min(...P.map((v) => v.x));
+      const ay = Math.min(...centres.map((c) => c.y)) + s * Math.max(...P.map((v) => v.y));
+      const tol = Math.max(4, 0.6 * Math.max(...centres.map((c) => c.size)));
+      const pairs = P.map((v) => {
+        const x = ax + s * v.x, y = ay - s * v.y;
+        let best = null, bestD = Infinity;
+        for (const c of centres) { const d = Math.hypot(c.x - x, c.y - y); if (d < bestD) { bestD = d; best = c; } }
+        return bestD <= tol ? best : null;
+      });
+      if (pairs.every(Boolean)) return pairs;
+    }
+    return null;
+  }
+
+  async function selectOnMap(names) {
+    const said = (Array.isArray(names) ? names : [names]).map((n) => String(n || "").trim()).filter(Boolean);
+    if (!said.length) return { found: false };
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const containers = deepQueryAll(".leaflet-container, .mapboxgl-map, .maplibregl-map, .ol-viewport, .gm-style, .esri-view").filter(isVisible);
+    const points = capturedPoints({ detail: true }).points;
+    for (const name of said) {
+      // 1. A marker that says what it is.
+      const labelled = (mapFeatures({ limit: 200 }).features || []).filter((f) => f.selector && f.label && nameRank(name, f.label) === 3);
+      if (labelled.length) {
+        const el = deepQuery(labelled[0].selector);
+        if (el) {
+          const before = mapPressSignal();
+          pressAtCentre(el);
+          await wait(700);
+          return { found: true, name: labelled[0].label, via: "marker", pressed: true, changed: pressDidSomething(before, mapPressSignal()), alsoNamed: labelled.length - 1 };
+        }
+      }
+      // The records called this, best name first.
+      const ranked = points.map((p) => ({ p, rank: nameRank(name, p.name) })).filter((x) => x.rank);
+      const top = ranked.length ? Math.max(...ranked.map((x) => x.rank)) : 0;
+      const matches = ranked.filter((x) => x.rank === top).map((x) => x.p)
+        .sort((a, b) => a.name.length - b.name.length);
+      const shortest = matches.length ? matches[0].name.length : 0;
+      const named = matches.filter((p) => p.name.length === shortest);
+      // The page's own rows called this - repeated siblings, not a heading
+      // or the search box echoing it - in the order the page lists them.
+      const rows = [];
+      if (containers.length) {
+        for (const el of document.querySelectorAll("body *")) {
+          if (rows.length >= 40) break;
+          if (el.children.length > 2 || /^(?:SCRIPT|STYLE|INPUT|TEXTAREA|SELECT|OPTION|TITLE)$/.test(el.tagName)) continue;
+          const text = String(el.textContent || "").trim();
+          if (!text || text.length > 90 || !isVisible(el) || containers.some((c) => c.contains(el))) continue;
+          const want = named.length ? named[0].name : name;
+          if (nameRank(want, text) !== 3 && nameRank(name, text) !== 3) continue;
+          if (rows.some((r) => r.name.contains(el) || el.contains(r.name))) continue;
+          // The row: the nearest holder that has look-alike siblings.
+          let row = null;
+          for (let n = el.parentElement, d = 0; n && n !== document.body && d < 6; n = n.parentElement, d++) {
+            const kin = n.parentElement ? [...n.parentElement.children].filter((k) => k !== n && k.tagName === n.tagName && k.className === n.className) : [];
+            if (kin.length >= 1) { row = n; break; }
+          }
+          if (row) rows.push({ name: el, row, spelt: named.some((p) => p.name === text), text: String(row.innerText || row.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160) });
+        }
+        // A row spelt as the record spells it before one that only matches
+        // in lower case - the search box's own echo of what was typed.
+        rows.sort((a, b) => (b.spelt ? 1 : 0) - (a.spelt ? 1 : 0));
+      }
+      // Several records with the one name: the one the page lists first, by
+      // the values of its own that row shows.
+      let point = named[0] || null;
+      let sure = named.length === 1;
+      if (named.length > 1 && rows.length) {
+        const rowText = flatName(rows[0].text);
+        const carried = named.filter((p) => (p.values || []).some((v) => flatName(v).length > 3 && rowText.includes(flatName(v))));
+        if (carried.length === 1) { point = carried[0]; sure = true; }
+      }
+      // 2. The record's own marker, where the markers can be paired - and
+      // only for a record known to be the one meant.
+      if (point && sure && containers.length) {
+        const markers = containers.flatMap((c) => [...c.querySelectorAll("path.leaflet-interactive, .leaflet-marker-icon, [class*=marker]:not([class*=pane]):not([class*=cluster]):not([class*=shadow])")])
+          .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.width < 48 && r.height > 0 && r.height < 48 && isVisible(el); });
+        const group = points.filter((p) => p.feed === point.feed);
+        const pairs = pairMarkers(group, markers);
+        const mine = pairs && pairs[group.indexOf(point)];
+        // Pressed only where no other record of a different name sits on it.
+        const crowded = mine && group.some((p, i) => pairs[i] === mine && flatName(p.name) !== flatName(point.name));
+        if (mine && !crowded) {
+          const before = mapPressSignal();
+          pressAtCentre(mine.el);
+          await wait(700);
+          if (pressDidSomething(before, mapPressSignal())) {
+            return { found: true, name: point.name, lat: point.lat, lon: point.lon, id: point.id, via: "marker", pressed: true, changed: true, alsoNamed: named.length - 1 };
+          }
+        }
+      }
+      // 3. Its row in the page's own list.
+      if (rows.length) {
+        const pick = rows[0];
+        const before = mapPressSignal();
+        realClick(pick.name);
+        await wait(900);
+        return { found: true, name: String(pick.name.textContent || "").trim().slice(0, 90), detail: pick.text,
+          lat: point ? point.lat : undefined, lon: point ? point.lon : undefined, id: point ? point.id : undefined,
+          via: "list", pressed: true, changed: pressDidSomething(before, mapPressSignal()), alsoNamed: rows.length - 1 };
+      }
+      // 4. The map moved to it.
+      if (point) return { found: true, ...point, feed: undefined, values: undefined, via: "moved", pressed: false, movedMap: moveMapTo(point), alsoNamed: named.length - 1 };
+    }
+    return { found: false, asked: said[0] };
   }
 
   const READERS = [
@@ -5036,7 +5213,7 @@
     mcpInfo, mcpTools, mcpCall, mcpRegister, mcpPublishControls, capturedSeries, capturedFacts,
     disclosures, openDisclosure, findInSections,
     pageTools: pageToolDescriptors, pageToolCall, searchTargets, searchUrl,
-    capturedPoints, findCapturedPoint, openCapturedPoint,
+    capturedPoints, findCapturedPoint, openCapturedPoint, selectOnMap,
     mcpInstall,
     check: (selector, on = true) => setChecked(selector, on),
     pickRadio: (nameOrAnything, valueOrLabel) => pickRadio(nameOrAnything, valueOrLabel),

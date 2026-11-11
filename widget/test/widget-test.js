@@ -483,6 +483,26 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     }
   }
 
+  console.log("results the page hands back");
+  {
+    // fill() returns the box it typed into. On an Angular page that box
+    // carries __ngContext__, the app's whole object graph, and copying it key
+    // by key froze the National Inventory of Dams' tab.
+    const w = page();
+    w.eval(`${fs.readFileSync(path.join(__dirname, "..", "src", "chrome-shim.js"), "utf8")}\nwindow.__mkShim = createChromeShim;`);
+    const shim = w.__mkShim({ modelHost: { status: () => ({}) }, pageGlobals: () => ["T"] });
+    const box = w.document.createElement("input");
+    w.document.body.appendChild(box);
+    const app = { name: "app" };
+    app.self = app; app.view = [app, box]; box.__ngContext__ = app;
+    w.T = { fill: () => box, nested: () => ({ el: box, deep: app }) };
+    const r = await shim.chrome.tabs.sendMessage(1, { type: "call", fn: "fill", args: [] });
+    check("an element handed back is described, not walked", r.ok && r.result && r.result.element, "input");
+    const r2 = await shim.chrome.tabs.sendMessage(1, { type: "call", fn: "nested", args: [] });
+    check("and an object that loops through one comes back, bounded", r2.ok && r2.result.el.element, "input");
+    shim.dispose();
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

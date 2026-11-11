@@ -151,12 +151,24 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   // Calls on the page. Results are copied the way the extension's bridge
   // copies them on their way through postMessage, so background.js never
   // holds a live object the page bundle still mutates.
-  const postable = (v) => {
+  // An element is described, as the bridge describes it: fill() returns the
+  // box it typed into, and on an Angular page the key-by-key copy of that box
+  // walked the whole app through its __ngContext__ and froze the tab (NID).
+  // The walk is bounded for the same reason.
+  const describeNode = (n) => ({
+    element: String(n.tagName || "node").toLowerCase(),
+    text: String(n.textContent || "").trim().slice(0, 80) || undefined,
+    id: n.id || undefined,
+    href: n.href || undefined,
+  });
+  const postable = (v, depth = 0) => {
     if (v == null || typeof v !== "object") return v;
+    if (typeof Node !== "undefined" && v instanceof Node) return describeNode(v);
     try { return structuredClone(v); } catch (e) {
-      if (Array.isArray(v)) return v.map(postable);
+      if (depth >= 6) return String(v);
+      if (Array.isArray(v)) return v.map((x) => postable(x, depth + 1));
       const out = {};
-      for (const k of Object.keys(v)) { try { out[k] = postable(v[k]); } catch (e2) { out[k] = String(v[k]); } }
+      for (const k of Object.keys(v)) { try { out[k] = postable(v[k], depth + 1); } catch (e2) { out[k] = String(v[k]); } }
       return out;
     }
   };
