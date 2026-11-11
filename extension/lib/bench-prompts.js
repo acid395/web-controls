@@ -893,5 +893,27 @@ globalThis.WC_BENCH_PROMPTS = {
    {"say":"only show wildfires","kind":"multistep","steps":["Map Filter","Prescribed Fire","Burned Area Response","Other"],"on":"Other","want":{"clicked":"Other"},"offline":null},
    {"say":"turn on red flag warnings and switch to the roads map","kind":"multistep","steps":["Map Settings","Red Flag Warnings","Roads"],"on":"Roads","want":{"clicked":"Roads"},"offline":null}
   ]
+ },
+ "wdfn-explore": {
+  "firstContact": true,
+  "url": "https://maps.waterdata.usgs.gov/mapper/",
+  "note": "Explore USGS Water Data (the NWIS Mapper URL redirects here). Leaflet map near Washington DC with 7 named monitoring-location pins (Potomac River Near Wash, DC Little Falls; Difficult Run Near Great Falls, VA; Rock Creek at Joyce Rd Washington, DC; Turkey Branch Near Rockville, MD; Dead Run at Whann Avenue Near Mclean, VA; Northwest Branch Anacostia River nr Colesville; 52V 2D groundwater well). Search box 'Start typing to search by water body, city, monitoring location name or ID'; Enlarge map; Layers (Light gray, USGS Topo, Imagery, Hydro, HUC); Zoom in/out. Right side: '7 locations found', Show filter and sort options (data collections, 120 days time range, location types), Show My Favorites options, the locations listed by Groundwater / Surface water. Menus WDFN tools and data (National Water Dashboard, WaterAlert...), Other water data resources, Connect.",
+  "prompts": [
+   {"say":"select Potomac River Near Wash, DC Little Falls on the map","kind":"action","steps":["Potomac River Near Wash, DC Little Falls"],"on":"Potomac River Near Wash, DC Little Falls","want":{"clicked":"Potomac River Near Wash, DC Little Falls"},"offline":null},
+   {"say":"click Rock Creek at Joyce Rd on the map","kind":"action","steps":["Rock Creek at Joyce Rd Washington, DC"],"on":"Rock Creek at Joyce Rd Washington, DC","want":{"clicked":"Rock Creek at Joyce Rd Washington, DC"},"offline":null},
+   {"say":"open the Turkey Branch gauge on the map","kind":"action","steps":["Turkey Branch Near Rockville, MD"],"on":"Turkey Branch Near Rockville, MD","want":{"clicked":"Turkey Branch Near Rockville, MD"},"offline":null},
+   {"say":"search for Difficult Run and select it on the map","kind":"multistep","steps":["Start typing to search by water body, city, monitoring location name or ID","Difficult Run Near Great Falls, VA"],"on":"Difficult Run Near Great Falls, VA","want":{"clicked":"Difficult Run Near Great Falls, VA"},"offline":null},
+   {"say":"open the layers panel","kind":"action","steps":["Layers"],"on":"Layers","want":{"clicked":"Layers"},"offline":null},
+   {"say":"switch the map to satellite imagery","kind":"action","steps":["Layers","Imagery"],"on":"Imagery","want":{"clicked":"Imagery"},"offline":null},
+   {"say":"show the watershed boundaries","kind":"action","steps":["Layers","HUC"],"on":"HUC","want":{"clicked":"HUC"},"offline":null},
+   {"say":"make the map bigger","kind":"action","steps":["Enlarge map"],"on":"Enlarge map","want":{"clicked":"Enlarge map"},"offline":null},
+   {"say":"zoom in on the map","kind":"action","steps":["Zoom in"],"on":"Zoom in","want":{"clicked":"Zoom in"},"offline":null},
+   {"say":"show the filter and sort options","kind":"action","steps":["Show filter and sort options"],"on":"Show filter and sort options","want":{"clicked":"Show filter and sort options"},"offline":null},
+   {"say":"go to the National Water Dashboard","kind":"action","steps":["WDFN tools and data","National Water Dashboard"],"on":"National Water Dashboard","want":{"clicked":"National Water Dashboard"},"offline":null},
+   {"say":"how many monitoring locations are on the map","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"which of these locations measure groundwater","kind":"explain","steps":[],"explain":true,"on":null,"want":{"read":true},"offline":null},
+   {"say":"select the Dead Run gauge on the map and tell me where it is","kind":"action+explain","steps":["Dead Run at Whann Avenue Near Mclean, VA"],"explain":true,"on":"Dead Run at Whann Avenue Near Mclean, VA","want":{"clicked":"Dead Run at Whann Avenue Near Mclean, VA","read":true},"offline":null},
+   {"say":"switch to the topo map and select Northwest Branch Anacostia River on the map","kind":"multistep","steps":["Layers","USGS Topo","Northwest Branch Anacostia River nr Colesville, MD"],"on":"Northwest Branch Anacostia River nr Colesville, MD","want":{"clicked":"Northwest Branch Anacostia River nr Colesville, MD"},"offline":null}
+  ]
  }
 };
