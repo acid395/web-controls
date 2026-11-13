@@ -5827,6 +5827,23 @@ function alsoCalled(label, control = null) {
   return names.filter((x) => x.length >= 2);
 }
 
+// A language's own name for itself, read as its English one. Federal pages
+// carry these links by law, written in the language they lead to; a
+// non-Latin one has no letters a-z at all, so words never reach it.
+const LANGUAGE_OWN_NAMES = [
+  [/\bespanol\b/, "spanish"], [/\bfrancais\b/, "french"], [/\bportugues\b/, "portuguese"],
+  [/\bdeutsch\b/, "german"], [/\bitaliano\b/, "italian"], [/\btieng viet\b/, "vietnamese"],
+  [/\bkreyol\b/, "creole"], [/\btagalog\b/, "tagalog"], [/\bpolski\b/, "polish"],
+  [/中文|简体|繁體/, "chinese"], [/한국어/, "korean"], [/日本語/, "japanese"],
+  [/русский/, "russian"], [/العربية/, "arabic"], [/हिन्दी/, "hindi"], [/فارسی/, "persian"],
+];
+function languageNamesFor(label) {
+  // Raw as well as folded: folding takes Hangul apart into its letters.
+  const raw = String(label || "").toLowerCase();
+  const t = foldAccents(raw);
+  return LANGUAGE_OWN_NAMES.filter(([re]) => re.test(t) || re.test(raw)).map(([, name]) => name);
+}
+
 function namedByClause(all, clause) {
   const flat = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   let exactly = false;
@@ -6939,6 +6956,11 @@ function shortlistFor(goal, controls, max = 20) {
     // place on the list to a dozen Forecast links sharing the same one.
     if (typing && takesTyping(c)) n += 1;
     if (!n && alsoCalled(c.label, c).some((a) => words.some((w) => wordMatchesText(w, a)))) n += 1;
+    // A language's link wears that language's own name. "Open the map in
+    // Spanish" shares no word with "En Español", and the page's twenty Map
+    // links filled the list without it - so the language named counts as
+    // the link named whole.
+    if (languageNamesFor(c.label).some((l) => words.includes(l))) n += 5;
     const opts = c.options || [];
     if (opts.length && words.some((w) => opts.some((o) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))) n += 3;
     if (c.hidden) n -= 0.5;
@@ -6985,8 +7007,14 @@ function leavesThePage(c) {
 }
 function askedToLeaveFor(goal, c) {
   const want = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
-  return /\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal)
-    && meaningfulWords(String(c.label || "")).some((w) => want.includes(w));
+  const own = meaningfulWords(String(c.label || ""));
+  if (/\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal)
+    && [...own, ...languageNamesFor(c.label)].some((w) => want.includes(w))) return true;
+  // Asking to see a link named whole is asking to go there: "show the
+  // national radar" is weather.gov's RADAR, a link to the radar site, and
+  // was refused for not saying "go".
+  return /\b(?:show|see|view|display|bring\s+up|pull\s+up)\b/i.test(goal)
+    && own.length > 0 && own.every((w) => want.includes(w));
 }
 
 // A control that undoes things is pressed only when the request asks for

@@ -3633,6 +3633,29 @@ section("the model chooses from the page's controls");
     }
     ensure("a value to type brings its box", offered("type 60601 into the forecast box", 6).some((l) => /ZIP Code/.test(l)), offered("type 60601 into the forecast box", 6));
   }
+  // The 8B never has the meaning model beside it, so a link in its own
+  // language had to be reachable by words: "Spanish" is "En Español".
+  {
+    const many = Array.from({ length: 30 }, (_, i) => `<a href="/m${i}">Map ${i}</a>`).join("");
+    const page = loadPage(`<!doctype html><html><body>${many}
+      <a href="/ES/MapaActual.aspx">En Español</a><a href="/zh/">中文</a><a href="/ko/">한국어</a></body></html>`,
+      { url: "https://droughtmonitor.example.edu/CurrentMap.aspx" });
+    if (page) {
+      const inv = page.GENERIC.inventory({ includeHidden: true });
+      const bgm = loadBackground({ page });
+      const vm = require("vm");
+      const offered = (goal) => vm.runInContext(`shortlistFor(${JSON.stringify(goal)}, controlsForModel(${JSON.stringify(inv)}, { max: 400 }), 20).map((c) => c.label)`, bgm);
+      ensure("'open the map in Spanish' offers En Español among thirty Map links", offered("open the map in Spanish").includes("En Español"), offered("open the map in Spanish"));
+      ensure("and a page in Chinese or Korean is reached by its English name",
+        offered("show this page in Chinese").includes("中文") && offered("switch to Korean").includes("한국어"), [offered("show this page in Chinese"), offered("switch to Korean")]);
+      const leave = (goal, label) => vm.runInContext(`askedToLeaveFor(${JSON.stringify(goal)}, { label: ${JSON.stringify(label)} })`, bgm);
+      ensure("asking for the page in Spanish is asking to go to En Español", leave("open the map in Spanish", "En Español") === true);
+      ensure("asking to see a link named whole is asking to go there", leave("show the national radar", "RADAR") === true);
+      ensure("but not a link only partly named",
+        leave("turn on flood map set, then choose cedar rapids", "Open this area in Google Maps (opens in a new tab)") === false
+        && leave("show the radar loop", "Radar Loop for Alaska") === false);
+    }
+  }
   {
     const bgw = loadBackground();
     for (const [w, t] of [["facility", "Care Facilities"], ["facilities", "care facility"], ["box", "Boxes"], ["day", "7 days"]]) {
