@@ -219,6 +219,19 @@
     background: var(--accent); color: var(--accent-ink); transition: filter .15s, transform .1s;
   }
   button.go svg { width: 16px; height: 16px; }
+  /* Hold to talk. Held, it goes red and pulses; what is heard appears in the
+     box as it is said, and letting go sends it like a typed ask. */
+  button.mic {
+    flex: none; width: 34px; height: 34px; padding: 0; border: none; border-radius: 50%;
+    display: grid; place-items: center; cursor: pointer; touch-action: none; user-select: none;
+    background: transparent; color: var(--muted); transition: background .15s, color .15s;
+  }
+  button.mic svg { width: 17px; height: 17px; }
+  button.mic:hover { background: var(--sunken); color: var(--ink); }
+  button.mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.mic.listening { background: var(--alert); color: #fff; animation: listen 1.1s infinite; }
+  button.mic[hidden] { display: none; }
+  @keyframes listen { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--alert) 45%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
   button.go:hover { filter: brightness(1.08); }
   button.go:active { transform: scale(.94); }
 
@@ -340,6 +353,7 @@
   <div class="ask">
     <div class="ask-row">
       <input id="smartInstruction" placeholder="Ask about this page, or tell it what to do..." autofocus>
+      <button id="talk" class="mic" type="button" title="Hold to talk, let go to send" aria-label="Hold to talk"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5M5.5 14.5h5"/></svg></button>
       <button id="smartAsk" class="go" title="Ask" aria-label="Ask"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg></button>
     </div>
     <div class="enable-row" id="enableRow">

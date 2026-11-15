@@ -1527,6 +1527,19 @@ else {
     !/<option[^>]+value="[^"]*-MLC"/.test(html), "a hardcoded <option> is back");
   ensure("and it loads the one list", /lib\/models\.js/.test(html), "no models.js script tag");
 
+  // Hold to talk: pressed starts listening, released stops it, and what was
+  // heard goes through the same Ask button as typed text.
+  {
+    const js = fsx.readFileSync(pathx.join(EXTDIR, "popup", "popup.js"), "utf8");
+    ensure("the panel has a microphone button", /id="talk"/.test(html), "no #talk");
+    ensure("it listens while held", /addEventListener\("pointerdown"[^]*?start\(/.test(js), "no pointerdown start");
+    ensure("and stops when let go", /addEventListener\("pointerup", stop\)/.test(js), "no pointerup stop");
+    ensure("and sends what it heard like a typed ask",
+      /rec\.onend[^]*?getElementById\("smartAsk"\)\.click\(\)/.test(js), "onend never clicks Ask");
+    ensure("with a page that can ask for the microphone, since the side panel cannot",
+      fsx.existsSync(pathx.join(EXTDIR, "popup", "mic.html")) && /popup\/mic\.html/.test(js), "no mic.html");
+  }
+
   // Every registered model is reachable by the words someone would type, and
   // "1b" must not swallow "1.5b" by sitting inside it.
   for (const [words, want] of [
