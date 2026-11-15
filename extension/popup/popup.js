@@ -347,16 +347,15 @@ if (chrome.storage && chrome.storage.onChanged) chrome.storage.onChanged.addList
 
 document.addEventListener("DOMContentLoaded", restoreHistory);
 
-on("toggleTools", "click", () => {
+on("toggleTools", "click", (e) => {
   const box = document.getElementById("tools");
   box.hidden = !box.hidden;
+  e.currentTarget.setAttribute("aria-pressed", String(!box.hidden));
 });
 
+// Back to the empty state rather than a blank panel, which read as broken.
 on("clearLog", "click", () => {
-  chrome.runtime.sendMessage({ type: "clearHistory" }, () => {
-    logEl().textContent = "";
-    drawnAt = new Map();
-  });
+  chrome.runtime.sendMessage({ type: "clearHistory" }, () => restoreHistory());
 });
 
 // chrome.permissions.request() only counts as triggered by a real click if

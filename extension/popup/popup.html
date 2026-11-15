@@ -38,19 +38,36 @@
   /* ---- header: what this page is, which is genuinely useful ---- */
   .top {
     display: flex; align-items: center; gap: 10px;
-    padding: 11px 14px; border-bottom: 1px solid var(--line-soft); background: var(--bg);
+    padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--line-soft); background: var(--bg);
   }
   .mark {
-    width: 28px; height: 28px; border-radius: 50%; flex: none;
-    display: grid; place-items: center; font-size: 14px; line-height: 1;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+    width: 28px; height: 28px; border-radius: 8px; flex: none;
+    display: grid; place-items: center; color: var(--accent-ink);
+    background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 80%, #7c5cff), var(--accent));
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
-  .name { font-size: 13.5px; font-weight: 600; letter-spacing: .005em; }
+  .mark svg { width: 16px; height: 16px; }
+  .brand { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+  .name { font-size: 13.5px; font-weight: 600; letter-spacing: -.005em; }
+  .brand .ver { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
   .pill {
-    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0;
     padding: 4px 10px; border-radius: 999px; background: var(--sunken);
     font-size: 10.5px; color: var(--muted); white-space: nowrap;
   }
+  .pill > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .dot { flex: none; }
+  /* Header actions: icon buttons, quiet until pointed at. */
+  .head-acts { display: flex; align-items: center; gap: 2px; flex: none; }
+  button.icon {
+    width: 28px; height: 28px; padding: 0; border: none; border-radius: 7px;
+    display: grid; place-items: center; cursor: pointer;
+    background: transparent; color: var(--muted); transition: background .15s, color .15s;
+  }
+  button.icon svg { width: 16px; height: 16px; }
+  button.icon:hover { background: var(--sunken); color: var(--ink); }
+  button.icon[aria-pressed="true"] { background: var(--sunken); color: var(--accent); }
+  button.icon:focus-visible, button.go:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
   .pill.live .dot { background: var(--ok); }
   .pill.generic .dot { background: var(--warn); }
@@ -180,7 +197,7 @@
   }
 
   /* ---- composer, at the bottom where a chat keeps it ---- */
-  .ask { padding: 10px 12px 6px; background: var(--bg); border-top: 1px solid var(--line-soft); }
+  .ask { padding: 10px 12px 12px; background: var(--bg); border-top: 1px solid var(--line-soft); }
   .ask-row {
     display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 15px;
     border: 1px solid var(--line); border-radius: 24px; background: var(--panel);
@@ -218,11 +235,6 @@
   }
   button.secondary:hover { border-color: var(--accent); color: var(--ink); }
 
-  .logbar {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 0 14px 6px; background: var(--bg);
-  }
-  .logbar .hint { margin: 0; font-size: 10px; color: var(--faint); }
   button.linky {
     padding: 2px 4px; border: none; background: none; cursor: pointer;
     color: var(--faint); font: 10.5px/1.4 inherit;
@@ -249,19 +261,23 @@
   /* The model bar. Loading has to be unmistakable: a 5GB download that looks
      like nothing is happening is the single most common way this appears
      broken. */
-  .modelbar { display: flex; align-items: center; gap: 8px; padding: 6px 14px;
-    border-bottom: 1px solid var(--line-soft); background: var(--bg); }
+  .modelbar { display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+    border-bottom: 1px solid var(--line-soft); background: var(--panel); }
   .modelbar select, .modelbar button {
-    flex: 0 1 auto; font: 11px/1.3 inherit; padding: 3px 9px; cursor: pointer;
-    border: 1px solid var(--line); border-radius: 999px; background: var(--sunken); color: var(--ink);
+    flex: 0 1 auto; font: 500 11px/1.3 inherit; padding: 4px 10px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink);
   }
-  .modelbar select { max-width: 50%; }
-  .modelbar button:hover { border-color: var(--accent); }
+  .modelbar select {
+    max-width: 50%; appearance: none; padding-right: 24px;
+    background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5l3-3' fill='none' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 7px center / 12px;
+  }
+  .modelbar select:focus-visible, .modelbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .modelbar button:hover, .modelbar select:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
   .modelstate { font-size: 11px; color: var(--muted); flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .modelstate.loading { color: var(--accent); font-weight: 600; }
   .modelstate.loading::before { content: "\25CF "; animation: pulse 1.1s infinite; }
-  .modelstate.warn { color: #b45309; }
+  .modelstate.warn { color: var(--warn); }
   /* Loaded and answering, said once and plainly. A bar that fills and then
      vanishes leaves nothing behind saying it finished, which is the moment
      somebody is actually waiting for. */
@@ -291,9 +307,16 @@
 </head>
 <body>
   <div class="top">
-    <span class="mark">🌊</span>
-    <span class="name">web-controls</span>
+    <span class="mark" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 6c1.6-1.4 3.2-1.4 4.8 0s3.2 1.4 4.8 0 2.4-1.2 3.4-.6M1.5 10.5c1.6-1.4 3.2-1.4 4.8 0s3.2 1.4 4.8 0 2.4-1.2 3.4-.6"/></svg></span>
+    <span class="brand">
+      <span class="name">web-controls</span>
+      <span class="ver" id="buildTag"></span>
+    </span>
     <span class="pill" id="routePill"><span class="dot"></span><span id="routeText">checking page...</span></span>
+    <span class="head-acts">
+      <button id="clearLog" class="icon" type="button" title="Clear the conversation" aria-label="Clear the conversation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11M6.5 2.5h3M4 4.5l.7 8.2a1 1 0 0 0 1 .8h4.6a1 1 0 0 0 1-.8l.7-8.2M6.8 7v4M9.2 7v4"/></svg></button>
+      <button id="toggleTools" class="icon" type="button" title="Debug tools" aria-label="Debug tools" aria-pressed="false"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/><circle cx="10" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/></svg></button>
+    </span>
   </div>
 
   <!-- Which model, at the top, where somebody looking for it would look.
@@ -324,12 +347,6 @@
       <button id="enableAll" class="secondary">Enable everywhere</button>
       <div class="hint" id="enableStatus"></div>
     </div>
-  </div>
-
-  <div class="logbar">
-    <button id="toggleTools" class="linky" type="button">debug</button>
-    <span class="hint" id="buildTag" style="margin-left:auto"></span>
-    <button id="clearLog" class="linky" type="button">clear</button>
   </div>
 
   <div class="tools" id="tools" hidden>
