@@ -145,16 +145,28 @@ textarea::placeholder { color: var(--ink-2); }
 .stop svg { width: 14px; height: 14px; }
 .stop:disabled { opacity: .55; }
 .send svg { width: 18px; height: 18px; }
+/* Hold to talk. Held, it goes red and pulses; what is heard appears in the
+   box as it is said, and letting go sends it like a typed ask. */
+.mic { flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px; display: grid; place-items: center;
+  cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; background: transparent; color: var(--ink-2);
+  transition: background .15s ease, color .15s ease; }
+.mic svg { width: 18px; height: 18px; }
+.mic:hover { background: var(--bg-2); color: var(--ink); }
+.mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mic.listening { background: var(--bad); color: #fff; animation: listen 1.1s infinite; }
+.mic[hidden] { display: none; }
+@keyframes listen { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--bad) 45%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
 .foot { margin-top: 7px; text-align: center; font-size: 11px; color: var(--ink-2); }
 .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent);
   border-radius: 50%; animation: spin .8s linear infinite; margin-right: 8px; vertical-align: -1px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .spin, .panel { animation: none; } .bar > div, .launcher, .ex, .compose { transition: none; } .log { scroll-behavior: auto; }
+  .spin, .panel, .mic.listening { animation: none; } .bar > div, .launcher, .ex, .compose { transition: none; } .log { scroll-behavior: auto; }
 }
 `;
 
 const SEND_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
+const MIC_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="2.5" width="7" height="12" rx="3.5"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3M8.5 21.5h7"/></svg>`;
 const STOP_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor"/></svg>`;
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9 10h6M9 13.5h4"/></svg>`;
 
@@ -281,7 +293,69 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     if (end) setTimeout(end, 3000);
   };
   stopBtn.addEventListener("click", stop);
-  compose.append(input, sendBtn, stopBtn);
+  // Hold to talk. Pressing the microphone starts listening, letting go stops
+  // it, and whatever was heard is sent the way a typed ask is - through the
+  // same submit, so it is queued behind a running request like typed text.
+  // What is heard so far shows in the box while the button is held.
+  const micBtn = el("button", "mic");
+  micBtn.type = "button";
+  micBtn.setAttribute("aria-label", "Hold to talk");
+  micBtn.title = "Hold to talk, let go to send";
+  micBtn.innerHTML = MIC_ICON;
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) micBtn.hidden = true;
+  else {
+    let rec = null, held = false, heard = "", interim = "";
+    const show = () => { input.value = (heard + " " + interim).replace(/\s+/g, " ").trim(); };
+    const start = (e) => {
+      if (held) return;
+      e.preventDefault();
+      held = true; heard = ""; interim = "";
+      rec = new Rec();
+      rec.lang = navigator.language || "en-US";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (ev) => {
+        interim = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const t = ev.results[i][0].transcript;
+          if (ev.results[i].isFinal) heard += " " + t; else interim += " " + t;
+        }
+        show();
+      };
+      rec.onerror = (ev) => {
+        if (ev.error === "not-allowed" || ev.error === "service-not-allowed") input.placeholder = "Allow the microphone for this site, then hold the button again";
+        else if (ev.error === "no-speech") input.placeholder = "Didn't hear anything - hold the button while you speak";
+        heard = ""; interim = "";
+      };
+      rec.onend = () => {
+        micBtn.classList.remove("listening");
+        // Whatever was still being worked out when the button was let go
+        // counts too: the last few words are often only interim.
+        const said = (heard + " " + interim).replace(/\s+/g, " ").trim();
+        heard = ""; interim = ""; rec = null;
+        if (held) { held = false; return; } // ended on its own; the next release is a no-op
+        if (!said) return;
+        input.value = "";
+        input.placeholder = options.placeholder;
+        ask(said);
+      };
+      try { rec.start(); micBtn.classList.add("listening"); }
+      catch (err) { held = false; rec = null; input.placeholder = "The microphone could not start"; }
+    };
+    const stop = () => {
+      if (!held) return;
+      held = false;
+      if (rec) rec.stop(); else micBtn.classList.remove("listening");
+    };
+    micBtn.addEventListener("pointerdown", (e) => { micBtn.setPointerCapture(e.pointerId); start(e); });
+    micBtn.addEventListener("pointerup", stop);
+    micBtn.addEventListener("pointercancel", stop);
+    micBtn.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) start(e); });
+    micBtn.addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") stop(); });
+    window.addEventListener("blur", stop);
+  }
+  compose.append(input, micBtn, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
   panel.appendChild(form);
 

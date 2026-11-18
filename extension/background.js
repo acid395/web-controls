@@ -7651,6 +7651,8 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
     const r = (ran && ran.result) || {};
     const moved = typeof r.itChanged === "boolean" ? r.itChanged : didItMove(ran);
     history.push({ did: `${act} "${String(target.label).slice(0, 40)}"${value}`, ok: ran && ran.ok !== false, changed: moved,
+      // Ran on a control the request names, with no change this can see.
+      unseen: !!(ran && ran.ok !== false && !moved && !namesNothingOf(goal, target, st.value)) || undefined,
       outcome: ran && ran.ok === false ? `failed: ${String(ran.error || "").slice(0, 60)}`
         : typeof r.itChanged === "boolean" ? `${r.was} -> ${r.now}` : moved ? "the page changed" : "nothing visibly changed" });
     pressedKeys.add(controlKey(target));
@@ -7670,7 +7672,12 @@ async function planWithModel(routeGlobal, goal, { maxSteps = null } = {}) {
       }
     }
   }
-  const short = history.filter((h) => h.ok && h.changed && !h.door).length < evident;
+  // A step that ran on a control the request names, where the page showed
+  // no change this can see, is not a step left out. A second plan cannot
+  // repeat it - the same step twice is once - so all it could add was
+  // padding, and it cost a whole model call after the page had already
+  // done the thing: a legend opened in place, a layer drawn on a canvas.
+  const short = history.filter((h) => h.ok && !h.skipped && !h.door && (h.changed || h.unseen)).length < evident;
   // Values the request gave that no step used, now offered by a list: a
   // form that fills Year once a pollutant is chosen, and the state list
   // once a year is. The first plan could not choose what was not there.
@@ -9415,6 +9422,20 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       return { ok: true, answer: null, history, steps: history.length,
         tookMs: Date.now() - began, said: lastSaid };
     }
+    // One clause, carried out on a control the request names: there is
+    // nothing left to decide. The turn after this one was asking the model
+    // whether it had finished - a 4B's twenty seconds to an 8B's two
+    // minutes of "thinking" after the page had visibly done the thing, to
+    // hear "finish" or the same control again, either of which ended the
+    // run. The search branch already ends here; a press is no different.
+    // Not a way in: a section opened on the way to what was asked still
+    // needs the step inside it, unless the request named the section.
+    if (!mayHaveMore && ran.ok !== false && (moved || satisfied) && shares && r.opened !== true
+        && !ASKING_TO_READ.test(goal) && !asksWhatIsOffered && !readFellThrough
+        && !(target.opensPanel && wholeNamedAmong(goal, [target]) !== target)) {
+      return { ok: true, answer: null, history, steps: history.length,
+        tookMs: Date.now() - began, said: lastSaid };
+    }
     // Opening a chooser is half of choosing. The model named the dropdown -
     // {"why":"selecting Alaska","name":"Select a state","do":"click"} - which
     // is right, and clicking one only opens it, so the run needed a second
@@ -10619,6 +10640,13 @@ async function runVerified(routeGlobal, toolCall) {
     pressKeys = keys;
   }
   forgetInventory();
+  // Said as it happens. The panel reads "model is thinking..." from the
+  // moment a generation starts, and nothing said otherwise until the run
+  // ended - so the press, the wait for the page and the read after it all
+  // looked like the model still running, after the page had visibly done
+  // the thing.
+  const acting = toolCall && toolCall.label ? `${friendlyToolName(toolCall.name)} "${String(toolCall.label).slice(0, 40)}"` : friendlyToolName(toolCall && toolCall.name);
+  if (activeAsk) tellPanel({ type: "agentProgress", text: `carrying it out: ${acting}` });
   const before = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   // The name goes with the address, so the page can refuse to press
   // something else that has since moved into the same place.
@@ -10643,6 +10671,7 @@ async function runVerified(routeGlobal, toolCall) {
   }
   if (!before.ok || result.ok === false) return result;
   const waitFrom = Date.now();
+  if (activeAsk) tellPanel({ type: "agentProgress", text: `done: ${acting} - waiting for the page to catch up` });
 
   // A press that is already taking the page somewhere else is waited for
   // here, before anything reads the page, not only once the reading below

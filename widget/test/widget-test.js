@@ -98,6 +98,11 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("clicking it opens the panel", !root.querySelector(".panel").hidden);
     check("and offers the site's suggestions", [...root.querySelectorAll(".ex")].map((b) => b.textContent)
       .join("|") === "show the monthly reports|what is the storage");
+    // Hold to talk sits beside Ask, and is hidden where the browser cannot
+    // listen - jsdom has no speech recognition, so here it is hidden.
+    const mic = root.querySelector(".mic");
+    check("a hold-to-talk button is drawn beside Ask", !!mic && mic.getAttribute("aria-label") === "Hold to talk");
+    check("and hidden where the browser cannot listen", mic && mic.hidden === true);
     const inv = w.GENERIC.inventory();
     const labels = inv.controls.map((c) => flat(c.label));
     check("the agent sees the page's controls", labels.some((l) => l.includes("monthly reports")), labels.join(" | "));

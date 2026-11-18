@@ -3669,6 +3669,55 @@ section("the model chooses from the page's controls");
         && leave("show the radar loop", "Radar Loop for Alaska") === false);
     }
   }
+
+  // After the page has done the thing, the model is not asked again.
+  //
+  // The step loop spent a turn after every press asking whether it was
+  // finished - a 4B's twenty seconds, an 8B's two minutes, of "thinking"
+  // after the page had visibly changed - and the planner planned a second
+  // time when it could not see a change, though the second plan could not
+  // repeat the step. One clause carried out on a control the request names
+  // is done; a step that ran on one is not a step left out.
+  {
+    const page = loadPage(`<html><body>
+      <label><input type="checkbox" id="snow"> Snow depth</label>
+      <label><input type="checkbox" id="temp"> Air temperature</label>
+      <button id="lo">Legend options</button>
+      <button>Print</button><button>Share</button>
+    </body></html>`, { url: "https://example.org/snow" });
+    if (page) {
+      const bgl = loadBackground({ page });
+      let turns = 0;
+      bgl.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmEmbed") return { ok: false };
+        if (m.type === "llmStep") { turns++; return { ok: true, step: { name: "Snow depth", do: "check", on: true } }; }
+        return undefined;
+      };
+      runAsync(async () => {
+        const r = await bgl.__ask({ type: "smartAsk", instruction: "model: enable snow depth" });
+        check("one clause, done on the control it names: the model is asked once", turns, 1);
+        ensure("and the box is on", page.document.getElementById("snow").checked === true);
+        ensure("and the run is a success", r && r.ok === true, JSON.stringify(r && r.display).slice(0, 200));
+      });
+      const bgp = loadBackground({ page });
+      bgp.__plans = true;
+      let plans = 0;
+      bgp.__model = (m) => {
+        if (m.type === "llmStatus") return { ready: true, hasGpu: true };
+        if (m.type === "llmEmbed") return { ok: false };
+        if (m.type === "llmStep" && m.mode === "plan") { plans++; return { ok: true, step: { steps: [{ name: "Legend options", do: "click" }] } }; }
+        if (m.type === "llmStep") return { ok: true, step: { do: "finish", answer: "" } };
+        return undefined;
+      };
+      runAsync(async () => {
+        const r = await bgp.__ask({ type: "smartAsk", instruction: "show the legend things" });
+        check("a planned step that ran on a named control, unseen, is not planned again", plans, 1);
+        ensure("and the run reports the one step", r && r.plannedBy === "plan" && r.steps.length === 1,
+          JSON.stringify(r && { by: r.plannedBy, steps: r.steps }).slice(0, 300));
+      });
+    }
+  }
   {
     const bgw = loadBackground();
     for (const [w, t] of [["facility", "Care Facilities"], ["facilities", "care facility"], ["box", "Boxes"], ["day", "7 days"]]) {
