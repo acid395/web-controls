@@ -358,72 +358,26 @@ on("clearLog", "click", () => {
   chrome.runtime.sendMessage({ type: "clearHistory" }, () => restoreHistory());
 });
 
-// Hold to talk. Pressing the microphone starts listening, letting go stops
-// it, and whatever was heard is sent the way a typed ask is - through the
-// same button, so bench, speed test and the rest all work spoken. What is
-// heard so far shows in the box while the button is held, so a wrong hearing
-// can be seen before it is sent.
+// Hold to talk - lib/hold-to-talk.js, shared with the widget. What was
+// heard goes through the same Ask button as typed text, so bench, speed
+// test and the rest all work spoken.
 (() => {
-  const btn = document.getElementById("talk");
-  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!btn) return;
-  if (!Rec) { btn.hidden = true; return; }
   const box = () => document.getElementById("smartInstruction");
-  let rec = null, held = false, heard = "", interim = "";
-
-  const show = () => { box().value = (heard + " " + interim).replace(/\s+/g, " ").trim(); };
-  const start = (e) => {
-    if (held) return;
-    if (e.preventDefault) e.preventDefault();
-    held = true; heard = ""; interim = "";
-    rec = new Rec();
-    rec.lang = navigator.language || "en-US";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.onresult = (ev) => {
-      interim = "";
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const t = ev.results[i][0].transcript;
-        if (ev.results[i].isFinal) heard += " " + t; else interim += " " + t;
-      }
-      show();
-    };
-    rec.onerror = (ev) => {
+  let askedForMic = false;
+  const btn = document.getElementById("talk");
+  if (typeof globalThis.WC_HOLD_TO_TALK !== "function") { if (btn) btn.hidden = true; return; }
+  globalThis.WC_HOLD_TO_TALK(btn, {
+    value: () => box().value,
+    setValue: (t) => { box().value = t; },
+    send: (t) => { box().value = t; document.getElementById("smartAsk").click(); },
+    say: (t) => setStatus(t),
+    denied: () => {
       // A side panel cannot show the microphone prompt itself, so the one
-      // page that can is opened once; after that this just works.
-      if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
-        chrome.tabs.create({ url: chrome.runtime.getURL("popup/mic.html") });
-        setStatus("allow the microphone in the tab that just opened, then hold the button again");
-      } else if (ev.error === "no-speech") setStatus("didn't hear anything - hold the button while you speak");
-      else if (ev.error !== "aborted") setStatus(`the microphone failed: ${ev.error}`);
-      heard = ""; interim = "";
-    };
-    rec.onend = () => {
-      btn.classList.remove("listening");
-      // Whatever was still being worked out when the button was let go
-      // counts too: the last few words are often only interim.
-      const said = (heard + " " + interim).replace(/\s+/g, " ").trim();
-      heard = ""; interim = ""; rec = null;
-      if (held) { held = false; return; } // ended on its own; the next release is a no-op
-      if (!said) return;
-      box().value = said;
-      document.getElementById("smartAsk").click();
-    };
-    try { rec.start(); btn.classList.add("listening"); }
-    catch (err) { held = false; rec = null; setStatus(`the microphone failed: ${(err && err.message) || err}`); }
-  };
-  const stop = () => {
-    if (!held) return;
-    held = false;
-    if (rec) rec.stop(); else btn.classList.remove("listening");
-  };
-  btn.addEventListener("pointerdown", (e) => { btn.setPointerCapture(e.pointerId); start(e); });
-  btn.addEventListener("pointerup", stop);
-  btn.addEventListener("pointercancel", stop);
-  // Keyboard too: hold space or enter on the focused button.
-  btn.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) start(e); });
-  btn.addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") stop(); });
-  window.addEventListener("blur", stop);
+      // page that can is opened - once; after that this just works.
+      if (!askedForMic) { askedForMic = true; chrome.tabs.create({ url: chrome.runtime.getURL("popup/mic.html") }); }
+      setStatus("allow the microphone in the tab that opened, then hold the button again");
+    },
+  });
 })();
 
 // chrome.permissions.request() only counts as triggered by a real click if

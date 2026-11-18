@@ -5837,11 +5837,12 @@ const LANGUAGE_OWN_NAMES = [
   [/中文|简体|繁體/, "chinese"], [/한국어/, "korean"], [/日本語/, "japanese"],
   [/русский/, "russian"], [/العربية/, "arabic"], [/हिन्दी/, "hindi"], [/فارسی/, "persian"],
 ];
-function languageNamesFor(label) {
+function languageNamesFor(label, among = LANGUAGE_OWN_NAMES) {
+  if (!among.length) return [];
   // Raw as well as folded: folding takes Hangul apart into its letters.
   const raw = String(label || "").toLowerCase();
   const t = foldAccents(raw);
-  return LANGUAGE_OWN_NAMES.filter(([re]) => re.test(t) || re.test(raw)).map(([, name]) => name);
+  return among.filter(([re]) => re.test(t) || re.test(raw)).map(([, name]) => name);
 }
 
 function namedByClause(all, clause) {
@@ -6936,6 +6937,8 @@ const NAMING_VERB = /^(?:zoom|search|download|sort|group|reset|clear|apply|find)
 const GOES_SOMEWHERE = /\b(?:go|open|visit|navigate|take\s+me|follow|link|page|jump|switch\s+to)\b/i;
 function shortlistFor(goal, controls, max = 20) {
   const all = meaningfulWords(goal);
+  // Worked out once, not sixteen regexes against every control.
+  const languagesAsked = LANGUAGE_OWN_NAMES.filter(([, name]) => all.includes(name));
   const words = all.filter((w) => !CONTROL_VERB.test(w));
   const verbs = all.filter((w) => NAMING_VERB.test(w));
   const typing = carriesAValue(goal);
@@ -6960,7 +6963,7 @@ function shortlistFor(goal, controls, max = 20) {
     // Spanish" shares no word with "En Español", and the page's twenty Map
     // links filled the list without it - so the language named counts as
     // the link named whole.
-    if (languageNamesFor(c.label).some((l) => words.includes(l))) n += 5;
+    if (languagesAsked.length && languageNamesFor(c.label, languagesAsked).length) n += 5;
     const opts = c.options || [];
     if (opts.length && words.some((w) => opts.some((o) => wordMatchesText(w, String(o.text || o.value || "").toLowerCase()) === "exact"))) n += 3;
     if (c.hidden) n -= 0.5;
@@ -7007,14 +7010,17 @@ function leavesThePage(c) {
 }
 function askedToLeaveFor(goal, c) {
   const want = meaningfulWords(goal).filter((w) => !CONTROL_VERB.test(w));
-  const own = meaningfulWords(String(c.label || ""));
-  if (/\b(?:go|open|visit|navigate|take\s+me|follow|link)\b/i.test(goal)
-    && [...own, ...languageNamesFor(c.label)].some((w) => want.includes(w))) return true;
+  // Less the suffix a page adds: "RADAR (opens in a new tab)" is named
+  // whole by "the radar". And a language's link wears that language's own
+  // name - 한국어 has no Latin word to match, and is named by "Korean".
+  const label = String(c.label || "").replace(/\s*\([^()]*\)\s*$/, "");
+  const names = [...meaningfulWords(label), ...languageNamesFor(label)];
+  if (GOES_SOMEWHERE.test(goal) && names.some((w) => want.includes(w))) return true;
   // Asking to see a link named whole is asking to go there: "show the
   // national radar" is weather.gov's RADAR, a link to the radar site, and
   // was refused for not saying "go".
   return /\b(?:show|see|view|display|bring\s+up|pull\s+up)\b/i.test(goal)
-    && own.length > 0 && own.every((w) => want.includes(w));
+    && names.length > 0 && names.every((w) => want.includes(w));
 }
 
 // A control that undoes things is pressed only when the request asks for
@@ -9422,20 +9428,6 @@ async function runModelAgent(routeGlobal, goal, { maxSteps = 6, budgetMs = null,
       return { ok: true, answer: null, history, steps: history.length,
         tookMs: Date.now() - began, said: lastSaid };
     }
-    // One clause, carried out on a control the request names: there is
-    // nothing left to decide. The turn after this one was asking the model
-    // whether it had finished - a 4B's twenty seconds to an 8B's two
-    // minutes of "thinking" after the page had visibly done the thing, to
-    // hear "finish" or the same control again, either of which ended the
-    // run. The search branch already ends here; a press is no different.
-    // Not a way in: a section opened on the way to what was asked still
-    // needs the step inside it, unless the request named the section.
-    if (!mayHaveMore && ran.ok !== false && (moved || satisfied) && shares && r.opened !== true
-        && !ASKING_TO_READ.test(goal) && !asksWhatIsOffered && !readFellThrough
-        && !(target.opensPanel && wholeNamedAmong(goal, [target]) !== target)) {
-      return { ok: true, answer: null, history, steps: history.length,
-        tookMs: Date.now() - began, said: lastSaid };
-    }
     // Opening a chooser is half of choosing. The model named the dropdown -
     // {"why":"selecting Alaska","name":"Select a state","do":"click"} - which
     // is right, and clicking one only opens it, so the run needed a second
@@ -10695,6 +10687,7 @@ async function runVerified(routeGlobal, toolCall) {
   const sigT = Date.now();
   const after = await invokeOnActiveTab("pageSignature", []).catch(() => ({ ok: false }));
   pageWaitTotal += Date.now() - waitFrom;
+  if (activeAsk) tellPanel({ type: "agentProgress", text: `done: ${acting} - the page has caught up, reading it` });
   debugLog(`[verify] ${toolCall && toolCall.name}: settle ${sigT - settleT}ms${settled.capped ? " (capped)" : ""}, signature ${Date.now() - sigT}ms`);
   if (!after.ok) return result;
 

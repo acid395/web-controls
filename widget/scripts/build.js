@@ -88,6 +88,7 @@ function body(scriptUrlExpr, loadersExpr) {
     isolated("extension/lib/step-prompt.js", read(EXT, "lib", "step-prompt.js")),
     isolated("extension/lib/env-vocab.js", read(EXT, "lib", "env-vocab.js")),
     isolated("extension/lib/gpu.js", read(EXT, "lib", "gpu.js")),
+    isolated("extension/lib/hold-to-talk.js", read(EXT, "lib", "hold-to-talk.js")),
     section("extension/page/feed-capture.js",
       `function installFeedCapture() {\n${read(EXT, "page", "feed-capture.js")}\n}`),
     isolated("extension/page/generic-bundle.js", read(EXT, "page", "generic-bundle.js")),

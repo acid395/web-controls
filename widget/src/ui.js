@@ -293,68 +293,29 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     if (end) setTimeout(end, 3000);
   };
   stopBtn.addEventListener("click", stop);
-  // Hold to talk. Pressing the microphone starts listening, letting go stops
-  // it, and whatever was heard is sent the way a typed ask is - through the
-  // same submit, so it is queued behind a running request like typed text.
-  // What is heard so far shows in the box while the button is held.
+  // Hold to talk - extension/lib/hold-to-talk.js, shared with the panel.
+  // What is heard goes through ask() like typed text, so it queues behind
+  // a running request the same way.
   const micBtn = el("button", "mic");
   micBtn.type = "button";
   micBtn.setAttribute("aria-label", "Hold to talk");
   micBtn.title = "Hold to talk, let go to send";
   micBtn.innerHTML = MIC_ICON;
-  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Rec) micBtn.hidden = true;
-  else {
-    let rec = null, held = false, heard = "", interim = "";
-    const show = () => { input.value = (heard + " " + interim).replace(/\s+/g, " ").trim(); };
-    const start = (e) => {
-      if (held) return;
-      e.preventDefault();
-      held = true; heard = ""; interim = "";
-      rec = new Rec();
-      rec.lang = navigator.language || "en-US";
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.onresult = (ev) => {
-        interim = "";
-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          const t = ev.results[i][0].transcript;
-          if (ev.results[i].isFinal) heard += " " + t; else interim += " " + t;
-        }
-        show();
-      };
-      rec.onerror = (ev) => {
-        if (ev.error === "not-allowed" || ev.error === "service-not-allowed") input.placeholder = "Allow the microphone for this site, then hold the button again";
-        else if (ev.error === "no-speech") input.placeholder = "Didn't hear anything - hold the button while you speak";
-        heard = ""; interim = "";
-      };
-      rec.onend = () => {
-        micBtn.classList.remove("listening");
-        // Whatever was still being worked out when the button was let go
-        // counts too: the last few words are often only interim.
-        const said = (heard + " " + interim).replace(/\s+/g, " ").trim();
-        heard = ""; interim = ""; rec = null;
-        if (held) { held = false; return; } // ended on its own; the next release is a no-op
-        if (!said) return;
-        input.value = "";
-        input.placeholder = options.placeholder;
-        ask(said);
-      };
-      try { rec.start(); micBtn.classList.add("listening"); }
-      catch (err) { held = false; rec = null; input.placeholder = "The microphone could not start"; }
-    };
-    const stop = () => {
-      if (!held) return;
-      held = false;
-      if (rec) rec.stop(); else micBtn.classList.remove("listening");
-    };
-    micBtn.addEventListener("pointerdown", (e) => { micBtn.setPointerCapture(e.pointerId); start(e); });
-    micBtn.addEventListener("pointerup", stop);
-    micBtn.addEventListener("pointercancel", stop);
-    micBtn.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) start(e); });
-    micBtn.addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") stop(); });
-    window.addEventListener("blur", stop);
-  }
+  let hintUntil = null;
+  const say = (t) => {
+    input.placeholder = t.charAt(0).toUpperCase() + t.slice(1);
+    clearTimeout(hintUntil);
+    hintUntil = setTimeout(() => { input.placeholder = options.placeholder; }, 6000);
+  };
+  if (typeof globalThis.WC_HOLD_TO_TALK === "function") {
+    globalThis.WC_HOLD_TO_TALK(micBtn, {
+      value: () => input.value,
+      setValue: (t) => { input.value = t; },
+      send: (t) => { input.value = ""; ask(t); },
+      say,
+      denied: () => say("allow the microphone for this site, then hold the button again"),
+    });
+  } else micBtn.hidden = true;
   compose.append(input, micBtn, sendBtn, stopBtn);
   form.append(compose, el("div", "foot", "Answers come from this page. Check anything important."));
   panel.appendChild(form);

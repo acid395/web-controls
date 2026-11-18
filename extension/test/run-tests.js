@@ -1531,13 +1531,56 @@ else {
   // heard goes through the same Ask button as typed text.
   {
     const js = fsx.readFileSync(pathx.join(EXTDIR, "popup", "popup.js"), "utf8");
-    ensure("the panel has a microphone button", /id="talk"/.test(html), "no #talk");
-    ensure("it listens while held", /addEventListener\("pointerdown"[^]*?start\(/.test(js), "no pointerdown start");
-    ensure("and stops when let go", /addEventListener\("pointerup", stop\)/.test(js), "no pointerup stop");
-    ensure("and sends what it heard like a typed ask",
-      /rec\.onend[^]*?getElementById\("smartAsk"\)\.click\(\)/.test(js), "onend never clicks Ask");
+    const talk = fsx.readFileSync(pathx.join(EXTDIR, "lib", "hold-to-talk.js"), "utf8");
+    const widgetUi = fsx.readFileSync(pathx.join(EXTDIR, "..", "widget", "src", "ui.js"), "utf8");
+    const widgetBuild = fsx.readFileSync(pathx.join(EXTDIR, "..", "widget", "scripts", "build.js"), "utf8");
+    ensure("the panel has a microphone button", /id="talk"/.test(html) && /lib\/hold-to-talk\.js/.test(html), "no #talk, or the lib is not loaded");
+    ensure("it listens while held", /addEventListener\("pointerdown"[^]*?start\(/.test(talk), "no pointerdown start");
+    ensure("and stops when let go", /addEventListener\("pointerup", stop\)/.test(talk), "no pointerup stop");
+    ensure("and the panel sends what it heard through Ask",
+      /WC_HOLD_TO_TALK\(/.test(js) && /send: \(t\) => \{[^}]*getElementById\("smartAsk"\)\.click\(\)/.test(js), "send never clicks Ask");
     ensure("with a page that can ask for the microphone, since the side panel cannot",
       fsx.existsSync(pathx.join(EXTDIR, "popup", "mic.html")) && /popup\/mic\.html/.test(js), "no mic.html");
+    ensure("and the widget uses the same code, not a copy",
+      /WC_HOLD_TO_TALK\(/.test(widgetUi) && !/new Rec\(/.test(widgetUi) && /hold-to-talk\.js/.test(widgetBuild), "the widget has its own copy, or the build leaves the lib out");
+
+    // Driven, with a stand-in recogniser: typed text is kept in front of
+    // what is heard, the last interim words count, and a refusal restores
+    // the box rather than sending.
+    const { JSDOM } = require("jsdom");
+    const dom = new JSDOM(`<button id="b"></button>`, { runScripts: "outside-only" });
+    const w = dom.window;
+    const recs = [];
+    w.SpeechRecognition = class { constructor() { recs.push(this); } start() { this.on = true; } stop() { this.on = false; this.onend(); } };
+    w.eval(talk);
+    const btn = w.document.getElementById("b");
+    let box = "show the", sent = [], said = [], denied = 0;
+    const on = w.WC_HOLD_TO_TALK(btn, { value: () => box, setValue: (t) => { box = t; }, send: (t) => sent.push(t), say: (t) => said.push(t), denied: () => denied++ });
+    ensure("the button is live where the browser can listen", on === true && !btn.hidden);
+    const hit = (t) => btn.dispatchEvent(new w.Event(t));
+    hit("pointerdown");
+    check("holding starts a hearing", recs.length, 1);
+    ensure("and shows it", btn.classList.contains("listening"));
+    recs[0].onresult({ resultIndex: 0, results: [Object.assign([{ transcript: "radar" }], { isFinal: true }), Object.assign([{ transcript: "loop" }], { isFinal: false })] });
+    check("what is heard follows what was typed, interim words included", box, "show the radar loop");
+    hit("pointerup");
+    check("letting go sends it", sent.join("|"), "show the radar loop");
+    ensure("and the hearing is over", !btn.classList.contains("listening") && recs[0].on === false);
+    box = "half typed";
+    hit("pointerdown");
+    recs[1].onerror({ error: "not-allowed" });
+    recs[1].onend();
+    check("a refusal is reported", denied, 1);
+    check("and the box is left as it was", box, "half typed");
+    hit("pointerup");
+    check("with nothing sent", sent.length, 1);
+    // Ended on its own while still held - a silence limit - and let go later.
+    hit("pointerdown");
+    recs[2].onresult({ resultIndex: 0, results: [Object.assign([{ transcript: "open the legend" }], { isFinal: true })] });
+    recs[2].onend();
+    check("a hearing that ends on its own waits for the release", sent.length, 1);
+    hit("pointerup");
+    check("and the release sends it", sent[1], "half typed open the legend");
   }
 
   // Every registered model is reachable by the words someone would type, and
