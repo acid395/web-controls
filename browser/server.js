@@ -119,7 +119,13 @@ async function proxy(req, res) {
 
   const ct = up.headers.get("content-type") || "";
   if (/text\/html/i.test(ct)) {
-    const text = inject(rewrite(await up.text(), host), url);
+    // Only a page load gets the widget. A site that fetches an HTML fragment
+    // and runs it (drought.gov does, for its feedback box) would otherwise
+    // get a second copy, run with no script tag to read its options from.
+    const dest = req.headers["sec-fetch-dest"];
+    const isPage = dest ? /^(document|iframe|frame)$/.test(dest) : !req.headers["x-requested-with"];
+    const rewritten = rewrite(await up.text(), host);
+    const text = isPage ? inject(rewritten, url) : rewritten;
     const b = Buffer.from(text);
     out["content-length"] = b.length;
     res.writeHead(up.status, out); return res.end(b);
