@@ -109,6 +109,7 @@ function body(scriptUrlExpr, loadersExpr) {
       + quietly(`${background}\nreturn { routeFor };`, "globalThis.__wcQuiet")
       + "\n}"),
     section("widget/src/model-host.js", read(SRC, "model-host.js")),
+    section("widget/src/shared-model-host.js", read(SRC, "shared-model-host.js")),
     section("widget/src/chrome-shim.js", read(SRC, "chrome-shim.js")),
     section("widget/src/ui.js", read(SRC, "ui.js")),
     section("widget/src/widget.js", read(SRC, "widget.js")),
@@ -123,7 +124,7 @@ if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
 ${body("(WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href", "null")}
 if (!WC_CURRENT_SCRIPT || WC_CURRENT_SCRIPT.dataset.captureFeeds !== "false") installFeedCapture();
-window.WebControls = { mount, version: globalThis.WC_WIDGET_VERSION };
+window.WebControls = { mount, serveModelHost, defaultModel: DEFAULTS.model, version: globalThis.WC_WIDGET_VERSION };
 if (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.dataset.manual == null) {
   const go = () => mount(optionsFromScript(WC_CURRENT_SCRIPT));
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", go, { once: true });
@@ -156,9 +157,11 @@ const esm = `${banner}const WebControls = typeof window === "undefined"
 if (window.WebControls) return window.WebControls;
 ${body("import.meta.url", ESM_LOADERS)}
 installFeedCapture();
-return (window.WebControls = { mount, version: globalThis.WC_WIDGET_VERSION });
+return (window.WebControls = { mount, serveModelHost, defaultModel: DEFAULTS.model, version: globalThis.WC_WIDGET_VERSION });
 })();
 export const mount = (options) => WebControls.mount(options);
+export const serveModelHost = (options) => WebControls.serveModelHost(options);
+export const defaultModel = WebControls.defaultModel;
 export const version = WebControls.version;
 export default WebControls;
 `;

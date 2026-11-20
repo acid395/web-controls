@@ -32,10 +32,10 @@ Rules of thumb from that:
 
 - Sites that are mostly pages work. Apps that build their own URLs in script, route on `location`, or sit behind bot protection each need their own fix, or can't be reached this way at all.
 - Every request the page makes passes through the server, including anything typed into the site. Running the server on the visitor's own machine keeps that local; a hosted server sees it all, which is the opposite of the extension and widget, where nothing leaves the browser.
-- The model loads inside the frame, so a full page navigation reloads it (the same as the widget on a site without client-side routing). The weights are cached by the browser after the first load.
+- The model is held by the address-bar page, not the framed page, so it is loaded once and every page opened afterwards uses it (`modelHost: "parent"` in the widget, `WebControls.serveModelHost()` here). The first load downloads the weights (3.4 GB for the default) and Chrome keeps them for this origin; after that a load is the time it takes to move them into the GPU. The bar shows the model's state and has its own Load button, so the model can be loading while a site is still being typed.
 - Sign-ins mostly break: cookies are rewritten onto this origin, but anything checking the host, and any OAuth redirect, won't match.
 
 ## Files
 
 - `server.js`: the proxy, the widget's files at `/__wc/`, the app at `/`.
-- `app/index.html`: the address bar and the frame.
+- `app/index.html`: the address bar, the frame, and the model host every framed page's widget talks to.

@@ -36,8 +36,12 @@ const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
 const NOT_FETCHED = /^(www\.w3\.org|schema\.org|ogp\.me|purl\.org|xmlns\.com|www\.google\.com\/recaptcha)$/i;
 const stats = { requests: 0, upstreamFail: 0, byHost: {}, byStatus: {} };
 
-const widgetTag = (pageUrl) =>
-  `<script src="${ME}/__wc/web-controls-widget.js" data-title="Ask this page" data-webllm="${ME}/__wc/web-llm.js" data-page-url="${pageUrl.replace(/"/g, "&quot;")}"></script>`;
+// The model lives in the address-bar page (data-model-host="parent"), so
+// it outlives every page the frame shows. History is kept per site, since
+// all of them share this one origin.
+const widgetTag = (pageUrl, host) =>
+  `<script src="${ME}/__wc/web-controls-widget.js" data-title="Ask this page" data-webllm="${ME}/__wc/web-llm.js"`
+  + ` data-model-host="parent" data-storage-key="web-controls:${host}" data-page-url="${pageUrl.replace(/"/g, "&quot;")}"></script>`;
 
 function allowed(host) {
   if (!ALLOW.length) return true;
@@ -56,11 +60,14 @@ function rewrite(text, host) {
     .replace(/(https?:)?\/\/([a-z0-9.-]+\.[a-z]{2,})(?=[/"'\s)?#,;]|$)/gi, (m, scheme, h) => (NOT_FETCHED.test(h) ? m : `${ME}/${h}`))
     // root-relative in attributes and CSS belong to the page's own host
     .replace(/(href|src|action|content|data-src|srcset|poster|formaction)=(["'])\/(?!\/)/gi, (m, a, q) => `${a}=${q}/${host}/`)
-    .replace(/url\((["']?)\/(?!\/)/gi, (m, q) => `url(${q}/${host}/`);
+    .replace(/url\((["']?)\/(?!\/)/gi, (m, q) => `url(${q}/${host}/`)
+    // a link that opens a new tab or replaces the top page would leave the
+    // address bar behind: everything stays in the frame
+    .replace(/\starget=(["']?)(_blank|_top|_parent)\1/gi, ' target="_self"');
 }
 
-function inject(html, pageUrl) {
-  const tag = widgetTag(pageUrl);
+function inject(html, pageUrl, host) {
+  const tag = widgetTag(pageUrl, host);
   if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tag}</body>`);
   return html + tag;
 }
@@ -125,7 +132,7 @@ async function proxy(req, res) {
     const dest = req.headers["sec-fetch-dest"];
     const isPage = dest ? /^(document|iframe|frame)$/.test(dest) : !req.headers["x-requested-with"];
     const rewritten = rewrite(await up.text(), host);
-    const text = isPage ? inject(rewritten, url) : rewritten;
+    const text = isPage ? inject(rewritten, url, host) : rewritten;
     const b = Buffer.from(text);
     out["content-length"] = b.length;
     res.writeHead(up.status, out); return res.end(b);

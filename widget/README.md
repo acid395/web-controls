@@ -114,6 +114,7 @@ Copy the files in `dist/` into the site and add one tag. It mounts itself once t
 | `worker` | `data-worker="false"` | `true` | Run the model in a Web Worker so it never blocks your UI |
 | `webllmUrl` | `data-webllm` | `web-llm.js` beside the widget | Where to load WebLLM from |
 | `pageUrl` | `data-page-url` | the page's own address | The site's real address when the page is served through a proxy (`browser/` sets it): the agent then routes on that host, with the path after it |
+| `modelHost` | `data-model-host` | `"local"` | `"parent"`: the model lives in the page framing this one, which calls `WebControls.serveModelHost()`. The model then outlives every page the frame shows. `browser/` sets it |
 | `hotkey` | `data-hotkey="false"` | `true` | Ctrl/Cmd+Shift+Space toggles the panel |
 | `debug` | `data-debug` | `false` | Log every ask and its result to the console |
 | | `data-capture-feeds="false"` | on | Record the JSON/CSV your page fetches, so questions can be answered from the data behind a chart |
@@ -170,7 +171,7 @@ The widget's own UI sits in a closed shadow root. Your CSS can't restyle it. The
 | What the user grants | Install, then "Enable on this site" | A click on "Load model" |
 | Blocked by | Nothing, for the sites it lists | The site's own CSP, which the site controls |
 
-A third way, `browser/`, is the widget put into a site by a proxy rather than by the site: see [browser/README.md](../browser/README.md) for what that works on and what it costs.
+A third way, `browser/`, is the widget put into a site by a proxy rather than by the site, with the model held in the address-bar page so it outlives each page: see [browser/README.md](../browser/README.md) for what that works on and what it costs.
 
 To compare the two on the same pages, `npm run demo` serves `/try-on-any-site.html`. That page has a bookmarklet that puts the widget onto any site.
 

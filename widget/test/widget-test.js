@@ -530,6 +530,73 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     plain.dispose();
   }
 
+  console.log("one model for every page in a frame");
+  {
+    // Two windows joined the way postMessage joins a frame and its parent:
+    // posting to a window delivers to that window's listeners, with the
+    // other as the source.
+    const mk = () => { const w = { ls: new Set() }; w.addEventListener = (t, f) => { if (t === "message") w.ls.add(f); }; w.removeEventListener = (t, f) => w.ls.delete(f); return w; };
+    const deliver = (to, from, data, origin) => setTimeout(() => { for (const f of to.ls) f({ data, origin, source: from }); }, 0);
+    // a frame: posting to its parent lands on the top window with the frame
+    // as source, and the parent's reply, posted to the source, lands back
+    const frameOf = (top) => { const f = mk(); f.parent = { postMessage: (data, origin) => deliver(top, f, data, origin) }; f.postMessage = (data, origin) => deliver(f, top, data, origin); return f; };
+    const top = mk();
+    const frame = frameOf(top);
+    const w = page();
+    w.eval(`${fs.readFileSync(path.join(__dirname, "..", "src", "shared-model-host.js"), "utf8")}\nwindow.__share = shareModelHost; window.__remote = createRemoteModelHost;`);
+    const loads = []; const steps = [];
+    let st = { ready: false, loading: false, model: null, progress: null, fraction: null, error: null, where: null, hasGpu: true, gpu: null };
+    const real = {
+      status: () => st,
+      load: (id) => { loads.push(id); st = { ...st, loading: true, model: id, fraction: 0.5 }; setTimeout(() => { st = { ...st, loading: false, ready: true, fraction: 1 }; }, 30); },
+      step: async (model, prompt, opts) => { steps.push({ model, prompt, opts }); return { text: "{\"ok\":1}", ms: 3, cost: {} }; },
+      embed: async (texts) => texts.map(() => [0, 1]),
+      release: async () => { st = { ...st, ready: false, model: null }; },
+      interrupt: () => { steps.push("interrupted"); },
+    };
+    const sharing = w.__share(real, { win: top, origin: "http://localhost:8787" });
+    const remote = w.__remote({ win: frame, origin: "http://localhost:8787" });
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+    await tick(10);
+    check("a page's widget sees the parent's model state before asking anything", remote.status().hasGpu === true && remote.status().ready === false);
+    remote.load("Qwen3-4B-q4f16_1-MLC");
+    await tick(10);
+    check("load reaches the parent", loads[0], "Qwen3-4B-q4f16_1-MLC");
+    check("and the page sees it loading, with progress", remote.status().loading === true && remote.status().fraction === 0.5, JSON.stringify(remote.status()));
+    await tick(600);
+    check("and then ready, pushed without being asked", remote.status().ready === true, JSON.stringify(remote.status()));
+    const out = await remote.step("Qwen3-4B-q4f16_1-MLC", "hello", { timeoutMs: 1000, schema: { type: "object" } });
+    check("a step is answered by the parent's model", out.text, "{\"ok\":1}");
+    check("with the prompt and options it was given", steps[0] && steps[0].prompt === "hello" && steps[0].opts.schema.type === "object");
+    const vec = await remote.embed(["a", "b"]);
+    check("so is an embedding", vec.length, 2);
+    remote.interrupt();
+    await tick(10);
+    check("and a cancel", steps.includes("interrupted"));
+    // A second page, as after a navigation: the model is still there.
+    const frame2 = frameOf(top);
+    const again = w.__remote({ win: frame2, origin: "http://localhost:8787" });
+    await tick(10);
+    check("the next page finds the model already loaded", again.status().ready === true && again.status().model === "Qwen3-4B-q4f16_1-MLC", JSON.stringify(again.status()));
+    const stranger = w.__remote({ win: frame2, origin: "https://elsewhere.example" });
+    await tick(10);
+    check("a page from another origin is not answered", stranger.status().ready === false);
+    remote.dispose(); again.dispose(); stranger.dispose(); sharing.stop();
+  }
+
+  console.log("the mini browser's page tag");
+  {
+    const w = page();
+    // Top-level, "parent" means nothing and the widget keeps its own model.
+    const tag = w.document.createElement("script");
+    tag.dataset.modelHost = "parent"; tag.dataset.storageKey = "web-controls:example.org";
+    w.eval(built);
+    const opts = w.eval(`(${built.match(/function optionsFromScript[\s\S]*?\n}/)[0]})`)(tag);
+    check("data-model-host and data-storage-key are read", opts.modelHost === "parent" && opts.storageKey === "web-controls:example.org", JSON.stringify(opts));
+    check("the built widget serves a model host", typeof w.WebControls.serveModelHost, "function");
+    check("and names its default model", typeof w.WebControls.defaultModel, "string");
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

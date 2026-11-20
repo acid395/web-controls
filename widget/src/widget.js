@@ -52,10 +52,7 @@ function mount(userOptions = {}) {
   }
   if (!options.models || !options.models.length) options.models = null;
   else if (!options.models.includes(options.model)) options.models = [options.model, ...options.models];
-  // A URL the site gave wins. Otherwise the module build's own loaders,
-  // which a bundler can follow, or the file beside the script tag's src.
-  const loaders = options.webllmUrl ? urlLoaders(options.webllmUrl)
-    : (WC_LOADERS || urlLoaders(new URL("web-llm.js", WC_SCRIPT_URL).href));
+  const loaders = loadersFor(options);
 
   let ui = null;
   let agent = null;
@@ -71,11 +68,16 @@ function mount(userOptions = {}) {
     }
   };
   // `_modelHost` is for tests: the same interface, decisions scripted.
-  const modelHost = options._modelHost || createModelHost({
-    ...loaders,
-    useWorker: options.worker !== false,
-    allowEmbed: !!options.meaning,
-  });
+  // "parent" is the mini browser: the page holding this one in a frame
+  // keeps the model, so it outlives every page the frame shows.
+  const modelHost = options._modelHost
+    || (options.modelHost === "parent" && window.parent && window.parent !== window
+      ? createRemoteModelHost()
+      : createModelHost({
+        ...loaders,
+        useWorker: options.worker !== false,
+        allowEmbed: !!options.meaning,
+      }));
   const shim = createChromeShim({
     modelHost,
     storageKey: options.storageKey,
@@ -131,13 +133,44 @@ function mount(userOptions = {}) {
     // handed back this one, with its panel already removed from the page.
     unmount: () => {
       ui.destroy();
-      modelHost.release();
+      // A shared model is the parent's to keep; this page only stops listening.
+      if (modelHost.dispose) modelHost.dispose(); else modelHost.release();
       shim.dispose();
       if (mounted === api) mounted = null;
     },
   };
   const api = mounted;
   return mounted;
+}
+
+// A URL the site gave wins. Otherwise the module build's own loaders,
+// which a bundler can follow, or the file beside the script tag's src.
+function loadersFor(options) {
+  return options.webllmUrl ? urlLoaders(options.webllmUrl)
+    : (WC_LOADERS || urlLoaders(new URL("web-llm.js", WC_SCRIPT_URL).href));
+}
+
+// The other half of modelHost: "parent". Called by a page that frames
+// others (the mini browser's address-bar page): it loads the model once
+// and answers every framed page's widget. Returns the host, to show its
+// progress and to start a load before any page asks.
+let served = null;
+function serveModelHost(userOptions = {}) {
+  if (served) return served;
+  const options = { ...DEFAULTS, ...userOptions };
+  const host = createModelHost({
+    ...loadersFor(options),
+    useWorker: options.worker !== false,
+    allowEmbed: !!options.meaning,
+  });
+  const sharing = shareModelHost(host);
+  served = {
+    load: (modelId) => host.load(modelId || options.model),
+    status: host.status,
+    release: host.release,
+    stop: () => { sharing.stop(); host.release(); served = null; },
+  };
+  return served;
 }
 
 // From a script tag's data attributes. data-suggestions is "|"-separated,
@@ -162,5 +195,7 @@ function optionsFromScript(script) {
   if (d.hotkey === "false") out.hotkey = false;
   if (d.debug != null) out.debug = d.debug !== "false";
   if (d.pageUrl) out.pageUrl = d.pageUrl;
+  if (d.modelHost) out.modelHost = d.modelHost;
+  if (d.storageKey) out.storageKey = d.storageKey;
   return out;
 }
