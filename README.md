@@ -7,10 +7,14 @@ off the page you're looking at. Type *"gage height in Alaska"* and it fetches
 that from USGS, whatever page you happen to be on. Type *"select Alaska"* and
 it operates the page's own controls for you.
 
-Two parts are here:
+Three ways to run it are here, all the same agent:
 
 - **`extension/`** — a Chrome extension. This is the thing you install and
   use. Start here.
+- **`widget/`** — the agent as a script a site adds to its own pages.
+- **`browser/`** — a page with an address bar that opens a site in a frame,
+  through a proxy, with the widget inside. Nothing to install and nothing
+  for the site to add; see its README for which sites that works on.
 - **everything else** — which are primarily per site examples.
 
 **Trying it out and reporting back?** [FEEDBACK.md](FEEDBACK.md) says what to

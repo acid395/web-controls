@@ -12,6 +12,11 @@ export interface WidgetOptions {
   theme?: "auto" | "light" | "dark";
   /** Any CSS color, for the launcher and the accents. */
   accent?: string;
+  /**
+   * The page's real address, when it is served through a proxy (the mini
+   * browser): the agent then routes on this host, with the path after it.
+   */
+  pageUrl?: string;
   /** The model a first-time visitor gets. Default "Qwen3-4B-q4f16_1-MLC". */
   model?: string;
   /** What the panel's model picker offers. */

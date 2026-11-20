@@ -64,7 +64,7 @@ function mount(userOptions = {}) {
   // an app that routes client-side can move between them.
   const loadedNamed = new Set();
   const ensureNamed = () => {
-    const route = agent && agent.routeFor(location.href);
+    const route = agent && agent.routeFor(shim.pageHref());
     if (route && route.global !== "GENERIC" && !loadedNamed.has(route.global) && WC_NAMED_BUNDLES[route.global]) {
       WC_NAMED_BUNDLES[route.global]();
       loadedNamed.add(route.global);
@@ -83,6 +83,7 @@ function mount(userOptions = {}) {
     beforeCall: ensureNamed,
     pageGlobals: () => [...loadedNamed, "GENERIC"],
     onWarm: () => { if (ui) ui.loadModel(); },
+    pageUrl: options.pageUrl,
   });
 
   // The model the site chose, unless the visitor has since picked another
@@ -160,5 +161,6 @@ function optionsFromScript(script) {
   if (d.webllm) out.webllmUrl = d.webllm;
   if (d.hotkey === "false") out.hotkey = false;
   if (d.debug != null) out.debug = d.debug !== "false";
+  if (d.pageUrl) out.pageUrl = d.pageUrl;
   return out;
 }

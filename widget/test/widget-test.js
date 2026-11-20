@@ -508,6 +508,28 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     shim.dispose();
   }
 
+  console.log("a page served through the mini browser's proxy");
+  {
+    // The proxy serves https://www.drought.gov/data-maps as
+    // /www.drought.gov/data-maps on its own origin. The agent must still
+    // route on drought.gov, or no site manifest ever matches.
+    const dom = new JSDOM("<!doctype html><title>Drought</title>", { url: "http://localhost:8787/www.drought.gov/data-maps?view=1#top", runScripts: "outside-only" });
+    const w = dom.window;
+    w.eval(`${fs.readFileSync(path.join(__dirname, "..", "src", "chrome-shim.js"), "utf8")}\nwindow.__mkShim = createChromeShim;`);
+    const shim = w.__mkShim({ modelHost: { status: () => ({}) }, pageGlobals: () => [], pageUrl: "https://www.drought.gov/" });
+    check("the agent sees the site's own address", shim.pageHref(), "https://www.drought.gov/data-maps?view=1#top");
+    const [tab] = await shim.chrome.tabs.query({});
+    check("and the tab reports it", tab.url, "https://www.drought.gov/data-maps?view=1#top");
+    w.history.pushState({}, "", "/www.drought.gov/by-sector");
+    check("a client-side route keeps the mapping", shim.pageHref(), "https://www.drought.gov/by-sector");
+    w.history.pushState({}, "", "/current-conditions");
+    check("and a router that dropped the proxy's prefix still lands on the site", shim.pageHref(), "https://www.drought.gov/current-conditions");
+    shim.dispose();
+    const plain = w.__mkShim({ modelHost: { status: () => ({}) }, pageGlobals: () => [] });
+    check("without pageUrl, the address is the page's own", plain.pageHref(), w.location.href);
+    plain.dispose();
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

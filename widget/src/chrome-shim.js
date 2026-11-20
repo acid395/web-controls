@@ -19,8 +19,20 @@
  * Everything else it touches at load - side panels, offscreen documents,
  * content-script registration - has no meaning here and is a no-op.
  */
-function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm, pageGlobals } = {}) {
+function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm, pageGlobals, pageUrl } = {}) {
   const messageHandlers = [];
+  // The address the agent routes on. A page served through the mini
+  // browser's proxy lives at <proxy>/<host>/<path>; `pageUrl` names the
+  // site, and the path after its host is the site's own, so routeFor and
+  // the site manifests see the address the page really has.
+  let proxiedHost = null;
+  try { if (pageUrl) proxiedHost = new URL(pageUrl).host; } catch (e) { /* not an address */ }
+  const pageHref = () => {
+    if (!proxiedHost) return location.href;
+    const prefix = `/${proxiedHost}`;
+    const p = location.pathname === prefix || location.pathname.startsWith(`${prefix}/`) ? location.pathname.slice(prefix.length) : location.pathname;
+    return `https://${proxiedHost}${p || "/"}${location.search}${location.hash}`;
+  };
   const updatedListeners = new Set();
   const changeListeners = new Set();
   const noop = () => {};
@@ -88,7 +100,7 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     id: 1,
     windowId: 1,
     active: true,
-    url: location.href,
+    url: pageHref(),
     title: document.title,
     // Loading only while the document is still being parsed. Waiting for
     // readyState "complete" meant waiting for the load event, which one hung
@@ -312,5 +324,5 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     });
   }
 
-  return { chrome, send, storage: storageLocal, dispose };
+  return { chrome, send, storage: storageLocal, dispose, pageHref };
 }
