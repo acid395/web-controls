@@ -19,16 +19,19 @@
  * navigated, which is the press working.
  */
 function createFramePage(frame, { realUrl, origin = location.origin, timeoutMs = 20000 } = {}) {
-  // The proxy serves https://host/path as /host/path on this origin.
+  const win = () => frame.contentWindow;
+  // The proxy serves the open site at this origin's root and any other
+  // under /__x/<host>; its shim names the page's host on the window.
   const mapped = realUrl || ((href) => {
     try {
       const u = new URL(href);
-      if (u.origin !== origin) return "";
-      const m = u.pathname.match(/^\/([a-z0-9.-]+\.[a-z]{2,})(\/.*)?$/i);
-      return m ? `https://${m[1]}${m[2] || "/"}${u.search}${u.hash}` : "";
+      if (u.origin !== origin || u.pathname.startsWith("/__app")) return "";
+      const other = u.pathname.match(/^\/__x\/([a-z0-9.-]+\.[a-z]{2,})(\/.*)?$/i);
+      if (other) return `https://${other[1]}${other[2] || "/"}${u.search}${u.hash}`;
+      const host = win() && win().__wcProxyHost;
+      return host ? `https://${host}${u.pathname}${u.search}${u.hash}` : "";
     } catch (e) { return ""; }
   });
-  const win = () => frame.contentWindow;
   const doc = () => frame.contentDocument;
   const rawHref = () => { try { return win().location.href; } catch (e) { return ""; } };
   const href = () => mapped(rawHref());

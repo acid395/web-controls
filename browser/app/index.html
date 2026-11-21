@@ -49,27 +49,27 @@
   }) : null;
   if (!widget) status.textContent = "widget files missing: run node widget/scripts/build.js";
 
-  // https://host/path, or just host/path, to this server's /host/path.
-  const toProxied = (typed) => {
-    let s = typed.trim();
-    if (!s) return null;
-    s = s.replace(/^https?:\/\//i, "");
-    if (!/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) return null;
-    if (!s.includes("/")) s += "/";
-    return "/" + s;
+  // https://host/path, or just host/path: the server opens that site at
+  // its root and sends the frame to the path.
+  const toOpen = (typed) => {
+    const s = typed.trim().replace(/^https?:\/\//i, "");
+    return /^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s) ? `/__open?site=${encodeURIComponent(s)}` : null;
   };
-  // The frame is same-origin, so its location is readable: show the real site, not our path.
+  // The frame is same-origin, so its location is readable: show the real
+  // site, not our path. The open site is at the root and its shim names it
+  // on the window; any other site is under /__x/<host>.
   const realUrl = () => {
     try {
-      const l = frame.contentWindow.location;
-      if (!l.pathname || l.pathname === "/" || l.pathname.startsWith("/__app")) return "";
-      const m = l.pathname.match(/^\/([a-z0-9.-]+\.[a-z]{2,})(\/.*)?$/i);
-      return m ? `https://${m[1]}${m[2] || "/"}${l.search}${l.hash}` : l.href;
+      const w = frame.contentWindow, l = w.location;
+      if (l.pathname.startsWith("/__app") || l.href === "about:blank") return "";
+      const other = l.pathname.match(/^\/__x\/([a-z0-9.-]+\.[a-z]{2,})(\/.*)?$/i);
+      if (other) return `https://${other[1]}${other[2] || "/"}${l.search}${l.hash}`;
+      return w.__wcProxyHost ? `https://${w.__wcProxyHost}${l.pathname}${l.search}${l.hash}` : "";
     } catch (e) { return ""; }
   };
 
   const open = () => {
-    const p = toProxied(url.value);
+    const p = toOpen(url.value);
     if (!p) { status.textContent = "type a site, like www.drought.gov"; return; }
     status.textContent = "loading…";
     frame.src = p;
@@ -102,6 +102,7 @@
       w.addEventListener("popstate", sync);
       w.addEventListener("hashchange", sync);
       if (!w.__wcPageInstalled) status.textContent = "the page script is not in this page";
+      if (!w.__wcProxyHost) status.textContent = "this page did not come through the proxy";
     } catch (e) { status.textContent = "page could not be read"; }
     // The panel, the first time a site is open; after that, as it was left.
     if (widget && !opened) { opened = true; widget.open(); }

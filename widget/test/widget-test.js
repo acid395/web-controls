@@ -539,9 +539,11 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     // the proxy, which put web-controls-page.js in it. The widget is
     // mounted on the frame, so the agent, the model and the history are in
     // the parent and a navigation in the frame does not end them.
-    const SITE = "http://localhost:8787/www.lakes.example";
+    // The proxy serves the open site at its root and its shim names the
+    // host on the window; here, the name alone.
+    const SITE = "http://localhost:8787";
     const framed = (body) => `<!doctype html><html><head><title>Lakes</title></head><body>${body}
-      <script>window.SLOW = { hang: () => new Promise(() => {}) };</script>
+      <script>window.__wcProxyHost = "www.lakes.example"; window.SLOW = { hang: () => new Promise(() => {}) };</script>
       <script src="http://localhost:8787/__wc/web-controls-page.js"></script></body></html>`;
     const pages = {
       [`${SITE}/`]: framed(APP.replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, "")),
