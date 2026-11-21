@@ -18,21 +18,15 @@
  *
  * Everything else it touches at load - side panels, offscreen documents,
  * content-script registration - has no meaning here and is a no-op.
+ *
+ * The page the agent works on is this one unless `page` says otherwise:
+ * the mini browser hands in a frame (frame-page.js), and the agent in the
+ * page around it then outlives every page the frame shows.
  */
-function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm, pageGlobals, pageUrl } = {}) {
+function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast, beforeCall, onWarm, pageGlobals, pageUrl, page } = {}) {
   const messageHandlers = [];
-  // The address the agent routes on. A page served through the mini
-  // browser's proxy lives at <proxy>/<host>/<path>; `pageUrl` names the
-  // site, and the path after its host is the site's own, so routeFor and
-  // the site manifests see the address the page really has.
-  let proxiedHost = null;
-  try { if (pageUrl) proxiedHost = new URL(pageUrl).host; } catch (e) { /* not an address */ }
-  const pageHref = () => {
-    if (!proxiedHost) return location.href;
-    const prefix = `/${proxiedHost}`;
-    const p = location.pathname === prefix || location.pathname.startsWith(`${prefix}/`) ? location.pathname.slice(prefix.length) : location.pathname;
-    return `https://${proxiedHost}${p || "/"}${location.search}${location.hash}`;
-  };
+  page = page || inPage({ pageUrl });
+  const pageHref = page.href;
   const updatedListeners = new Set();
   const changeListeners = new Set();
   const noop = () => {};
@@ -95,101 +89,38 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     clear(cb) { writeAll({}); return either(undefined, cb); },
   };
 
-  // --- the tab, which is this page ----------------------------------------
+  // --- the tab, which is the page -----------------------------------------
   const thisTab = () => ({
     id: 1,
     windowId: 1,
     active: true,
-    url: pageHref(),
-    title: document.title,
-    // Loading only while the document is still being parsed. Waiting for
-    // readyState "complete" meant waiting for the load event, which one hung
-    // image or tracker holds off forever - and nothing announced it when it
-    // did come. So on such a page every ask sat out waitForPageLoad's full
-    // ten seconds (twenty when waitForNavigation took "loading" for a
-    // navigation), for a page whose controls had been there all along.
-    status: document.readyState === "loading" ? "loading" : "complete",
+    url: page.href(),
+    title: page.title(),
+    status: page.status(),
   });
-
-  const tellComplete = () => {
-    const done = { ...thisTab(), status: "complete" };
+  const tell = (status) => {
+    const tab = { ...thisTab(), status };
     for (const fn of updatedListeners) {
-      try { fn(done.id, { status: "complete" }, done); } catch (e) { /* theirs */ }
+      try { fn(tab.id, status === "loading" ? { status, url: tab.url } : { status }, tab); } catch (e) { /* theirs */ }
     }
   };
-  // A client-side route change is the only navigation this page lives
-  // through. A full one ends this script along with everything else.
-  const announce = () => {
-    const tab = thisTab();
-    for (const fn of updatedListeners) {
-      try { fn(tab.id, { status: "loading", url: tab.url }, tab); } catch (e) { /* theirs */ }
-    }
-    setTimeout(tellComplete, 0);
-  };
-  let lastUrl = location.href;
-  const checkUrl = () => { if (location.href !== lastUrl) { lastUrl = location.href; announce(); } };
-  const undo = [];
-  for (const name of ["pushState", "replaceState"]) {
-    const original = history[name];
-    if (typeof original !== "function") continue;
-    const wrapped = function (...args) {
-      const out = original.apply(this, args);
-      try { checkUrl(); } catch (e) { /* never break the app's router */ }
-      return out;
-    };
-    history[name] = wrapped;
-    undo.push(() => { if (history[name] === wrapped) history[name] = original; });
-  }
-  // Mounted from a module before the document finished parsing: a wait
-  // that began then hears when it has.
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tellComplete, { once: true });
-  window.addEventListener("popstate", checkUrl);
-  window.addEventListener("hashchange", checkUrl);
-  // Unmounted: the router wrappers and listeners go too, or every
+  const unwatch = page.watch(() => tell("loading"), () => tell("complete"));
+  // Unmounted: the page's watchers and listeners go too, or every
   // mount/unmount left another in the chain.
   const dispose = () => {
-    undo.forEach((fn) => fn());
-    window.removeEventListener("popstate", checkUrl);
-    window.removeEventListener("hashchange", checkUrl);
+    unwatch();
+    if (page.dispose) page.dispose();
     updatedListeners.clear(); changeListeners.clear(); messageHandlers.length = 0;
   };
 
-  // Calls on the page. Results are copied the way the extension's bridge
-  // copies them on their way through postMessage, so background.js never
-  // holds a live object the page bundle still mutates.
-  // An element is described, as the bridge describes it: fill() returns the
-  // box it typed into, and on an Angular page the key-by-key copy of that box
-  // walked the whole app through its __ngContext__ and froze the tab (NID).
-  // The walk is bounded for the same reason.
-  const describeNode = (n) => ({
-    element: String(n.tagName || "node").toLowerCase(),
-    text: String(n.textContent || "").trim().slice(0, 80) || undefined,
-    id: n.id || undefined,
-    href: n.href || undefined,
-  });
-  const postable = (v, depth = 0) => {
-    if (v == null || typeof v !== "object") return v;
-    if (typeof Node !== "undefined" && v instanceof Node) return describeNode(v);
-    try { return structuredClone(v); } catch (e) {
-      if (depth >= 6) return String(v);
-      if (Array.isArray(v)) return v.map((x) => postable(x, depth + 1));
-      const out = {};
-      for (const k of Object.keys(v)) { try { out[k] = postable(v[k], depth + 1); } catch (e2) { out[k] = String(v[k]); } }
-      return out;
-    }
-  };
+  // Calls on the page, answered by whichever of the named manifests owns
+  // the function - only the ones the widget loaded itself. A window.SITE is
+  // as likely the host's own - or an element with id="SITE", whose native
+  // click() then answered the agent's click and pressed nothing.
   async function callPage(m) {
     if (!m || m.type !== "call") return {};
     if (beforeCall) { try { beforeCall(); } catch (e) { /* GENERIC still answers */ } }
-    // Only the manifests the widget loaded itself. A window.SITE is as
-    // likely the host's own - or an element with id="SITE", whose native
-    // click() then answered the agent's click and pressed nothing.
-    const names = pageGlobals ? pageGlobals() : ["GENERIC"];
-    const owner = names.map((n) => window[n])
-      .find((t) => t && typeof t.nodeType !== "number" && typeof t[m.fn] === "function");
-    if (!owner) return { ok: false, error: `${m.fn} is not a function on any manifest loaded here` };
-    try { return { ok: true, result: postable(await owner[m.fn](...(m.args || []))) }; }
-    catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+    return page.call(m, pageGlobals ? pageGlobals() : ["GENERIC"]);
   }
 
   // --- the model, in the role of the extension's side panel ---------------
@@ -319,4 +250,67 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   }
 
   return { chrome, send, storage: storageLocal, dispose, pageHref };
+}
+
+/* This page, as the agent's tab: the widget a site installs. */
+function inPage({ pageUrl } = {}) {
+  // The address the agent routes on. A page served through a proxy lives at
+  // <proxy>/<host>/<path>; `pageUrl` names the site, and the path after its
+  // host is the site's own, so routeFor and the site manifests see the
+  // address the page really has.
+  let proxiedHost = null;
+  try { if (pageUrl) proxiedHost = new URL(pageUrl).host; } catch (e) { /* not an address */ }
+  const href = () => {
+    if (!proxiedHost) return location.href;
+    const prefix = `/${proxiedHost}`;
+    const p = location.pathname === prefix || location.pathname.startsWith(`${prefix}/`) ? location.pathname.slice(prefix.length) : location.pathname;
+    return `https://${proxiedHost}${p || "/"}${location.search}${location.hash}`;
+  };
+  return {
+    href,
+    title: () => document.title,
+    // Loading only while the document is still being parsed. Waiting for
+    // readyState "complete" meant waiting for the load event, which one hung
+    // image or tracker holds off forever - and nothing announced it when it
+    // did come. So on such a page every ask sat out waitForPageLoad's full
+    // ten seconds (twenty when waitForNavigation took "loading" for a
+    // navigation), for a page whose controls had been there all along.
+    status: () => (document.readyState === "loading" ? "loading" : "complete"),
+    async call(m, names) {
+      const owner = names.map((n) => window[n])
+        .find((t) => t && typeof t.nodeType !== "number" && typeof t[m.fn] === "function");
+      if (!owner) return { ok: false, error: `${m.fn} is not a function on any manifest loaded here` };
+      try { return { ok: true, result: wcPostable(await owner[m.fn](...(m.args || []))) }; }
+      catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+    },
+    // A client-side route change is the only navigation this page lives
+    // through. A full one ends this script along with everything else.
+    watch(onLoading, onComplete) {
+      let lastUrl = location.href;
+      const announce = () => { onLoading(); setTimeout(onComplete, 0); };
+      const checkUrl = () => { if (location.href !== lastUrl) { lastUrl = location.href; announce(); } };
+      const undo = [];
+      for (const name of ["pushState", "replaceState"]) {
+        const original = history[name];
+        if (typeof original !== "function") continue;
+        const wrapped = function (...args) {
+          const out = original.apply(this, args);
+          try { checkUrl(); } catch (e) { /* never break the app's router */ }
+          return out;
+        };
+        history[name] = wrapped;
+        undo.push(() => { if (history[name] === wrapped) history[name] = original; });
+      }
+      // Mounted from a module before the document finished parsing: a wait
+      // that began then hears when it has.
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", onComplete, { once: true });
+      window.addEventListener("popstate", checkUrl);
+      window.addEventListener("hashchange", checkUrl);
+      return () => {
+        undo.forEach((fn) => fn());
+        window.removeEventListener("popstate", checkUrl);
+        window.removeEventListener("hashchange", checkUrl);
+      };
+    },
+  };
 }

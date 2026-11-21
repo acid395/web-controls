@@ -113,8 +113,8 @@ Copy the files in `dist/` into the site and add one tag. It mounts itself once t
 | `meaning` | `data-meaning` | `false` | Also load the 1 GB embedder that narrows big pages by meaning; without it, they're narrowed by words |
 | `worker` | `data-worker="false"` | `true` | Run the model in a Web Worker so it never blocks your UI |
 | `webllmUrl` | `data-webllm` | `web-llm.js` beside the widget | Where to load WebLLM from |
-| `pageUrl` | `data-page-url` | the page's own address | The site's real address when the page is served through a proxy (`browser/` sets it): the agent then routes on that host, with the path after it |
-| `modelHost` | `data-model-host` | `"local"` | `"parent"`: the model lives in the page framing this one, which calls `WebControls.serveModelHost()`. The model then outlives every page the frame shows. `browser/` sets it |
+| `pageUrl` | `data-page-url` | the page's own address | The site's real address when the page is served through a proxy: the agent then routes on that host, with the path after it |
+| `frame` | | | An `<iframe>` to work on instead of this page. The agent, the model and the panel stay in this page, so an ask survives a press that leaves the framed page. The framed page must be same-origin and carry `web-controls-page.js`; `browser/` arranges both |
 | `hotkey` | `data-hotkey="false"` | `true` | Ctrl/Cmd+Shift+Space toggles the panel |
 | `debug` | `data-debug` | `false` | Log every ask and its result to the console |
 | | `data-capture-feeds="false"` | on | Record the JSON/CSV your page fetches, so questions can be answered from the data behind a chart |
@@ -129,7 +129,7 @@ Copy the files in `dist/` into the site and add one tag. It mounts itself once t
 - `loadModel()` starts the download. Progress shows in the panel.
 - `setModel(id)` picks a model, remembered per site.
 - `modelStatus()` returns `{ ready, loading, fraction, model, where, error, hasGpu }`.
-- `inventory()` returns the page as the agent sees it. It's useful for checking what your markup exposes.
+- `inventory()` returns the page as the agent sees it (a promise when the page is in a frame). It's useful for checking what your markup exposes.
 - `unmount()`
 
 ## Content-Security-Policy

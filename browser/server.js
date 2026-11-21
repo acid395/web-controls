@@ -37,12 +37,10 @@ const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
 const NOT_FETCHED = /^(www\.w3\.org|schema\.org|ogp\.me|purl\.org|xmlns\.com|www\.google\.com\/recaptcha)$/i;
 const stats = { requests: 0, upstreamFail: 0, byHost: {}, byStatus: {} };
 
-// The model lives in the address-bar page (data-model-host="parent"), so
-// it outlives every page the frame shows. History is kept per site, since
-// all of them share this one origin.
-const widgetTag = (pageUrl, host) =>
-  `<script src="${ME}/__wc/web-controls-widget.js" data-title="Ask this page" data-webllm="${ME}/__wc/web-llm.js"`
-  + ` data-model-host="parent" data-storage-key="web-controls:${host}" data-page-url="${pageUrl.replace(/"/g, "&quot;")}"></script>`;
+// The page's half only: the manifests and the bridge the agent reaches
+// them through. The agent, the model and the panel are in the address-bar
+// page, which is what lets an ask survive a press that leaves the page.
+const PAGE_TAG = `<script src="${ME}/__wc/web-controls-page.js"></script>`;
 
 const allowedBy = (list) => (host) => !list.length || list.some((a) => host === a || host.endsWith(`.${a}`));
 
@@ -64,10 +62,9 @@ function rewrite(text, host) {
     .replace(/\starget=(["']?)(_blank|_top|_parent)\1/gi, ' target="_self"');
 }
 
-function inject(html, pageUrl, host) {
-  const tag = widgetTag(pageUrl, host);
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tag}</body>`);
-  return html + tag;
+function inject(html) {
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${PAGE_TAG}</body>`);
+  return html + PAGE_TAG;
 }
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json" };
@@ -131,13 +128,13 @@ async function proxy(req, res, allowed) {
 
   const ct = up.headers.get("content-type") || "";
   if (/text\/html/i.test(ct)) {
-    // Only a page load gets the widget. A site that fetches an HTML fragment
+    // Only a page load gets the tag. A site that fetches an HTML fragment
     // and runs it (drought.gov does, for its feedback box) would otherwise
-    // get a second copy, run with no script tag to read its options from.
+    // get a second copy.
     const dest = req.headers["sec-fetch-dest"];
     const isPage = dest ? /^(document|iframe|frame)$/.test(dest) : !req.headers["x-requested-with"];
     const rewritten = rewrite(await up.text(), host);
-    const text = isPage ? inject(rewritten, url, host) : rewritten;
+    const text = isPage ? inject(rewritten) : rewritten;
     const b = Buffer.from(text);
     out["content-length"] = b.length;
     res.writeHead(up.status, out); return res.end(b);

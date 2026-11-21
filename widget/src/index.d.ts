@@ -36,11 +36,12 @@ export interface WidgetOptions {
   /** localStorage key the history is kept under. Default "web-controls". */
   storageKey?: string;
   /**
-   * Where the model runs. "local" (the default) is this page. "parent" is
-   * the page framing this one, which must call {@link serveModelHost}: the
-   * model then outlives every page the frame shows. The mini browser sets it.
+   * Work on the page in this frame instead of this page. The agent, the
+   * model and the panel stay here, so a press that leaves the framed page
+   * does not end the ask. The framed page must carry web-controls-page.js
+   * and be same-origin, which the mini browser's proxy arranges.
    */
-  modelHost?: "local" | "parent";
+  frame?: HTMLIFrameElement;
   /** Log every ask and its result to the console. Default false. */
   debug?: boolean;
 }
@@ -92,7 +93,7 @@ export interface Widget {
   /** Picks a model, remembered for this site; swapped in now if one is loaded. */
   setModel(id: string): Promise<void>;
   modelStatus(): ModelStatus;
-  /** The page as the agent sees it. */
+  /** The page as the agent sees it; a promise when the page is in a frame. */
   inventory(): unknown;
   unmount(): void;
 }
@@ -100,21 +101,8 @@ export interface Widget {
 /** Mounts the widget. There is one per page: a second call returns the first. */
 export function mount(options?: WidgetOptions): Widget;
 
-export interface ServedModelHost {
-  /** Starts loading a model, the default one when none is named. */
-  load(modelId?: string): void;
-  status(): ModelStatus;
-  release(): Promise<void>;
-  /** Stops answering frames and releases the model. */
-  stop(): void;
-}
-/**
- * For a page that shows other pages in frames: holds one model and answers
- * every framed widget mounted with `modelHost: "parent"`. One per page.
- */
-export function serveModelHost(options?: Pick<WidgetOptions, "model" | "webllmUrl" | "worker" | "meaning">): ServedModelHost;
 /** The model a first-time visitor gets. */
 export const defaultModel: string;
 export const version: string;
-declare const WebControls: { mount: typeof mount; serveModelHost: typeof serveModelHost; defaultModel: string; version: string };
+declare const WebControls: { mount: typeof mount; defaultModel: string; version: string };
 export default WebControls;

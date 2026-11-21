@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>web-controls browser</title>
 <style>
-  :root { --bg: #f5f6f8; --bar: #fff; --line: #d9dce2; --ink: #1c1f26; --mute: #6b7280; --accent: #2563eb; --ok: #16a34a; --bad: #dc2626; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #15171c; --bar: #1f2229; --line: #353943; --ink: #e8eaef; --mute: #9aa1ad; --accent: #60a5fa; --ok: #4ade80; --bad: #f87171; } }
+  :root { --bg: #f5f6f8; --bar: #fff; --line: #d9dce2; --ink: #1c1f26; --mute: #6b7280; --accent: #2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171c; --bar: #1f2229; --line: #353943; --ink: #e8eaef; --mute: #9aa1ad; --accent: #60a5fa; } }
   html, body { height: 100%; margin: 0; }
   body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   .bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bar); border-bottom: 1px solid var(--line); }
@@ -17,15 +17,7 @@
   #url:focus { outline: none; border-color: var(--accent); }
   #go { background: var(--accent); color: #fff; border-color: var(--accent); }
   #status { color: var(--mute); font-size: 12px; white-space: nowrap; }
-  .model { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); white-space: nowrap; }
-  .model .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
-  .model .dot.loading { background: var(--accent); }
-  .model .dot.ready { background: var(--ok); }
-  .model .dot.bad { background: var(--bad); }
-  .model .track { width: 80px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
-  .model .track i { display: block; height: 100%; width: 0; background: var(--accent); }
   #frame { flex: 1; width: 100%; border: 0; background: #fff; }
-  @media (max-width: 720px) { #modelText { display: none; } }
 </style>
 </head>
 <body>
@@ -36,15 +28,12 @@
   <input id="url" type="text" placeholder="Enter a site, e.g. www.drought.gov" autocomplete="off" spellcheck="false">
   <button id="go">Open</button>
   <span id="status"></span>
-  <span class="model">
-    <i class="dot" id="modelDot"></i>
-    <span id="modelText">Model not loaded</span>
-    <span class="track" id="modelTrack" hidden><i id="modelFill"></i></span>
-    <button id="loadModel" title="Load the model once; every page you open then uses it">Load model</button>
-  </span>
 </div>
 <iframe id="frame" name="page" title="the page"></iframe>
-<!-- The widget's code, for its model host only: this page mounts no panel. -->
+<!-- The widget, mounted on the frame: the agent, the model and the panel
+     are in this page, and outlive every page the frame shows. The framed
+     page carries only its manifests and a bridge (web-controls-page.js,
+     which the proxy puts in). -->
 <script src="/__wc/web-controls-widget.js" data-manual data-webllm="/__wc/web-llm.js"></script>
 <script>
 (() => {
@@ -52,45 +41,14 @@
   const url = $("url"), frame = $("frame"), status = $("status");
   const back = $("back"), fwd = $("fwd"), reload = $("reload");
 
-  // --- the model, kept here so it outlives every page the frame shows ----
-  const served = window.WebControls && WebControls.serveModelHost ? WebControls.serveModelHost({ webllmUrl: "/__wc/web-llm.js" }) : null;
-  const modelDot = $("modelDot"), modelText = $("modelText"), modelTrack = $("modelTrack"), modelFill = $("modelFill"), loadBtn = $("loadModel");
-  const short = (id) => String(id || "").replace(/-q4f16_1-MLC$|-q0f32-MLC$/, "").replace(/-Instruct/, "");
-  const drawModel = () => {
-    modelText.title = "";
-    if (!served) { modelText.textContent = "widget files missing: run node widget/scripts/build.js"; modelDot.className = "dot bad"; loadBtn.disabled = true; return; }
-    const s = served.status();
-    modelTrack.hidden = !s.loading;
-    if (s.loading) modelFill.style.width = `${Math.round((s.fraction || 0) * 100)}%`;
-    loadBtn.hidden = s.ready || s.loading;
-    if (!s.hasGpu) { modelDot.className = "dot bad"; modelText.textContent = "No WebGPU in this browser"; loadBtn.disabled = true; }
-    else if (s.ready) { modelDot.className = "dot ready"; modelText.textContent = `${short(s.model)} ready for every page`; }
-    else if (s.loading) { modelDot.className = "dot loading"; modelText.textContent = `Loading ${short(s.model)} ${typeof s.fraction === "number" ? Math.round(s.fraction * 100) + "%" : ""}`; }
-    else if (s.error) {
-      const why = s.error.replace(/^Error:\s*/, "");
-      modelDot.className = "dot bad";
-      modelText.textContent = `Model failed: ${why.length > 48 ? `${why.slice(0, 48)}…` : why}`;
-      modelText.title = s.error;
-    }
-    else { modelDot.className = "dot"; modelText.textContent = "Model not loaded"; }
-  };
-  // The model a page's widget chose is remembered under the page's site;
-  // here, the one chosen last, else the widget's default.
-  const chosenModel = () => {
-    try {
-      for (const k of Object.keys(localStorage)) {
-        if (!k.startsWith("web-controls")) continue;
-        const v = JSON.parse(localStorage.getItem(k) || "{}");
-        if (v && v.llmModelId) return v.llmModelId;
-      }
-    } catch (e) { /* none kept */ }
-    return WebControls.defaultModel;
-  };
-  loadBtn.addEventListener("click", () => { served.load(chosenModel()); drawModel(); });
-  setInterval(drawModel, 700);
-  drawModel();
+  const widget = window.WebControls ? WebControls.mount({
+    frame,
+    title: "Ask this site",
+    storageKey: "web-controls:browser",
+    suggestions: ["what does this page show", "open the map"],
+  }) : null;
+  if (!widget) status.textContent = "widget files missing: run node widget/scripts/build.js";
 
-  // --- the frame ----------------------------------------------------------
   // https://host/path, or just host/path, to this server's /host/path.
   const toProxied = (typed) => {
     let s = typed.trim();
@@ -126,18 +84,27 @@
   // bar is kept in step by a clock, one for every page the frame will show.
   const sync = () => { const r = realUrl(); if (r && document.activeElement !== url) url.value = r; };
   setInterval(sync, 1000);
+  // The pages shown, so Back is only offered when there is one to go back
+  // to: a frame's history is the tab's, and going back from the first page
+  // would leave the mini browser itself.
+  const seen = [];
+  let opened = false;
   frame.addEventListener("load", () => {
     const real = realUrl();
     if (!real) return;
+    if (seen.length >= 2 && seen[seen.length - 2] === real) seen.pop(); else if (seen[seen.length - 1] !== real) seen.push(real);
     url.value = real;
     status.textContent = "";
-    back.disabled = fwd.disabled = reload.disabled = false;
+    back.disabled = seen.length < 2;
+    fwd.disabled = reload.disabled = false;
     try {
       const w = frame.contentWindow;
       w.addEventListener("popstate", sync);
       w.addEventListener("hashchange", sync);
-      if (!w.WebControls) status.textContent = "widget not in this page";
+      if (!w.__wcPageInstalled) status.textContent = "the page script is not in this page";
     } catch (e) { status.textContent = "page could not be read"; }
+    // The panel, the first time a site is open; after that, as it was left.
+    if (widget && !opened) { opened = true; widget.open(); }
   });
 
   const first = new URLSearchParams(location.search).get("site");

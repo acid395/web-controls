@@ -45,12 +45,10 @@ const raw = (port, p) => new Promise((resolve, reject) => {
 
   console.log("the widget's tag");
   {
-    const page = inject("<html><body><p>hi</p></body></html>", "https://www.drought.gov/", "www.drought.gov");
-    check("goes in before </body>", /<script src="[^"]+\/__wc\/web-controls-widget\.js"[^>]*><\/script><\/body>/.test(page), page);
-    check("with the model shared from the parent and history kept per site",
-      page.includes('data-model-host="parent"') && page.includes('data-storage-key="web-controls:www.drought.gov"'), page);
-    check("and the page's real address", page.includes('data-page-url="https://www.drought.gov/"'), page);
-    check("a page with no </body> gets it at the end", inject("<p>x</p>", "https://a.gov/", "a.gov").endsWith("</script>"));
+    const page = inject("<html><body><p>hi</p></body></html>");
+    check("the page's half goes in before </body>", /<script src="[^"]+\/__wc\/web-controls-page\.js"><\/script><\/body>/.test(page), page);
+    check("and not the widget: the agent is in the parent", !page.includes("web-controls-widget.js"), page);
+    check("a page with no </body> gets it at the end", inject("<p>x</p>").endsWith("</script>"));
   }
 
   console.log("the server's own routes");

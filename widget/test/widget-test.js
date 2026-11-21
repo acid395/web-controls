@@ -11,10 +11,13 @@
  */
 const fs = require("fs");
 const path = require("path");
-const { JSDOM, VirtualConsole } = require(path.join(__dirname, "..", "..", "extension", "test", "node_modules", "jsdom"));
+const { JSDOM, VirtualConsole, requestInterceptor } = require(path.join(__dirname, "..", "..", "extension", "test", "node_modules", "jsdom"));
 
 const DIST = path.join(__dirname, "..", "dist", "web-controls-widget.js");
 const built = fs.readFileSync(DIST, "utf8");
+const PAGE_BUILT = fs.readFileSync(path.join(__dirname, "..", "dist", "web-controls-page.js"), "utf8");
+const src = (f) => fs.readFileSync(path.join(__dirname, "..", "src", f), "utf8");
+const SHIM_SRC = `${src("postable.js")}\n${src("chrome-shim.js")}`;
 
 let passed = 0;
 let failed = 0;
@@ -494,7 +497,7 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     // carries __ngContext__, the app's whole object graph, and copying it key
     // by key froze the National Inventory of Dams' tab.
     const w = page();
-    w.eval(`${fs.readFileSync(path.join(__dirname, "..", "src", "chrome-shim.js"), "utf8")}\nwindow.__mkShim = createChromeShim;`);
+    w.eval(`${SHIM_SRC}\nwindow.__mkShim = createChromeShim;`);
     const shim = w.__mkShim({ modelHost: { status: () => ({}) }, pageGlobals: () => ["T"] });
     const box = w.document.createElement("input");
     w.document.body.appendChild(box);
@@ -515,7 +518,7 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     // route on drought.gov, or no site manifest ever matches.
     const dom = new JSDOM("<!doctype html><title>Drought</title>", { url: "http://localhost:8787/www.drought.gov/data-maps?view=1#top", runScripts: "outside-only" });
     const w = dom.window;
-    w.eval(`${fs.readFileSync(path.join(__dirname, "..", "src", "chrome-shim.js"), "utf8")}\nwindow.__mkShim = createChromeShim;`);
+    w.eval(`${SHIM_SRC}\nwindow.__mkShim = createChromeShim;`);
     const shim = w.__mkShim({ modelHost: { status: () => ({}) }, pageGlobals: () => [], pageUrl: "https://www.drought.gov/" });
     check("the agent sees the site's own address", shim.pageHref(), "https://www.drought.gov/data-maps?view=1#top");
     const [tab] = await shim.chrome.tabs.query({});
@@ -530,58 +533,97 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     plain.dispose();
   }
 
-  console.log("one model for every page in a frame");
+  console.log("the mini browser: the agent around the frame");
   {
-    // Two windows joined the way postMessage joins a frame and its parent:
-    // posting to a window delivers to that window's listeners, with the
-    // other as the source.
-    const mk = () => { const w = { ls: new Set() }; w.addEventListener = (t, f) => { if (t === "message") w.ls.add(f); }; w.removeEventListener = (t, f) => w.ls.delete(f); return w; };
-    const deliver = (to, from, data, origin) => setTimeout(() => { for (const f of to.ls) f({ data, origin, source: from }); }, 0);
-    // a frame: posting to its parent lands on the top window with the frame
-    // as source, and the parent's reply, posted to the source, lands back
-    const frameOf = (top) => { const f = mk(); f.parent = { postMessage: (data, origin) => deliver(top, f, data, origin) }; f.postMessage = (data, origin) => deliver(f, top, data, origin); return f; };
-    const top = mk();
-    const frame = frameOf(top);
-    const w = page();
-    w.eval(`${fs.readFileSync(path.join(__dirname, "..", "src", "shared-model-host.js"), "utf8")}\nwindow.__share = shareModelHost; window.__remote = createRemoteModelHost;`);
-    const loads = []; const steps = [];
-    let st = { ready: false, loading: false, model: null, progress: null, fraction: null, error: null, where: null, hasGpu: true, gpu: null };
-    const real = {
-      status: () => st,
-      load: (id) => { loads.push(id); st = { ...st, loading: true, model: id, fraction: 0.5 }; setTimeout(() => { st = { ...st, loading: false, ready: true, fraction: 1 }; }, 30); },
-      step: async (model, prompt, opts) => { steps.push({ model, prompt, opts }); return { text: "{\"ok\":1}", ms: 3, cost: {} }; },
-      embed: async (texts) => texts.map(() => [0, 1]),
-      release: async () => { st = { ...st, ready: false, model: null }; },
-      interrupt: () => { steps.push("interrupted"); },
+    // The parent is the address-bar page; the frame shows a site served by
+    // the proxy, which put web-controls-page.js in it. The widget is
+    // mounted on the frame, so the agent, the model and the history are in
+    // the parent and a navigation in the frame does not end them.
+    const SITE = "http://localhost:8787/www.lakes.example";
+    const framed = (body) => `<!doctype html><html><head><title>Lakes</title></head><body>${body}
+      <script>window.SLOW = { hang: () => new Promise(() => {}) };</script>
+      <script src="http://localhost:8787/__wc/web-controls-page.js"></script></body></html>`;
+    const pages = {
+      [`${SITE}/`]: framed(APP.replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, "")),
+      [`${SITE}/reports`]: framed(`<h1>Monthly reports</h1><label><input type="checkbox" id="wet"> Only wet months</label><p>Twelve reports.</p>`),
     };
-    const sharing = w.__share(real, { win: top, origin: "http://localhost:8787" });
-    const remote = w.__remote({ win: frame, origin: "http://localhost:8787" });
+    const serve = requestInterceptor((request) => {
+      if (request.url.startsWith("http://localhost:8787/__wc/web-controls-page.js")) return new Response(PAGE_BUILT, { headers: { "Content-Type": "text/javascript" } });
+      if (pages[request.url]) return new Response(pages[request.url], { headers: { "Content-Type": "text/html" } });
+      return new Response("not found", { status: 404 });
+    });
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on("jsdomError", (e) => { if (process.env.WC_DEBUG) console.error("jsdom:", e.message); });
+    const dom = new JSDOM(`<!doctype html><body><iframe id="frame"></iframe></body>`, { url: "http://localhost:8787/", runScripts: "dangerously",
+      pretendToBeVisual: true, resources: { interceptors: [serve] }, virtualConsole });
+    const w = dom.window;
+    const frame = w.document.getElementById("frame");
+    const attach = w.Element.prototype.attachShadow;
+    w.Element.prototype.attachShadow = function (init) { const root = attach.call(this, init); w.__widgetRoot = root; return root; };
+    // jsdom lays nothing out, in the frame either: everything measures something.
+    const measure = function () { return { width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 }; };
+    const show = (url) => new Promise((r) => {
+      const heard = () => {
+        if (frame.contentWindow.location.href !== url) return;
+        frame.removeEventListener("load", heard);
+        frame.contentWindow.Element.prototype.getBoundingClientRect = measure;
+        r();
+      };
+      frame.addEventListener("load", heard);
+      frame.src = url;
+    });
     const tick = (ms) => new Promise((r) => setTimeout(r, ms));
-    await tick(10);
-    check("a page's widget sees the parent's model state before asking anything", remote.status().hasGpu === true && remote.status().ready === false);
-    remote.load("Qwen3-4B-q4f16_1-MLC");
-    await tick(10);
-    check("load reaches the parent", loads[0], "Qwen3-4B-q4f16_1-MLC");
-    check("and the page sees it loading, with progress", remote.status().loading === true && remote.status().fraction === 0.5, JSON.stringify(remote.status()));
-    await tick(600);
-    check("and then ready, pushed without being asked", remote.status().ready === true, JSON.stringify(remote.status()));
-    const out = await remote.step("Qwen3-4B-q4f16_1-MLC", "hello", { timeoutMs: 1000, schema: { type: "object" } });
-    check("a step is answered by the parent's model", out.text, "{\"ok\":1}");
-    check("with the prompt and options it was given", steps[0] && steps[0].prompt === "hello" && steps[0].opts.schema.type === "object");
-    const vec = await remote.embed(["a", "b"]);
-    check("so is an embedding", vec.length, 2);
-    remote.interrupt();
-    await tick(10);
-    check("and a cancel", steps.includes("interrupted"));
-    // A second page, as after a navigation: the model is still there.
-    const frame2 = frameOf(top);
-    const again = w.__remote({ win: frame2, origin: "http://localhost:8787" });
-    await tick(10);
-    check("the next page finds the model already loaded", again.status().ready === true && again.status().model === "Qwen3-4B-q4f16_1-MLC", JSON.stringify(again.status()));
-    const stranger = w.__remote({ win: frame2, origin: "https://elsewhere.example" });
-    await tick(10);
-    check("a page from another origin is not answered", stranger.status().ready === false);
-    remote.dispose(); again.dispose(); stranger.dispose(); sharing.stop();
+
+    const s = w.document.createElement("script");
+    s.dataset.manual = "";
+    s.textContent = built;
+    w.document.body.appendChild(s);
+    const asked = [];
+    const decide = (name) => ({ text: JSON.stringify({ why: "asked", name, do: "check", on: true }), ms: 5, cost: {} });
+    const host = {
+      status: () => ({ ready: true, loading: false, model: "Llama-3.2-3B-Instruct-q4f16_1-MLC", progress: null, fraction: 1, hasGpu: true, gpu: null, where: "a test" }),
+      step: async (model, prompt) => { asked.push(prompt); return decide(/wet/i.test(prompt) ? "Only wet months" : "Show 30-year average"); },
+      async embed() { throw new Error("off"); }, async release() {}, load() {}, interrupt() {},
+    };
+    const wc = w.WebControls.mount({ frame, _modelHost: host, storageKey: "web-controls:browser" });
+    check("mounted in the parent, not the frame", !!w.document.querySelector("[data-web-controls-widget]"));
+    const early = await wc.ask("tick the average");
+    check("with no site open, the panel says to open one", /open a site first/.test(early && early.error), JSON.stringify(early).slice(0, 200));
+
+    await show(`${SITE}/`);
+    check("the framed page carries the manifests and the bridge, not the widget",
+      frame.contentWindow.__wcPageInstalled === true && !!frame.contentWindow.GENERIC && !frame.contentWindow.WebControls);
+    const inv = await wc.inventory();
+    check("inventory() reads the frame", !!(inv && inv.controls) && JSON.stringify(inv.controls).includes("30-year average"), JSON.stringify(inv).slice(0, 200));
+    const res = await wc.ask("overlay the long-term normal on the chart");
+    check("an ask is carried out in the frame", frame.contentDocument.getElementById("avg").checked === true, JSON.stringify(res).slice(0, 300));
+
+    // The frame moves to another page: the agent, its history and the
+    // model are still here.
+    await show(`${SITE}/reports`);
+    await tick(400);
+    const res2 = await wc.ask("only the wet months");
+    check("after a navigation the next ask works on the new page", frame.contentDocument.getElementById("wet").checked === true, JSON.stringify(res2).slice(0, 300));
+    const hist = (JSON.parse(w.localStorage.getItem("web-controls:browser") || "{}").askHistory) || [];
+    check("and the history holds both asks, across pages", hist.length >= 2 && hist.some((h) => /wet months/.test(h.instruction)) && hist.some((h) => /long-term/.test(h.instruction)), JSON.stringify(hist.map((h) => h.instruction)));
+
+    // A call the page never answers because it went away: the agent is told
+    // what the extension is told, and reads a navigating press as working.
+    w.eval(`${src("frame-page.js")}\nwindow.__framePage = createFramePage;`);
+    const fp = w.__framePage(frame);
+    check("the frame's real address is the site's", fp.href(), "https://www.lakes.example/reports");
+    const back = await fp.call({ fn: "goBack", args: [] }, ["GENERIC"]);
+    check("go back on the first page opened stays put, and says so", back.ok && /nothing to go back to/.test(back.result.note) && fp.href() === "https://www.lakes.example/reports", JSON.stringify(back));
+    const seen = [];
+    fp.watch(() => seen.push("loading"), () => seen.push("complete"));
+    const hung = fp.call({ fn: "hang", args: [] }, ["SLOW"]).then(() => "answered", (e) => String(e.message));
+    await show(`${SITE}/`);
+    check("a call left waiting when the page goes away is a closed channel", /message channel closed/.test(await hung), await hung);
+    await tick(400);
+    check("after a second page there is somewhere to go back to", fp.canGoBack() === true);
+    check("and the navigation was announced as loading, then complete", seen.join(",").includes("loading,complete"), seen.join(","));
+    fp.dispose();
+    wc.unmount();
   }
 
   console.log("a model the widget's list does not know");
@@ -606,17 +648,12 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("setModel moves the picker too", picker.value, "Llama-3.2-1B-Instruct-q4f16_1-MLC");
   }
 
-  console.log("the mini browser's page tag");
+  console.log("the built widget's surface");
   {
     const w = page();
-    // Top-level, "parent" means nothing and the widget keeps its own model.
-    const tag = w.document.createElement("script");
-    tag.dataset.modelHost = "parent"; tag.dataset.storageKey = "web-controls:example.org";
     w.eval(built);
-    const opts = w.eval(`(${built.match(/function optionsFromScript[\s\S]*?\n}/)[0]})`)(tag);
-    check("data-model-host and data-storage-key are read", opts.modelHost === "parent" && opts.storageKey === "web-controls:example.org", JSON.stringify(opts));
-    check("the built widget serves a model host", typeof w.WebControls.serveModelHost, "function");
-    check("and names its default model", typeof w.WebControls.defaultModel, "string");
+    check("mount and the default model are offered", typeof w.WebControls.mount === "function" && typeof w.WebControls.defaultModel === "string");
+    check("the page's half installs no widget", !/WebControls\s*=/.test(PAGE_BUILT) && /__wcPageInstalled/.test(PAGE_BUILT));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

@@ -6,6 +6,8 @@
  * Writes widget/dist/:
  *   web-controls-widget.js    a classic script; mounts itself from its tag
  *   web-controls-widget.mjs   the same, as a module exporting mount()
+ *   web-controls-page.js      the page's half for the mini browser: the
+ *                             manifests and the bridge, no agent
  *   web-llm.js                the WebLLM build the extension ships, loaded
  *                             only when somebody presses "Load model"
  *
@@ -109,7 +111,8 @@ function body(scriptUrlExpr, loadersExpr) {
       + quietly(`${background}\nreturn { routeFor };`, "globalThis.__wcQuiet")
       + "\n}"),
     section("widget/src/model-host.js", read(SRC, "model-host.js")),
-    section("widget/src/shared-model-host.js", read(SRC, "shared-model-host.js")),
+    section("widget/src/postable.js", read(SRC, "postable.js")),
+    section("widget/src/frame-page.js", read(SRC, "frame-page.js")),
     section("widget/src/chrome-shim.js", read(SRC, "chrome-shim.js")),
     section("widget/src/ui.js", read(SRC, "ui.js")),
     section("widget/src/widget.js", read(SRC, "widget.js")),
@@ -124,7 +127,7 @@ if (window.WebControls) return;
 const WC_CURRENT_SCRIPT = document.currentScript;
 ${body("(WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.src) || location.href", "null")}
 if (!WC_CURRENT_SCRIPT || WC_CURRENT_SCRIPT.dataset.captureFeeds !== "false") installFeedCapture();
-window.WebControls = { mount, serveModelHost, defaultModel: DEFAULTS.model, version: globalThis.WC_WIDGET_VERSION };
+window.WebControls = { mount, defaultModel: DEFAULTS.model, version: globalThis.WC_WIDGET_VERSION };
 if (WC_CURRENT_SCRIPT && WC_CURRENT_SCRIPT.dataset.manual == null) {
   const go = () => mount(optionsFromScript(WC_CURRENT_SCRIPT));
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", go, { once: true });
@@ -157,10 +160,9 @@ const esm = `${banner}const WebControls = typeof window === "undefined"
 if (window.WebControls) return window.WebControls;
 ${body("import.meta.url", ESM_LOADERS)}
 installFeedCapture();
-return (window.WebControls = { mount, serveModelHost, defaultModel: DEFAULTS.model, version: globalThis.WC_WIDGET_VERSION });
+return (window.WebControls = { mount, defaultModel: DEFAULTS.model, version: globalThis.WC_WIDGET_VERSION });
 })();
 export const mount = (options) => WebControls.mount(options);
-export const serveModelHost = (options) => WebControls.serveModelHost(options);
 export const defaultModel = WebControls.defaultModel;
 export const version = WebControls.version;
 export default WebControls;
@@ -173,9 +175,32 @@ const handler = new WebWorkerMLCEngineHandler();
 self.onmessage = (e) => handler.onmessage(e);
 `;
 
+// The page's half of the mini browser: the manifests and the bridge that
+// answers the agent in the page around the frame. No agent, no model, no
+// panel - those are in the parent, which is what lets an ask survive a
+// navigation. The proxy puts this into every page it serves.
+const pageSide = `${banner}(function () {
+if (window.__wcPageInstalled) return;
+window.__wcPageInstalled = true;
+${[
+    section("extension/page/feed-capture.js",
+      `function installFeedCapture() {\n${read(EXT, "page", "feed-capture.js")}\n}\ninstallFeedCapture();`),
+    isolated("extension/page/generic-bundle.js", read(EXT, "page", "generic-bundle.js")),
+    section("extension/page/*-bundle.js (named manifests)",
+      "const WC_NAMED_BUNDLES = {\n"
+      + [["USGS", "usgs"], ["SITE", "site"], ["NOAA", "noaa"], ["FCP", "forecastpoints"]]
+        .map(([g, file]) => `  ${g}: function () {\n${quietly(read(EXT, "page", `${file}-bundle.js`))}\n  },\n`).join("")
+      + "};"),
+    section("widget/src/postable.js", read(SRC, "postable.js")),
+    section("widget/src/frame-bridge.js", read(SRC, "frame-bridge.js")),
+  ].join("\n")}
+})();
+`;
+
 fs.mkdirSync(DIST, { recursive: true });
 fs.writeFileSync(path.join(DIST, "web-controls-widget.js"), classic);
 fs.writeFileSync(path.join(DIST, "web-controls-widget.mjs"), esm);
+fs.writeFileSync(path.join(DIST, "web-controls-page.js"), pageSide);
 fs.writeFileSync(path.join(DIST, "web-llm-worker.mjs"), workerFile);
 fs.copyFileSync(path.join(EXT, "offscreen", "vendor", "web-llm.js"), path.join(DIST, "web-llm.js"));
 fs.copyFileSync(path.join(SRC, "index.d.ts"), path.join(DIST, "web-controls-widget.d.ts"));
@@ -183,7 +208,7 @@ fs.copyFileSync(path.join(SRC, "index.d.ts"), path.join(DIST, "web-controls-widg
 // Both outputs parsed in the mode they will run in: the script sloppy, the
 // module strict. A construct legal in one and not the other is exactly how
 // the npm build broke while every test of the script build passed.
-for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-llm-worker.mjs"]) {
+for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-controls-page.js", "web-llm-worker.mjs"]) {
   try {
     require("child_process").execFileSync(process.execPath, ["--check", path.join(DIST, f)], { stdio: "pipe" });
   } catch (e) {
@@ -193,6 +218,6 @@ for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-llm-w
 
 const kb = (f) =>`${Math.round(fs.statSync(path.join(DIST, f)).size / 1024)} KB`;
 console.log(`web-controls widget ${pkg.version}`);
-for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-llm-worker.mjs", "web-llm.js", "web-controls-widget.d.ts"]) {
+for (const f of ["web-controls-widget.js", "web-controls-widget.mjs", "web-controls-page.js", "web-llm-worker.mjs", "web-llm.js", "web-controls-widget.d.ts"]) {
   console.log(`  dist/${f.padEnd(26)} ${kb(f)}`);
 }

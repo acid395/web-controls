@@ -68,25 +68,36 @@ function mount(userOptions = {}) {
     }
   };
   // `_modelHost` is for tests: the same interface, decisions scripted.
-  // "parent" is the mini browser: the page holding this one in a frame
-  // keeps the model, so it outlives every page the frame shows.
-  const modelHost = options._modelHost
-    || (options.modelHost === "parent" && window.parent && window.parent !== window
-      ? createRemoteModelHost()
-      : createModelHost({
-        ...loaders,
-        useWorker: options.worker !== false,
-        allowEmbed: !!options.meaning,
-      }));
+  const modelHost = options._modelHost || createModelHost({
+    ...loaders,
+    useWorker: options.worker !== false,
+    allowEmbed: !!options.meaning,
+  });
+  // `frame` is the mini browser: the agent is in this page and the site is
+  // in the frame, so a press that leaves the page does not end the ask. The
+  // framed page holds the manifests (frame-bridge.js) and loads a named one
+  // when a call names it; here only the names are chosen.
+  const framed = options.frame ? createFramePage(options.frame) : null;
+  const namesFor = () => {
+    const route = agent && agent.routeFor(shim.pageHref());
+    return route && route.global !== "GENERIC" ? [route.global, "GENERIC"] : ["GENERIC"];
+  };
   const shim = createChromeShim({
     modelHost,
     storageKey: options.storageKey,
     onBroadcast: (m) => { if (ui) ui.progress(m); },
-    beforeCall: ensureNamed,
-    pageGlobals: () => [...loadedNamed, "GENERIC"],
+    beforeCall: framed ? null : ensureNamed,
+    pageGlobals: framed ? namesFor : () => [...loadedNamed, "GENERIC"],
     onWarm: () => { if (ui) ui.loadModel(); },
     pageUrl: options.pageUrl,
+    page: framed,
   });
+  // With no site in the frame yet, the agent would only say "no active
+  // tab"; said here in words that name the bar.
+  const send = !framed ? shim.send : (m) => (
+    m && /^(smartAsk|runToolCall)$/.test(m.type) && !framed.href()
+      ? Promise.resolve({ ok: false, error: "open a site first: type its address in the bar above" })
+      : shim.send(m));
 
   // The model the site chose, unless the visitor has since picked another
   // from the panel.
@@ -99,7 +110,7 @@ function mount(userOptions = {}) {
   globalThis.__wcQuiet = !options.debug;
   agent = bootAgent(shim.chrome);
 
-  ui = createWidgetUI({ send: shim.send, modelHost, storage: shim.storage, options });
+  ui = createWidgetUI({ send, modelHost, storage: shim.storage, options });
 
   mounted = {
     version: globalThis.WC_WIDGET_VERSION,
@@ -124,14 +135,15 @@ function mount(userOptions = {}) {
     },
     modelStatus: () => modelHost.status(),
     // The page as the agent sees it, for a developer checking what their
-    // markup exposes.
-    inventory: () => (window.GENERIC ? window.GENERIC.inventory() : null),
+    // markup exposes. A promise when the page is in a frame.
+    inventory: () => (framed
+      ? shim.chrome.tabs.sendMessage(1, { type: "call", fn: "inventory", args: [] }).then((r) => (r && r.ok ? r.result : null))
+      : (window.GENERIC ? window.GENERIC.inventory() : null)),
     // Gone, and mountable again. Leaving `mounted` set meant the next mount()
     // handed back this one, with its panel already removed from the page.
     unmount: () => {
       ui.destroy();
-      // A shared model is the parent's to keep; this page only stops listening.
-      if (modelHost.dispose) modelHost.dispose(); else modelHost.release();
+      modelHost.release();
       shim.dispose();
       if (mounted === api) mounted = null;
     },
@@ -145,29 +157,6 @@ function mount(userOptions = {}) {
 function loadersFor(options) {
   return options.webllmUrl ? urlLoaders(options.webllmUrl)
     : (WC_LOADERS || urlLoaders(new URL("web-llm.js", WC_SCRIPT_URL).href));
-}
-
-// The other half of modelHost: "parent". Called by a page that frames
-// others (the mini browser's address-bar page): it loads the model once
-// and answers every framed page's widget. Returns the host, to show its
-// progress and to start a load before any page asks.
-let served = null;
-function serveModelHost(userOptions = {}) {
-  if (served) return served;
-  const options = { ...DEFAULTS, ...userOptions };
-  const host = createModelHost({
-    ...loadersFor(options),
-    useWorker: options.worker !== false,
-    allowEmbed: !!options.meaning,
-  });
-  const sharing = shareModelHost(host);
-  served = {
-    load: (modelId) => host.load(modelId || options.model),
-    status: host.status,
-    release: host.release,
-    stop: () => { sharing.stop(); host.release(); served = null; },
-  };
-  return served;
 }
 
 // From a script tag's data attributes. data-suggestions is "|"-separated,
@@ -192,7 +181,6 @@ function optionsFromScript(script) {
   if (d.hotkey === "false") out.hotkey = false;
   if (d.debug != null) out.debug = d.debug !== "false";
   if (d.pageUrl) out.pageUrl = d.pageUrl;
-  if (d.modelHost) out.modelHost = d.modelHost;
   if (d.storageKey) out.storageKey = d.storageKey;
   return out;
 }

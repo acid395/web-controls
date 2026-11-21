@@ -13,8 +13,9 @@ Three ways to run it are here, all the same agent:
   use. Start here.
 - **`widget/`** — the agent as a script a site adds to its own pages.
 - **`browser/`** — a page with an address bar that opens a site in a frame,
-  through a proxy, with the widget inside. Nothing to install and nothing
-  for the site to add; see its README for which sites that works on.
+  through a proxy, with the agent beside it the way the extension sits
+  beside a tab. Nothing to install and nothing for the site to add; see its
+  README for which sites that works on.
 - **everything else** — which are primarily per site examples.
 
 **Trying it out and reporting back?** [FEEDBACK.md](FEEDBACK.md) says what to
