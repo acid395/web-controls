@@ -111,6 +111,12 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     status: document.readyState === "loading" ? "loading" : "complete",
   });
 
+  const tellComplete = () => {
+    const done = { ...thisTab(), status: "complete" };
+    for (const fn of updatedListeners) {
+      try { fn(done.id, { status: "complete" }, done); } catch (e) { /* theirs */ }
+    }
+  };
   // A client-side route change is the only navigation this page lives
   // through. A full one ends this script along with everything else.
   const announce = () => {
@@ -118,12 +124,7 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     for (const fn of updatedListeners) {
       try { fn(tab.id, { status: "loading", url: tab.url }, tab); } catch (e) { /* theirs */ }
     }
-    setTimeout(() => {
-      const done = { ...thisTab(), status: "complete" };
-      for (const fn of updatedListeners) {
-        try { fn(done.id, { status: "complete" }, done); } catch (e) { /* theirs */ }
-      }
-    }, 0);
+    setTimeout(tellComplete, 0);
   };
   let lastUrl = location.href;
   const checkUrl = () => { if (location.href !== lastUrl) { lastUrl = location.href; announce(); } };
@@ -141,14 +142,7 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
   }
   // Mounted from a module before the document finished parsing: a wait
   // that began then hears when it has.
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      const done = { ...thisTab(), status: "complete" };
-      for (const fn of updatedListeners) {
-        try { fn(done.id, { status: "complete" }, done); } catch (e) { /* theirs */ }
-      }
-    }, { once: true });
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tellComplete, { once: true });
   window.addEventListener("popstate", checkUrl);
   window.addEventListener("hashchange", checkUrl);
   // Unmounted: the router wrappers and listeners go too, or every
@@ -190,7 +184,7 @@ function createChromeShim({ modelHost, storageKey = "web-controls", onBroadcast,
     // Only the manifests the widget loaded itself. A window.SITE is as
     // likely the host's own - or an element with id="SITE", whose native
     // click() then answered the agent's click and pressed nothing.
-    const names = pageGlobals ? pageGlobals() : ["USGS", "SITE", "NOAA", "FCP", "GENERIC"];
+    const names = pageGlobals ? pageGlobals() : ["GENERIC"];
     const owner = names.map((n) => window[n])
       .find((t) => t && typeof t.nodeType !== "number" && typeof t[m.fn] === "function");
     if (!owner) return { ok: false, error: `${m.fn} is not a function on any manifest loaded here` };

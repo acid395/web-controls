@@ -17,9 +17,9 @@ export interface WidgetOptions {
    * browser): the agent then routes on this host, with the path after it.
    */
   pageUrl?: string;
-  /** The model a first-time visitor gets. Default "Qwen3-4B-q4f16_1-MLC". */
+  /** The model a first-time visitor gets. Default "Qwen3-4B-q4f16_1-MLC". Any WebLLM model id. */
   model?: string;
-  /** What the panel's model picker offers. */
+  /** What the panel's model picker offers. An id the widget's list does not know is shown under its id. */
   models?: string[];
   /** Start the model download when the panel opens, instead of waiting for "Load model". Default false. */
   autoLoad?: boolean;

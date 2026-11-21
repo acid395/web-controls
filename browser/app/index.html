@@ -51,7 +51,6 @@
   const $ = (id) => document.getElementById(id);
   const url = $("url"), frame = $("frame"), status = $("status");
   const back = $("back"), fwd = $("fwd"), reload = $("reload");
-  let visited = 0;
 
   // --- the model, kept here so it outlives every page the frame shows ----
   const served = window.WebControls && WebControls.serveModelHost ? WebControls.serveModelHost({ webllmUrl: "/__wc/web-llm.js" }) : null;
@@ -67,7 +66,12 @@
     if (!s.hasGpu) { modelDot.className = "dot bad"; modelText.textContent = "No WebGPU in this browser"; loadBtn.disabled = true; }
     else if (s.ready) { modelDot.className = "dot ready"; modelText.textContent = `${short(s.model)} ready for every page`; }
     else if (s.loading) { modelDot.className = "dot loading"; modelText.textContent = `Loading ${short(s.model)} ${typeof s.fraction === "number" ? Math.round(s.fraction * 100) + "%" : ""}`; }
-    else if (s.error) { modelDot.className = "dot bad"; modelText.textContent = `Model failed: ${s.error.replace(/^Error:\s*/, "").slice(0, 48)}…`; modelText.title = s.error; }
+    else if (s.error) {
+      const why = s.error.replace(/^Error:\s*/, "");
+      modelDot.className = "dot bad";
+      modelText.textContent = `Model failed: ${why.length > 48 ? `${why.slice(0, 48)}…` : why}`;
+      modelText.title = s.error;
+    }
     else { modelDot.className = "dot"; modelText.textContent = "Model not loaded"; }
   };
   // The model a page's widget chose is remembered under the page's site;
@@ -111,8 +115,6 @@
     if (!p) { status.textContent = "type a site, like www.drought.gov"; return; }
     status.textContent = "loading…";
     frame.src = p;
-    visited++;
-    reload.disabled = false;
   };
   $("go").addEventListener("click", open);
   url.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
@@ -120,18 +122,21 @@
   fwd.addEventListener("click", () => { try { frame.contentWindow.history.forward(); } catch (e) { /* not ours */ } });
   reload.addEventListener("click", () => { try { frame.contentWindow.location.reload(); } catch (e) { /* not ours */ } });
 
+  // Client-side routing changes the frame's URL with no load event, so the
+  // bar is kept in step by a clock, one for every page the frame will show.
+  const sync = () => { const r = realUrl(); if (r && document.activeElement !== url) url.value = r; };
+  setInterval(sync, 1000);
   frame.addEventListener("load", () => {
     const real = realUrl();
-    if (real) { url.value = real; status.textContent = ""; }
-    back.disabled = fwd.disabled = visited < 1;
+    if (!real) return;
+    url.value = real;
+    status.textContent = "";
+    back.disabled = fwd.disabled = reload.disabled = false;
     try {
       const w = frame.contentWindow;
-      // Client-side routing changes the frame's URL with no load event.
-      const sync = () => { const r = realUrl(); if (r && document.activeElement !== url) url.value = r; };
       w.addEventListener("popstate", sync);
       w.addEventListener("hashchange", sync);
-      setInterval(sync, 1000);
-      if (real && !w.WebControls) status.textContent = "widget not in this page";
+      if (!w.WebControls) status.textContent = "widget not in this page";
     } catch (e) { status.textContent = "page could not be read"; }
   });
 

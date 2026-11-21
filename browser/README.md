@@ -39,3 +39,4 @@ Rules of thumb from that:
 
 - `server.js`: the proxy, the widget's files at `/__wc/`, the app at `/`.
 - `app/index.html`: the address bar, the frame, and the model host every framed page's widget talks to.
+- `test/server-test.js`: the rewrite, the tag and the server's own routes, with no network (`node browser/test/server-test.js`).

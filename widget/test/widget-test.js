@@ -584,6 +584,28 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     remote.dispose(); again.dispose(); stranger.dispose(); sharing.stop();
   }
 
+  console.log("a model the widget's list does not know");
+  {
+    const w = page();
+    const loads = [];
+    const host = {
+      status: () => ({ ready: false, loading: false, model: null, hasGpu: true, gpu: null }),
+      load: (id) => loads.push(id),
+      async step() { throw new Error("off"); }, async embed() { throw new Error("off"); }, async release() {},
+    };
+    const s = w.document.createElement("script");
+    s.dataset.manual = "";
+    s.textContent = built;
+    w.document.body.appendChild(s);
+    const wc = w.WebControls.mount({ _modelHost: host, model: "gemma-2-2b-it-q4f16_1-MLC" });
+    const picker = w.__widgetRoot.querySelector("select");
+    check("the site's own model id is in the picker", [...picker.options].some((o) => o.value === "gemma-2-2b-it-q4f16_1-MLC"));
+    await wc.loadModel();
+    check("and is what Load model loads", loads[0], "gemma-2-2b-it-q4f16_1-MLC");
+    await wc.setModel("Llama-3.2-1B-Instruct-q4f16_1-MLC");
+    check("setModel moves the picker too", picker.value, "Llama-3.2-1B-Instruct-q4f16_1-MLC");
+  }
+
   console.log("the mini browser's page tag");
   {
     const w = page();

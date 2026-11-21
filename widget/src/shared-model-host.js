@@ -84,31 +84,40 @@ function createRemoteModelHost({ win = window, target = win.parent, origin = loc
   };
   win.addEventListener("message", onMessage);
 
+  // timeoutMs 0: wait for the answer however long it takes.
   const call = (op, args = [], timeoutMs = 10000) => new Promise((resolve, reject) => {
     const id = ++seq;
-    const timer = setTimeout(() => {
+    const timer = timeoutMs ? setTimeout(() => {
       pending.delete(id);
       reject(new Error(`the shared model host did not answer "${op}" in ${Math.round(timeoutMs / 1000)}s`));
-    }, timeoutMs);
+    }, timeoutMs) : null;
     pending.set(id, { resolve, reject, timer });
     try { target.postMessage({ wc: "model", id, op, args }, origin); }
     catch (err) { clearTimeout(timer); pending.delete(id); reject(err); }
   });
+  const refresh = () => call("status", [], 3000).then(take).catch(() => {});
 
   // What the host has now, before anything is asked of it: a model it already
-  // holds shows as ready at once on the next page.
-  call("status", [], 3000).then(take).catch(() => {});
+  // holds shows as ready at once on the next page. No answer means the page
+  // holding this one is not the mini browser, and the panel says so rather
+  // than showing a model that will never load.
+  call("status", [], 3000).then(take).catch(() => {
+    if (!last.ready && !last.loading) last = { ...last, error: "no shared model host answered: this page is framed by something other than the mini browser" };
+  });
 
   return {
     load: (modelId) => { call("load", [modelId], 5000).then(take).catch(() => {}); },
+    // No clock of its own: the host times the generation and answers with
+    // the error, and a step asked while the model is still loading waits
+    // for the load, as the in-page host's does.
     step: async (modelId, prompt, opts = {}) => {
-      const out = await call("step", [modelId, prompt, opts], (opts.timeoutMs || 45000) + 5000);
-      call("status", [], 3000).then(take).catch(() => {});
+      const out = await call("step", [modelId, prompt, opts], 0);
+      refresh();
       return out;
     },
     embed: (texts) => call("embed", [texts], 120000),
     status: () => last,
-    release: async () => { await call("release", [], 10000).catch(() => {}); call("status", [], 3000).then(take).catch(() => {}); },
+    release: async () => { await call("release", [], 10000).catch(() => {}); refresh(); },
     interrupt: () => { call("interrupt", [], 3000).catch(() => {}); },
     dispose: () => { win.removeEventListener("message", onMessage); for (const p of pending.values()) clearTimeout(p.timer); pending.clear(); },
   };

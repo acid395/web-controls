@@ -7,6 +7,10 @@
  * buttons never turn up as "controls on this page" - which in an extension
  * was never a question, because the panel was another window.
  */
+// The dark palette, once: chosen by the site (theme "dark") or by the
+// visitor's system when the site left it "auto".
+const DARK = "--bg: #161b22; --bg-2: #1f262f; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2d3641;"
+  + " --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5);";
 const WIDGET_CSS = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -20,12 +24,8 @@ const WIDGET_CSS = `
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
 }
-@media (prefers-color-scheme: dark) {
-  .root:not(.light) { --bg: #161b22; --bg-2: #1f262f; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2d3641;
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5); }
-}
-.root.dark { --bg: #161b22; --bg-2: #1f262f; --ink: #e6ebf1; --ink-2: #9aa6b4; --line: #2d3641;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5); }
+@media (prefers-color-scheme: dark) { .root:not(.light) { ${DARK} } }
+.root.dark { ${DARK} }
 button { font: inherit; }
 
 /* The launcher: the logo as it was, with a little lift. */
@@ -240,11 +240,17 @@ function createWidgetUI({ send, modelHost, storage, options }) {
   state.append(dot, stateText);
   const picker = document.createElement("select");
   picker.setAttribute("aria-label", "Model");
-  const models = (globalThis.WC_MODELS || []).filter((m) => !options.models || options.models.includes(m.id));
+  // The models the site allows, in the order the list knows them, and then
+  // any the site named that the list does not know - a WebLLM id of the
+  // site's own choosing - under its id. Left out, the picker fell back to
+  // the first known model and the site's choice was never loaded.
+  const known = (globalThis.WC_MODELS || []).filter((m) => !options.models || options.models.includes(m.id));
+  const models = known.concat((options.models || [options.model]).filter((id) => id && !known.some((m) => m.id === id))
+    .map((id) => ({ id, name: id, vramMB: null })));
   for (const m of models) {
     const o = document.createElement("option");
     o.value = m.id;
-    o.textContent = `${m.name} (~${(m.vramMB / 1024).toFixed(1)} GB)`;
+    o.textContent = m.vramMB ? `${m.name} (~${(m.vramMB / 1024).toFixed(1)} GB)` : m.name;
     picker.appendChild(o);
   }
   const loadBtn = el("button", "btn", "Load model");
@@ -373,12 +379,16 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     startPolling();
   }
   loadBtn.addEventListener("click", loadModel);
-  picker.addEventListener("change", async () => {
+  // Remembered for this site, and swapped in now if a model is already
+  // loaded or loading. The picker and the site's setModel() both come here.
+  async function setModel(id) {
     const was = modelHost.status();
-    await storage.set({ llmModelId: picker.value });
+    await storage.set({ llmModelId: id });
+    if (picker.value !== id) picker.value = id;
     if (was.ready || was.loading) await loadModel();
     else drawModel();
-  });
+  }
+  picker.addEventListener("change", () => setModel(picker.value));
 
   // --- cards ---------------------------------------------------------------
   const scrollDown = () => { log.scrollTop = log.scrollHeight; };
@@ -701,6 +711,7 @@ function createWidgetUI({ send, modelHost, storage, options }) {
     stop: () => { if (busy) stop(); else send({ type: "cancelAsk" }).catch(() => {}); return Promise.resolve({ ok: true }); },
     progress,
     loadModel,
+    setModel,
     destroy: () => {
       if (poll) clearInterval(poll);
       window.removeEventListener("keydown", onHotkey);

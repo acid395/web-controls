@@ -115,15 +115,12 @@ function mount(userOptions = {}) {
     loadModel: ui.loadModel,
     // Stops the request in progress, as the Stop button does.
     cancel: () => (ui && ui.stop ? ui.stop() : shim.send({ type: "cancelAsk" })),
-    // The same as choosing it in the panel: remembered for this site, and
-    // swapped in now if a model is already loaded or loading.
+    // The same as choosing it in the panel.
     setModel: async (id) => {
       if (options.models && !options.models.includes(id)) {
         throw new Error(`${id} is not one of this widget's models: ${options.models.join(", ")}`);
       }
-      await shim.storage.set({ llmModelId: id });
-      const s = modelHost.status();
-      if (s.ready || s.loading) await ui.loadModel();
+      await ui.setModel(id);
     },
     modelStatus: () => modelHost.status(),
     // The page as the agent sees it, for a developer checking what their

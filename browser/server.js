@@ -29,6 +29,7 @@ const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i
 const PORT = Number(flag("port", 8787));
 const ALLOW = flag("allow", "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 const ME = `http://localhost:${PORT}`;
+const ME_RE = ME.replace(/[.]/g, "\\.");
 const WIDGET_DIR = path.join(__dirname, "..", "widget", "dist");
 const APP_DIR = path.join(__dirname, "app");
 const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
@@ -43,14 +44,11 @@ const widgetTag = (pageUrl, host) =>
   `<script src="${ME}/__wc/web-controls-widget.js" data-title="Ask this page" data-webllm="${ME}/__wc/web-llm.js"`
   + ` data-model-host="parent" data-storage-key="web-controls:${host}" data-page-url="${pageUrl.replace(/"/g, "&quot;")}"></script>`;
 
-function allowed(host) {
-  if (!ALLOW.length) return true;
-  return ALLOW.some((a) => host === a || host.endsWith(`.${a}`));
-}
+const allowedBy = (list) => (host) => !list.length || list.some((a) => host === a || host.endsWith(`.${a}`));
 
 function hostFromReferer(req) {
   const ref = req.headers.referer || "";
-  const m = ref.match(new RegExp(`^${ME.replace(/[.]/g, "\\.")}/([^/?#]+)`));
+  const m = ref.match(new RegExp(`^${ME_RE}/([^/?#]+)`));
   return m && HOST_RE.test(m[1]) ? m[1] : null;
 }
 
@@ -72,20 +70,27 @@ function inject(html, pageUrl, host) {
   return html + tag;
 }
 
-function serveFile(res, file, type) {
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json" };
+
+// A file from one of this server's own directories, and nothing outside it:
+// "/__wc/../../package.json" resolves to the directory above and is refused.
+function serveFile(res, dir, rel) {
+  let file;
+  try { file = path.resolve(dir, decodeURIComponent(rel)); } catch (e) { file = ""; }
+  if (!file.startsWith(dir + path.sep)) { res.writeHead(404); return res.end("not found"); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end("not found"); }
-    res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
     res.end(data);
   });
 }
 
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".ts": "text/plain" };
-
-async function proxy(req, res) {
-  let [, first, ...rest] = req.url.split("/");
+async function proxy(req, res, allowed) {
+  // /<host><rest>, the rest keeping its query: "/www.x.gov?a=1" is the
+  // site's front page with a query, not a host called "www.x.gov?a=1".
+  const m = req.url.match(/^\/([^/?#]+)(.*)$/);
   let host, pathPart;
-  if (HOST_RE.test(first)) { host = first.toLowerCase(); pathPart = "/" + rest.join("/"); }
+  if (m && HOST_RE.test(m[1])) { host = m[1].toLowerCase(); pathPart = m[2] || "/"; if (!pathPart.startsWith("/")) pathPart = `/${pathPart}`; }
   else { host = hostFromReferer(req); pathPart = req.url; }
   if (!host) { res.writeHead(404, { "content-type": "text/plain" }); return res.end("no site in the path: use /<host>/<path>"); }
   if (!allowed(host)) { res.writeHead(403, { "content-type": "text/plain" }); return res.end(`${host} is not on this server's allow list`); }
@@ -101,7 +106,7 @@ async function proxy(req, res) {
   for (const h of ["content-type", "cookie", "x-requested-with", "range", "if-none-match", "if-modified-since"]) {
     if (req.headers[h]) headers[h] = req.headers[h];
   }
-  if (req.headers.referer) headers.referer = req.headers.referer.replace(new RegExp(`^${ME}/`), "https://");
+  if (req.headers.referer) headers.referer = req.headers.referer.replace(new RegExp(`^${ME_RE}/`), "https://");
   let body = null;
   if (req.method !== "GET" && req.method !== "HEAD") {
     body = await new Promise((r) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => r(Buffer.concat(c))); });
@@ -147,24 +152,26 @@ async function proxy(req, res) {
   res.writeHead(up.status, out); res.end(b);
 }
 
-const server = http.createServer((req, res) => {
-  const u = req.url;
-  const bare = u.split("?")[0];
-  if (bare === "/" || bare.startsWith("/__app")) {
-    const rel = bare === "/" ? "index.html" : bare.replace(/^\/__app\/?/, "") || "index.html";
-    return serveFile(res, path.join(APP_DIR, rel), TYPES[path.extname(rel)] || "application/octet-stream");
-  }
-  if (u.startsWith("/__wc/")) {
-    const rel = u.slice("/__wc/".length).split("?")[0];
-    return serveFile(res, path.join(WIDGET_DIR, rel), TYPES[path.extname(rel)] || "application/octet-stream");
-  }
-  if (u === "/__stats") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify(stats, null, 2)); }
-  if (u === "/favicon.ico") { res.writeHead(204); return res.end(); }
-  proxy(req, res).catch((e) => { try { res.writeHead(500); res.end(String(e)); } catch (_) { /* gone */ } });
-});
+function createServer({ allow = ALLOW } = {}) {
+  const allowed = allowedBy(allow);
+  return http.createServer((req, res) => {
+    const bare = req.url.split("?")[0];
+    if (bare === "/" || bare.startsWith("/__app")) {
+      return serveFile(res, APP_DIR, bare === "/" ? "index.html" : bare.replace(/^\/__app\/?/, "") || "index.html");
+    }
+    if (bare.startsWith("/__wc/")) return serveFile(res, WIDGET_DIR, bare.slice("/__wc/".length));
+    if (bare === "/__stats") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify(stats, null, 2)); }
+    if (bare === "/favicon.ico") { res.writeHead(204); return res.end(); }
+    proxy(req, res, allowed).catch((e) => { try { res.writeHead(500); res.end(String(e)); } catch (_) { /* gone */ } });
+  });
+}
 
-server.listen(PORT, () => {
-  console.log(`web-controls mini browser: ${ME}`);
-  if (ALLOW.length) console.log(`sites allowed: ${ALLOW.join(", ")}`);
-  else console.log("any site (pass --allow host1,host2 to limit it)");
-});
+module.exports = { rewrite, inject, createServer };
+
+if (require.main === module) {
+  createServer().listen(PORT, () => {
+    console.log(`web-controls mini browser: ${ME}`);
+    if (ALLOW.length) console.log(`sites allowed: ${ALLOW.join(", ")}`);
+    else console.log("any site (pass --allow host1,host2 to limit it)");
+  });
+}

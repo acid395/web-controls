@@ -82,28 +82,25 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
     if (onProgress) onProgress(lastProgress.text, lastProgress.fraction);
   };
 
-  async function inWorker(api, modelId, chatOpts) {
+  const didNotStart = (why) => {
+    const err = new Error(`the model worker could not start${why ? `: ${why}` : ""}`);
+    err.workerDidNotStart = true;
+    return err;
+  };
+  async function inWorker(api, modelId) {
     // A worker the page's CSP forbids fails with an error event and nothing
     // else, and CreateWebWorkerMLCEngine would wait on it forever - so the
     // error is raced against the load.
     // Some refusals are thrown by the constructor rather than reported later.
     let made;
-    try { made = makeWorker(); } catch (e) {
-      const err = new Error(`the model worker could not start: ${String((e && e.message) || e)}`);
-      err.workerDidNotStart = true;
-      throw err;
-    }
+    try { made = makeWorker(); } catch (e) { throw didNotStart(String((e && e.message) || e)); }
     const worker = made.worker;
     const failed = new Promise((_, reject) => {
-      worker.addEventListener("error", (e) => {
-        const err = new Error(`the model worker could not start${e && e.message ? `: ${e.message}` : ""}`);
-        err.workerDidNotStart = true;
-        reject(err);
-      }, { once: true });
+      worker.addEventListener("error", (e) => reject(didNotStart(e && e.message)), { once: true });
     });
     try {
       const engine = await Promise.race([
-        api.CreateWebWorkerMLCEngine(worker, modelId, { initProgressCallback: progressCb }, chatOpts),
+        api.CreateWebWorkerMLCEngine(worker, modelId, { initProgressCallback: progressCb }),
         failed,
       ]);
       where = "a worker";
@@ -118,21 +115,20 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
 
   async function build(modelId) {
     const api = await webllm();
-    // As panel-model.js: every model on the window WebLLM ships it with, so
-    // a large one is not left shorter of room than a small one.
-    const chatOpts = undefined;
+    // Every model on the context window WebLLM ships it with, as
+    // panel-model.js does: no chat options are passed.
     // The main thread only when the worker itself could not start - a CSP
     // without blob:, a browser without module workers. A worker that started
     // and then failed to load the model failed for a reason the main thread
     // shares (the network, the card's memory), and falling back there began
     // the whole multi-gigabyte download again to fail the same way.
     if (useWorker && makeWorker && typeof Worker !== "undefined" && api.CreateWebWorkerMLCEngine) {
-      try { return await inWorker(api, modelId, chatOpts); } catch (e) {
+      try { return await inWorker(api, modelId); } catch (e) {
         if (!(e && e.workerDidNotStart)) throw e;
       }
     }
     where = "the page";
-    return api.CreateMLCEngine(modelId, { initProgressCallback: progressCb }, chatOpts);
+    return api.CreateMLCEngine(modelId, { initProgressCallback: progressCb });
   }
 
   function engineFor(modelId) {
@@ -154,20 +150,18 @@ function createModelHost({ loadLib, makeWorker, useWorker = true, allowEmbed = f
       // wipe the successor's state and have it built twice.
       .then((e) => { if (enginePromise === p) engineReady = true; return e; })
       .catch((err) => {
-        if (enginePromise === p) {
-          enginePromise = null; engineReady = false; engineModel = null;
-          lastError = String((err && err.message) || err);
-        }
+        if (enginePromise === p) { forget(); lastError = String((err && err.message) || err); }
         throw err;
       });
     enginePromise = p;
     return p;
   }
 
+  const forget = () => { enginePromise = null; engineReady = false; engineModel = null; };
   async function release() {
     if (!enginePromise) return;
     const held = enginePromise;
-    enginePromise = null; engineReady = false; engineModel = null;
+    forget();
     lastProgress = { text: "", fraction: null };
     try { const e = await held; if (e && e.unload) await e.unload(); } catch (e) { /* gone */ }
   }
