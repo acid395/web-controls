@@ -172,6 +172,7 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
       if (u.pathname === "/app.js") return new Response(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("var a = 1; // https://www.drought.gov/x", "utf16le")]), { headers: { "content-type": "application/javascript", etag: '"j1"' } });
       if (u.pathname === "/go") return new Response("", { status: 302, headers: { location: "https://www.drought.gov/page" } });
       if (u.pathname === "/fragment") return new Response("<div>part</div>", { headers: { "content-type": "text/html" } });
+      if (u.pathname === "/checked") return new Response("<html><body>Performing security verification</body></html>", { status: 403, headers: { "content-type": "text/html; charset=UTF-8", "cf-mitigated": "challenge", server: "cloudflare" } });
       return new Response("not found", { status: 404 });
     };
     const server = createServer({ allow: ["www.drought.gov", "maps.googleapis.com"] });
@@ -213,6 +214,8 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
     check("a script is passed through byte for byte, UTF-16 mark and all", js.buf[0] === 0xff && js.buf[1] === 0xfe && js.buf.toString("utf16le").includes("https://www.drought.gov/x") && js.headers.etag === '"j1"', `${js.buf.length} ${JSON.stringify(js.headers)}`);
     const frag = await raw(port, "/fragment", { host: "www--drought--gov.localhost:8787", headers: { "sec-fetch-dest": "empty" } });
     check("an HTML fragment a page fetches gets no tags", !frag.body.includes("proxy-shim") && frag.body.includes("<div>part</div>"), frag.body);
+    const chk = await raw(port, "/checked", { host: "www--drought--gov.localhost:8787", headers: { "sec-fetch-dest": "iframe" } });
+    check("a bot check that only a real tab can pass is said so, with the way round it", chk.status === 403 && /checking for bots/.test(chk.body) && /href="https:\/\/www\.drought\.gov\/checked" target="_blank" rel="noopener" data-wc-leave/.test(chk.body) && chk.body.includes("proxy-shim.js") && !/Performing security verification/.test(chk.body), chk.body.slice(0, 300));
     const go = await raw(port, "/go", { host: "www--drought--gov.localhost:8787" });
     check("a redirect is pointed at the proxy", go.status === 302 && go.headers.location === `${SITE}/page`, `${go.status} ${go.headers.location}`);
     const pre = await raw(port, "/api", { host: "api--example--org.localhost:8787", method: "OPTIONS", headers: { origin: SITE, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } });

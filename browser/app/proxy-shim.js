@@ -132,7 +132,9 @@
   window.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const a = (e.composedPath ? e.composedPath() : [e.target]).find((n) => n && (n.tagName === "A" || n.tagName === "AREA") && n.href);
-    if (!a || a.hasAttribute("download")) return;
+    // A download, or a link of the server's own that is meant to leave
+    // (a site's bot check, which only a real tab can pass), is left alone.
+    if (!a || a.hasAttribute("download") || a.hasAttribute("data-wc-leave")) return;
     const target = (a.getAttribute("target") || "").toLowerCase();
     const leaves = target && target !== "_self";
     const to = route(a.href);

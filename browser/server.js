@@ -213,6 +213,19 @@ async function proxy(req, res, host, allowed) {
   }
   stats.byStatus[up.status] = (stats.byStatus[up.status] || 0) + 1;
 
+  // A bot check (Cloudflare's managed challenge) answers the server's
+  // request, which it takes for a bot, with a page that proves a browser is
+  // a browser - at the real site, in a real tab. Through here it can only
+  // fail: the page would run on the proxied origin, inside a frame. Said
+  // plainly, with the way round it, in place of the broken check.
+  if (up.headers.get("cf-mitigated") === "challenge" && /text\/html/i.test(up.headers.get("content-type") || "")) {
+    const site = escapeHtml(target.hostname);
+    return errorPage(res, 403, `${site} is checking for bots`,
+      `The site asked for a browser check before it would answer, and the check only runs at the site itself, not through the mini browser. `
+      + `<a href="${escapeHtml(target.href)}" target="_blank" rel="noopener" data-wc-leave>Open ${site} in a new tab</a> to use it there, or use the extension, which works in that tab. `
+      + `If the site is yours, a Cloudflare rule that skips the challenge for it lets the mini browser in.`);
+  }
+
   const out = {};
   for (const [k, v] of up.headers) if (!DROP_RESPONSE.test(k)) out[k] = v;
   // Cookies stay on the proxied origin: a Domain naming the real site would

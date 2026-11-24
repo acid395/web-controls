@@ -46,10 +46,11 @@ Run on 2026-11-24 in headless Chrome, with the model off: each site opened throu
 | recreation.gov | 613 | Works. |
 | en.wikipedia.org (Colorado River) | 4139 | Works; a model-off ask takes 30 s on a page this big. |
 | usgs.gov, bls.gov, waterdata.usgs.gov (NWIS) | | 403 from the sites' bot protection. The server forwards the browser's own headers, and headless Chrome announces itself as headless; try these from a normal Chrome before counting them out. |
+| hydroinformatics.tulane.edu | | Cloudflare's managed challenge: the site answers the server's request with a browser check that only runs at the site itself, in a real tab. The frame says so and links to the site in a new tab; the extension works there. For a site of your own, a Cloudflare WAF rule that skips the challenge lets the mini browser in. |
 
 Rules of thumb from that:
 
-- Sites that are pages or apps work, including ones that route on `location`. What is left is bot protection, which answers the proxy's request and not the browser's, and apps that compare their host name with their own.
+- Sites that are pages or apps work, including ones that route on `location`. What is left is bot protection, which answers the proxy's request and not the browser's: a plain 403, or a browser check (Cloudflare's) that cannot run anywhere but the real site. No proxy gets past that; the extension, which is the real browser, does.
 - Every request the page makes passes through the server, including anything typed into the site. Running the server on your own machine keeps that local; a hosted server sees it all, which is the opposite of the extension and widget, where nothing leaves the browser.
 - The model is held by the address-bar page, so it is loaded once and every page opened afterwards uses it. The first load downloads the weights (3.4 GB for the default) and Chrome keeps them for this origin; after that a load is the time it takes to move them into the GPU. The panel's Load model button works before any site is open.
 - Sign-ins mostly break: cookies stay on the proxied origin, but anything checking the host, and any OAuth redirect, won't match. Don't sign in to accounts through it.
