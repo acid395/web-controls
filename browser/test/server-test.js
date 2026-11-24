@@ -9,7 +9,7 @@
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-const { pointAtProxy, inject, decodeText, blockedHost, unproxyQuery, unproxyBody, createServer } = require(path.join(__dirname, "..", "server.js"));
+const { pointAtProxy, inject, decodeText, blockedHost, unproxyQuery, unproxyBody, widgetStale, createServer } = require(path.join(__dirname, "..", "server.js"));
 const ProxyUrl = require(path.join(__dirname, "..", "app", "proxy-url.js"));
 const { JSDOM, VirtualConsole } = require(path.join(__dirname, "..", "..", "extension", "test", "node_modules", "jsdom"));
 
@@ -158,6 +158,24 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
     f.contentWindow.history.pushState(null, "", "/data?x=2");
     await new Promise((r) => setTimeout(r, 20));
     check("a route change is reported, with no load", heard[heard.length - 1], "complete:https://www.drought.gov/data?x=2:Data");
+  }
+
+  console.log("the widget is built by the server when it has to be");
+  {
+    const os = require("os");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wc-dist-"));
+    const srcDir = path.join(tmp, "src"); fs.mkdirSync(srcDir);
+    const dist = path.join(tmp, "dist"); fs.mkdirSync(dist);
+    const touch = (p, when) => { fs.writeFileSync(p, "x"); fs.utimesSync(p, when, when); };
+    const t0 = new Date(Date.now() - 60000), t1 = new Date(Date.now() - 30000), t2 = new Date();
+    touch(path.join(srcDir, "a.js"), t0);
+    check("with no dist, it is stale", widgetStale(dist, [srcDir]) === true);
+    for (const f of ["web-controls-widget.js", "web-controls-page.js", "web-llm.js", "web-llm-worker.mjs"]) touch(path.join(dist, f), t1);
+    check("built after every source, it is not", widgetStale(dist, [srcDir]) === false);
+    touch(path.join(srcDir, "b.js"), t2);
+    check("a source edited since is", widgetStale(dist, [srcDir]) === true);
+    check("a source that does not exist is nothing to be newer than", widgetStale(dist, [path.join(tmp, "nowhere")]) === false);
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 
   console.log("the server's routes, against a stand-in for the sites");

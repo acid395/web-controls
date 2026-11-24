@@ -3,10 +3,11 @@
 The third way to run the agent: a page with an address bar. Type a site, it opens in a frame, and the panel beside it works on it, across every page it leads to. Nothing to install in Chrome and nothing for the site to add.
 
 ```sh
-node widget/scripts/build.js      # once, for widget/dist
 node browser/server.js            # http://localhost:8787
 node browser/server.js --allow www.drought.gov,www.weather.gov --port 9000
 ```
+
+Node 20 or newer, nothing to install. The server builds the widget's files (`widget/dist`) itself the first time, and again whenever their sources have changed since; `node widget/scripts/build.js` does the same by hand.
 
 Open http://localhost:8787/ and enter a site, or go straight to `http://localhost:8787/?site=www.drought.gov`. It has to be `localhost`, not `127.0.0.1`: the sites live on subdomains of it.
 

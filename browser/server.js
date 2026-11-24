@@ -149,6 +149,33 @@ function unproxyBody(body, contentType) {
   return out === text ? body : Buffer.from(out);
 }
 
+// The widget's built files, made when they are missing or older than what
+// they are built from, so a fresh clone runs with `node browser/server.js`
+// alone. The build is widget/scripts/build.js, a few seconds, no packages.
+const BUILD = path.join(__dirname, "..", "widget", "scripts", "build.js");
+const BUILT_FROM = [path.join(__dirname, "..", "widget", "src"), path.join(__dirname, "..", "widget", "package.json"), BUILD,
+  path.join(__dirname, "..", "extension", "background.js"), path.join(__dirname, "..", "extension", "lib"), path.join(__dirname, "..", "extension", "page"), path.join(__dirname, "..", "extension", "offscreen", "vendor")];
+const newest = (p) => {
+  let t = 0;
+  try {
+    const st = fs.statSync(p);
+    if (st.isDirectory()) for (const f of fs.readdirSync(p)) t = Math.max(t, newest(path.join(p, f)));
+    else t = st.mtimeMs;
+  } catch (e) { /* not there: nothing to be newer than */ }
+  return t;
+};
+// True when dist is missing a file or any source is newer than it.
+function widgetStale(dist = WIDGET_DIR, sources = BUILT_FROM) {
+  const files = ["web-controls-widget.js", "web-controls-page.js", "web-llm.js", "web-llm-worker.mjs"].map((f) => path.join(dist, f));
+  if (!files.every((f) => fs.existsSync(f))) return true;
+  const built = Math.min(...files.map((f) => fs.statSync(f).mtimeMs));
+  return sources.some((s) => newest(s) > built);
+}
+function buildWidget() {
+  console.log("building the widget (widget/dist is missing or out of date)...");
+  require("child_process").execFileSync(process.execPath, [BUILD], { stdio: "inherit" });
+}
+
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".d.ts": "text/plain" };
 
 // A file from one of this server's own directories, and nothing outside it:
@@ -286,11 +313,14 @@ function createServer({ allow = ALLOW } = {}) {
   });
 }
 
-module.exports = { pointAtProxy, inject, decodeText, blockedHost, unproxyQuery, unproxyBody, createServer, SHIM_TAG, PAGE_TAG };
+module.exports = { pointAtProxy, inject, decodeText, blockedHost, unproxyQuery, unproxyBody, widgetStale, createServer, SHIM_TAG, PAGE_TAG };
 
 // Both loopback addresses, since a browser may resolve localhost to either.
 // Never all interfaces: this is an open proxy.
 if (require.main === module) {
+  if (widgetStale()) {
+    try { buildWidget(); } catch (e) { console.error(`the widget could not be built: ${e.message}\n  run: node widget/scripts/build.js`); }
+  }
   const server = createServer().listen(PORT, "127.0.0.1", () => {
     console.log(`web-controls mini browser: ${ME}/`);
     if (ALLOW.length) console.log(`sites allowed: ${ALLOW.join(", ")}`);
