@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Site Viewer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="bar">
+  <span class="brand">web-controls <span>viewer</span></span>
+  <button class="icon" id="back" type="button" title="Back" aria-label="Back" disabled>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
+  <button class="icon" id="reload" type="button" title="Reload" aria-label="Reload" disabled>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+  </button>
+  <form id="go" class="address" autocomplete="off">
+    <span class="dot" id="status-dot" title="No site loaded"></span>
+    <input id="address" type="text" inputmode="url" spellcheck="false" placeholder="Enter a website address, e.g. waterdata.usgs.gov/state/Idaho/" aria-label="Website address">
+    <button type="submit">Open</button>
+  </form>
+  <a id="open-real" class="real" href="#" target="_blank" rel="noopener" hidden title="Open the real site in a new tab">Open site ↗</a>
+</header>
+
+<main class="stage">
+  <section id="landing" class="landing">
+    <h1>Control any website by asking</h1>
+    <p>Enter an address above. The site loads below, and the button in the corner opens an agent that operates it for you: <em>“select Alaska”</em>, <em>“click Download”</em>, <em>“search for Boise River”</em>.</p>
+    <div class="examples" id="examples">
+      <button type="button" data-url="https://waterdata.usgs.gov/state/Idaho/">waterdata.usgs.gov/state/Idaho</button>
+      <button type="button" data-url="https://water.noaa.gov/">water.noaa.gov</button>
+      <button type="button" data-url="https://www.drought.gov/">drought.gov</button>
+      <button type="button" data-url="https://www.weather.gov/">weather.gov</button>
+      <button type="button" data-url="https://en.wikipedia.org/wiki/Snake_River">wikipedia: Snake River</button>
+    </div>
+    <p class="fine">Sites load through a proxy on this machine. Don't sign in to accounts here.</p>
+  </section>
+  <div id="notice" class="notice" role="status" hidden>
+    <span id="notice-text"></span>
+    <button type="button" id="notice-action" hidden></button>
+    <button type="button" id="notice-close" class="link" aria-label="Dismiss">✕</button>
+  </div>
+  <!-- No allow-top-navigation: a site's frame-busting script cannot replace
+       the viewer. allow-same-origin keeps the site on its own origin, which is
+       a different one from the viewer's. -->
+  <iframe id="site" title="Website" hidden
+    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox"
+    allow="fullscreen; clipboard-write; geolocation"></iframe>
+</main>
+
+<button id="fab" class="fab" type="button" aria-expanded="false" aria-controls="panel" title="Ask the agent (Ctrl+Shift+Space)">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>
+  <span>Ask</span>
+</button>
+
+<section id="panel" class="panel" hidden aria-label="Site agent">
+  <header>
+    <div>
+      <strong>Site agent</strong>
+      <small id="panel-page">No site loaded</small>
+    </div>
+    <button type="button" class="icon" id="panel-clear" title="Clear conversation" aria-label="Clear conversation">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>
+    </button>
+    <button type="button" class="icon" id="panel-close" title="Close" aria-label="Close">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <div class="log" id="log" role="log" aria-live="polite"></div>
+  <div class="chips" id="chips"></div>
+  <form class="ask" id="ask" autocomplete="off">
+    <input id="prompt" type="text" placeholder="Say what to do, e.g. select Alaska" aria-label="Command">
+    <button type="submit" id="send" aria-label="Send">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-2-7z"/></svg>
+    </button>
+  </form>
+</section>
+
+<script src="proxy-url.js"></script>
+<script src="commands.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

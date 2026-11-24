@@ -1,0 +1,14 @@
+{
+  "name": "web-controls-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enter a website's address, see it in an iframe, and control it with plain-English commands from a floating agent widget.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/viewer-test.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "MIT"
+}
