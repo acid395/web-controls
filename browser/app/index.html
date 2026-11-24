@@ -29,17 +29,25 @@
   <button id="go">Open</button>
   <span id="status"></span>
 </div>
-<iframe id="frame" name="page" title="the page"></iframe>
+<!-- The site, on its own origin (its subdomain of this host). Sandboxed
+     without allow-top-navigation: a site's frame-busting script cannot
+     replace this page. -->
+<iframe id="frame" name="page" title="the page"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox"
+  allow="fullscreen; clipboard-write; geolocation"></iframe>
 <!-- The widget, mounted on the frame: the agent, the model and the panel
      are in this page, and outlive every page the frame shows. The framed
      page carries only its manifests and a bridge (web-controls-page.js,
-     which the proxy puts in). -->
+     which the proxy puts in), and the proxy's shim, which reports where
+     the frame is. -->
+<script src="/__app/proxy-url.js"></script>
 <script src="/__wc/web-controls-widget.js" data-manual data-webllm="/__wc/web-llm.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const url = $("url"), frame = $("frame"), status = $("status");
   const back = $("back"), fwd = $("fwd"), reload = $("reload");
+  const urls = WCProxyUrl.create(location.host, location.protocol);
 
   const widget = window.WebControls ? WebControls.mount({
     frame,
@@ -49,63 +57,64 @@
   }) : null;
   if (!widget) status.textContent = "widget files missing: run node widget/scripts/build.js";
 
-  // https://host/path, or just host/path: the server opens that site at
-  // its root and sends the frame to the path.
+  // What the frame last said about itself (the proxy's shim reports), for
+  // the bar and for anything checking on the mini browser from outside.
+  const page = window.__wcPage = { url: "", title: "", status: "", origin: null, reported: false };
+
+  // https://host/path, or just host/path, to the site's proxied address.
   const toOpen = (typed) => {
-    const s = typed.trim().replace(/^https?:\/\//i, "");
-    return /^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s) ? `/__open?site=${encodeURIComponent(s)}` : null;
-  };
-  // The frame is same-origin, so its location is readable: show the real
-  // site, not our path. The open site is at the root and its shim names it
-  // on the window; any other site is under /__x/<host>.
-  const realUrl = () => {
+    let s = String(typed || "").trim();
+    if (!s) return null;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s}`;
     try {
-      const w = frame.contentWindow, l = w.location;
-      if (l.pathname.startsWith("/__app") || l.href === "about:blank") return "";
-      const other = l.pathname.match(/^\/__x\/([a-z0-9.-]+\.[a-z]{2,})(\/.*)?$/i);
-      if (other) return `https://${other[1]}${other[2] || "/"}${l.search}${l.hash}`;
-      return w.__wcProxyHost ? `https://${w.__wcProxyHost}${l.pathname}${l.search}${l.hash}` : "";
-    } catch (e) { return ""; }
+      const u = new URL(s);
+      if (!/^https?:$/.test(u.protocol) || !u.hostname.includes(".")) return null;
+      return urls.toProxy(u.href);
+    } catch (e) { return null; }
   };
 
   const open = () => {
     const p = toOpen(url.value);
-    if (!p) { status.textContent = "type a site, like www.drought.gov"; return; }
+    if (!p) { status.textContent = /--/.test(url.value) ? "addresses containing -- cannot be opened here" : "type a site, like www.drought.gov"; return; }
     status.textContent = "loading…";
+    page.reported = false;
     frame.src = p;
   };
   $("go").addEventListener("click", open);
   url.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
-  back.addEventListener("click", () => { try { frame.contentWindow.history.back(); } catch (e) { /* not ours */ } });
-  fwd.addEventListener("click", () => { try { frame.contentWindow.history.forward(); } catch (e) { /* not ours */ } });
-  reload.addEventListener("click", () => { try { frame.contentWindow.location.reload(); } catch (e) { /* not ours */ } });
+  // The frame is another origin: its history is asked for over a message
+  // the shim answers.
+  const nav = (what) => { try { frame.contentWindow.postMessage({ wc: "page-nav", do: what }, page.origin || "*"); } catch (e) { /* nothing open */ } };
+  back.addEventListener("click", () => nav("back"));
+  fwd.addEventListener("click", () => nav("forward"));
+  reload.addEventListener("click", () => nav("reload"));
 
-  // Client-side routing changes the frame's URL with no load event, so the
-  // bar is kept in step by a clock, one for every page the frame will show.
-  const sync = () => { const r = realUrl(); if (r && document.activeElement !== url) url.value = r; };
-  setInterval(sync, 1000);
   // The pages shown, so Back is only offered when there is one to go back
   // to: a frame's history is the tab's, and going back from the first page
   // would leave the mini browser itself.
   const seen = [];
   let opened = false;
-  frame.addEventListener("load", () => {
-    const real = realUrl();
-    if (!real) return;
-    if (seen.length >= 2 && seen[seen.length - 2] === real) seen.pop(); else if (seen[seen.length - 1] !== real) seen.push(real);
-    url.value = real;
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (e.source !== frame.contentWindow || !m || m.wc !== "page-state") return;
+    page.reported = true;
+    page.origin = e.origin;
+    page.url = m.url || "";
+    page.title = m.title || "";
+    page.status = m.status;
+    if (m.url && document.activeElement !== url) url.value = m.url;
+    if (m.status === "loading" || m.status === "leaving") { status.textContent = "loading…"; return; }
+    if (seen.length >= 2 && seen[seen.length - 2] === m.url) seen.pop(); else if (seen[seen.length - 1] !== m.url) seen.push(m.url);
     status.textContent = "";
     back.disabled = seen.length < 2;
     fwd.disabled = reload.disabled = false;
-    try {
-      const w = frame.contentWindow;
-      w.addEventListener("popstate", sync);
-      w.addEventListener("hashchange", sync);
-      if (!w.__wcPageInstalled) status.textContent = "the page script is not in this page";
-      if (!w.__wcProxyHost) status.textContent = "this page did not come through the proxy";
-    } catch (e) { status.textContent = "page could not be read"; }
     // The panel, the first time a site is open; after that, as it was left.
     if (widget && !opened) { opened = true; widget.open(); }
+  });
+  // A document that loads and never reports did not come through the proxy.
+  frame.addEventListener("load", () => {
+    page.reported = false;
+    setTimeout(() => { if (!page.reported) status.textContent = "this page did not come through the proxy"; }, 800);
   });
 
   const first = new URLSearchParams(location.search).get("site");

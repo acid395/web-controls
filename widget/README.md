@@ -114,7 +114,7 @@ Copy the files in `dist/` into the site and add one tag. It mounts itself once t
 | `worker` | `data-worker="false"` | `true` | Run the model in a Web Worker so it never blocks your UI |
 | `webllmUrl` | `data-webllm` | `web-llm.js` beside the widget | Where to load WebLLM from |
 | `pageUrl` | `data-page-url` | the page's own address | The site's real address when the page is served through a proxy: the agent then routes on that host, with the path after it |
-| `frame` | | | An `<iframe>` to work on instead of this page. The agent, the model and the panel stay in this page, so an ask survives a press that leaves the framed page. The framed page must be same-origin and carry `web-controls-page.js`; `browser/` arranges both |
+| `frame` | | | An `<iframe>` to work on instead of this page. The agent, the model and the panel stay in this page, so an ask survives a press that leaves the framed page. The framed page must carry `web-controls-page.js`, and be same-origin or report its address the way `browser/`'s proxy shim does; `browser/` arranges both |
 | `hotkey` | `data-hotkey="false"` | `true` | Ctrl/Cmd+Shift+Space toggles the panel |
 | `debug` | `data-debug` | `false` | Log every ask and its result to the console |
 | | `data-capture-feeds="false"` | on | Record the JSON/CSV your page fetches, so questions can be answered from the data behind a chart |

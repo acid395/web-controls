@@ -536,27 +536,31 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
   console.log("the mini browser: the agent around the frame");
   {
     // The parent is the address-bar page; the frame shows a site served by
-    // the proxy, which put web-controls-page.js in it. The widget is
-    // mounted on the frame, so the agent, the model and the history are in
-    // the parent and a navigation in the frame does not end them.
-    // The proxy serves the open site at its root and its shim names the
-    // host on the window; here, the name alone.
-    const SITE = "http://localhost:8787";
-    const framed = (body) => `<!doctype html><html><head><title>Lakes</title></head><body>${body}
-      <script>window.__wcProxyHost = "www.lakes.example"; window.SLOW = { hang: () => new Promise(() => {}) };</script>
-      <script src="http://localhost:8787/__wc/web-controls-page.js"></script></body></html>`;
+    // the proxy from the site's own subdomain, with the proxy's shim first
+    // in <head> (it reports where the frame is: the frame is another
+    // origin, so nothing in it can be read from the parent) and
+    // web-controls-page.js before </body>. The widget is mounted on the
+    // frame, so the agent, the model and the history are in the parent and
+    // a navigation in the frame does not end them.
+    const SHELL = "http://localhost:8787";
+    const SITE = "http://www--lakes--example.localhost:8787";
+    const SHIM = fs.readFileSync(path.join(__dirname, "..", "..", "browser", "app", "proxy-shim.js"), "utf8");
+    const framed = (body) => `<!doctype html><html><head><title>Lakes</title><script src="${SITE}/__wc/proxy-shim.js" data-me="${SHELL}" data-proxy="localhost:8787"></script></head><body>${body}
+      <script>window.SLOW = { hang: () => new Promise(() => {}) };</script>
+      <script src="${SITE}/__wc/web-controls-page.js"></script></body></html>`;
     const pages = {
       [`${SITE}/`]: framed(APP.replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, "")),
       [`${SITE}/reports`]: framed(`<h1>Monthly reports</h1><label><input type="checkbox" id="wet"> Only wet months</label><p>Twelve reports.</p>`),
     };
     const serve = requestInterceptor((request) => {
-      if (request.url.startsWith("http://localhost:8787/__wc/web-controls-page.js")) return new Response(PAGE_BUILT, { headers: { "Content-Type": "text/javascript" } });
+      if (request.url === `${SITE}/__wc/web-controls-page.js`) return new Response(PAGE_BUILT, { headers: { "Content-Type": "text/javascript" } });
+      if (request.url === `${SITE}/__wc/proxy-shim.js`) return new Response(SHIM, { headers: { "Content-Type": "text/javascript" } });
       if (pages[request.url]) return new Response(pages[request.url], { headers: { "Content-Type": "text/html" } });
       return new Response("not found", { status: 404 });
     });
     const virtualConsole = new VirtualConsole();
     virtualConsole.on("jsdomError", (e) => { if (process.env.WC_DEBUG) console.error("jsdom:", e.message); });
-    const dom = new JSDOM(`<!doctype html><body><iframe id="frame"></iframe></body>`, { url: "http://localhost:8787/", runScripts: "dangerously",
+    const dom = new JSDOM(`<!doctype html><body><iframe id="frame"></iframe></body>`, { url: `${SHELL}/`, runScripts: "dangerously",
       pretendToBeVisual: true, resources: { interceptors: [serve] }, virtualConsole });
     const w = dom.window;
     const frame = w.document.getElementById("frame");
@@ -564,6 +568,7 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     w.Element.prototype.attachShadow = function (init) { const root = attach.call(this, init); w.__widgetRoot = root; return root; };
     // jsdom lays nothing out, in the frame either: everything measures something.
     const measure = function () { return { width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 }; };
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms));
     const show = (url) => new Promise((r) => {
       const heard = () => {
         if (frame.contentWindow.location.href !== url) return;
@@ -573,8 +578,7 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
       };
       frame.addEventListener("load", heard);
       frame.src = url;
-    });
-    const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+    }).then(() => tick(50)); // the page's report arrives after its load
 
     const s = w.document.createElement("script");
     s.dataset.manual = "";
@@ -591,39 +595,43 @@ const flat = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
     check("mounted in the parent, not the frame", !!w.document.querySelector("[data-web-controls-widget]"));
     const early = await wc.ask("tick the average");
     check("with no site open, the panel says to open one", /open a site first/.test(early && early.error), JSON.stringify(early).slice(0, 200));
+    // A second adapter on the same frame, to look at what the agent's sees.
+    w.eval(`${src("frame-page.js")}\nwindow.__framePage = createFramePage;`);
+    const fp = w.__framePage(frame);
+    const seen = [];
+    fp.watch(() => seen.push("loading"), () => seen.push("complete"));
 
     await show(`${SITE}/`);
-    check("the framed page carries the manifests and the bridge, not the widget",
-      frame.contentWindow.__wcPageInstalled === true && !!frame.contentWindow.GENERIC && !frame.contentWindow.WebControls);
+    check("the framed page carries the shim, the manifests and the bridge, not the widget",
+      frame.contentWindow.__wcProxyShim === true && frame.contentWindow.__wcPageInstalled === true && !!frame.contentWindow.GENERIC && !frame.contentWindow.WebControls);
+    check("the page told the parent its real address", fp.href(), "https://www.lakes.example/");
+    check("and that it loaded", seen.join(","), "loading,complete");
     const inv = await wc.inventory();
     check("inventory() reads the frame", !!(inv && inv.controls) && JSON.stringify(inv.controls).includes("30-year average"), JSON.stringify(inv).slice(0, 200));
     const res = await wc.ask("overlay the long-term normal on the chart");
     check("an ask is carried out in the frame", frame.contentDocument.getElementById("avg").checked === true, JSON.stringify(res).slice(0, 300));
+    const back = await fp.call({ fn: "goBack", args: [] }, ["GENERIC"]);
+    check("go back on the first page opened stays put, and says so", back.ok && /nothing to go back to/.test(back.result.note) && fp.href() === "https://www.lakes.example/", JSON.stringify(back));
 
     // The frame moves to another page: the agent, its history and the
-    // model are still here.
+    // model are still here. A call the first page never answered because
+    // it went away is told what the extension is told, and the agent reads
+    // a navigating press as working.
+    const hung = fp.call({ fn: "hang", args: [] }, ["SLOW"]).then(() => "answered", (e) => String(e.message));
     await show(`${SITE}/reports`);
-    await tick(400);
+    check("a call left waiting when the page goes away is a closed channel", /message channel closed/.test(await hung), await hung);
+    check("the new page's address", fp.href(), "https://www.lakes.example/reports");
+    check("and its navigation was announced as loading, then complete", seen.join(","), "loading,complete,loading,complete");
+    check("after a second page there is somewhere to go back to", fp.canGoBack() === true);
     const res2 = await wc.ask("only the wet months");
     check("after a navigation the next ask works on the new page", frame.contentDocument.getElementById("wet").checked === true, JSON.stringify(res2).slice(0, 300));
     const hist = (JSON.parse(w.localStorage.getItem("web-controls:browser") || "{}").askHistory) || [];
     check("and the history holds both asks, across pages", hist.length >= 2 && hist.some((h) => /wet months/.test(h.instruction)) && hist.some((h) => /long-term/.test(h.instruction)), JSON.stringify(hist.map((h) => h.instruction)));
-
-    // A call the page never answers because it went away: the agent is told
-    // what the extension is told, and reads a navigating press as working.
-    w.eval(`${src("frame-page.js")}\nwindow.__framePage = createFramePage;`);
-    const fp = w.__framePage(frame);
-    check("the frame's real address is the site's", fp.href(), "https://www.lakes.example/reports");
-    const back = await fp.call({ fn: "goBack", args: [] }, ["GENERIC"]);
-    check("go back on the first page opened stays put, and says so", back.ok && /nothing to go back to/.test(back.result.note) && fp.href() === "https://www.lakes.example/reports", JSON.stringify(back));
-    const seen = [];
-    fp.watch(() => seen.push("loading"), () => seen.push("complete"));
-    const hung = fp.call({ fn: "hang", args: [] }, ["SLOW"]).then(() => "answered", (e) => String(e.message));
-    await show(`${SITE}/`);
-    check("a call left waiting when the page goes away is a closed channel", /message channel closed/.test(await hung), await hung);
-    await tick(400);
-    check("after a second page there is somewhere to go back to", fp.canGoBack() === true);
-    check("and the navigation was announced as loading, then complete", seen.join(",").includes("loading,complete"), seen.join(","));
+    // A route change: the page says where it is now, with no load.
+    frame.contentWindow.history.pushState(null, "", "/reports?month=may");
+    await tick(50);
+    check("a route change is reported as the new address", fp.href(), "https://www.lakes.example/reports?month=may");
+    check("and announced as a load, so the agent re-reads", seen.slice(-2).join(","), "loading,complete");
     fp.dispose();
     wc.unmount();
   }

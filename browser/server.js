@@ -1,117 +1,97 @@
 #!/usr/bin/env node
-/* server.js - the mini browser: a proxy that re-serves one site on this
- * origin, with the agent's page-side script put into every page it serves.
+/* server.js - the mini browser: a proxy that serves any site from its own
+ * subdomain of localhost, with the agent's page-side script in every page.
  *
  *   node browser/server.js            # http://localhost:8787
  *   node browser/server.js --port 9000 --allow www.drought.gov,water.noaa.gov
  *
- * Why a proxy. A page can only read and operate a frame from its own origin,
- * and most of the sites we care about send X-Frame-Options, which stops a
- * frame from another origin showing them at all. Fetching the page here and
- * serving it from this origin removes both: the frame is same-origin, and
- * the headers never reach the browser. The price is that every request the
- * page makes has to come back through here, so the HTML, CSS and scripts
- * are rewritten on the way out, and app/proxy-shim.js does the same inside
- * the page for the addresses its scripts build as they run.
+ * Why a proxy. A page cannot reach into a frame showing another site, and
+ * most of the sites we care about send X-Frame-Options, which stops a frame
+ * from showing them at all. Fetching the page here and serving it from this
+ * machine removes the headers; a script put into the page gives the agent
+ * its hands.
  *
- * Paths. The site that is open is served at the root: /path is
- * https://<open site>/path, so the page's own address is what its scripts
- * expect - an app that routes on location.pathname works. Everything from
- * any other host goes under /__x/<host>/<path>. One site is open at a time;
- * /__open?site=<host>/<path> opens another and the page's links to other
- * sites go through it.
+ * Addresses. Each site is served from its own subdomain, path unchanged
+ * (app/proxy-url.js, the scheme of viewer/, Samrat Shrestha's):
  *
- * Reserved: /__app/* is the mini browser's own page and shim, /__wc/* the
- * widget's files, /__stats what passed through.
+ *   https://waterdata.usgs.gov/state/Idaho/
+ *   http://waterdata--usgs--gov.localhost:8787/state/Idaho/
+ *
+ * So a site's root-relative links, its router and its pushState all work
+ * untouched, its cookies and storage are its own, any number of sites can
+ * be open, and nothing in a script has to be rewritten: a page's requests
+ * to other sites are routed inside the page (app/proxy-shim.js), and its
+ * stylesheets, images and scripts from elsewhere load from where they
+ * are. Browsers resolve every *.localhost name to this machine, so there
+ * is nothing to configure.
+ *
+ *   localhost:8787        the address-bar page (app/), the widget's files
+ *                         at /__wc/, /__stats
+ *   *.localhost:8787      the sites; /__wc/ there too, for the page's script
+ *
+ * Local use only. This is a proxy to anywhere, so it listens on the
+ * loopback interface alone and refuses addresses on this machine or the
+ * local network. --allow limits it to listed hosts and their subdomains.
  */
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { Readable } = require("stream");
+const ProxyUrl = require("./app/proxy-url.js");
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 && args[i + 1] ? args[i + 1] : fallback; };
 const PORT = Number(flag("port", 8787));
 const ALLOW = flag("allow", "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-const ME = `http://localhost:${PORT}`;
-const ME_RE = ME.replace(/[.]/g, "\\.");
+const HOST = `localhost:${PORT}`;
+const ME = `http://${HOST}`;
+const urls = ProxyUrl.create(HOST, "http:");
 const WIDGET_DIR = path.join(__dirname, "..", "widget", "dist");
 const APP_DIR = path.join(__dirname, "app");
-const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
-// Namespaces, schemas and the like are names, not places the page fetches;
-// a bot-check widget (Turnstile, reCAPTCHA, hCaptcha) only runs from its own
-// origin and looks for its script tag by that address, so it is left there.
-const NOT_FETCHED = /^(www\.w3\.org|schema\.org|ogp\.me|purl\.org|xmlns\.com|challenges\.cloudflare\.com|(www\.)?recaptcha\.net|(js\.|api\.)?hcaptcha\.com)$/i;
 const stats = { requests: 0, upstreamFail: 0, byHost: {}, byStatus: {} };
 
-// The page's half only: the manifests and the bridge the agent reaches
-// them through. The agent, the model and the panel are in the address-bar
-// page, which is what lets an ask survive a press that leaves the page.
-const PAGE_TAG = `<script src="${ME}/__wc/web-controls-page.js"></script>`;
-// And before any of the page's own scripts, the proxy continued in the
-// page (app/proxy-shim.js): addresses a script builds as it runs are
-// turned back towards this server as they are used.
-const shimTag = (host, base) => `<script src="${ME}/__app/proxy-shim.js" data-me="${ME}" data-host="${host}" data-base="${base}"></script>`;
+// Two tags in every page. First in <head>, before any of the site's own
+// scripts: the proxy continued in the page (app/proxy-shim.js), which routes
+// the requests a script makes to other sites back through here, keeps
+// navigations in the frame, and tells the address-bar page where the frame
+// is. Before </body>: the page's half of the widget (web-controls-page.js) -
+// the manifests and a bridge the agent calls them through. The agent, the
+// model and the panel are in the address-bar page, which is what lets an
+// ask survive a press that leaves the page.
+const SHIM_TAG = `<script src="/__wc/proxy-shim.js" data-me="${ME}" data-proxy="${HOST}"></script>`;
+const PAGE_TAG = `<script src="/__wc/web-controls-page.js"></script>`;
 
 const allowedBy = (list) => (host) => !list.length || list.some((a) => host === a || host.endsWith(`.${a}`));
 
-/* The site that is open: served at the root. */
-let openHost = null;
-const baseFor = (host) => (host === openHost ? "" : `/__x/${host}`);
-
-// An address in a page, as it comes back through here: the open site's at
-// the root, any other's under /__x/<host>. In a page served under /__x/
-// (`base`), root-relative addresses belong to that host and are prefixed.
-function rewrite(text, host, base = baseFor(host)) {
-  return text
-    // https://x.y.z/... anywhere; //x.y.z/... only after a quote, = or (,
-    // where an address is - inside a script, //x.y.z at the start of a
-    // comment rewritten to http://... turned the line into a label and
-    // broke the script ("Label 'http' has already been declared").
-    .replace(/(https?:|(?<=["'`=(]))\/\/([a-z0-9.-]+\.[a-z]{2,})(?=[/"'`\s)?#,;]|$)/gi, (m, scheme, h) => (NOT_FETCHED.test(h) ? m : `${ME}${baseFor(h.toLowerCase())}`))
-    // root-relative in attributes and CSS belong to the page's own host
-    .replace(/(href|src|action|content|data-src|poster|formaction)=(["'])\/(?!\/|__x\/|__wc\/|__app\/)/gi, (m, a, q) => `${a}=${q}${base}/`)
-    .replace(/srcset=(["'])([^"']*)\1/gi, (m, q, v) => `srcset=${q}${fixSrcset(v, base)}${q}`)
-    .replace(/url\((["']?)\/(?!\/|__x\/)/gi, (m, q) => `url(${q}${base}/`)
-    // a link that opens a new tab or replaces the top page would leave the
-    // address bar behind: everything stays in the frame
-    .replace(/\starget=(["']?)(_blank|_top|_parent)\1/gi, ' target="_self"');
-}
-const fixSrcset = (v, base) => v.split(",").map((c) => {
-  const m = c.trim().match(/^(\S+)(\s.*)?$/);
-  if (!m) return c;
-  const u = m[1].startsWith("/") && !m[1].startsWith("//") && !m[1].startsWith("/__x/") ? `${base}${m[1]}` : m[1];
-  return u + (m[2] || "");
-}).join(", ");
-
-// What only a page needs: a rewritten script no longer matches its
-// integrity hash, so the attribute goes; a CSP or referrer policy in a meta
-// tag would do what the dropped headers did.
-function rewritePage(html, host, base = baseFor(host)) {
-  return rewrite(html, host, base)
-    .replace(/\sintegrity=(["'])[^"']*\1/gi, "")
-    .replace(/<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/gi, "")
-    .replace(/<meta[^>]+name=["']?referrer["']?[^>]*>/gi, "");
+// Not this machine, and not the local network: a site in the frame can make
+// requests through this proxy, and must not reach a router or a service on
+// localhost by doing so.
+function blockedHost(hostname) {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  return false;
 }
 
-// The shim first - before the page's own scripts, at the top of <head> -
-// and the page's half of the agent last.
-function inject(html, host, base = baseFor(host)) {
-  const shim = shimTag(host, base);
-  let out;
-  if (/<head[^>]*>/i.test(html)) out = html.replace(/<head[^>]*>/i, (m) => `${m}${shim}`);
-  else if (/<html[^>]*>/i.test(html)) out = html.replace(/<html[^>]*>/i, (m) => `${m}${shim}`);
-  else out = shim + html;
-  if (/<\/body>/i.test(out)) return out.replace(/<\/body>/i, `${PAGE_TAG}</body>`);
-  return out + PAGE_TAG;
-}
+// Hop-by-hop headers and the ones fetch sets for itself. The rest of the
+// browser's headers go up as they are, so the site sees the browser it is
+// really talking to.
+const DROP_REQUEST = /^(host|connection|keep-alive|proxy-.*|transfer-encoding|upgrade|te|trailer|expect|accept-encoding|content-length|sec-fetch-site)$/i;
+// Encoding and length change on the way through (fetch decompresses). The
+// rest forbid framing, pin the site to https, or would let the site's own
+// CORS answer through instead of this one.
+const DROP_RESPONSE = /^(content-encoding|content-length|transfer-encoding|connection|keep-alive|x-frame-options|content-security-policy(-report-only)?|strict-transport-security|cross-origin-.*|access-control-allow-(origin|credentials)|report-to|nel|alt-svc|clear-site-data|set-cookie)$/i;
 
 // Response.text() reads everything as UTF-8; an older site in ISO-8859-1 or
 // windows-1252 came through with its accents broken. Decoded as the site
-// says - in the header, or in a meta tag near the top - and sent as UTF-8.
+// says and sent as UTF-8. A byte-order mark outranks every header, as it
+// does in a browser.
 function decodeText(buf, ct, isHtml) {
-  // A byte-order mark outranks every header, as it does in a browser: a
-  // script served as UTF-16 with no charset (nps.gov's) is only readable
-  // that way.
   let charset = buf[0] === 0xff && buf[1] === 0xfe ? "utf-16le" : buf[0] === 0xfe && buf[1] === 0xff ? "utf-16be" : buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? "utf-8" : null;
   if (!charset) charset = (ct.match(/charset=["']?([\w-]+)/i) || [])[1];
   if (!charset) {
@@ -124,7 +104,52 @@ function decodeText(buf, ct, isHtml) {
   return text;
 }
 
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json" };
+// A site's absolute links to itself, pointed at its proxied origin instead:
+// "https://www.drought.gov/x" anywhere, and "//www.drought.gov/x" where it
+// is a value - after a quote, "=" or "(" - but not where it begins a
+// script comment, which the rewrite would turn into a label and a comment
+// ("Label 'http' has already been declared", cdc.gov). In HTML and CSS
+// only; scripts are not rewritten, their requests are routed in the page.
+function pointAtProxy(text, realOrigin, proxyOrigin) {
+  const host = new URL(realOrigin).host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(?:https?://|(?<=["'=(])//)${host}(?=[/"'\\s)?#<]|$)`, "gi"), proxyOrigin);
+}
+
+// What only a page gets: the two tags, and no CSP in a meta tag (it forbids
+// framing and inline handlers as the header does).
+function inject(html) {
+  let out = html.replace(/<meta[^>]+http-equiv\s*=\s*["']?content-security-policy(?:-report-only)?["']?[^>]*>/gi, "");
+  const head = /<head(?:\s[^>]*)?>/i.exec(out);
+  const root = /<html(?:\s[^>]*)?>/i.exec(out);
+  const at = head ? head.index + head[0].length : root ? root.index + root[0].length : 0;
+  out = out.slice(0, at) + SHIM_TAG + out.slice(at);
+  if (/<\/body>/i.test(out)) return out.replace(/<\/body>/i, `${PAGE_TAG}</body>`);
+  return out + PAGE_TAG;
+}
+
+// A proxied page's address, back to the real one, for the services that
+// check which site is asking (ProxyUrl.REFERRER_CHECKED): the Google Maps
+// script sends location.href to Google, which checks it against the API
+// key's allowed sites - older versions in a query string, newer ones in a
+// JSON request body. Plain or percent-encoded, as it was found.
+const PROXIED_ORIGIN_RE = new RegExp(`http(:|%3A)(?:/|%2F){2}([a-z0-9-]+)\\.localhost(?::|%3A)${PORT}`, "gi");
+const unproxyText = (text) => text.replace(PROXIED_ORIGIN_RE, (m, colon, label) => {
+  const real = ProxyUrl.decodeLabel(label.toLowerCase());
+  return real ? (colon === ":" ? real : encodeURIComponent(real)) : m;
+});
+function unproxyQuery(pathAndQuery) {
+  const q = pathAndQuery.indexOf("?");
+  return q < 0 ? pathAndQuery : pathAndQuery.slice(0, q) + unproxyText(pathAndQuery.slice(q));
+}
+// Text bodies only: a changed length would corrupt a binary protobuf.
+function unproxyBody(body, contentType) {
+  if (!body || !body.length || !/json|text|x-www-form-urlencoded/i.test(contentType || "")) return body;
+  const text = body.toString("utf8");
+  const out = unproxyText(text);
+  return out === text ? body : Buffer.from(out);
+}
+
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".d.ts": "text/plain" };
 
 // A file from one of this server's own directories, and nothing outside it:
 // "/__wc/../../package.json" resolves to the directory above and is refused.
@@ -134,127 +159,130 @@ function serveFile(res, dir, rel) {
   if (!file.startsWith(dir + path.sep)) { res.writeHead(404); return res.end("not found"); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end("not found"); }
-    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
+    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream", "cache-control": "no-cache" });
     res.end(data);
   });
 }
+// The widget's built files, and the shim beside them, on every host.
+const serveShared = (res, rel) => (rel === "proxy-shim.js" || rel === "proxy-url.js" ? serveFile(res, APP_DIR, rel) : serveFile(res, WIDGET_DIR, rel));
 
-// "www.drought.gov", "www.drought.gov/data", "https://www.drought.gov/data"
-// -> the host and the path.
-function parseSite(typed) {
-  let s = String(typed || "").trim().replace(/^https?:\/\//i, "");
-  const m = s.match(/^([^/?#]+)(.*)$/);
-  if (!m || !HOST_RE.test(m[1])) return null;
-  return { host: m[1].toLowerCase(), path: m[2] && m[2].startsWith("/") ? m[2] : `/${m[2] || ""}` };
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// What the frame shows when a site cannot be: a page of ours, with the shim
+// so the address bar still learns where the frame is.
+function errorPage(res, status, title, detail) {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${SHIM_TAG}</head>
+<body style="font:15px/1.5 system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#17212e">
+<h1 style="font-size:20px">${escapeHtml(title)}</h1><p>${detail}</p></body></html>`);
 }
 
-async function proxy(req, res, host, pathPart, allowed) {
-  if (!allowed(host)) { res.writeHead(403, { "content-type": "text/plain" }); return res.end(`${host} is not on this server's allow list`); }
+async function proxy(req, res, host, allowed) {
+  const proxyOrigin = `http://${host}`;
+  const realOrigin = urls.realOrigin(`${proxyOrigin}/`);
+  if (!realOrigin) return errorPage(res, 400, "Not a site address", `${escapeHtml(host)} does not name a site.`);
+  const target = new URL(unproxyQuery(req.url), realOrigin);
+  if (blockedHost(target.hostname)) return errorPage(res, 403, "Blocked", `The mini browser does not open addresses on this machine or the local network (${escapeHtml(target.hostname)}).`);
+  if (!allowed(target.hostname)) return errorPage(res, 403, "Not on the allow list", `${escapeHtml(target.hostname)} is not on this server's allow list.`);
   stats.requests++;
-  stats.byHost[host] = (stats.byHost[host] || 0) + 1;
-  const url = `https://${host}${pathPart}`;
-  const base = baseFor(host);
+  stats.byHost[target.hostname] = (stats.byHost[target.hostname] || 0) + 1;
 
-  // The browser's own headers go up as they are, so the site sees the
-  // browser it is really talking to; only the ones that name this server
-  // or its connection are kept back.
+  // CORS between proxied sites (a page on one fetching an API on another),
+  // answered here for whichever proxied origin asked.
+  const origin = req.headers.origin;
+  const cors = origin && origin !== "null" ? { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", vary: "Origin" } : {};
+  if (req.method === "OPTIONS" && req.headers["access-control-request-method"]) {
+    res.writeHead(204, { ...cors, "access-control-allow-methods": req.headers["access-control-request-method"], "access-control-allow-headers": req.headers["access-control-request-headers"] || "*", "access-control-max-age": "600" });
+    return res.end();
+  }
+
   const headers = {};
-  const keepBack = /^(host|connection|keep-alive|accept-encoding|content-length|transfer-encoding|upgrade|te|trailer|proxy-.*|sec-fetch-.*|origin|referer)$/i;
-  // The open site lives at this server's root, so its addresses are the
-  // same in the browser's cache whichever site is open: a cached page or
-  // script of the last site would be shown for this one. Nothing of the
-  // open site is cached, and no "is it still the same?" question goes up
-  // that a 304 would answer with the browser's copy.
-  const conditional = /^(if-none-match|if-modified-since|if-match|if-unmodified-since|if-range)$/i;
-  for (const [h, v] of Object.entries(req.headers)) if (!keepBack.test(h) && !(base === "" && conditional.test(h)) && typeof v === "string") headers[h] = v;
-  if (req.headers.referer) {
-    const r = req.headers.referer.match(new RegExp(`^${ME_RE}(?:/__x/([^/?#]+))?(/.*)?$`));
-    if (r) headers.referer = `https://${r[1] || openHost || host}${r[2] || "/"}`;
-  }
-  if (req.headers.origin) headers.origin = `https://${host}`;
-  let body = null;
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    body = await new Promise((r) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => r(Buffer.concat(c))); });
-  }
+  for (const [k, v] of Object.entries(req.headers)) if (!DROP_REQUEST.test(k) && v != null) headers[k] = Array.isArray(v) ? v.join(", ") : v;
+  // The site sees itself, not localhost.
+  if (origin && origin !== "null") headers.origin = urls.realOrigin(`${origin}/`) || origin;
+  if (req.headers.referer) headers.referer = urls.toReal(req.headers.referer);
+
   let up;
-  try { up = await fetch(url, { method: req.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(60000) }); }
-  catch (e) { stats.upstreamFail++; res.writeHead(502, { "content-type": "text/plain" }); return res.end(`could not reach ${url}: ${e.message}`); }
+  try {
+    let body = req.method === "GET" || req.method === "HEAD" ? undefined : await new Promise((r, j) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => r(Buffer.concat(c))); req.on("error", j); });
+    if (body && ProxyUrl.REFERRER_CHECKED.includes(target.hostname)) body = unproxyBody(body, req.headers["content-type"]);
+    up = await fetch(target, { method: req.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(60000) });
+  } catch (e) {
+    stats.upstreamFail++;
+    const why = (e && e.cause && e.cause.code) || (e && e.message) || String(e);
+    return errorPage(res, 502, "Could not reach the site", `${escapeHtml(target.href)}<br><br>${escapeHtml(why)}`);
+  }
   stats.byStatus[up.status] = (stats.byStatus[up.status] || 0) + 1;
 
   const out = {};
-  const drop = /^(x-frame-options|content-security-policy(-report-only)?|strict-transport-security|content-encoding|content-length|transfer-encoding|cross-origin-.*|report-to|nel|permissions-policy|referrer-policy|x-content-type-options)$/i;
-  const caching = /^(cache-control|etag|last-modified|expires|age|vary)$/i;
-  for (const [k, v] of up.headers) {
-    if (drop.test(k) || (base === "" && caching.test(k))) continue;
-    if (k === "location") { out[k] = rewrite(v.startsWith("/") && !v.startsWith("//") ? `${base}${v}` : v, host, base); continue; }
-    out[k] = v;
-  }
-  // Cookies for the site, kept on this origin under the same names; the
-  // site's Domain and Secure would otherwise keep them from being sent back.
+  for (const [k, v] of up.headers) if (!DROP_RESPONSE.test(k)) out[k] = v;
+  // Cookies stay on the proxied origin: a Domain naming the real site would
+  // be refused by the browser.
   const cookies = typeof up.headers.getSetCookie === "function" ? up.headers.getSetCookie() : [];
-  if (cookies.length) out["set-cookie"] = cookies.map((c) => c.replace(/;\s*domain=[^;]*/i, "").replace(/;\s*secure/i, "").replace(/;\s*samesite=none/i, ""));
-  out["access-control-allow-origin"] = "*";
-  if (base === "") out["cache-control"] = "no-store";
+  if (cookies.length) out["set-cookie"] = cookies.map((c) => c.replace(/;\s*domain=[^;]*/gi, ""));
+  if (out.location) { try { out.location = urls.toProxy(new URL(out.location, target).href) || out.location; } catch (e) { /* as sent */ } }
+  Object.assign(out, cors);
 
-  const ct = up.headers.get("content-type") || "";
-  const raw = Buffer.from(await up.arrayBuffer());
-  if (/text\/html|application\/xhtml/i.test(ct)) {
-    // Only a page load gets the tags. A site that fetches an HTML fragment
-    // and runs it (drought.gov does, for its feedback box) would otherwise
-    // get a second copy.
-    const dest = req.headers["sec-fetch-dest"];
-    const isPage = dest ? /^(document|iframe|frame)$/.test(dest) : !req.headers["x-requested-with"];
-    const rewritten = rewritePage(decodeText(raw, ct, true), host, base);
-    const b = Buffer.from(isPage ? inject(rewritten, host, base) : rewritten);
-    out["content-type"] = "text/html; charset=utf-8";
-    out["content-length"] = b.length;
-    res.writeHead(up.status, out); return res.end(b);
+  const type = out["content-type"] || "";
+  const dest = req.headers["sec-fetch-dest"];
+  // Only a page load gets the tags: a site that fetches an HTML fragment
+  // and runs it would otherwise get a second copy.
+  const isDocument = /text\/html|application\/xhtml\+xml/i.test(type) && (!dest || dest === "document" || dest === "iframe" || dest === "frame");
+  const isCss = /text\/css/i.test(type);
+  const hasBody = req.method !== "HEAD" && up.body && up.status !== 204 && up.status !== 304;
+
+  if (hasBody && (isDocument || isCss)) {
+    let text = pointAtProxy(decodeText(Buffer.from(await up.arrayBuffer()), type, isDocument), realOrigin, proxyOrigin);
+    if (isDocument) {
+      for (const h of ProxyUrl.REFERRER_CHECKED) text = pointAtProxy(text, `https://${h}`, urls.toProxy(`https://${h}/`).slice(0, -1));
+      text = inject(text);
+      // The document carries a script the site never sent; a cached copy
+      // from before the shim changed would carry an old one.
+      out["cache-control"] = "no-store"; delete out.etag; delete out["last-modified"];
+    }
+    out["content-type"] = `${type.replace(/;\s*charset=[^;]+/i, "")}; charset=utf-8`;
+    res.writeHead(up.status, out);
+    return res.end(text);
   }
-  if (/text\/css|javascript|json|text\/plain|xml/i.test(ct)) {
-    const b = Buffer.from(rewrite(decodeText(raw, ct, false), host, base));
-    out["content-type"] = ct.replace(/;\s*charset=[^;]*/i, "") + "; charset=utf-8";
-    out["content-length"] = b.length;
-    res.writeHead(up.status, out); return res.end(b);
-  }
-  out["content-length"] = raw.length;
-  res.writeHead(up.status, out); res.end(raw);
+  // Everything else as the site sent it, streamed.
+  res.writeHead(up.status, out);
+  if (!hasBody) return res.end();
+  Readable.fromWeb(up.body).on("error", () => res.destroy()).pipe(res);
 }
 
 function createServer({ allow = ALLOW } = {}) {
   const allowed = allowedBy(allow);
   return http.createServer((req, res) => {
+    const host = String(req.headers.host || "").toLowerCase();
     const bare = req.url.split("?")[0];
-    if (bare === "/__app" || bare === "/__app/" || bare.startsWith("/__app/")) {
-      return serveFile(res, APP_DIR, bare.replace(/^\/__app\/?/, "") || "index.html");
+    if (bare.startsWith("/__wc/")) return serveShared(res, bare.slice("/__wc/".length));
+    if (host === HOST || host === `localhost`) {
+      if (bare === "/" || bare === "/__app" || bare === "/__app/" || bare.startsWith("/__app/")) return serveFile(res, APP_DIR, bare.replace(/^\/__app\/?/, "").replace(/^\/$/, "") || "index.html");
+      if (bare === "/__stats") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify(stats, null, 2)); }
+      if (bare === "/favicon.ico") { res.writeHead(204); return res.end(); }
+      res.writeHead(404, { "content-type": "text/plain" }); return res.end(`not found: the mini browser is at ${ME}/`);
     }
-    if (bare.startsWith("/__wc/")) return serveFile(res, WIDGET_DIR, bare.slice("/__wc/".length));
-    if (bare === "/__stats") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ ...stats, open: openHost }, null, 2)); }
-    if (bare === "/favicon.ico" && !openHost) { res.writeHead(204); return res.end(); }
-    // Opening a site: it becomes the one at the root, and the frame goes
-    // to its page.
-    if (bare === "/__open") {
-      const site = parseSite(new URL(req.url, ME).searchParams.get("site"));
-      if (!site) { res.writeHead(400, { "content-type": "text/plain" }); return res.end("type a site, like www.drought.gov"); }
-      if (!allowed(site.host)) { res.writeHead(403, { "content-type": "text/plain" }); return res.end(`${site.host} is not on this server's allow list`); }
-      openHost = site.host;
-      res.writeHead(302, { location: site.path, "cache-control": "no-store" }); return res.end();
+    // Subdomains of 127.0.0.1 are not a thing: the address bar has to be on
+    // localhost for its sites to be on *.localhost.
+    if (/^127\.0\.0\.1(:|$)|^\[::1\](:|$)/.test(host)) { res.writeHead(302, { location: ME + req.url }); return res.end(); }
+    if (host.endsWith(`.${HOST}`)) {
+      return proxy(req, res, host, allowed).catch((e) => {
+        if (!res.headersSent) errorPage(res, 500, "Proxy error", escapeHtml((e && e.message) || e)); else res.destroy();
+      });
     }
-    const x = req.url.match(/^\/__x\/([^/?#]+)(.*)$/);
-    let host, pathPart;
-    if (x && HOST_RE.test(x[1])) { host = x[1].toLowerCase(); pathPart = x[2] && x[2].startsWith("/") ? x[2] : `/${x[2] || ""}`; }
-    else if (bare === "/" && !openHost) { return serveFile(res, APP_DIR, "index.html"); }
-    else if (openHost) { host = openHost; pathPart = req.url; }
-    if (!host) { res.writeHead(404, { "content-type": "text/plain" }); return res.end("no site is open: /__open?site=<host>"); }
-    proxy(req, res, host, pathPart, allowed).catch((e) => { try { res.writeHead(500); res.end(String(e)); } catch (_) { /* gone */ } });
+    res.writeHead(400, { "content-type": "text/plain" }); res.end(`open ${ME}/`);
   });
 }
 
-module.exports = { rewrite, rewritePage, inject, decodeText, parseSite, createServer, open: (host) => { openHost = host; } };
+module.exports = { pointAtProxy, inject, decodeText, blockedHost, unproxyQuery, unproxyBody, createServer, SHIM_TAG, PAGE_TAG };
 
+// Both loopback addresses, since a browser may resolve localhost to either.
+// Never all interfaces: this is an open proxy.
 if (require.main === module) {
-  createServer().listen(PORT, () => {
-    console.log(`web-controls mini browser: ${ME}/__app/`);
+  const server = createServer().listen(PORT, "127.0.0.1", () => {
+    console.log(`web-controls mini browser: ${ME}/`);
     if (ALLOW.length) console.log(`sites allowed: ${ALLOW.join(", ")}`);
     else console.log("any site (pass --allow host1,host2 to limit it)");
   });
+  server.on("error", (e) => { console.error(String(e.message || e)); process.exit(1); });
+  createServer().listen(PORT, "::1").on("error", () => { /* no IPv6 loopback here */ });
 }

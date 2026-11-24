@@ -16,6 +16,9 @@ Three ways to run it are here, all the same agent:
   through a proxy, with the agent beside it the way the extension sits
   beside a tab. Nothing to install and nothing for the site to add; see its
   README for which sites that works on.
+- **`viewer/`** — the prototype the mini browser's proxy design came from:
+  the same per-site addressing, with a pattern-matched command set in place
+  of the model.
 - **everything else** — which are primarily per site examples.
 
 **Trying it out and reporting back?** [FEEDBACK.md](FEEDBACK.md) says what to

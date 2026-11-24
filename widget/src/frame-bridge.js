@@ -20,14 +20,17 @@
     try { WC_NAMED_BUNDLES[g](); } catch (e) { /* GENERIC still answers */ }
     loaded.add(g);
   };
-  // From the parent, on this origin. jsdom delivers a message with no
-  // source and an empty origin; a browser never sends an empty one, so
-  // allowing it changes nothing where this runs for real.
-  const fromParent = (e) => (e.source == null || e.source === window.parent) && (e.origin === location.origin || e.origin === "");
+  // From the parent: the address-bar page, whose origin the proxy's shim
+  // names on this window (the page is on its own subdomain), or this
+  // origin where the widget frames a page of its own. jsdom delivers a
+  // message with no source and an empty origin; a browser never sends an
+  // empty one, so allowing it changes nothing where this runs for real.
+  const shell = () => window.__wcShellOrigin || location.origin;
+  const fromParent = (e) => (e.source == null || e.source === window.parent) && (e.origin === shell() || e.origin === location.origin || e.origin === "");
   window.addEventListener("message", async (e) => {
     const m = e.data;
     if (!m || m.wc !== "page-call" || !fromParent(e)) return;
-    const reply = (out) => { try { window.parent.postMessage({ wc: "page-reply", id: m.id, ...out }, location.origin); } catch (err) { /* parent gone */ } };
+    const reply = (out) => { try { window.parent.postMessage({ wc: "page-reply", id: m.id, ...out }, e.origin || shell()); } catch (err) { /* parent gone */ } };
     const names = Array.isArray(m.globals) && m.globals.length ? m.globals : ["GENERIC"];
     names.forEach(load);
     const owner = names.map((n) => window[n])
