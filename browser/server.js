@@ -36,14 +36,15 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { Readable } = require("stream");
+const { Readable, pipeline } = require("stream");
 const ProxyUrl = require("./app/proxy-url.js");
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 && args[i + 1] ? args[i + 1] : fallback; };
 const PORT = Number(flag("port", 8787));
 const ALLOW = flag("allow", "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-const HOST = `localhost:${PORT}`;
+// A browser leaves the default port out of the Host header.
+const HOST = PORT === 80 ? "localhost" : `localhost:${PORT}`;
 const ME = `http://${HOST}`;
 const urls = ProxyUrl.create(HOST, "http:");
 const WIDGET_DIR = path.join(__dirname, "..", "widget", "dist");
@@ -132,7 +133,7 @@ function inject(html) {
 // script sends location.href to Google, which checks it against the API
 // key's allowed sites - older versions in a query string, newer ones in a
 // JSON request body. Plain or percent-encoded, as it was found.
-const PROXIED_ORIGIN_RE = new RegExp(`http(:|%3A)(?:/|%2F){2}([a-z0-9-]+)\\.localhost(?::|%3A)${PORT}`, "gi");
+const PROXIED_ORIGIN_RE = new RegExp(`http(:|%3A)(?:/|%2F){2}([a-z0-9-]+)\\.localhost${PORT === 80 ? "" : `(?::|%3A)${PORT}`}`, "gi");
 const unproxyText = (text) => text.replace(PROXIED_ORIGIN_RE, (m, colon, label) => {
   const real = ProxyUrl.decodeLabel(label.toLowerCase());
   return real ? (colon === ":" ? real : encodeURIComponent(real)) : m;
@@ -226,18 +227,30 @@ async function proxy(req, res, host, allowed) {
   for (const [k, v] of Object.entries(req.headers)) if (!DROP_REQUEST.test(k) && v != null) headers[k] = Array.isArray(v) ? v.join(", ") : v;
   // The site sees itself, not localhost.
   if (origin && origin !== "null") headers.origin = urls.realOrigin(`${origin}/`) || origin;
-  if (req.headers.referer) headers.referer = urls.toReal(req.headers.referer);
+  // The address bar's own address, which the first page in the frame would
+  // carry as its referer, is nobody's business.
+  if (req.headers.referer) {
+    const referer = urls.toReal(req.headers.referer);
+    if (referer.startsWith(`${ME}/`)) delete headers.referer; else headers.referer = referer;
+  }
 
+  // The site has a minute to answer with headers; the body takes as long
+  // as it takes (a download, an event stream). When the browser gives up
+  // on the request, so does the proxy.
+  const upstream = new AbortController();
+  const slow = setTimeout(() => upstream.abort(new Error("the site did not answer within 60 s")), 60000);
+  res.on("close", () => upstream.abort());
   let up;
   try {
     let body = req.method === "GET" || req.method === "HEAD" ? undefined : await new Promise((r, j) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => r(Buffer.concat(c))); req.on("error", j); });
     if (body && ProxyUrl.REFERRER_CHECKED.includes(target.hostname)) body = unproxyBody(body, req.headers["content-type"]);
-    up = await fetch(target, { method: req.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(60000) });
+    up = await fetch(target, { method: req.method, headers, body, redirect: "manual", signal: upstream.signal });
   } catch (e) {
     stats.upstreamFail++;
-    const why = (e && e.cause && e.cause.code) || (e && e.message) || String(e);
+    if (res.writableEnded || res.destroyed) return;
+    const why = (e && e.cause && e.cause.code) || (upstream.signal.reason && upstream.signal.reason.message) || (e && e.message) || String(e);
     return errorPage(res, 502, "Could not reach the site", `${escapeHtml(target.href)}<br><br>${escapeHtml(why)}`);
-  }
+  } finally { clearTimeout(slow); }
   stats.byStatus[up.status] = (stats.byStatus[up.status] || 0) + 1;
 
   // A bot check (Cloudflare's managed challenge) answers the server's
@@ -260,7 +273,10 @@ async function proxy(req, res, host, allowed) {
   const cookies = typeof up.headers.getSetCookie === "function" ? up.headers.getSetCookie() : [];
   if (cookies.length) out["set-cookie"] = cookies.map((c) => c.replace(/;\s*domain=[^;]*/gi, ""));
   if (out.location) { try { out.location = urls.toProxy(new URL(out.location, target).href) || out.location; } catch (e) { /* as sent */ } }
+  // The site's own Vary is kept, with Origin added to it.
+  const vary = out.vary;
   Object.assign(out, cors);
+  if (vary && cors.vary && !/(^|,)\s*(origin|\*)\s*(,|$)/i.test(vary)) out.vary = `${vary}, Origin`; else if (vary) out.vary = vary;
 
   const type = out["content-type"] || "";
   const dest = req.headers["sec-fetch-dest"];
@@ -286,7 +302,9 @@ async function proxy(req, res, host, allowed) {
   // Everything else as the site sent it, streamed.
   res.writeHead(up.status, out);
   if (!hasBody) return res.end();
-  Readable.fromWeb(up.body).on("error", () => res.destroy()).pipe(res);
+  // pipeline, not pipe: a browser that gives up on a download closes the
+  // response, and the site's stream has to be let go with it.
+  pipeline(Readable.fromWeb(up.body), res, () => {});
 }
 
 function createServer({ allow = ALLOW } = {}) {

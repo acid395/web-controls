@@ -81,7 +81,10 @@
     frame.src = p;
   };
   $("go").addEventListener("click", open);
-  url.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+  url.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") open();
+    else if (e.key === "Escape") { url.value = page.url; url.blur(); }
+  });
   // The frame is another origin: its history is asked for over a message
   // the shim answers.
   const nav = (what) => { try { frame.contentWindow.postMessage({ wc: "page-nav", do: what }, page.origin || "*"); } catch (e) { /* nothing open */ } };
@@ -97,7 +100,9 @@
   window.addEventListener("message", (e) => {
     const m = e.data;
     if (e.source !== frame.contentWindow || !m || m.wc !== "page-state") return;
-    page.reported = true;
+    // "leaving" is the old document's last word; the next one has not
+    // spoken yet.
+    page.reported = m.status !== "leaving";
     page.origin = e.origin;
     page.url = m.url || "";
     page.title = m.title || "";
@@ -108,12 +113,17 @@
     status.textContent = "";
     back.disabled = seen.length < 2;
     fwd.disabled = reload.disabled = false;
+    document.title = m.title ? `${m.title} - web-controls` : "web-controls browser";
+    // The address bar's own address names the page, so reloading it, or
+    // bookmarking it, comes back to the same page.
+    if (m.url) history.replaceState(null, "", `?site=${encodeURIComponent(m.url)}`);
     // The panel, the first time a site is open; after that, as it was left.
     if (widget && !opened) { opened = true; widget.open(); }
   });
-  // A document that loads and never reports did not come through the proxy.
+  // A document that loads and has not reported within a moment of it did
+  // not come through the proxy (a proxied one speaks before its load).
   frame.addEventListener("load", () => {
-    page.reported = false;
+    if (page.reported) return;
     setTimeout(() => { if (!page.reported) status.textContent = "this page did not come through the proxy"; }, 800);
   });
 

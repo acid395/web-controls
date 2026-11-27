@@ -112,8 +112,9 @@
 
   // --- navigations ----------------------------------------------------------
   // A form's POST body is lost if its navigation is redirected afterwards,
-  // so its action is pointed at the proxy before it is sent.
-  const fixForm = (form) => { if (form && form.tagName === "FORM") { const to = route(form.action); if (to) form.setAttribute("action", to); } };
+  // so its action is pointed at the proxy before it is sent. The attribute,
+  // not form.action: a field named "action" shadows that property.
+  const fixForm = (form) => { if (form && form.tagName === "FORM") { const to = route(form.getAttribute("action") || ""); if (to) form.setAttribute("action", to); } };
   window.addEventListener("submit", (e) => fixForm(e.target), true);
   const nativeSubmit = HTMLFormElement.prototype.submit;
   HTMLFormElement.prototype.submit = function () { fixForm(this); return nativeSubmit.call(this); };

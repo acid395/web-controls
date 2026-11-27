@@ -7,7 +7,7 @@ off the page you're looking at. Type *"gage height in Alaska"* and it fetches
 that from USGS, whatever page you happen to be on. Type *"select Alaska"* and
 it operates the page's own controls for you.
 
-Three ways to run it are here, all the same agent:
+Three ways to run it are here, all the same agent, and the things it came from:
 
 - **`extension/`** — a Chrome extension. This is the thing you install and
   use. Start here.
@@ -48,7 +48,7 @@ Example prompts.
 | `read this page` | Extracts the page's tables, values and charts. |
 | `select Alaska` | Operates the page's own controls. |
 
-sent to the public NWS APIs.
+Nothing leaves the browser but the requests sent to the public agency APIs.
 
 ## Run the tests
 
@@ -83,7 +83,7 @@ When it can't answer, it says what it understood, what it searched, and what
 the page can actually do.
 
 `extension/README.md` goes into the engineering detail, including the
-limitations(a chart drawn to a canvas has no
+limitations (a chart drawn to a canvas has no
 numbers to read; maps mostly can't be clicked).
 
 ---

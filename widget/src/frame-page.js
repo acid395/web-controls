@@ -59,12 +59,15 @@ function createFramePage(frame, { timeoutMs = 20000 } = {}) {
   const begin = () => { if (!loading) { loading = true; if (onLoading) onLoading(); } };
   const end = () => { clearTimeout(settle); if (loading) { loading = false; if (onComplete) onComplete(); } };
 
+  // Whether the document now in the frame has reported; "leaving" is the
+  // old one's last word, so the next has not.
+  let reported = false;
   const fromFrame = (e) => e.source == null || e.source === win();
   const onMessage = (e) => {
     const m = e.data;
     if (!m || !fromFrame(e)) return;
     if (m.wc === "page-state") {
-      reported = true;
+      reported = m.status !== "leaving";
       if (e.origin) state.origin = e.origin;
       if (m.status === "loading") {
         // The first word of a new document: whatever was waiting on the
@@ -101,7 +104,6 @@ function createFramePage(frame, { timeoutMs = 20000 } = {}) {
   // no shim: a same-origin page of the widget's own, whose address can be
   // read, or one that did not come through the proxy, which ends after a
   // moment's grace (a proxied page's "complete" follows its load at once).
-  let reported = false;
   const loaded = () => {
     clearTimeout(settle);
     if (!reported) {

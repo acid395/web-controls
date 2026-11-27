@@ -131,6 +131,12 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
     check("set as an attribute too", s2.getAttribute("src"), "http://maps--google--com.localhost:8787/maps/api/js");
     w.history.pushState(null, "", "/map?lat=1");
     check("pushState is the site's own, untouched", w.location.pathname + w.location.search, "/map?lat=1");
+    const form = w.document.createElement("form");
+    form.setAttribute("action", "https://search.example.org/q");
+    form.innerHTML = '<input name="action" value="shadows form.action"><button>go</button>';
+    w.document.body.appendChild(form);
+    form.dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+    check("a form posting to another site is pointed at the proxy, even with a field named action", form.getAttribute("action"), "http://search--example--org.localhost:8787/q");
     check("a page not in a frame reports to nobody", w.parent === w);
   }
 
@@ -183,10 +189,11 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
     const seen = [];
     const realFetch = globalThis.fetch;
     globalThis.fetch = async (url, init) => {
-      seen.push({ url: String(url), headers: init.headers, method: init.method, body: init.body });
+      seen.push({ url: String(url), headers: init.headers, method: init.method, body: init.body, signal: init.signal, abortedAtFetch: !!(init.signal && init.signal.aborted) });
       const u = new URL(url);
       if (u.pathname === "/page") return new Response('<html><head><title>p</title></head><body><a href="https://www.drought.gov/data">d</a> <a href="/rel">r</a></body></html>', { status: 200, headers: { "content-type": "text/html; charset=utf-8", etag: '"v1"', "last-modified": "Mon, 01 Jan 2024 00:00:00 GMT", "x-frame-options": "DENY", "content-security-policy": "frame-ancestors 'none'", "set-cookie": "s=1; Domain=.drought.gov; Path=/; Secure" } });
       if (u.pathname === "/style.css") return new Response(".a{background:url(https://www.drought.gov/i.png)}", { headers: { "content-type": "text/css", etag: '"c1"' } });
+      if (u.pathname === "/api") return new Response("{}", { headers: { "content-type": "application/json", vary: "Accept-Encoding" } });
       if (u.pathname === "/app.js") return new Response(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("var a = 1; // https://www.drought.gov/x", "utf16le")]), { headers: { "content-type": "application/javascript", etag: '"j1"' } });
       if (u.pathname === "/go") return new Response("", { status: 302, headers: { location: "https://www.drought.gov/page" } });
       if (u.pathname === "/fragment") return new Response("<div>part</div>", { headers: { "content-type": "text/html" } });
@@ -220,7 +227,8 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
 
     const page = await raw(port, "/page?x=1", { host: "www--drought--gov.localhost:8787", headers: { "sec-fetch-dest": "iframe", "if-none-match": '"v1"', referer: "http://localhost:8787/", "accept-language": "en" } });
     check("a site's page is fetched at its real address, path and query unchanged", seen[0].url, "https://www.drought.gov/page?x=1");
-    check("with the browser's headers, and the referer mapped to the real site", seen[0].headers["accept-language"] === "en" && seen[0].headers.referer === "http://localhost:8787/" && !("host" in seen[0].headers), JSON.stringify(seen[0].headers));
+    check("with the browser's headers, less the address bar's own address as referer", seen[0].headers["accept-language"] === "en" && !("referer" in seen[0].headers) && !("host" in seen[0].headers), JSON.stringify(seen[0].headers));
+    check("the site is fetched under a signal that is let go when the browser is done, not before", seen[0].signal instanceof AbortSignal && !seen[0].abortedAtFetch && seen[0].signal.aborted);
     check("the page gets both tags", page.body.includes('<head><script src="/__wc/proxy-shim.js"') && /web-controls-page\.js"><\/script><\/body>/.test(page.body), page.body.slice(0, 200));
     check("its own absolute links point at its proxied origin", page.body.includes(`href="${SITE}/data"`) && page.body.includes('href="/rel"'), page.body);
     check("the framing headers are gone", !page.headers["x-frame-options"] && !page.headers["content-security-policy"], JSON.stringify(page.headers));
@@ -238,6 +246,8 @@ const raw = (port, p, { host = "localhost:8787", headers = {}, method = "GET" } 
     check("a redirect is pointed at the proxy", go.status === 302 && go.headers.location === `${SITE}/page`, `${go.status} ${go.headers.location}`);
     const pre = await raw(port, "/api", { host: "api--example--org.localhost:8787", method: "OPTIONS", headers: { origin: SITE, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } });
     check("a preflight between proxied sites is answered here", pre.status === 403 || (pre.status === 204 && pre.headers["access-control-allow-origin"] === SITE), `${pre.status} ${JSON.stringify(pre.headers)}`);
+    const api = await raw(port, "/api", { host: "www--drought--gov.localhost:8787", headers: { origin: SITE, referer: `${SITE}/page` } });
+    check("a cross-site answer is for the asking origin, the site's own Vary kept", api.headers["access-control-allow-origin"] === SITE && api.headers.vary === "Accept-Encoding, Origin" && seen[seen.length - 1].headers.referer === "https://www.drought.gov/page", JSON.stringify(api.headers));
     const other = await raw(port, "/", { host: "www--weather--gov.localhost:8787" });
     check("a site off the allow list is refused", other.status === 403 && /not on this server's allow list/.test(other.body), `${other.status}`);
     const local = await raw(port, "/", { host: "10--0--0--1.localhost:8787" });

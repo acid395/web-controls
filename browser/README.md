@@ -9,7 +9,7 @@ node browser/server.js --allow www.drought.gov,www.weather.gov --port 9000
 
 Node 20 or newer, nothing to install. The server builds the widget's files (`widget/dist`) itself the first time, and again whenever their sources have changed since; `node widget/scripts/build.js` does the same by hand.
 
-Open http://localhost:8787/ and enter a site, or go straight to `http://localhost:8787/?site=www.drought.gov`. It has to be `localhost`, not `127.0.0.1`: the sites live on subdomains of it.
+Open http://localhost:8787/ and enter a site, or go straight to `http://localhost:8787/?site=www.drought.gov`. The address keeps up with the page in the frame, so reloading or bookmarking the mini browser brings that page back. It has to be `localhost`, not `127.0.0.1`: the sites live on subdomains of it.
 
 ## How it works
 
